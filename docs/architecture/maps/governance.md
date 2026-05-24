@@ -15,7 +15,6 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
   - Child-agent allowlist enforcement.
   - Temporary grant issue/get/revoke/use manager methods.
 - `src/kernel/governance/capabilities.rs`
-  - Profile preset capability maps.
   - Exact/wildcard capability rule matching.
   - Shared bool-rule ceiling checks used by temporary grants, peer delegation, and import delegation.
   - Tool-name to capability-name mapping.
@@ -23,7 +22,7 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
   - Temporary grant snapshot DTO.
   - Active grant storage entry.
   - Grant expiry, subject access, and delegation ancestry validation.
-- `src/kernel/config/governance.rs`
+- `src/kernel/config.rs`
   - Governance configuration types and defaults.
 - `src/kernel/config/validation.rs`
   - Governance config validation.
@@ -39,7 +38,7 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
 Capability checks:
 
 1. Build a `GovernanceSubject` from active agent/session/module/root/grant context.
-2. Match the requested capability against profile preset rules.
+2. Match the requested capability against the resolved baseline capability map.
 3. Apply ceilings from agent capability profile, agent max capabilities, root max capabilities, delegated import capabilities, and active grant.
 4. If enforcement is off, report the decision but allow execution.
 5. If enforcement is on, return the denial reason on failure.
@@ -61,7 +60,8 @@ Temporary grants:
 
 - Exact capability rules outrank wildcard rules.
 - The longest matching wildcard wins.
-- Open profile allows unmatched capabilities by baseline; other profiles deny unmatched capabilities.
+- `governance.unmatched_capability` decides the baseline result when no explicit capability rule matches.
+- `governance.profile` is an observability/DX label; explicit capabilities are the security source of truth.
 - Empty bool allowlists deny when used as a hard ceiling.
 - Empty JSON max-capability maps mean no ceiling.
 - Enforcement-disabled mode must still produce accurate observability decisions.
@@ -92,8 +92,14 @@ git diff --check
 
 The current pass keeps `governance.rs` as the policy manager and public decision surface, while:
 
-- `governance/capabilities.rs` owns capability preset/matching logic.
+- `governance/capabilities.rs` owns capability rule matching logic.
 - `governance/grants.rs` owns temporary grant data and chain validation helpers.
+- `templates/governance/*.toml` owns starter policy templates used by onboarding/scaffold output.
+
+`GovernanceManager` resolves a baseline from `[governance.capabilities]` and
+`governance.unmatched_capability`. If an older config only has a built-in
+`profile` label and no explicit capability map, the manager uses the matching
+template as a compatibility fallback.
 
 This centralized the exact/wildcard bool-rule matcher that had been duplicated in:
 

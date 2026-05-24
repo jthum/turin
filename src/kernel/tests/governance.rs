@@ -7,8 +7,10 @@ use crate::kernel::config::{
 #[test]
 fn snapshot_includes_profile_defaults_and_subject() {
     let mut cfg = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: false,
+        unmatched_capability: GovernanceUnmatchedCapability::Deny,
+        capabilities: Default::default(),
         audit: GovernanceAuditConfig {
             mode: GovernanceAuditMode::Observational,
             include_capability_context: true,
@@ -48,15 +50,15 @@ fn snapshot_includes_profile_defaults_and_subject() {
 
     let mgr = GovernanceManager::new(cfg);
     let snapshot = mgr.snapshot_for_agent(Some("reviewer"));
-    assert_eq!(snapshot.profile, GovernanceProfile::Balanced);
+    assert_eq!(snapshot.profile, "balanced");
     assert_eq!(snapshot.subject_agent_id.as_deref(), Some("reviewer"));
     assert_eq!(snapshot.audit_mode, GovernanceAuditMode::Observational);
-    assert!(!snapshot.audit_persist_before_hooks);
-    assert!(
-        snapshot
-            .preset_capabilities
-            .contains_key("runtime.db.query")
+    assert_eq!(
+        snapshot.unmatched_capability,
+        GovernanceUnmatchedCapability::Deny
     );
+    assert!(!snapshot.audit_persist_before_hooks);
+    assert!(snapshot.capabilities.contains_key("runtime.db.query"));
     assert_eq!(snapshot.roots.len(), 1);
     assert_eq!(snapshot.agents.len(), 1);
 }
@@ -64,7 +66,7 @@ fn snapshot_includes_profile_defaults_and_subject() {
 #[test]
 fn capability_decision_respects_profile_and_enforcement() {
     let mut cfg = GovernanceConfig {
-        profile: GovernanceProfile::Governed,
+        profile: "governed".to_string(),
         enforcement_enabled: true,
         ..GovernanceConfig::default()
     };
@@ -111,7 +113,7 @@ fn tool_capability_mapping_covers_high_risk_builtins() {
 #[test]
 fn capability_decision_preserves_module_subject_context() {
     let mgr = GovernanceManager::new(GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: false,
         ..GovernanceConfig::default()
     });
@@ -131,7 +133,7 @@ fn capability_decision_preserves_module_subject_context() {
 #[test]
 fn allowed_child_agents_is_opt_in_and_enforced_when_configured() {
     let mut cfg = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: true,
         ..GovernanceConfig::default()
     };
@@ -162,7 +164,7 @@ fn allowed_child_agents_is_opt_in_and_enforced_when_configured() {
 #[test]
 fn agent_capability_profile_applies_named_capability_ceiling() {
     let mut cfg = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: true,
         ..GovernanceConfig::default()
     };
@@ -218,7 +220,7 @@ fn agent_capability_profile_applies_named_capability_ceiling() {
 #[test]
 fn temporary_grants_apply_ceiling_and_consume_max_uses() {
     let cfg = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: true,
         grants: GovernanceGrantsConfig {
             enabled: true,

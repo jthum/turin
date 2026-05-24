@@ -1,108 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::kernel::config::GovernanceProfile;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CapabilityRuleMatch {
     pub rule: Option<String>,
     pub via_wildcard: bool,
     pub allowed: Option<bool>,
-}
-
-pub(super) fn preset_capabilities_for_profile(
-    profile: &GovernanceProfile,
-) -> BTreeMap<String, serde_json::Value> {
-    let mut caps = BTreeMap::new();
-    match profile {
-        GovernanceProfile::Open => {
-            caps.insert("runtime.db.*".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.*".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.*".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("harness.import.*".into(), serde_json::Value::Bool(true));
-            caps.insert("harness.use.*".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(true));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(true));
-        }
-        GovernanceProfile::Balanced => {
-            caps.insert("runtime.db.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(true));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.unscoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.scoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("harness.use.unscoped".into(), serde_json::Value::Bool(true));
-            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(true));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
-        }
-        GovernanceProfile::Governed => {
-            caps.insert("runtime.db.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.db.exec".into(), serde_json::Value::Bool(false));
-            caps.insert("runtime.agent.submit".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.await".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.status".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.agent.spawn".into(), serde_json::Value::Bool(false));
-            caps.insert("runtime.graph.query".into(), serde_json::Value::Bool(true));
-            caps.insert("runtime.graph.write".into(), serde_json::Value::Bool(false));
-            caps.insert(
-                "runtime.code.search.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert("runtime.policy.set".into(), serde_json::Value::Bool(false));
-            caps.insert(
-                "runtime.governance.grant.*".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.import.unscoped".into(),
-                serde_json::Value::Bool(false),
-            );
-            caps.insert(
-                "harness.import.scoped".into(),
-                serde_json::Value::Bool(true),
-            );
-            caps.insert(
-                "harness.use.unscoped".into(),
-                serde_json::Value::Bool(false),
-            );
-            caps.insert("harness.use.scoped".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.read".into(), serde_json::Value::Bool(true));
-            caps.insert("fs.write".into(), serde_json::Value::Bool(false));
-            caps.insert("shell.exec".into(), serde_json::Value::Bool(false));
-        }
-        GovernanceProfile::Custom => {}
-    }
-    caps
 }
 
 pub(super) fn match_capability_rule(
@@ -253,15 +155,6 @@ pub(super) fn capability_ceiling_denial_reason_bool_map(
                 capability, source_kind, source_name
             ),
         })
-    }
-}
-
-pub(super) fn profile_name(profile: &GovernanceProfile) -> &'static str {
-    match profile {
-        GovernanceProfile::Open => "open",
-        GovernanceProfile::Balanced => "balanced",
-        GovernanceProfile::Governed => "governed",
-        GovernanceProfile::Custom => "custom",
     }
 }
 

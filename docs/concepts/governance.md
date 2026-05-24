@@ -16,38 +16,50 @@ It is designed to let you run:
 4. **Delegation is downward-only (no privilege amplification).**
 5. **Provider-specific quirks do not belong in governance logic.**
 
-## Governance Profiles
+## Governance Policy
 
 Configured in `[governance]`:
 
 ```toml
 [governance]
-profile = "open"         # open | balanced | governed | custom
+profile = "open"         # descriptive label for observability and harness behavior
 enforcement_enabled = false
+unmatched_capability = "allow"  # allow | deny
+
+[governance.capabilities]
+"runtime.db.*" = true
+"runtime.agent.*" = true
+"fs.read" = true
+"fs.write" = true
+"shell.exec" = true
 ```
 
-### `open`
+The security source of truth is the explicit capability map plus
+`unmatched_capability`. `profile` is a lightweight label exposed through
+`runtime.governance.profile()` and snapshots; it is not trusted as the policy
+itself.
+
+Starter tools such as `turin init` can still offer named profiles like `open`,
+`balanced`, and `governed`, but they expand those choices into explicit
+capability rules in the generated config.
+
+### Open-style policies
 
 - Maximum flexibility
 - Governance checks may still be observable, but enforcement is commonly disabled
 - Good for experimentation and isolated environments
 
-### `balanced`
+### Balanced-style policies
 
 - Safer default capability posture
 - Designed for day-to-day use where some restrictions are helpful
 - Still overrideable with explicit config/runtime policy choices
 
-### `governed`
+### Governed-style policies
 
 - Strict capability enforcement posture
 - Intended for controlled environments and stronger audit expectations
 - Commonly paired with scoped imports and immutable audit mode
-
-### `custom`
-
-- Use your own capability profile tables and governance config
-- Turin still provides the enforcement engine; you define the shape
 
 ## Enforcement Toggle
 
@@ -471,9 +483,9 @@ These are useful for adaptive behavior (e.g., degrade gracefully when a capabili
 
 ### 1. Open by default, tighten by deployment
 
-- local/dev sandbox: `profile = "open"`, `enforcement_enabled = false`
-- shared/dev infra: `balanced`
-- production/controlled workflows: `governed` + scoped imports + immutable audit
+- local/dev sandbox: `profile = "open"`, `enforcement_enabled = false`, `unmatched_capability = "allow"`
+- shared/dev infra: balanced starter policy with explicit capability rules
+- production/controlled workflows: governed starter policy + scoped imports + immutable audit
 
 ### 2. Split harness roots by trust level
 
@@ -500,6 +512,27 @@ Use grants for short-lived elevated actions rather than widening persistent capa
 [governance]
 profile = "governed"
 enforcement_enabled = true
+unmatched_capability = "deny"
+
+[governance.capabilities]
+"runtime.db.query" = true
+"runtime.db.exec" = false
+"runtime.agent.submit" = true
+"runtime.agent.await" = true
+"runtime.agent.status" = true
+"runtime.agent.spawn" = false
+"runtime.graph.query" = true
+"runtime.graph.write" = false
+"runtime.code.search.*" = true
+"runtime.policy.set" = false
+"runtime.governance.grant.*" = true
+"harness.import.unscoped" = false
+"harness.import.scoped" = true
+"harness.use.unscoped" = false
+"harness.use.scoped" = true
+"fs.read" = true
+"fs.write" = false
+"shell.exec" = false
 
 [governance.audit]
 mode = "immutable"

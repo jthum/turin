@@ -5,15 +5,16 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use turin_types::governance_templates;
 
 use crate::kernel::config::{
-    GovernanceAuditMode, GovernanceConfig, GovernanceImportMode, GovernanceProfile,
+    GovernanceAuditMode, GovernanceConfig, GovernanceImportMode, GovernanceUnmatchedCapability,
 };
 
 pub(crate) use capabilities::{capability_allowed_by_bool_rules, tool_capability_name};
 use capabilities::{
     capability_ceiling_denial_reason_bool_map, capability_ceiling_denial_reason_json_map,
-    match_capability_rule, preset_capabilities_for_profile, profile_name,
+    match_capability_rule,
 };
 pub use grants::GovernanceGrantSnapshot;
 use grants::{
@@ -41,13 +42,14 @@ pub struct GovernanceAgentSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernanceSnapshot {
-    pub profile: GovernanceProfile,
+    pub profile: String,
     pub enforcement_enabled: bool,
     pub audit_mode: GovernanceAuditMode,
     pub audit_persist_before_hooks: bool,
     pub audit_include_capability_context: bool,
     pub import_mode: GovernanceImportMode,
     pub import_allow_unscoped_in_open: bool,
+    pub unmatched_capability: GovernanceUnmatchedCapability,
     pub capabilities_observability_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_agent_id: Option<String>,
@@ -56,7 +58,7 @@ pub struct GovernanceSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<GovernanceAgentSnapshot>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub preset_capabilities: BTreeMap<String, serde_json::Value>,
+    pub capabilities: BTreeMap<String, serde_json::Value>,
     pub grants_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grants_max_ttl_ms: Option<u64>,
@@ -73,7 +75,7 @@ pub struct CapabilityDecision {
     pub subject_root_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_grant_id: Option<String>,
-    pub profile: GovernanceProfile,
+    pub profile: String,
     pub enforcement_enabled: bool,
     pub matched_rule: Option<String>,
     pub matched_via_wildcard: bool,
@@ -98,6 +100,44 @@ pub struct GovernanceSubject {
     pub import_capabilities: Option<BTreeMap<String, bool>>,
 }
 
+#[derive(Debug, Clone)]
+struct CapabilityBaseline {
+    capabilities: BTreeMap<String, serde_json::Value>,
+    unmatched_capability: GovernanceUnmatchedCapability,
+}
+
+#[derive(Debug, Deserialize)]
+struct GovernanceTemplateDocument {
+    governance: GovernanceConfig,
+}
+
+fn resolve_capability_baseline(config: &GovernanceConfig) -> CapabilityBaseline {
+    if !config.capabilities.is_empty() {
+        return CapabilityBaseline {
+            capabilities: config.capabilities.clone(),
+            unmatched_capability: config.unmatched_capability.clone(),
+        };
+    }
+
+    let Some(template) = governance_templates::by_name(config.profile.as_str()) else {
+        return CapabilityBaseline {
+            capabilities: BTreeMap::new(),
+            unmatched_capability: config.unmatched_capability.clone(),
+        };
+    };
+
+    match toml::from_str::<GovernanceTemplateDocument>(template) {
+        Ok(document) => CapabilityBaseline {
+            capabilities: document.governance.capabilities,
+            unmatched_capability: document.governance.unmatched_capability,
+        },
+        Err(_) => CapabilityBaseline {
+            capabilities: BTreeMap::new(),
+            unmatched_capability: config.unmatched_capability.clone(),
+        },
+    }
+}
+
 impl GovernanceSubject {
     pub fn for_agent(agent_id: impl Into<String>) -> Self {
         Self {
@@ -110,13 +150,18 @@ impl GovernanceSubject {
 #[derive(Debug, Clone)]
 pub struct GovernanceManager {
     config: GovernanceConfig,
+    baseline_capabilities: BTreeMap<String, serde_json::Value>,
+    unmatched_capability: GovernanceUnmatchedCapability,
     grants: Arc<Mutex<HashMap<String, ActiveGovernanceGrant>>>,
 }
 
 impl GovernanceManager {
     pub fn new(config: GovernanceConfig) -> Self {
+        let baseline = resolve_capability_baseline(&config);
         Self {
             config,
+            baseline_capabilities: baseline.capabilities,
+            unmatched_capability: baseline.unmatched_capability,
             grants: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -166,11 +211,12 @@ impl GovernanceManager {
             audit_include_capability_context: self.config.audit.include_capability_context,
             import_mode: self.config.import.mode.clone(),
             import_allow_unscoped_in_open: self.config.import.allow_unscoped_in_open,
+            unmatched_capability: self.unmatched_capability.clone(),
             capabilities_observability_only: true,
             subject_agent_id: agent_id.map(str::to_string),
             roots,
             agents,
-            preset_capabilities: preset_capabilities_for_profile(&self.config.profile),
+            capabilities: self.baseline_capabilities.clone(),
             grants_enabled: self.config.grants.enabled,
             grants_max_ttl_ms: self.config.grants.max_ttl_ms,
         }
@@ -193,12 +239,14 @@ impl GovernanceManager {
         subject: &GovernanceSubject,
         capability: &str,
     ) -> CapabilityDecision {
-        let caps = preset_capabilities_for_profile(&self.config.profile);
-        let matched = match_capability_rule(&caps, capability);
+        let matched = match_capability_rule(&self.baseline_capabilities, capability);
 
         let baseline_allowed = match matched.allowed {
             Some(v) => v,
-            None => matches!(self.config.profile, GovernanceProfile::Open),
+            None => matches!(
+                self.unmatched_capability,
+                GovernanceUnmatchedCapability::Allow
+            ),
         };
 
         let mut ceiling_denial_reason = None;
@@ -285,14 +333,11 @@ impl GovernanceManager {
             Some(match &matched.rule {
                 Some(rule) => format!(
                     "Governance denial: capability '{}' denied by profile '{}' (rule '{}')",
-                    capability,
-                    profile_name(&self.config.profile),
-                    rule
+                    capability, self.config.profile, rule
                 ),
                 None => format!(
                     "Governance denial: capability '{}' denied by profile '{}' (no matching allow rule)",
-                    capability,
-                    profile_name(&self.config.profile)
+                    capability, self.config.profile
                 ),
             })
         };

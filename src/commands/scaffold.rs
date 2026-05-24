@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::ValueEnum;
 use std::fs;
 use std::path::{Path, PathBuf};
+use turin_types::governance_templates;
 use turin_types::layout::{
     DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace,
     default_state_db_for_workspace,
@@ -66,31 +67,19 @@ impl GovernancePreset {
         }
     }
 
-    pub fn enforcement_enabled(self) -> bool {
-        !matches!(self, Self::Open)
-    }
-
-    pub fn audit_mode(self) -> &'static str {
-        match self {
-            Self::Open => "off",
-            Self::Balanced => "observational",
-            Self::Governed => "immutable",
-        }
-    }
-
-    pub fn import_mode(self) -> &'static str {
-        match self {
-            Self::Open => "legacy",
-            Self::Balanced => "mixed",
-            Self::Governed => "scoped",
-        }
-    }
-
     pub fn description(self) -> &'static str {
         match self {
             Self::Open => "Open experimentation with minimal governance friction",
             Self::Balanced => "Safer defaults with observability and capability enforcement",
             Self::Governed => "Tighter audit and scoped-import defaults for regulated setups",
+        }
+    }
+
+    pub fn template(self) -> &'static str {
+        match self {
+            Self::Open => governance_templates::OPEN,
+            Self::Balanced => governance_templates::BALANCED,
+            Self::Governed => governance_templates::GOVERNED,
         }
     }
 }
@@ -407,26 +396,8 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     toml.push_str("#\n");
     toml.push_str("# Then run `turin-map index` from the project root.\n");
 
-    toml.push_str("\n[governance]\n");
-    toml.push_str(&format!("profile = \"{}\"\n", options.governance.profile()));
-    toml.push_str(&format!(
-        "enforcement_enabled = {}\n\n",
-        options.governance.enforcement_enabled()
-    ));
-
-    toml.push_str("[governance.audit]\n");
-    toml.push_str(&format!("mode = \"{}\"\n", options.governance.audit_mode()));
-    toml.push_str("include_capability_context = false\n\n");
-
-    toml.push_str("[governance.import]\n");
-    toml.push_str(&format!(
-        "mode = \"{}\"\n",
-        options.governance.import_mode()
-    ));
-    toml.push_str(&format!(
-        "allow_unscoped_in_open = {}\n",
-        matches!(options.governance, GovernancePreset::Open)
-    ));
+    toml.push('\n');
+    toml.push_str(options.governance.template());
 
     toml
 }

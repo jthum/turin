@@ -207,8 +207,9 @@ type = "mock"
 # Leave disabled for open experimentation; enable and tune when you want stronger controls.
 
 [governance]
-profile = "open"              # open | balanced | governed | custom
+profile = "open"              # label for observability; explicit rules below are the policy
 enforcement_enabled = false
+unmatched_capability = "allow" # allow | deny
 
 [governance.audit]
 mode = "off"                  # off | observational | immutable
@@ -219,6 +220,19 @@ include_capability_context = false
 mode = "legacy"               # legacy | mixed | scoped
 # default_root = "core"
 allow_unscoped_in_open = true
+
+[governance.capabilities]
+"runtime.db.*" = true
+"runtime.agent.*" = true
+"runtime.graph.*" = true
+"runtime.code.search.*" = true
+"runtime.policy.set" = true
+"runtime.governance.grant.*" = true
+"harness.import.*" = true
+"harness.use.*" = true
+"fs.read" = true
+"fs.write" = true
+"shell.exec" = true
 
 # Example roots for import_scoped(...) governance attribution
 # [governance.roots.core]

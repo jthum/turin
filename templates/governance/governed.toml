@@ -1,0 +1,32 @@
+[governance]
+profile = "governed"
+enforcement_enabled = true
+unmatched_capability = "deny"
+
+[governance.audit]
+mode = "immutable"
+include_capability_context = false
+
+[governance.import]
+mode = "scoped"
+allow_unscoped_in_open = false
+
+[governance.capabilities]
+"runtime.db.query" = true
+"runtime.db.exec" = false
+"runtime.agent.submit" = true
+"runtime.agent.await" = true
+"runtime.agent.status" = true
+"runtime.agent.spawn" = false
+"runtime.graph.query" = true
+"runtime.graph.write" = false
+"runtime.code.search.*" = true
+"runtime.policy.set" = false
+"runtime.governance.grant.*" = true
+"harness.import.unscoped" = false
+"harness.import.scoped" = true
+"harness.use.unscoped" = false
+"harness.use.scoped" = true
+"fs.read" = true
+"fs.write" = false
+"shell.exec" = false

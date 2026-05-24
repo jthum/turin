@@ -1,0 +1,32 @@
+[governance]
+profile = "balanced"
+enforcement_enabled = true
+unmatched_capability = "deny"
+
+[governance.audit]
+mode = "observational"
+include_capability_context = false
+
+[governance.import]
+mode = "mixed"
+allow_unscoped_in_open = false
+
+[governance.capabilities]
+"runtime.db.query" = true
+"runtime.db.exec" = true
+"runtime.agent.submit" = true
+"runtime.agent.await" = true
+"runtime.agent.status" = true
+"runtime.agent.spawn" = true
+"runtime.graph.query" = true
+"runtime.graph.write" = true
+"runtime.code.search.*" = true
+"runtime.policy.set" = true
+"runtime.governance.grant.*" = true
+"harness.import.unscoped" = true
+"harness.import.scoped" = true
+"harness.use.unscoped" = true
+"harness.use.scoped" = true
+"fs.read" = true
+"fs.write" = true
+"shell.exec" = false

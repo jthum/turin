@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::time::sleep;
 use turin::kernel::Kernel;
-use turin::kernel::config::{
-    AgentConfig, GovernanceConfig, GovernanceGrantsConfig, GovernanceProfile,
-};
+use turin::kernel::config::{AgentConfig, GovernanceConfig, GovernanceGrantsConfig};
 use turin::persistence::state::SessionReadTarget;
 
 mod support;
@@ -826,7 +824,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: true,
         grants: GovernanceGrantsConfig {
             enabled: true,
@@ -1312,7 +1310,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: GovernanceProfile::Balanced,
+        profile: "balanced".to_string(),
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),

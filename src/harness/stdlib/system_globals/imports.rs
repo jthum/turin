@@ -7,7 +7,7 @@ use crate::harness::engine::{
     lookup_loaded_module_by_canonical_path, register_watch_root, resolve_governance_root_name,
 };
 use crate::harness::stdlib::system_globals::resolve_safe_path;
-use crate::kernel::config::{GovernanceImportMode, GovernanceProfile};
+use crate::kernel::config::GovernanceImportMode;
 use delegation::{
     delegated_import_capabilities, enforce_delegated_capability_subset,
     get_active_import_capabilities, wrap_imported_module,
@@ -432,8 +432,7 @@ fn enforce_module_policy(
         return Ok(());
     }
 
-    let allow_unscoped_open_override =
-        matches!(gov_cfg.profile, GovernanceProfile::Open) && gov_cfg.import.allow_unscoped_in_open;
+    let allow_unscoped_open_override = gov_cfg.import.allow_unscoped_in_open;
 
     match gov_cfg.import.mode {
         GovernanceImportMode::Legacy => {

@@ -11,9 +11,9 @@ use turin::inference::provider::{
 use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, ContextPersistenceConfig, EmbeddingConfig, GovernanceConfig,
-    GovernanceGrantsConfig, GovernanceProfile, HarnessConfig, InferenceConfig,
-    InferenceContextConfig, KernelConfig, NamedStoreConfig, PersistenceConfig, ProviderConfig,
-    ScopedStorePlacementConfig, StoreTargetConfig, TurinConfig,
+    GovernanceGrantsConfig, HarnessConfig, InferenceConfig, InferenceContextConfig, KernelConfig,
+    NamedStoreConfig, PersistenceConfig, ProviderConfig, ScopedStorePlacementConfig,
+    StoreTargetConfig, TurinConfig,
 };
 use turin::kernel::policy::PolicyScope;
 use turin::persistence::manager::StoreSelector;
@@ -1382,7 +1382,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         providers,
         embeddings: None,
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Governed,
+            profile: "governed".to_string(),
             enforcement_enabled: true,
             ..turin::kernel::config::GovernanceConfig::default()
         },
@@ -1562,7 +1562,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         providers,
         embeddings: None,
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             ..turin::kernel::config::GovernanceConfig::default()
         },
@@ -1743,7 +1743,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
             ..turin::kernel::config::GovernanceConfig::default()
@@ -1896,7 +1896,7 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             ..turin::kernel::config::GovernanceConfig::default()
         },
@@ -3744,7 +3744,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
             if snap.grants_enabled ~= true then error("snapshot.grants_enabled mismatch") end
 
             local saw_db_query = false
-            for k, v in pairs(snap.preset_capabilities or {}) do
+            for k, v in pairs(snap.capabilities or {}) do
                 if k == "runtime.db.query" and v == true then
                     saw_db_query = true
                 end
@@ -3839,8 +3839,10 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: false,
+            unmatched_capability: turin::kernel::config::GovernanceUnmatchedCapability::Deny,
+            capabilities: Default::default(),
             audit: turin::kernel::config::GovernanceAuditConfig {
                 mode: turin::kernel::config::GovernanceAuditMode::Observational,
                 include_capability_context: true,
@@ -3995,7 +3997,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
             ..turin::kernel::config::GovernanceConfig::default()
@@ -4108,7 +4110,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Governed,
+            profile: "governed".to_string(),
             enforcement_enabled: true,
             import: turin::kernel::config::GovernanceImportConfig {
                 mode: turin::kernel::config::GovernanceImportMode::Scoped,
@@ -4233,7 +4235,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin::kernel::config::GovernanceImportConfig {
                 mode: turin::kernel::config::GovernanceImportMode::Scoped,
@@ -4339,7 +4341,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
             ..turin::kernel::config::GovernanceConfig::default()
@@ -4456,7 +4458,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             roots,
             ..turin::kernel::config::GovernanceConfig::default()
@@ -4573,7 +4575,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
             ..turin::kernel::config::GovernanceConfig::default()
@@ -4763,7 +4765,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             capability_profiles,
             agents: governance_agents,
@@ -4952,7 +4954,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: turin::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -5124,7 +5126,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: turin::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -5272,7 +5274,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin::kernel::config::GovernanceImportConfig {
                 mode: turin::kernel::config::GovernanceImportMode::Mixed,
@@ -5421,7 +5423,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin::kernel::config::GovernanceImportConfig {
                 mode: turin::kernel::config::GovernanceImportMode::Mixed,
@@ -5570,7 +5572,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin::kernel::config::GovernanceImportConfig {
                 mode: turin::kernel::config::GovernanceImportMode::Mixed,
@@ -5691,7 +5693,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin::kernel::config::GovernanceConfig {
-            profile: turin::kernel::config::GovernanceProfile::Governed,
+            profile: "governed".to_string(),
             enforcement_enabled: true,
             ..turin::kernel::config::GovernanceConfig::default()
         },
@@ -6965,7 +6967,7 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
-            profile: GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: GovernanceGrantsConfig {
                 enabled: true,
@@ -7211,7 +7213,7 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
-            profile: GovernanceProfile::Balanced,
+            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: GovernanceGrantsConfig {
                 enabled: true,

@@ -294,14 +294,16 @@ pub struct ProviderConfig {
     pub context_window_tokens: Option<u32>,
 }
 
+fn default_governance_profile() -> String {
+    "open".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum GovernanceProfile {
+pub enum GovernanceUnmatchedCapability {
     #[default]
-    Open,
-    Balanced,
-    Governed,
-    Custom,
+    Allow,
+    Deny,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
@@ -383,12 +385,16 @@ pub struct GovernanceGrantsConfig {
     pub require_audit_reason: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct GovernanceConfig {
-    #[serde(default)]
-    pub profile: GovernanceProfile,
+    #[serde(default = "default_governance_profile")]
+    pub profile: String,
     #[serde(default)]
     pub enforcement_enabled: bool,
+    #[serde(default)]
+    pub unmatched_capability: GovernanceUnmatchedCapability,
+    #[serde(default)]
+    pub capabilities: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub audit: GovernanceAuditConfig,
     #[serde(default)]
@@ -402,6 +408,23 @@ pub struct GovernanceConfig {
     pub agents: std::collections::HashMap<String, GovernanceAgentCapabilitiesConfig>,
     #[serde(default)]
     pub grants: GovernanceGrantsConfig,
+}
+
+impl Default for GovernanceConfig {
+    fn default() -> Self {
+        Self {
+            profile: default_governance_profile(),
+            enforcement_enabled: false,
+            unmatched_capability: GovernanceUnmatchedCapability::Allow,
+            capabilities: Default::default(),
+            audit: GovernanceAuditConfig::default(),
+            import: GovernanceImportConfig::default(),
+            roots: Default::default(),
+            capability_profiles: Default::default(),
+            agents: Default::default(),
+            grants: GovernanceGrantsConfig::default(),
+        }
+    }
 }
 
 // ─── Loading ─────────────────────────────────────────────────────

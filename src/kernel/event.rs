@@ -290,18 +290,20 @@ mod tests {
         assert_eq!(
             KernelEvent::Audit(AuditEvent::GovernanceSnapshot {
                 snapshot: GovernanceSnapshot {
-                    profile: crate::kernel::config::GovernanceProfile::Open,
+                    profile: "open".to_string(),
                     enforcement_enabled: false,
                     audit_mode: crate::kernel::config::GovernanceAuditMode::Off,
                     audit_persist_before_hooks: false,
                     audit_include_capability_context: false,
                     import_mode: crate::kernel::config::GovernanceImportMode::Legacy,
                     import_allow_unscoped_in_open: true,
+                    unmatched_capability:
+                        crate::kernel::config::GovernanceUnmatchedCapability::Allow,
                     capabilities_observability_only: true,
                     subject_agent_id: None,
                     roots: vec![],
                     agents: vec![],
-                    preset_capabilities: Default::default(),
+                    capabilities: Default::default(),
                     grants_enabled: false,
                     grants_max_ttl_ms: None,
                 }
@@ -317,7 +319,7 @@ mod tests {
                     subject_module_name: None,
                     subject_root_name: None,
                     subject_grant_id: None,
-                    profile: crate::kernel::config::GovernanceProfile::Balanced,
+                    profile: "balanced".to_string(),
                     enforcement_enabled: true,
                     matched_rule: Some("fs.*".into()),
                     matched_via_wildcard: true,

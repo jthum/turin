@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 use serde::Serialize;
+use turin_types::governance_templates;
 use turin_types::layout::{DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace};
 
 use crate::files::{
@@ -17,6 +18,13 @@ enum ProviderChoice {
     Anthropic,
     OpenAi,
     Mock,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GovernanceChoice {
+    Open,
+    Balanced,
+    Governed,
 }
 
 impl ProviderChoice {
@@ -41,6 +49,16 @@ impl ProviderChoice {
             Self::Anthropic => "claude-sonnet-4-20250514",
             Self::OpenAi => "gpt-5.4",
             Self::Mock => "mock",
+        }
+    }
+}
+
+impl GovernanceChoice {
+    fn template(self) -> &'static str {
+        match self {
+            Self::Open => governance_templates::OPEN,
+            Self::Balanced => governance_templates::BALANCED,
+            Self::Governed => governance_templates::GOVERNED,
         }
     }
 }
@@ -137,7 +155,8 @@ pub(crate) async fn run_init(args: InitArgs) -> Result<()> {
         None
     };
 
-    let config_body = generate_turin_config(provider, &model, &system_prompt)?;
+    let governance = prompt_governance()?;
+    let config_body = generate_turin_config(provider, governance, &model, &system_prompt)?;
     let harness_path =
         default_layout_root_for_workspace(&default_workspace_root_for_missing_config(&config_path))
             .join(DEFAULT_LAYOUT_HARNESSES_DIR)
@@ -181,8 +200,23 @@ fn prompt_provider() -> Result<ProviderChoice> {
     })
 }
 
+fn prompt_governance() -> Result<GovernanceChoice> {
+    let options = ["Balanced", "Open", "Governed"];
+    let index = Select::new()
+        .with_prompt("Governance profile")
+        .items(options)
+        .default(0)
+        .interact()?;
+    Ok(match index {
+        1 => GovernanceChoice::Open,
+        2 => GovernanceChoice::Governed,
+        _ => GovernanceChoice::Balanced,
+    })
+}
+
 fn generate_turin_config(
     provider: ProviderChoice,
+    governance: GovernanceChoice,
     model: &str,
     system_prompt: &str,
 ) -> Result<String> {
@@ -220,7 +254,10 @@ fn generate_turin_config(
         providers,
     };
 
-    toml::to_string_pretty(&config).context("Failed to render Turin config")
+    let mut body = toml::to_string_pretty(&config).context("Failed to render Turin config")?;
+    body.push('\n');
+    body.push_str(governance.template());
+    Ok(body)
 }
 
 fn starter_harness() -> &'static str {
@@ -242,11 +279,14 @@ mod tests {
     fn generated_turin_config_mentions_selected_provider() {
         let body = generate_turin_config(
             ProviderChoice::Anthropic,
+            GovernanceChoice::Balanced,
             "claude-sonnet-4-20250514",
             "You are useful.",
         )
         .expect("rendered");
         assert!(body.contains("[providers.anthropic]"));
         assert!(body.contains("api_key_env = \"ANTHROPIC_API_KEY\""));
+        assert!(body.contains("[governance.capabilities]"));
+        assert!(body.contains("\"shell.exec\" = false"));
     }
 }

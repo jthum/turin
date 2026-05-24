@@ -24,16 +24,7 @@ pub fn register_runtime_governance_namespace(
             "profile",
             lua.create_function(move |lua, ()| {
                 let snapshot = governance_manager.snapshot();
-                match serde_json::to_string(&snapshot.profile) {
-                    Ok(serialized) => {
-                        let profile = serialized.trim_matches('"').to_string();
-                        string_value(lua, &profile)
-                    }
-                    Err(e) => Err(mlua::Error::runtime(format!(
-                        "failed to serialize governance profile: {}",
-                        e
-                    ))),
-                }
+                string_value(lua, &snapshot.profile)
             })?,
         )?;
     }

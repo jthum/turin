@@ -731,6 +731,7 @@ type = "openai"
 [governance]
 profile = "balanced"
 enforcement_enabled = false
+unmatched_capability = "deny"
 
 [governance.audit]
 mode = "observational"
@@ -739,6 +740,11 @@ include_capability_context = true
 [governance.import]
 mode = "mixed"
 default_root = "core"
+
+[governance.capabilities]
+"runtime.db.query" = true
+"runtime.db.exec" = true
+"shell.exec" = false
 
 [governance.roots.core]
 path = "harness/core"
@@ -768,7 +774,19 @@ require_audit_reason = true
 "#;
 
     let config = TurinConfig::from_str(toml).unwrap();
-    assert_eq!(config.governance.profile, GovernanceProfile::Balanced);
+    assert_eq!(config.governance.profile, "balanced".to_string());
+    assert_eq!(
+        config.governance.unmatched_capability,
+        GovernanceUnmatchedCapability::Deny
+    );
+    assert_eq!(
+        config
+            .governance
+            .capabilities
+            .get("shell.exec")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
     assert_eq!(
         config.governance.audit.mode,
         GovernanceAuditMode::Observational

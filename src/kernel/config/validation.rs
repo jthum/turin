@@ -41,6 +41,17 @@ where
     Ok(())
 }
 
+fn validate_bool_rule_map(
+    map: &std::collections::BTreeMap<String, serde_json::Value>,
+    label: &str,
+) -> Result<()> {
+    for (rule, value) in map {
+        require_non_empty(rule, format!("{label} contains an empty capability rule"))?;
+        anyhow::ensure!(value.is_boolean(), "{}.{} must be a boolean", label, rule);
+    }
+    Ok(())
+}
+
 impl TurinConfig {
     /// Validate semantic invariants that serde can't enforce.
     pub fn validate(&self) -> Result<()> {
@@ -216,6 +227,8 @@ impl TurinConfig {
             self.governance.grants.max_ttl_ms,
             "governance.grants.max_ttl_ms",
         )?;
+        require_non_empty(&self.governance.profile, "governance.profile")?;
+        validate_bool_rule_map(&self.governance.capabilities, "governance.capabilities")?;
 
         for (root_name, root) in &self.governance.roots {
             require_non_empty_with_message(
