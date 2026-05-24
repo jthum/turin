@@ -91,17 +91,26 @@ impl StateStore {
         conn.execute(
             r#"
             UPDATE scheduled_jobs
-            SET running_task_id = COALESCE(running_task_id, ?2),
-                next_run_unix_ms = ?3,
-                enabled = ?4,
-                last_run_unix_ms = ?5,
-                active_run_count = active_run_count + 1,
+            SET running_task_id = (
+                    SELECT task_id
+                    FROM scheduled_job_runs
+                    WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                    ORDER BY id ASC
+                    LIMIT 1
+                ),
+                next_run_unix_ms = ?2,
+                enabled = ?3,
+                last_run_unix_ms = ?4,
+                active_run_count = (
+                    SELECT COUNT(*)
+                    FROM scheduled_job_runs
+                    WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                ),
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
             turso::params![
                 id,
-                task_id,
                 next_run_unix_ms,
                 if enabled { 1 } else { 0 },
                 last_run_unix_ms
@@ -135,42 +144,26 @@ impl StateStore {
         .await
         .context("Failed to finish scheduled job run")?;
 
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT task_id
-                FROM scheduled_job_runs
-                WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
-                ORDER BY id ASC
-                LIMIT 1
-                "#,
-                turso::params![scheduled_job_id],
-            )
-            .await?;
-        let running_task_id = if let Some(row) = rows.next().await? {
-            Some(row.get::<String>(0)?)
-        } else {
-            None
-        };
-        let remaining = self
-            .count_active_scheduled_job_runs(scheduled_job_id)
-            .await?;
-
         conn.execute(
             r#"
             UPDATE scheduled_jobs
-            SET running_task_id = ?2,
-                active_run_count = ?3,
-                last_status = ?4,
+            SET running_task_id = (
+                    SELECT task_id
+                    FROM scheduled_job_runs
+                    WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                    ORDER BY id ASC
+                    LIMIT 1
+                ),
+                active_run_count = (
+                    SELECT COUNT(*)
+                    FROM scheduled_job_runs
+                    WHERE scheduled_job_id = ?1 AND finished_unix_ms IS NULL
+                ),
+                last_status = ?2,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![
-                scheduled_job_id,
-                running_task_id,
-                remaining as i64,
-                last_status
-            ],
+            turso::params![scheduled_job_id, last_status],
         )
         .await
         .context("Failed to refresh scheduled job after run completion")?;

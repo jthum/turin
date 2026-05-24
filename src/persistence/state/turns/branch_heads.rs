@@ -49,6 +49,15 @@ impl StateStore {
 
     pub async fn get_active_branch_head(&self, session_id: i64) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
+        self.get_active_branch_head_with_conn(&conn, session_id)
+            .await
+    }
+
+    async fn get_active_branch_head_with_conn(
+        &self,
+        conn: &turso::Connection,
+        session_id: i64,
+    ) -> Result<Option<BranchHeadRow>> {
         let sql = format!(
             "{BRANCH_HEAD_SELECT}
              WHERE s.id = ?1 AND bh.id = s.active_branch_head_id"
@@ -198,10 +207,8 @@ impl StateStore {
             .with_context(|| format!("Failed to activate branch head '{}'", name))?;
         }
 
-        let heads = self.list_branch_heads(session_id).await?;
-        heads
-            .into_iter()
-            .find(|head| head.id == branch_id)
+        self.get_branch_head_with_conn(&conn, session_id, branch_id)
+            .await?
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
 
@@ -290,10 +297,8 @@ impl StateStore {
             .with_context(|| format!("Failed to activate branch head '{}'", name))?;
         }
 
-        let heads = self.list_branch_heads(session_id).await?;
-        heads
-            .into_iter()
-            .find(|head| head.id == branch_id)
+        self.get_branch_head_with_conn(&conn, session_id, branch_id)
+            .await?
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
 
@@ -319,7 +324,8 @@ impl StateStore {
         )
         .await
         .with_context(|| format!("Failed to check out branch head '{}'", name))?;
-        self.get_active_branch_head(session_id).await
+        self.get_active_branch_head_with_conn(&conn, session_id)
+            .await
     }
 
     pub async fn checkout_branch_head_by_public_id(
@@ -344,7 +350,8 @@ impl StateStore {
         )
         .await
         .context("Failed to check out branch head by id")?;
-        self.get_active_branch_head(session_id).await
+        self.get_active_branch_head_with_conn(&conn, session_id)
+            .await
     }
 
     pub(super) async fn resolve_branch_head(
@@ -391,6 +398,19 @@ impl StateStore {
                 .find(|turn| turn.branch_depth == branch_depth)
                 .map(|turn| turn.id)),
         }
+    }
+
+    async fn get_branch_head_with_conn(
+        &self,
+        conn: &turso::Connection,
+        session_id: i64,
+        branch_id: i64,
+    ) -> Result<Option<BranchHeadRow>> {
+        let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.id = ?2");
+        let mut rows = conn
+            .query(&sql, turso::params![session_id, branch_id])
+            .await?;
+        next_branch_head_row(&mut rows).await
     }
 }
 
