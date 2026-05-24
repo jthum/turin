@@ -266,6 +266,8 @@ impl StateStore {
         conn: &turso::Connection,
         turn_id: i64,
     ) -> Result<Option<TurnRow>> {
+        conn.cacheflush()
+            .context("Failed to refresh turn read state")?;
         let mut stmt = conn.prepare_cached(TURN_SELECT_BY_ID).await?;
         let mut rows = stmt.query([turn_id]).await?;
         if let Some(row) = rows.next().await? {

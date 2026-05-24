@@ -54,6 +54,8 @@ impl StateStore {
         )
         .await
         .with_context(|| format!("Failed to insert turn message for session: {}", session_id))?;
+        conn.cacheflush()
+            .context("Failed to flush inserted session message")?;
         Ok(())
     }
 
