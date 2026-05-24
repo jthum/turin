@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-05-24
+
+### Added
+- **Governance Capability Templates**
+  - Added explicit governance starter templates under `templates/governance/` for `open`, `balanced`, and `governed`.
+  - Added `governance.unmatched_capability` and explicit `[governance.capabilities]` support so runtime enforcement reads inspectable capability rules instead of hidden preset matrices.
+  - Kept profile-only governance configs working through a compatibility fallback while generated configs now include the expanded capability map.
+- **Signals And Work Coordination**
+  - Added wildcard signal topic subscriptions so harnesses can subscribe to topic families such as `deploy.*` without waking on unrelated exact topics.
+  - Added per-task budget metrics for turns, tokens, and elapsed runtime bookkeeping so harnesses can make budget-aware worklist decisions.
+- **Performance Tooling**
+  - Added black-box channel/direct-task perf scenarios, persisted-message scale reports, PSS/anonymous-PSS breakdowns, heap attribution support, and daemon task/cache diagnostics.
+  - Added release-friendly profiling documentation for allocator tuning, heap profiling, and runtime memory measurements.
+- **Architecture And Testing Documentation**
+  - Added durable architecture maps and project-quality guidance for the refactored runtime, channels, scheduler/worklists, governance, runtime DB/graph, code search, manager, web tools, and related subsystems.
+  - Added a worklists concept guide that documents the durable work item model, claim lifecycle, dispatch patterns, dependency metadata, hierarchy, and stale-claim recovery.
+
+### Changed
+- **Runtime And Harness Structure**
+  - Split large runtime, daemon, channel, scheduler/worklist, action, agent-binding, web-tool, and harness-global files into smaller ownership-focused modules.
+  - Consolidated repeated Lua result shaping, async bridge helpers, session/store resolution, scheduler/worklist row mapping, channel setup, and capability matching helpers.
+  - Consolidated `RuntimeControl` around a coherent runtime state lock to reduce torn-snapshot risk and repetitive lock handling.
+- **Memory And Persistence**
+  - Bounded live-session hot history and old tool payload retention so long-running channel sessions no longer keep rematerializing full turn history.
+  - Reused event persistence writers and cached event statements to reduce control-plane allocation churn and lower post-idle memory retention in daemon perf scenarios.
+  - Added optional peer idle allocator trimming for memory-sensitive deployments.
+- **Governance**
+  - Changed `profile` from a hardcoded enum-driven policy selector into a string label for observability and harness DX.
+  - Moved starter policy defaults out of core governance matching logic and into explicit TOML templates consumed by scaffold/onboarding flows.
+- **Release Automation**
+  - Updated CI to skip doc-only changes, keep correctness checks on code changes, and reserve release binary packaging for release tags/manual release runs.
+  - Updated release bundles to include `turin`, `turin-remote`, `turin-map`, `turin-manager`, and the external Discord, Telegram, Rocket.Chat, and WhatsApp sidecars. Existing TUI/App binaries remain excluded from this release bundle while the UI story is being reworked.
+
+### Fixed
+- **Security And Hardening**
+  - Added file-size enforcement and clearer path/error handling around harness filesystem globals.
+  - Hardened channel filesystem paths and channel setting parsing helpers.
+  - Added security-negative and capability-characterization coverage around governance, scoped imports, channel authorization, and high-risk tool paths.
+- **Operational Robustness**
+  - Improved channel runtime transitions, sidecar process handling, channel task payload mapping, and sidecar host discovery reuse.
+  - Improved scheduler overlap/worklist state characterization and durable work item filtering behavior.
+
 ## [0.29.0] - 2026-05-15
 
 ### Added
