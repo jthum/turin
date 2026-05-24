@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-05-24
+
+### Fixed
+- Fixed branch checkout persistence by closing branch lookup readers before updating the active branch head, resolving the CI/release preflight failures seen after the `0.30.0` tag.
+- Reverted speculative branch-persistence cache flushes that added unnecessary database work without addressing the release failure.
+
 ## [0.30.0] - 2026-05-24
 
 ### Added
