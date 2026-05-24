@@ -118,8 +118,6 @@ impl StateStore {
         )
         .await
         .context("Failed to mark scheduled job started")?;
-        conn.cacheflush()
-            .context("Failed to flush scheduled job start state")?;
         Ok(())
     }
 
@@ -169,8 +167,6 @@ impl StateStore {
         )
         .await
         .context("Failed to refresh scheduled job after run completion")?;
-        conn.cacheflush()
-            .context("Failed to flush scheduled job completion state")?;
         Ok(())
     }
 }
