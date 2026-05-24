@@ -58,8 +58,6 @@ impl StateStore {
         conn: &turso::Connection,
         session_id: i64,
     ) -> Result<Option<BranchHeadRow>> {
-        conn.cacheflush()
-            .context("Failed to refresh branch head read state")?;
         let sql = format!(
             "{BRANCH_HEAD_SELECT}
              WHERE s.id = ?1 AND bh.id = s.active_branch_head_id"
@@ -74,8 +72,6 @@ impl StateStore {
         branch_id: i64,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        conn.cacheflush()
-            .context("Failed to refresh branch head read state")?;
         let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.id = ?2");
         let mut rows = conn
             .query(&sql, turso::params![session_id, branch_id])
@@ -89,8 +85,6 @@ impl StateStore {
         name: &str,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        conn.cacheflush()
-            .context("Failed to refresh branch head read state")?;
         let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.name = ?2");
         let mut rows = conn.query(&sql, turso::params![session_id, name]).await?;
         next_branch_head_row(&mut rows).await
@@ -102,8 +96,6 @@ impl StateStore {
         public_id: uuid::Uuid,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        conn.cacheflush()
-            .context("Failed to refresh branch head read state")?;
         let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.public_id = ?2");
         let mut rows = conn
             .query(
@@ -116,8 +108,6 @@ impl StateStore {
 
     pub async fn list_branch_heads(&self, session_id: i64) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
-        conn.cacheflush()
-            .context("Failed to refresh branch head list state")?;
         let sql =
             format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 ORDER BY bh.created_at, bh.id");
         let rows = conn.query(&sql, [session_id]).await?;
@@ -130,8 +120,6 @@ impl StateStore {
         source_turn_id: i64,
     ) -> Result<Vec<BranchHeadRow>> {
         let conn = self.connect().await?;
-        conn.cacheflush()
-            .context("Failed to refresh branch sibling list state")?;
         let sql = format!(
             "{BRANCH_HEAD_SELECT}
              WHERE bh.session_id = ?1 AND bh.created_from_turn_id = ?2
@@ -426,8 +414,6 @@ impl StateStore {
         session_id: i64,
         branch_id: i64,
     ) -> Result<Option<BranchHeadRow>> {
-        conn.cacheflush()
-            .context("Failed to refresh branch head read state")?;
         let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.id = ?2");
         let mut rows = conn
             .query(&sql, turso::params![session_id, branch_id])
