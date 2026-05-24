@@ -1257,6 +1257,7 @@ Rules:
 Notes:
 
 - scheduler metadata and durable cross-agent signals live in the daemon-owned `runtime.db`
+- local `on(...)` and durable `runtime.on(...)` support exact topics plus terminal wildcard topics such as `deploy.*`; `*` catches all topics
 - scheduled execution still runs through Turin’s normal task path
 - jobs may target arbitrary state/store contexts through `persistence`
 - this namespace is unavailable outside daemon-managed runtimes

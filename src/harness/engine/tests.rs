@@ -609,6 +609,94 @@ async fn test_runtime_signals_list_and_subscribers_helpers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_runtime_signals_support_terminal_wildcard_subscriptions() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            runtime.on("deploy.complete", function(data, meta)
+                session.set("signal_exact", meta.name .. ":" .. data.env)
+            end)
+
+            runtime.on("deploy.*", function(data, meta)
+                session.set("signal_family", meta.name .. ":" .. data.env)
+            end)
+
+            runtime.on("*", function(data, meta)
+                session.set("signal_global", meta.name .. ":" .. data.env)
+            end)
+
+            action.define("signals.read", function(_ctx, _params)
+                return {
+                    exact = session.get("signal_exact"),
+                    family = session.get("signal_family"),
+                    global = session.get("signal_global"),
+                }
+            end)
+        "#,
+    )
+    .unwrap();
+
+    let app_data = test_app_data_with_scheduler(dir.path().to_path_buf()).await;
+    let runtime_store = app_data
+        .scheduler
+        .clone()
+        .expect("scheduler")
+        .runtime_store();
+    runtime_store
+        .replace_signal_subscriptions_for_agents(
+            &["test-agent".to_string(), "observer".to_string()],
+            &[
+                ("test-agent".to_string(), "deploy.complete".to_string()),
+                ("test-agent".to_string(), "deploy.*".to_string()),
+                ("observer".to_string(), "deploy.*".to_string()),
+                ("observer".to_string(), "*".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+    let subscribers = runtime_store
+        .list_signal_subscriber_agent_ids("deploy.complete")
+        .await
+        .unwrap();
+    assert_eq!(subscribers, vec!["observer", "test-agent"]);
+
+    runtime_store
+        .insert_signal(crate::persistence::state::SignalInsert {
+            public_id: uuid::Uuid::now_v7().into_bytes().to_vec(),
+            topic: "deploy.complete".to_string(),
+            source_agent_id: "publisher".to_string(),
+            target_agent_id: "test-agent".to_string(),
+            payload: serde_json::json!({ "env": "prod" }).to_string(),
+        })
+        .await
+        .unwrap();
+    let signals = runtime_store
+        .list_signals_for_agent("test-agent", 10)
+        .await
+        .unwrap();
+    assert_eq!(signals.len(), 1);
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let invoked = engine.dispatch_runtime_signal(&signals[0]).unwrap();
+    assert_eq!(invoked, 3);
+
+    let result = engine
+        .invoke_declared_action_for_agent("test-agent", "signals.read", serde_json::json!({}))
+        .unwrap()
+        .expect("declared action result");
+    assert_eq!(
+        result,
+        serde_json::json!({
+            "exact": "deploy.complete:prod",
+            "family": "deploy.complete:prod",
+            "global": "deploy.complete:prod",
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_worklist_dx_helpers_support_prompt_and_action_items() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
@@ -1802,6 +1890,72 @@ fn test_engine_custom_events_dispatch_in_order_and_return_count() {
         .evaluate("on_turn_prepare", serde_json::json!({}))
         .unwrap();
     assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_engine_custom_events_support_terminal_wildcard_listeners() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            local seen = {}
+
+            on("deploy.complete", function(payload, meta)
+                table.insert(seen, "exact:" .. meta.name .. ":" .. payload.env)
+            end)
+
+            on("deploy.*", function(payload, meta)
+                table.insert(seen, "family:" .. meta.name .. ":" .. payload.env)
+            end)
+
+            on("*", function(payload, meta)
+                table.insert(seen, "all:" .. meta.name .. ":" .. payload.env)
+            end)
+
+            function on_turn_prepare(_ctx)
+                local handled = emit("deploy.complete", { env = "prod" })
+                if handled ~= 3 then
+                    error("expected exact, family, and global listeners")
+                end
+                if seen[1] ~= "exact:deploy.complete:prod" then
+                    error("expected exact listener first")
+                end
+                if seen[2] ~= "family:deploy.complete:prod" then
+                    error("expected family wildcard listener second")
+                end
+                if seen[3] ~= "all:deploy.complete:prod" then
+                    error("expected global wildcard listener third")
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_engine_rejects_non_terminal_event_wildcards() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            on("deploy.*.complete", function() end)
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    let err = engine
+        .load_dir(dir.path())
+        .expect_err("non-terminal wildcard should be rejected");
+    assert!(err.to_string().contains("terminal prefix patterns"));
 }
 
 #[test]

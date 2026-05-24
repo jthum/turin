@@ -4,6 +4,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::harness::stdlib::binding_common::wrap_registered_callback;
 use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::system_globals::ensure_load_time;
+use crate::signal_topics::{signal_topic_subscription_candidates, validate_signal_topic_pattern};
 
 const EVENT_LISTENER_REGISTRY_KEY: &str = "__harness_event_listeners";
 
@@ -12,6 +13,7 @@ pub fn register_event_globals(lua: &Lua) -> LuaResult<()> {
         "on",
         lua.create_function(|lua, (name, handler): (String, Function)| {
             ensure_load_time(lua, "on")?;
+            validate_signal_topic_pattern(&name).map_err(mlua::Error::runtime)?;
 
             let registry = ensure_event_listener_registry(lua)?;
             let listeners = match registry.get::<Value>(name.clone())? {
@@ -39,33 +41,35 @@ pub fn register_event_globals(lua: &Lua) -> LuaResult<()> {
         "emit",
         lua.create_function(|lua, (name, payload): (String, Option<Value>)| {
             let registry = ensure_event_listener_registry(lua)?;
-            let listeners = match registry.get::<Value>(name.clone())? {
-                Value::Nil => return Ok(0usize),
-                Value::Table(table) => table,
-                other => {
-                    return Err(mlua::Error::runtime(format!(
-                        "event listener registry entry '{}' has invalid type {:?}",
-                        name, other
-                    )));
-                }
-            };
-
             let payload = match payload {
                 None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
                 Some(value) => object_refs::encode_lua_payload(lua, value)?,
             };
 
             let event_ctx = lua.create_table()?;
-            event_ctx.set("name", name)?;
+            event_ctx.set("name", name.clone())?;
 
-            let count = listeners.raw_len();
-            for index in 1..=count {
-                let listener: Function = listeners.raw_get(index)?;
-                let payload_value = object_refs::decode_json_payload(lua, &payload)?;
-                listener.call::<()>((payload_value, event_ctx.clone()))?;
+            let mut invoked = 0usize;
+            for pattern in signal_topic_subscription_candidates(&name) {
+                let listeners = match registry.get::<Value>(pattern.clone())? {
+                    Value::Nil => continue,
+                    Value::Table(table) => table,
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "event listener registry entry '{}' has invalid type {:?}",
+                            pattern, other
+                        )));
+                    }
+                };
+                for index in 1..=listeners.raw_len() {
+                    let listener: Function = listeners.raw_get(index)?;
+                    let payload_value = object_refs::decode_json_payload(lua, &payload)?;
+                    listener.call::<()>((payload_value, event_ctx.clone()))?;
+                    invoked += 1;
+                }
             }
 
-            Ok(count)
+            Ok(invoked)
         })?,
     )?;
 

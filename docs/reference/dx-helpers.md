@@ -308,6 +308,7 @@ Notes:
 - `this:is_cancelled()` lets long-running actions cooperate with session/task cancellation without inventing their own flag
 - `on(...)` is load-time only and registers additive local listeners in registration order
 - `emit(...)` dispatches those listeners synchronously in-process and returns the number of listeners invoked
+- `on(...)` and `runtime.on(...)` support exact topics plus terminal wildcard topics such as `deploy.*`; `*` catches all topics
 - local event listeners are intended to react by mutating state, calling `action.run(...)`, or scheduling/worklisting follow-up work
 - `runtime.on(...)` is load-time only and declares that the current harness should receive durable cross-agent signals for that topic
 - those declared topics are mirrored into a durable `runtime.db` subscription index on harness init/reload so cold agents remain discoverable

@@ -13,6 +13,7 @@ use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::persistence::schema::SignalRow;
 use crate::persistence::state::SignalInsert;
+use crate::signal_topics::{signal_topic_subscription_candidates, validate_signal_topic_pattern};
 
 const RUNTIME_SIGNAL_LISTENER_REGISTRY_KEY: &str = "__harness_runtime_signal_listeners";
 const RUNTIME_SIGNAL_TOPIC_REGISTRY_KEY: &str = "__harness_runtime_signal_topics";
@@ -202,17 +203,6 @@ pub(crate) fn runtime_signal_topics(lua: &Lua) -> LuaResult<Vec<String>> {
 
 pub(crate) fn dispatch_runtime_signal(lua: &Lua, signal: &SignalRow) -> Result<usize, mlua::Error> {
     let registry = ensure_runtime_signal_listener_registry(lua)?;
-    let listeners = match registry.get::<Value>(signal.topic.clone())? {
-        Value::Nil => return Ok(0),
-        Value::Table(table) => table,
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "runtime signal listener registry entry '{}' has invalid type {:?}",
-                signal.topic, other
-            )));
-        }
-    };
-
     let event_ctx = lua.create_table()?;
     event_ctx.set("name", signal.topic.clone())?;
     event_ctx.set(
@@ -227,15 +217,29 @@ pub(crate) fn dispatch_runtime_signal(lua: &Lua, signal: &SignalRow) -> Result<u
 
     let event_payload = build_runtime_signal_event_payload(lua, signal)?;
 
-    let count = listeners.raw_len();
-    for index in 1..=count {
-        let listener: Function = listeners.raw_get(index)?;
-        listener.call::<()>((event_payload.clone(), event_ctx.clone()))?;
+    let mut invoked = 0usize;
+    for pattern in signal_topic_subscription_candidates(&signal.topic) {
+        let listeners = match registry.get::<Value>(pattern.clone())? {
+            Value::Nil => continue,
+            Value::Table(table) => table,
+            other => {
+                return Err(mlua::Error::runtime(format!(
+                    "runtime signal listener registry entry '{}' has invalid type {:?}",
+                    pattern, other
+                )));
+            }
+        };
+        for index in 1..=listeners.raw_len() {
+            let listener: Function = listeners.raw_get(index)?;
+            listener.call::<()>((event_payload.clone(), event_ctx.clone()))?;
+            invoked += 1;
+        }
     }
-    Ok(count)
+    Ok(invoked)
 }
 
 fn register_runtime_signal_listener(lua: &Lua, topic: &str, handler: Function) -> LuaResult<()> {
+    validate_signal_topic_pattern(topic).map_err(mlua::Error::runtime)?;
     let registry = ensure_runtime_signal_listener_registry(lua)?;
     let listeners = match registry.get::<Value>(topic)? {
         Value::Nil => {

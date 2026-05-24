@@ -448,6 +448,8 @@ end
 
 - `on(...)` listeners are local, synchronous, and additive
 - `emit(...)` returns the number of listeners invoked
+- `on(...)` and `runtime.on(...)` support exact topics plus terminal wildcard
+  topics such as `deploy.*`; `*` catches all topics
 - system lifecycle hooks remain the explicit `on_*` functions; custom events are separate
 - `runtime.on(...)` / `runtime.emit(...)` are the durable cross-agent variant:
   - handlers are declared at harness load time

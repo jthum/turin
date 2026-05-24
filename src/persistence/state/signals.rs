@@ -3,6 +3,7 @@ use turso::Value as SqlValue;
 
 use super::StateStore;
 use crate::persistence::schema::SignalRow;
+use crate::signal_topics::signal_topic_subscription_candidates;
 
 const SIGNAL_COLUMNS: &str = "id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at";
 
@@ -44,15 +45,23 @@ impl StateStore {
 
     pub async fn list_signal_subscriber_agent_ids(&self, topic: &str) -> Result<Vec<String>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT agent_id
-                 FROM subscriptions
-                 WHERE topic = ?1
-                 ORDER BY agent_id ASC",
-                [topic],
-            )
-            .await?;
+        let candidates = signal_topic_subscription_candidates(topic);
+        let placeholders = (1..=candidates.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT DISTINCT agent_id
+             FROM subscriptions
+             WHERE topic IN ({placeholders})
+             ORDER BY agent_id ASC"
+        );
+        let params = candidates
+            .into_iter()
+            .map(SqlValue::Text)
+            .collect::<Vec<_>>();
+        let mut stmt = conn.prepare(&sql).await?;
+        let mut rows = stmt.query(params).await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
