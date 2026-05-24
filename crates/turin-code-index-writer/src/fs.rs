@@ -34,38 +34,47 @@ pub(super) fn collect_indexable_files(root: &Path) -> Result<Vec<PathBuf>> {
 
 pub(super) fn normalize_relative_path(root: &Path, path: &Path) -> Result<String> {
     let relative = if path.is_absolute() {
-        path.strip_prefix(root)
+        let stripped = path
+            .strip_prefix(root)
             .with_context(|| format!("'{}' is outside '{}'", path.display(), root.display()))?
-            .to_path_buf()
+            .to_path_buf();
+        normalize_relative_components(root, path, &stripped)?
     } else {
-        let mut normalized = PathBuf::new();
-        for component in path.components() {
-            match component {
-                Component::CurDir => {}
-                Component::Normal(part) => normalized.push(part),
-                Component::ParentDir => {
-                    if !normalized.pop() {
-                        bail!(
-                            "path '{}' escapes root '{}'",
-                            path.display(),
-                            root.display()
-                        );
-                    }
-                }
-                Component::Prefix(_) | Component::RootDir => {
+        normalize_relative_components(root, path, path)?
+    };
+    let normalized = relative
+        .to_str()
+        .with_context(|| format!("path '{}' is not valid UTF-8", relative.display()))?
+        .replace('\\', "/");
+    if normalized.is_empty() {
+        bail!("path must not be empty");
+    }
+    Ok(normalized)
+}
+
+fn normalize_relative_components(root: &Path, original: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                if !normalized.pop() {
                     bail!(
-                        "path '{}' is outside root '{}'",
-                        path.display(),
+                        "path '{}' escapes root '{}'",
+                        original.display(),
                         root.display()
                     );
                 }
             }
+            Component::Prefix(_) | Component::RootDir => {
+                bail!(
+                    "path '{}' is outside root '{}'",
+                    original.display(),
+                    root.display()
+                );
+            }
         }
-        normalized
-    };
-    let normalized = relative.to_string_lossy().replace('\\', "/");
-    if normalized.is_empty() {
-        bail!("path must not be empty");
     }
     Ok(normalized)
 }

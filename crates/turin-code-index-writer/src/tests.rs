@@ -150,6 +150,45 @@ fn oversized_symbol_chunks_keep_signature_metadata() {
     );
 }
 
+#[test]
+fn normalize_relative_path_rejects_absolute_parent_escape() -> Result<()> {
+    let tmp = tempdir()?;
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root)?;
+    let root = std::fs::canonicalize(root)?;
+
+    let err = super::fs::normalize_relative_path(&root, &root.join("../outside.rs"))
+        .expect_err("absolute path with parent escape should fail");
+    assert!(err.to_string().contains("escapes root"));
+    Ok(())
+}
+
+#[test]
+fn normalize_relative_path_normalizes_absolute_components() -> Result<()> {
+    let tmp = tempdir()?;
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root)?;
+    let root = std::fs::canonicalize(root)?;
+
+    let path = root.join("src/../lib.rs");
+    let normalized = super::fs::normalize_relative_path(&root, &path)?;
+    assert_eq!(normalized, "lib.rs");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn normalize_relative_path_rejects_non_utf8_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = PathBuf::from(std::ffi::OsString::from_vec(vec![
+        b's', b'r', b'c', b'/', 0xff, b'.', b'r', b's',
+    ]));
+    let err = super::fs::normalize_relative_path(Path::new("/repo"), &path)
+        .expect_err("index identity paths should be valid UTF-8");
+    assert!(err.to_string().contains("not valid UTF-8"));
+}
+
 async fn lexical_search(
     workspace_root: &Path,
     query: &str,

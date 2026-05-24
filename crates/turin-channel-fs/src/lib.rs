@@ -154,7 +154,9 @@ impl FsChannelDriver {
         let mut paths = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && entry.file_type().await?.is_file()
+            {
                 paths.push(path);
             }
         }
@@ -165,6 +167,7 @@ impl FsChannelDriver {
     }
 
     async fn load_event(&self, path: &Path) -> Result<InboundEvent> {
+        ensure_regular_file(path).await?;
         let raw = tokio::fs::read_to_string(path)
             .await
             .with_context(|| format!("Failed to read '{}'", path.display()))?;
@@ -235,26 +238,40 @@ impl ChannelDriver for FsChannelDriver {
                             .entry(path.clone())
                             .and_modify(|count| *count += 1)
                             .or_insert(1);
-                        if *failures >= 3
-                            && !path_is_recently_modified(&path, PARSE_RETRY_GRACE).await
-                        {
-                            self.parse_failures.remove(&path);
-                            self.mark_failed(&path).await?;
-                            tracing::warn!(
-                                channel_id = %self.channel_id,
-                                path = %path.display(),
-                                error = %err,
-                                "Failed to parse filesystem channel message after retries"
-                            );
-                        } else {
-                            tracing::debug!(
-                                channel_id = %self.channel_id,
-                                path = %path.display(),
-                                attempt = *failures,
-                                error = %err,
-                                "Retrying filesystem channel message after parse failure"
-                            );
+                        if *failures >= 3 {
+                            match path_is_recently_modified(&path, PARSE_RETRY_GRACE).await {
+                                Ok(false) => {
+                                    self.parse_failures.remove(&path);
+                                    self.mark_failed(&path).await?;
+                                    tracing::warn!(
+                                        channel_id = %self.channel_id,
+                                        path = %path.display(),
+                                        error = %err,
+                                        "Failed to parse filesystem channel message after retries"
+                                    );
+                                    continue;
+                                }
+                                Ok(true) => {}
+                                Err(metadata_err) => {
+                                    self.parse_failures.remove(&path);
+                                    tracing::warn!(
+                                        channel_id = %self.channel_id,
+                                        path = %path.display(),
+                                        error = %err,
+                                        metadata_error = %metadata_err,
+                                        "Skipping filesystem channel message after parse failure and metadata error"
+                                    );
+                                    continue;
+                                }
+                            }
                         }
+                        tracing::debug!(
+                            channel_id = %self.channel_id,
+                            path = %path.display(),
+                            attempt = *failures,
+                            error = %err,
+                            "Retrying filesystem channel message after parse failure"
+                        );
                     }
                 }
             }
@@ -275,6 +292,7 @@ impl ChannelDriver for FsChannelDriver {
         conversation: &ChannelConversationKey,
         message: OutboundMessage,
     ) -> Result<()> {
+        ensure_dir(&self.config.outbox_dir).await?;
         let out = FsOutboundMessage {
             channel_id: self.channel_id.clone(),
             conversation: conversation.clone(),
@@ -359,15 +377,26 @@ fn unix_millis() -> u64 {
 async fn ensure_dir(path: &Path) -> Result<()> {
     tokio::fs::create_dir_all(path)
         .await
-        .with_context(|| format!("Failed to create '{}'", path.display()))
+        .with_context(|| format!("Failed to create '{}'", path.display()))?;
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .with_context(|| format!("Failed to inspect '{}'", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Directory '{}' must not be a symlink", path.display());
+    }
+    if !metadata.is_dir() {
+        anyhow::bail!("Path '{}' is not a directory", path.display());
+    }
+    Ok(())
 }
 
 async fn move_file(path: &Path, target_dir: &Path) -> Result<()> {
     ensure_dir(target_dir).await?;
-    let target = target_dir.join(
-        path.file_name()
-            .ok_or_else(|| anyhow!("Invalid path '{}': missing file name", path.display()))?,
-    );
+    ensure_regular_file(path).await?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("Invalid path '{}': missing file name", path.display()))?;
+    let target = available_move_target(target_dir, file_name).await?;
     tokio::fs::rename(path, &target).await.with_context(|| {
         format!(
             "Failed to move '{}' to '{}'",
@@ -378,13 +407,64 @@ async fn move_file(path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn path_is_recently_modified(path: &Path, grace: Duration) -> bool {
-    tokio::fs::metadata(path)
+async fn ensure_regular_file(path: &Path) -> Result<()> {
+    let metadata = tokio::fs::symlink_metadata(path)
         .await
-        .ok()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .is_some_and(|age| age <= grace)
+        .with_context(|| format!("Failed to inspect '{}'", path.display()))?;
+    ensure_regular_file_metadata(path, &metadata)
+}
+
+fn ensure_regular_file_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("File '{}' must not be a symlink", path.display());
+    }
+    if !metadata.is_file() {
+        anyhow::bail!("Path '{}' is not a regular file", path.display());
+    }
+    Ok(())
+}
+
+async fn available_move_target(target_dir: &Path, file_name: &std::ffi::OsStr) -> Result<PathBuf> {
+    let preferred = target_dir.join(file_name);
+    if !preferred.try_exists()? {
+        return Ok(preferred);
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("message");
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str());
+    for _ in 0..8 {
+        let suffix = uuid::Uuid::now_v7().simple();
+        let candidate_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem}-{suffix}.{extension}"),
+            _ => format!("{stem}-{suffix}"),
+        };
+        let candidate = target_dir.join(candidate_name);
+        if !candidate.try_exists()? {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "Failed to allocate collision-free target in '{}'",
+        target_dir.display()
+    )
+}
+
+async fn path_is_recently_modified(path: &Path, grace: Duration) -> Result<bool> {
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .with_context(|| format!("Failed to inspect '{}'", path.display()))?;
+    ensure_regular_file_metadata(path, &metadata)?;
+    let modified = metadata
+        .modified()
+        .with_context(|| format!("Failed to read modified time for '{}'", path.display()))?;
+    Ok(match SystemTime::now().duration_since(modified) {
+        Ok(age) => age <= grace,
+        Err(_) => true,
+    })
 }
 
 #[cfg(test)]
