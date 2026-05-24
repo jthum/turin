@@ -308,16 +308,18 @@ impl StateStore {
         name: &str,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id FROM branch_heads WHERE session_id = ?1 AND name = ?2",
-                turso::params![session_id, name],
-            )
-            .await?;
-        let Some(row) = rows.next().await? else {
-            return Ok(None);
+        let branch_id = {
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM branch_heads WHERE session_id = ?1 AND name = ?2",
+                    turso::params![session_id, name],
+                )
+                .await?;
+            let Some(row) = rows.next().await? else {
+                return Ok(None);
+            };
+            row.get::<i64>(0)?
         };
-        let branch_id = row.get::<i64>(0)?;
         conn.execute(
             "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
             turso::params![branch_id, session_id],
@@ -334,16 +336,18 @@ impl StateStore {
         public_id: uuid::Uuid,
     ) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                "SELECT id FROM branch_heads WHERE session_id = ?1 AND public_id = ?2",
-                turso::params![session_id, public_id.into_bytes().to_vec()],
-            )
-            .await?;
-        let Some(row) = rows.next().await? else {
-            return Ok(None);
+        let branch_id = {
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM branch_heads WHERE session_id = ?1 AND public_id = ?2",
+                    turso::params![session_id, public_id.into_bytes().to_vec()],
+                )
+                .await?;
+            let Some(row) = rows.next().await? else {
+                return Ok(None);
+            };
+            row.get::<i64>(0)?
         };
-        let branch_id = row.get::<i64>(0)?;
         conn.execute(
             "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
             turso::params![branch_id, session_id],
