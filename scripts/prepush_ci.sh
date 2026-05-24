@@ -17,10 +17,13 @@ Steps:
   fmt       cargo fmt --all --check
   check     cargo check --workspace --all-targets
   clippy    cargo clippy --workspace --all-targets -- -D warnings
-  test      cargo test --workspace --all-targets -- --include-ignored
-  build     cargo build --release --workspace
+  test      cargo test --workspace --all-targets
+  test-ignored
+            cargo test --workspace --all-targets -- --ignored
+  build     cargo build --release for shipped release binaries
   all       fmt + check + clippy + test
   ci        fmt + check + clippy + test + build
+  release   fmt + check + clippy + test + build
 
 Examples:
   scripts/prepush_ci.sh
@@ -45,12 +48,23 @@ run_step() {
       "$CARGO_BIN" clippy --workspace --all-targets -- -D warnings
       ;;
     test)
-      echo "==> cargo test --workspace --all-targets -- --include-ignored"
-      "$CARGO_BIN" test --workspace --all-targets -- --include-ignored
+      echo "==> cargo test --workspace --all-targets"
+      "$CARGO_BIN" test --workspace --all-targets
+      ;;
+    test-ignored)
+      echo "==> cargo test --workspace --all-targets -- --ignored"
+      "$CARGO_BIN" test --workspace --all-targets -- --ignored
       ;;
     build)
-      echo "==> cargo build --release --workspace"
-      "$CARGO_BIN" build --release --workspace
+      echo "==> cargo build --release for shipped binaries"
+      "$CARGO_BIN" build --release \
+        -p turin \
+        -p turin-map \
+        -p turin-manager \
+        -p turin-channel-discord \
+        -p turin-channel-telegram \
+        -p turin-channel-rocketchat \
+        -p turin-channel-whatsapp
       ;;
     all)
       run_step fmt
@@ -59,6 +73,13 @@ run_step() {
       run_step test
       ;;
     ci)
+      run_step fmt
+      run_step check
+      run_step clippy
+      run_step test
+      run_step build
+      ;;
+    release)
       run_step fmt
       run_step check
       run_step clippy

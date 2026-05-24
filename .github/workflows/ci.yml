@@ -3,8 +3,21 @@ name: CI
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,20 +52,3 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run Tests
         run: scripts/prepush_ci.sh test
-
-  build:
-    name: Release Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-      - name: Build Release
-        run: scripts/prepush_ci.sh build
-      - name: Archive production artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: turin-binary
-          path: target/release/turin

@@ -9,12 +9,51 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_PACKAGES: >-
+    -p turin
+    -p turin-map
+    -p turin-manager
+    -p turin-channel-discord
+    -p turin-channel-telegram
+    -p turin-channel-rocketchat
+    -p turin-channel-whatsapp
+  RELEASE_BINS: >-
+    turin
+    turin-remote
+    turin-map
+    turin-manager
+    turin-channel-discord
+    turin-channel-telegram
+    turin-channel-rocketchat
+    turin-channel-whatsapp
 
 jobs:
+  preflight:
+    name: Release Preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run release validation
+        run: scripts/prepush_ci.sh fmt check clippy test
+
   build-release-assets:
     name: Build ${{ matrix.name }}
+    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,25 +78,33 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binaries
-        run: cargo build --release -p turin -p turin-map
+        shell: bash
+        run: cargo build --release $RELEASE_PACKAGES
 
       - name: Package release bundle (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/turin dist/
-          cp target/release/turin-map dist/
-          tar -czf "turin-${{ matrix.name }}.tar.gz" -C dist turin turin-map
+          for bin in $RELEASE_BINS; do
+            cp "target/release/$bin" "dist/$bin"
+          done
+          tar -czf "turin-${{ matrix.name }}.tar.gz" -C dist $RELEASE_BINS
 
       - name: Package release bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/turin.exe dist/turin.exe
-          Copy-Item target/release/turin-map.exe dist/turin-map.exe
-          Compress-Archive -Path dist/turin.exe, dist/turin-map.exe -DestinationPath "turin-${{ matrix.name }}.zip"
+          $bins = $env:RELEASE_BINS -split '\s+' | Where-Object { $_ -ne '' }
+          $paths = @()
+          foreach ($bin in $bins) {
+            $source = "target/release/$bin.exe"
+            $dest = "dist/$bin.exe"
+            Copy-Item $source $dest
+            $paths += $dest
+          }
+          Compress-Archive -Path $paths -DestinationPath "turin-${{ matrix.name }}.zip"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
