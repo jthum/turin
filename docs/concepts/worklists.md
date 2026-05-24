@@ -2,11 +2,7 @@
 
 Durable worklists are Turin's primitive for persistent, claimable work.
 
-They are meant to make the simple case easy and the complex case possible. A
-flat queue can be three lines of harness code. A project backlog with lanes,
-dependencies, deterministic actions, human checkpoints, and stale-claim
-recovery uses the same primitive. The extra behavior lives in item data, not in
-a separate API for every workflow shape.
+They are meant to make the simple case easy and the complex case possible. A flat queue can be three lines of harness code. A project backlog with lanes, dependencies, deterministic actions, human checkpoints, and stale-claim recovery uses the same primitive. The extra behavior lives in item data, not in a separate API for every workflow shape.
 
 ## Core Model
 
@@ -42,8 +38,7 @@ Harness code owns the domain semantics:
 - whether hierarchy is useful
 - how action and approval items are handled
 
-The worklist does not infer completion. Completion is always explicit through
-the harness, an action, or a user-approved workflow.
+The worklist does not infer completion. Completion is always explicit through the harness, an action, or a user-approved workflow.
 
 ## Five Core Operations
 
@@ -90,8 +85,7 @@ item:requeue()            -- release claim / clear pause state
 item:update(fields)       -- patch item fields
 ```
 
-List and claim operations can filter by built-in fields, pause fields, and
-metadata:
+List and claim operations can filter by built-in fields, pause fields, and metadata:
 
 ```lua
 tasks:next({ where = { role = "qa" } })
@@ -99,13 +93,11 @@ tasks:pending({ where = { tag = "blocked" }, limit = 10 })
 tasks:find({ where = { id = task_id } })
 ```
 
-This is what lets different agents share one backlog without pretending that
-all work belongs in one undifferentiated global queue.
+This is what lets different agents share one backlog without pretending that all work belongs in one undifferentiated global queue.
 
 ## Payloads And Metadata
 
-Worklist complexity is additive. If a field is unused, the worklist behaves like
-a plain queue.
+Worklist complexity is additive. If a field is unused, the worklist behaves like a plain queue.
 
 Common item fields:
 
@@ -186,13 +178,11 @@ local next_dev = tasks:next({ where = { role = "dev" } })
 local next_qa = tasks:next({ where = { role = "qa" } })
 ```
 
-Both approaches can live in one state DB or in different stores. The primitive
-does not force that choice.
+Both approaches can live in one state DB or in different stores. The primitive does not force that choice.
 
 ## Prompt And Action Items
 
-Not every item requires inference. The same worklist can sequence prompts,
-deterministic actions, and human checkpoints.
+Not every item requires inference. The same worklist can sequence prompts, deterministic actions, and human checkpoints.
 
 Prompt items submit normal Turin tasks:
 
@@ -224,13 +214,11 @@ tasks:add("Approve sprint plan", {
 })
 ```
 
-The worklist stores and claims these items. The harness decides whether to
-dispatch, wait, ask the user, or mark them done.
+The worklist stores and claims these items. The harness decides whether to dispatch, wait, ask the user, or mark them done.
 
 ## Dependencies
 
-Dependencies are metadata-backed work ordering. `next` skips items whose
-dependencies are not complete.
+Dependencies are metadata-backed work ordering. `next` skips items whose dependencies are not complete.
 
 ```lua
 local compile = tasks:add("Compile source")
@@ -262,8 +250,7 @@ The integration item becomes claimable only after both build items are done.
 
 ## Hierarchy
 
-Items can have children. This gives nested projects, sprints, tasks, and
-subtasks without a separate model.
+Items can have children. This gives nested projects, sprints, tasks, and subtasks without a separate model.
 
 ```lua
 local projects = worklist("projects")
@@ -283,8 +270,7 @@ if task then
 end
 ```
 
-Hierarchy is optional. A flat worklist and a nested worklist use the same helper
-surface.
+Hierarchy is optional. A flat worklist and a nested worklist use the same helper surface.
 
 ## Long-Running Work
 
@@ -312,8 +298,7 @@ function on_turn_prepare(turn)
 end
 ```
 
-The scheduler decides when the harness wakes up. The worklist decides which
-durable item is active. The harness decides what the active item means.
+The scheduler decides when the harness wakes up. The worklist decides which durable item is active. The harness decides what the active item means.
 
 ## Dispatch Pattern
 
@@ -339,8 +324,7 @@ function on_turn_prepare(turn)
 end
 ```
 
-Dispatch helpers do not auto-complete items. That keeps the completion decision
-in the domain layer.
+Dispatch helpers do not auto-complete items. That keeps the completion decision in the domain layer.
 
 ## Completion
 
@@ -354,26 +338,22 @@ Common completion patterns:
 - A failed attempt calls `item:fail(reason)` or `item:requeue()`.
 - A long-running item refreshes ownership with `item:heartbeat()`.
 
-This explicitness is deliberate. It avoids hidden policy in the runtime and
-keeps workflow judgment in harness code.
+This explicitness is deliberate. It avoids hidden policy in the runtime and keeps workflow judgment in harness code.
 
 ## Stale Claim Recovery
 
-Claims are durable. If a runtime disappears while holding an item, the item can
-be found and released later:
+Claims are durable. If a runtime disappears while holding an item, the item can be found and released later:
 
 ```lua
 local stale = tasks:orphaned({ stale_after_seconds = 600 })
 local released = tasks:release_stale({ stale_after_seconds = 600 })
 ```
 
-This is useful for daemon-supervised agents, scheduled work, and channel-driven
-sessions where a crash should not permanently trap work.
+This is useful for daemon-supervised agents, scheduled work, and channel-driven sessions where a crash should not permanently trap work.
 
 ## Store And Scope
 
-Worklists are state-store backed. They are not stored in one daemon-global queue
-unless the harness chooses such a store.
+Worklists are state-store backed. They are not stored in one daemon-global queue unless the harness chooses such a store.
 
 ```lua
 local project_tasks = worklist("tasks", {
@@ -430,5 +410,4 @@ The current implementation includes:
 - state/store/scope routing
 - daemon read APIs for inspection
 
-For exact method signatures, see `docs/reference/primitives.md`. For ownership,
-invariants, and focused tests, see `docs/architecture/maps/scheduler-worklists.md`.
+For exact method signatures, see `docs/reference/primitives.md`. For ownership, invariants, and focused tests, see `docs/architecture/maps/scheduler-worklists.md`.
