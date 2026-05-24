@@ -300,6 +300,8 @@ impl StateStore {
         )
         .await
         .context("Failed to advance active branch head")?;
+        conn.cacheflush()
+            .context("Failed to flush branch head advancement")?;
 
         let mut rows = conn
             .query(

@@ -206,6 +206,8 @@ impl StateStore {
             .await
             .with_context(|| format!("Failed to activate branch head '{}'", name))?;
         }
+        conn.cacheflush()
+            .with_context(|| format!("Failed to flush branch head '{}'", name))?;
 
         self.get_branch_head_with_conn(&conn, session_id, branch_id)
             .await?
@@ -296,6 +298,8 @@ impl StateStore {
             .await
             .with_context(|| format!("Failed to activate branch head '{}'", name))?;
         }
+        conn.cacheflush()
+            .with_context(|| format!("Failed to flush branch head '{}'", name))?;
 
         self.get_branch_head_with_conn(&conn, session_id, branch_id)
             .await?
@@ -324,6 +328,8 @@ impl StateStore {
         )
         .await
         .with_context(|| format!("Failed to check out branch head '{}'", name))?;
+        conn.cacheflush()
+            .with_context(|| format!("Failed to flush branch checkout '{}'", name))?;
         self.get_active_branch_head_with_conn(&conn, session_id)
             .await
     }
@@ -350,6 +356,8 @@ impl StateStore {
         )
         .await
         .context("Failed to check out branch head by id")?;
+        conn.cacheflush()
+            .context("Failed to flush branch checkout by id")?;
         self.get_active_branch_head_with_conn(&conn, session_id)
             .await
     }
