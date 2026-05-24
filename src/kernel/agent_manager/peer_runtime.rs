@@ -199,6 +199,7 @@ impl PeerRuntime {
             .set_active_task_conflict_policy(task.conflict_policy);
         self.session
             .set_current_task_branch_outcome(task.branch_outcome.clone());
+        self.session.begin_active_task_budget();
         if let Err(error) = self
             .host
             .begin_task_execution_scope(&mut self.session, &task)

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +31,40 @@ pub struct ActiveTaskState {
     pub branch_outcome: Option<TaskBranchOutcome>,
     pub conflict_detached: bool,
     pub turn_target: Option<TurnWriteTarget>,
+    budget: Option<ActiveTaskBudget>,
     execution_restore: Option<TaskExecutionRestoreState>,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveTaskBudget {
+    started_at_unix_ms: u64,
+    started_at: Instant,
+    input_tokens_at_start: u64,
+    output_tokens_at_start: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct TaskBudgetSnapshot {
+    pub task_started_at_unix_ms: Option<u64>,
+    pub task_elapsed_ms: u64,
+    pub task_input_tokens: u64,
+    pub task_output_tokens: u64,
+    pub task_total_tokens: u64,
+    pub task_turn_count: u32,
+}
+
+impl ActiveTaskBudget {
+    fn start(input_tokens_at_start: u64, output_tokens_at_start: u64) -> Self {
+        Self {
+            started_at_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            started_at: Instant::now(),
+            input_tokens_at_start,
+            output_tokens_at_start,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -481,6 +514,36 @@ impl SessionState {
         window: Duration,
     ) -> usize {
         self.tool_rate_limit.reserve(requested, max_calls, window)
+    }
+
+    pub fn begin_active_task_budget(&mut self) {
+        self.active_task.budget = Some(ActiveTaskBudget::start(
+            self.total_input_tokens,
+            self.total_output_tokens,
+        ));
+    }
+
+    pub fn active_task_budget_snapshot(&self, task_turn_count: u32) -> TaskBudgetSnapshot {
+        let Some(budget) = self.active_task.budget.as_ref() else {
+            return TaskBudgetSnapshot {
+                task_turn_count,
+                ..TaskBudgetSnapshot::default()
+            };
+        };
+        let task_input_tokens = self
+            .total_input_tokens
+            .saturating_sub(budget.input_tokens_at_start);
+        let task_output_tokens = self
+            .total_output_tokens
+            .saturating_sub(budget.output_tokens_at_start);
+        TaskBudgetSnapshot {
+            task_started_at_unix_ms: Some(budget.started_at_unix_ms),
+            task_elapsed_ms: budget.started_at.elapsed().as_millis() as u64,
+            task_input_tokens,
+            task_output_tokens,
+            task_total_tokens: task_input_tokens + task_output_tokens,
+            task_turn_count,
+        }
     }
 
     pub fn history_is_pruned(&self) -> bool {

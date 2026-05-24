@@ -181,7 +181,9 @@ impl ExecutionHost {
                 }
             };
 
-            let token_usage_action = self.evaluate_token_usage(session).await;
+            let token_usage_action = self
+                .evaluate_token_usage(session, task_turn_count + 1)
+                .await;
             session.turn_index += 1;
             task_turn_count += 1;
             self.prune_session_hot_history(session);

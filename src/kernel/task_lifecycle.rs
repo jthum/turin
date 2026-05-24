@@ -33,6 +33,7 @@ impl ExecutionHost {
                 error: error_message.clone(),
             }),
         );
+        let task_budget = session.active_task_budget_snapshot(task_turn_count);
 
         let verdict_result = {
             self.ensure_session_harness_engine(session)?;
@@ -48,6 +49,11 @@ impl ExecutionHost {
                         "plan_id": task.plan_id.clone(),
                         "status": status,
                         "task_turn_count": task_turn_count,
+                        "task_started_at_unix_ms": task_budget.task_started_at_unix_ms,
+                        "task_elapsed_ms": task_budget.task_elapsed_ms,
+                        "task_input_tokens": task_budget.task_input_tokens,
+                        "task_output_tokens": task_budget.task_output_tokens,
+                        "task_total_tokens": task_budget.task_total_tokens,
                         "turn_count": session.turn_index,
                         "execution": ExecutionStatusSnapshot::from_session(session),
                         "branch_outcome": branch_outcome,

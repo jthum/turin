@@ -384,6 +384,15 @@ Payload:
 - `input_tokens`
 - `output_tokens`
 - `total_tokens`
+- `task_started_at_unix_ms`
+- `task_elapsed_ms`
+- `task_input_tokens`
+- `task_output_tokens`
+- `task_total_tokens`
+- `task_turn_count`
+
+The first three token fields are session totals. The `task_*` fields are deltas
+for the currently running task, measured from task start.
 
 Notes:
 
@@ -439,6 +448,11 @@ Payload:
 - `event.plan_id` (optional)
 - `event.status` (`success`, `rejected`, `max_turns`, `error`, `cancelled`)
 - `event.task_turn_count`
+- `event.task_started_at_unix_ms`
+- `event.task_elapsed_ms`
+- `event.task_input_tokens`
+- `event.task_output_tokens`
+- `event.task_total_tokens`
 - `event.turn_count`
 - `event.error` (optional)
 

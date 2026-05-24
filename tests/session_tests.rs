@@ -3166,3 +3166,112 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
     kernel.end_session(&mut session).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_token_usage_and_task_complete_include_task_budget_metrics() -> Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("task_budget.lua"),
+        r#"
+            local queued_followup = false
+
+            local function valid_budget(payload)
+                return payload.task_started_at_unix_ms ~= nil
+                    and type(payload.task_elapsed_ms) == "number"
+                    and payload.task_elapsed_ms >= 0
+                    and payload.task_input_tokens == 10
+                    and payload.task_output_tokens == 5
+                    and payload.task_total_tokens == 15
+                    and payload.task_turn_count == 1
+                    and (payload.total_tokens == nil or payload.total_tokens >= payload.task_total_tokens)
+            end
+
+            function on_token_usage(usage)
+                if not valid_budget(usage) then
+                    return REJECT, "missing or invalid task budget metrics"
+                end
+                return ALLOW
+            end
+
+            function on_task_complete(event)
+                if event.status == "success" and not queued_followup and valid_budget(event) then
+                    queued_followup = true
+                    return MODIFY, { "Follow-up from budget metrics" }
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::new(Mutex::new(Vec::new())),
+            }),
+        ),
+    );
+    kernel
+        .policy_manager()
+        .set(
+            "hook.token_usage.reject_mode",
+            serde_json::Value::String("enforce_task".to_string()),
+            &PolicyScope {
+                scope: Some("global".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Check budget metrics".to_string()))
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Ok(store) = kernel.store_manager().get_default().await {
+        let events = store
+            .get_events(
+                session.internal_id.unwrap(),
+                &SessionReadTarget::ActiveBranch,
+            )
+            .await?;
+        assert_eq!(
+            count_event_type(&events, "task_start"),
+            2,
+            "on_task_complete should queue a follow-up only when budget metrics are valid"
+        );
+        assert!(
+            events.iter().all(|event| {
+                event.event_type != "task_complete"
+                    || serde_json::from_str::<serde_json::Value>(&event.payload)
+                        .ok()
+                        .and_then(|value| value.get("status").cloned())
+                        .and_then(|status| status.as_str().map(str::to_string))
+                        .is_none_or(|status| status == "success")
+            }),
+            "token usage enforcement should not reject when task budget metrics are valid"
+        );
+    }
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}

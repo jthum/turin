@@ -65,14 +65,22 @@ impl ExecutionHost {
     pub(crate) async fn evaluate_token_usage(
         &self,
         session: &SessionState,
+        task_turn_count: u32,
     ) -> TokenUsageHookAction {
         let verdict_result = {
             if let Some(harness) = self.session_harness_engine(session) {
                 let engine = harness.lock().expect("session harness mutex poisoned");
+                let task_budget = session.active_task_budget_snapshot(task_turn_count);
                 let payload = serde_json::json!({
                     "input_tokens": session.total_input_tokens,
                     "output_tokens": session.total_output_tokens,
                     "total_tokens": session.total_input_tokens + session.total_output_tokens,
+                    "task_started_at_unix_ms": task_budget.task_started_at_unix_ms,
+                    "task_elapsed_ms": task_budget.task_elapsed_ms,
+                    "task_input_tokens": task_budget.task_input_tokens,
+                    "task_output_tokens": task_budget.task_output_tokens,
+                    "task_total_tokens": task_budget.task_total_tokens,
+                    "task_turn_count": task_budget.task_turn_count,
                 });
                 Some(engine.evaluate("on_token_usage", payload))
             } else {
