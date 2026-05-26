@@ -7,9 +7,9 @@ use turin_control_client::{
     AgentSummary, ChannelSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus,
     LiveSession, SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::EventEnvelope;
+use turin_daemon_protocol::{EventEnvelope, UiIntentMessage};
 
-use crate::controller::UiUpdate;
+use crate::{UiIntentState, controller::UiUpdate};
 
 const MAX_RECENT_EVENTS: usize = 64;
 const MAX_RECENT_NOTICES: usize = 16;
@@ -26,6 +26,8 @@ pub struct DashboardState {
     pub tasks: Vec<TaskStatus>,
     #[serde(default)]
     pub session_details: BTreeMap<String, SessionDetail>,
+    #[serde(default)]
+    pub ui: UiIntentState,
     pub recent_events: Vec<EventEnvelope>,
     #[serde(default)]
     pub recent_notices: Vec<DashboardNotice>,
@@ -104,6 +106,7 @@ impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
         let now = now_unix_ms();
+        let ui = UiIntentState::from_messages(ui_intents_from_status(&snapshot.status));
         Ok(Self {
             connection_kind: snapshot.connection_kind,
             connection_target: snapshot.connection_target,
@@ -113,6 +116,7 @@ impl DashboardState {
             sessions: snapshot.sessions,
             tasks: snapshot.tasks,
             session_details: BTreeMap::new(),
+            ui,
             recent_events: Vec::new(),
             recent_notices: Vec::new(),
             last_snapshot_unix_ms: now,
@@ -146,6 +150,7 @@ impl DashboardState {
 
     pub fn apply_snapshot(&mut self, snapshot: DashboardSnapshot) {
         let now = now_unix_ms();
+        let static_ui_intents = ui_intents_from_status(&snapshot.status);
         let mut retained_details = BTreeMap::new();
         for session in &snapshot.sessions {
             if let Some(mut detail) = self.session_details.remove(&session.session_id) {
@@ -169,6 +174,7 @@ impl DashboardState {
         self.live_sessions = snapshot.live_sessions;
         self.sessions = snapshot.sessions;
         self.tasks = snapshot.tasks;
+        self.ui.apply_messages(static_ui_intents);
         self.session_details = retained_details;
         self.last_snapshot_unix_ms = now;
         self.last_error = None;
@@ -200,6 +206,7 @@ impl DashboardState {
     pub fn record_event(&mut self, event: EventEnvelope) {
         self.last_event_unix_ms = Some(now_unix_ms());
         self.total_event_count += 1;
+        let _ = self.ui.apply_event(&event);
         self.recent_events.push(event);
         if self.recent_events.len() > MAX_RECENT_EVENTS {
             let drop_count = self.recent_events.len() - MAX_RECENT_EVENTS;
@@ -347,13 +354,23 @@ fn freshness_at(now_ms: u64, last_snapshot_ms: u64) -> DashboardFreshness {
     }
 }
 
+fn ui_intents_from_status(status: &DaemonStatus) -> Vec<UiIntentMessage> {
+    status
+        .harnesses
+        .iter()
+        .flat_map(|harness| harness.ui_intents.iter().cloned())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         DashboardFreshness, DashboardNoticeLevel, DashboardState, MAX_RECENT_NOTICES,
         format_relative_age, freshness_at,
     };
+    use serde_json::json;
     use turin_control_client::ConnectionKind;
+    use turin_daemon_protocol::{EventEnvelope, UI_INTENT_EVENT};
     use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
     fn empty_dashboard() -> DashboardState {
@@ -366,6 +383,7 @@ mod tests {
             sessions: Vec::new(),
             tasks: Vec::new(),
             session_details: Default::default(),
+            ui: Default::default(),
             recent_events: Vec::new(),
             recent_notices: Vec::new(),
             last_snapshot_unix_ms: 0,
@@ -439,5 +457,25 @@ mod tests {
         assert_eq!(dashboard.last_refresh_ok, Some(false));
         assert_eq!(dashboard.last_refresh_latency_label(), "120ms");
         assert_eq!(dashboard.last_refresh_status_label(), "failed");
+    }
+
+    #[test]
+    fn record_event_applies_ui_intents_to_dashboard_ui_state() {
+        let mut dashboard = empty_dashboard();
+        let event = EventEnvelope::new(
+            UI_INTENT_EVENT,
+            json!({
+                "type": "notify",
+                "app_id": "release",
+                "title": "Release blocked"
+            }),
+        );
+
+        dashboard.record_event(event);
+
+        assert_eq!(dashboard.recent_events.len(), 1);
+        assert_eq!(dashboard.ui.recent_notices().len(), 1);
+        assert_eq!(dashboard.ui.recent_notices()[0].title, "Release blocked");
+        assert!(dashboard.ui.app("release").is_some());
     }
 }
