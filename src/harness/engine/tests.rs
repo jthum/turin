@@ -157,6 +157,113 @@ fn test_engine_load_nonexistent_dir() {
 }
 
 #[test]
+fn test_ui_load_time_intents_are_collected() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            ui.app("Release Operator", {
+                subtitle = "Coordinate release checks",
+            })
+
+            ui.home("Release Desk", {
+                ui.worklist("Open Work", {
+                    id = "open-work",
+                    from = "worklists.release",
+                }),
+                ui.section("Controls", {
+                    ui.action("Run Smoke Tests", "qa.run_smoke", {
+                        id = "run-smoke",
+                        params = { suite = "smoke" },
+                    }),
+                }),
+                ui.activity("Release Activity", {
+                    from = "signals.release",
+                }),
+            })
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let intents = engine.ui_intents().unwrap();
+    assert_eq!(intents.len(), 2);
+    assert!(matches!(
+        intents[0].intent,
+        turin_daemon_protocol::UiIntent::App(_)
+    ));
+
+    let turin_daemon_protocol::UiIntent::Home(home) = &intents[1].intent else {
+        panic!("expected home intent");
+    };
+    assert_eq!(home.title, "Release Desk");
+    assert_eq!(home.nodes.len(), 3);
+
+    let turin_daemon_protocol::UiNode::Worklist(worklist) = &home.nodes[0] else {
+        panic!("expected worklist node");
+    };
+    assert_eq!(worklist.id.as_deref(), Some("open-work"));
+    assert_eq!(worklist.source, "worklists.release");
+
+    let turin_daemon_protocol::UiNode::Section(section) = &home.nodes[1] else {
+        panic!("expected section node");
+    };
+    assert_eq!(section.title, "Controls");
+    let turin_daemon_protocol::UiNode::Action(action) = &section.nodes[0] else {
+        panic!("expected action node");
+    };
+    assert_eq!(action.label, "Run Smoke Tests");
+    assert_eq!(action.action, "qa.run_smoke");
+    assert_eq!(action.params["suite"], "smoke");
+}
+
+#[test]
+fn test_ui_dynamic_intents_are_collected_from_hooks() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            function on_turn_prepare(_ctx)
+                ui.notice("Release blocked", {
+                    body = "QA failed",
+                    level = "warning",
+                })
+                ui.focus("open-work")
+                ui.refresh("worklists.release")
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    assert!(engine.ui_intents().unwrap().is_empty());
+
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+
+    let intents = engine.ui_intents().unwrap();
+    assert_eq!(intents.len(), 3);
+    assert!(matches!(
+        intents[0].intent,
+        turin_daemon_protocol::UiIntent::Notify(_)
+    ));
+    assert!(matches!(
+        intents[1].intent,
+        turin_daemon_protocol::UiIntent::Focus(_)
+    ));
+    assert!(matches!(
+        intents[2].intent,
+        turin_daemon_protocol::UiIntent::Refresh(_)
+    ));
+}
+
+#[test]
 fn test_runtime_inference_available_reports_named_contexts() {
     let mut app_data = test_app_data();
     let mut config = crate::kernel::config::TurinConfig::default();

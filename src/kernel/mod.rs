@@ -39,6 +39,7 @@ use event::TaskTerminalStatus;
 use execution_host::ExecutionHost;
 use std::collections::HashMap;
 use std::sync::Arc;
+use turin_daemon_protocol::UiIntentMessage;
 
 use notify::RecommendedWatcher;
 
@@ -49,6 +50,8 @@ pub struct HarnessRuntimeSnapshot {
     pub bound_agents: Vec<String>,
     pub watched_roots: Vec<String>,
     pub loaded_scripts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui_intents: Vec<UiIntentMessage>,
 }
 
 /// The Turin Kernel — manages the agent loop, event system, and tool execution.
@@ -162,6 +165,7 @@ impl Kernel {
                     bound_agents: agents,
                     watched_roots,
                     loaded_scripts,
+                    ui_intents: runtime.ui_intents(),
                 }
             })
             .collect();

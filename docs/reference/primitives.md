@@ -152,12 +152,26 @@ These are layered on top of the existing scoped aliases.
 - `schedule.delete(public_id) -> job`
 - `worklist(name, opts?) -> list_proxy`
 - `code.find(query, opts?)`
+- `ui.app(title, opts?)`
+- `ui.home(title, nodes?)`
+- `ui.show(area, node)`
+- `ui.notice(title, opts?)`
+- `ui.focus(target)`
+- `ui.refresh(binding)`
+- `ui.section(title, nodes?)`
+- `ui.text(text, opts?)`
+- `ui.action(label, action, opts?)`
+- `ui.worklist(title, opts?)`
+- `ui.activity(title, opts?)`
+- `ui.detail(title, opts?)`
+- `ui.approval_queue(title, opts?)`
 
 Notes:
 
 - `remember(...)` / `recall(...)` use the same default agent-scoped memory as `memory.*`
 - `code.find(...)` is a thin wrapper over `runtime.code.search.hybrid(...)`
 - `code.find(...)` defaults to the Turin workspace root and accepts `opts.root` / `opts.index_path` overrides
+- `ui.*` is the experimental UI Intent v0 surface; it records semantic UI intent for Turin clients rather than renderer-specific instructions
 - `action.define(...)` and `on(...)` are load-time only registration helpers
 - `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
 - `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
@@ -183,6 +197,63 @@ local file = fs.read("SPEC.md")
 local rows = code.find("capability decision")
 local project = scope("project", "my-app", { namespace = "notes" })
 ```
+
+### UI Intent v0
+
+The `ui` namespace lets harnesses describe semantic UI intent for Turin clients.
+Clients decide how to react based on their own capabilities. The API is
+experimental and expected to evolve while the TUI and graphical app are built in
+parallel.
+
+Load-time example:
+
+```lua
+ui.app("Release Operator", {
+  subtitle = "Coordinate release checks",
+})
+
+ui.home("Release Desk", {
+  ui.worklist("Open Work", {
+    id = "open-work",
+    from = "worklists.release",
+  }),
+
+  ui.section("Controls", {
+    ui.action("Run Smoke Tests", "qa.run_smoke", {
+      id = "run-smoke",
+      params = { suite = "smoke" },
+    }),
+  }),
+
+  ui.activity("Release Activity", {
+    from = "signals.release",
+  }),
+})
+```
+
+Dynamic intent example:
+
+```lua
+function on_turn_prepare(_ctx)
+  ui.notice("Release blocked", {
+    body = "QA failed",
+    level = "warning",
+  })
+
+  ui.focus("open-work")
+  ui.refresh("worklists.release")
+
+  return ALLOW
+end
+```
+
+Current v0 behavior:
+
+- `ui.app(...)`, `ui.home(...)`, and `ui.show(...)` record app/workspace intent
+- `ui.notice(...)`, `ui.focus(...)`, and `ui.refresh(...)` record dynamic client-facing intent
+- node constructors such as `ui.action(...)` and `ui.worklist(...)` return semantic nodes for use inside higher-level intents
+- actions reference named Turin actions; durable side effects should stay in actions/runtime primitives
+- clients are responsible for rendering, degrading, or ignoring UI intent according to their capabilities
 
 `scope_proxy` methods:
 

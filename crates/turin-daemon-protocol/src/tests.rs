@@ -159,6 +159,105 @@ fn handshake_round_trips_typed_shape() {
 }
 
 #[test]
+fn ui_home_intent_round_trips_as_event_payload() {
+    let message = UiIntentMessage::new(UiIntent::Home(UiHomeIntent {
+        title: "Release Desk".to_string(),
+        subtitle: Some("Coordinate release checks".to_string()),
+        nodes: vec![
+            UiNode::Worklist(UiWorklistNode {
+                id: Some("open-work".to_string()),
+                title: "Open Work".to_string(),
+                source: "worklists.release".to_string(),
+                filters: serde_json::Map::new(),
+            }),
+            UiNode::Section(UiSectionNode {
+                id: Some("controls".to_string()),
+                title: "Controls".to_string(),
+                nodes: vec![UiNode::Action(UiActionNode {
+                    id: Some("run-smoke".to_string()),
+                    label: "Run Smoke Tests".to_string(),
+                    action: "qa.run_smoke".to_string(),
+                    params: json!({ "suite": "smoke" }),
+                    confirm: false,
+                })],
+            }),
+            UiNode::Activity(UiActivityNode {
+                id: Some("activity".to_string()),
+                title: "Release Activity".to_string(),
+                source: "signals.release".to_string(),
+            }),
+        ],
+    }))
+    .from_harness("release")
+    .for_session("ui_123");
+
+    let event = message.into_event().expect("serialize ui intent event");
+
+    assert_eq!(event.event, UI_INTENT_EVENT);
+    assert_eq!(event.data["version"], UI_INTENT_VERSION);
+    assert_eq!(event.data["type"], "home");
+    assert_eq!(event.data["source"]["harness_id"], "release");
+    assert_eq!(event.data["recipient"]["ui_session_id"], "ui_123");
+    assert_eq!(event.data["title"], "Release Desk");
+    assert_eq!(event.data["nodes"][0]["kind"], "worklist");
+    assert_eq!(event.data["nodes"][1]["nodes"][0]["kind"], "action");
+    assert_eq!(
+        event.data["nodes"][1]["nodes"][0]["params"]["suite"],
+        "smoke"
+    );
+
+    let decoded = UiIntentMessage::from_event(&event)
+        .expect("deserialize ui intent")
+        .expect("ui intent event");
+    match decoded.intent {
+        UiIntent::Home(home) => {
+            assert_eq!(home.title, "Release Desk");
+            assert_eq!(home.nodes.len(), 3);
+            assert!(matches!(home.nodes[0], UiNode::Worklist(_)));
+            assert!(matches!(home.nodes[1], UiNode::Section(_)));
+            assert!(matches!(home.nodes[2], UiNode::Activity(_)));
+        }
+        other => panic!("unexpected ui intent: {other:?}"),
+    }
+}
+
+#[test]
+fn ui_intent_parser_ignores_unrelated_events() {
+    let event = EventEnvelope::new("runtime.ready", json!({ "ok": true }));
+    let decoded = UiIntentMessage::from_event(&event).expect("parse event");
+    assert!(decoded.is_none());
+}
+
+#[test]
+fn ui_dynamic_intents_have_small_wire_shapes() {
+    let notice = UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+        title: "Release blocked".to_string(),
+        body: Some("QA failed".to_string()),
+        level: Some(UiNoticeLevel::Warning),
+    }));
+    let notice_value = serde_json::to_value(&notice).expect("serialize notice");
+    assert_eq!(notice_value["type"], "notify");
+    assert_eq!(notice_value["level"], "warning");
+    assert_eq!(notice_value["title"], "Release blocked");
+
+    let focus = UiIntentMessage::new(UiIntent::Focus(UiFocusIntent {
+        target: "open-work".to_string(),
+    }));
+    let focus_value = serde_json::to_value(&focus).expect("serialize focus");
+    assert_eq!(focus_value["type"], "focus");
+    assert_eq!(focus_value["target"], "open-work");
+
+    let refresh = UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+        binding: "worklists.release".to_string(),
+    }));
+    let refresh_value = serde_json::to_value(&refresh).expect("serialize refresh");
+    assert_eq!(refresh_value["type"], "refresh");
+    assert_eq!(refresh_value["binding"], "worklists.release");
+    assert!(refresh_value.get("source").is_none());
+    assert!(refresh_value.get("target").is_none());
+}
+
+#[test]
 fn schedule_create_request_round_trips_typed_shape() {
     let request = RequestEnvelope::new(
         Some("req_sched".to_string()),

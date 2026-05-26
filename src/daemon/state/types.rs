@@ -1,6 +1,6 @@
 use serde::Serialize;
 use turin_channel_core::ChannelAdapterManifest;
-use turin_daemon_protocol::SessionSearchHitKind;
+use turin_daemon_protocol::{SessionSearchHitKind, UiIntentMessage};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentDetail {
@@ -22,6 +22,8 @@ pub struct HarnessDetail {
     pub bound_agents: Vec<String>,
     pub watched_roots: Vec<String>,
     pub loaded_scripts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui_intents: Vec<UiIntentMessage>,
 }
 
 #[derive(Debug, Clone, Serialize)]

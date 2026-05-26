@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
+use turin_daemon_protocol::UiIntentMessage;
 
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
@@ -57,6 +58,10 @@ impl HarnessInstance {
         self.engine.runtime_signal_topics().unwrap_or_default()
     }
 
+    pub(crate) fn ui_intents(&self) -> Vec<UiIntentMessage> {
+        self.engine.ui_intents().unwrap_or_default()
+    }
+
     pub(crate) fn load_script_str(&mut self, script: &str) -> Result<()> {
         self.engine.load_script_str(script)
     }
@@ -81,6 +86,7 @@ struct HarnessLoadedState {
     loaded_scripts: Vec<String>,
     explicit_watch_roots: Vec<PathBuf>,
     runtime_signal_topics: Vec<String>,
+    ui_intents: Vec<UiIntentMessage>,
 }
 
 // Despite the legacy name, this is the shared harness definition and metadata cache.
@@ -196,11 +202,20 @@ impl HarnessRuntime {
             .clone()
     }
 
+    pub(crate) fn ui_intents(&self) -> Vec<UiIntentMessage> {
+        self.loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned")
+            .ui_intents
+            .clone()
+    }
+
     pub(crate) fn init(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
         let instance = self.create_instance(ctx)?;
         let loaded_scripts = instance.loaded_scripts();
         let explicit_watch_roots = instance.explicit_watch_roots();
         let runtime_signal_topics = instance.runtime_signal_topics();
+        let ui_intents = instance.ui_intents();
         let script_count = loaded_scripts.len();
         if script_count > 0 {
             info!(
@@ -227,6 +242,7 @@ impl HarnessRuntime {
         state.loaded_scripts = loaded_scripts;
         state.explicit_watch_roots = explicit_watch_roots;
         state.runtime_signal_topics = runtime_signal_topics;
+        state.ui_intents = ui_intents;
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(script_count)
     }

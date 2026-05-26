@@ -7,6 +7,7 @@ mod request;
 mod schedule;
 mod sessions;
 mod tasks;
+mod ui;
 mod worklists;
 
 pub use agents::*;
@@ -18,6 +19,7 @@ pub use request::*;
 pub use schedule::*;
 pub use sessions::*;
 pub use tasks::*;
+pub use ui::*;
 pub use worklists::*;
 
 pub(crate) fn default_enabled() -> bool {

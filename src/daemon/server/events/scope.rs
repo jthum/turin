@@ -234,6 +234,7 @@ mod tests {
                     bound_agents: vec!["default".into()],
                     watched_roots: Vec::new(),
                     loaded_scripts: Vec::new(),
+                    ui_intents: Vec::new(),
                 },
                 HarnessRuntimeSnapshot {
                     harness_id: "reviewer".into(),
@@ -241,6 +242,7 @@ mod tests {
                     bound_agents: vec!["writer".into()],
                     watched_roots: Vec::new(),
                     loaded_scripts: Vec::new(),
+                    ui_intents: Vec::new(),
                 },
             ],
             agent_runtimes: vec![

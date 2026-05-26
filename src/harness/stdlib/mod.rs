@@ -27,3 +27,4 @@ pub mod scoped_data_backend;
 pub mod session_user_aliases;
 pub mod system_globals;
 pub mod tool_bindings;
+pub mod ui_bindings;

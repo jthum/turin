@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::error;
 
 use crate::harness::globals::{self, HarnessAppData, HarnessExecutionBinding};
-use crate::harness::stdlib::{action_bindings, runtime_signal, tool_bindings};
+use crate::harness::stdlib::{action_bindings, runtime_signal, tool_bindings, ui_bindings};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
@@ -476,6 +476,10 @@ impl HarnessEngine {
 
     pub fn runtime_signal_topics(&self) -> Result<Vec<String>> {
         runtime_signal::runtime_signal_topics(&self.lua).map_err(anyhow::Error::from)
+    }
+
+    pub fn ui_intents(&self) -> Result<Vec<turin_daemon_protocol::UiIntentMessage>> {
+        ui_bindings::ui_intents(&self.lua).map_err(anyhow::Error::from)
     }
 
     pub fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {

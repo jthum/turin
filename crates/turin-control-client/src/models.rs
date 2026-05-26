@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use turin_channel_core::ChannelAdapterManifest;
-use turin_daemon_protocol::SessionSearchHitKind;
+use turin_daemon_protocol::{SessionSearchHitKind, UiIntentMessage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonStatus {
@@ -62,6 +62,8 @@ pub struct HarnessRuntime {
     pub watched_roots: Vec<String>,
     #[serde(default)]
     pub loaded_scripts: Vec<String>,
+    #[serde(default)]
+    pub ui_intents: Vec<UiIntentMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

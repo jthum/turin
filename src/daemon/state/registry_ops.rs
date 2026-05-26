@@ -222,6 +222,7 @@ impl DaemonState {
                 bound_agents: snapshot.bound_agents,
                 watched_roots: snapshot.watched_roots,
                 loaded_scripts: snapshot.loaded_scripts,
+                ui_intents: snapshot.ui_intents,
             })
     }
 

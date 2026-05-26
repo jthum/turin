@@ -10,7 +10,7 @@ use crate::harness::dx;
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::stdlib::{
     action_bindings, agent_bindings, event_bindings, memory_kv_bindings, runtime_bindings,
-    session_user_aliases, system_globals, tool_bindings,
+    session_user_aliases, system_globals, tool_bindings, ui_bindings,
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
@@ -139,6 +139,7 @@ pub fn register_globals(lua: &Lua, app_data: HarnessAppData) -> LuaResult<()> {
     action_bindings::register_action_globals(lua)?;
     crate::harness::stdlib::object_refs::register_ref_and_target_globals(lua)?;
     event_bindings::register_event_globals(lua)?;
+    ui_bindings::register_ui_globals(lua)?;
     tool_bindings::register_tool_globals(lua)?;
     system_globals::register_import_global(lua)?;
     dx::register_dx_globals(lua, &app_data)?;
@@ -160,7 +161,7 @@ fn register_verdict_constants(lua: &Lua) -> LuaResult<()> {
 fn install_public_error_contract(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     for root in [
-        "runtime", "memory", "kv", "agent", "action", "session", "user", "fs", "json", "time",
+        "runtime", "memory", "kv", "agent", "action", "session", "user", "fs", "json", "time", "ui",
     ] {
         if let Ok(table) = globals.get::<Table>(root) {
             wrap_public_table(lua, &table, root)?;
