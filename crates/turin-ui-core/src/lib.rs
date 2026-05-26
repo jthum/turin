@@ -1,5 +1,6 @@
 mod controller;
 mod dashboard;
+mod intents;
 
 pub use controller::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
@@ -16,3 +17,4 @@ pub use dashboard::{
     DashboardFreshness, DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot,
     DashboardState, format_relative_age,
 };
+pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppState, UiIntentState};
