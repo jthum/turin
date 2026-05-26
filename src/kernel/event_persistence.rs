@@ -95,6 +95,10 @@ fn persisted_event_record(
     session: &SessionState,
     event: &KernelEvent,
 ) -> Option<PersistedKernelEvent> {
+    if matches!(event, KernelEvent::Ui(_)) {
+        return None;
+    }
+
     if let Some(target) = branch_scoped_persistence_target(session, event) {
         return Some(PersistedKernelEvent {
             internal_id: session.internal_id,
@@ -134,6 +138,7 @@ fn event_is_branch_scoped(event: &KernelEvent) -> bool {
                 | crate::kernel::event::LifecycleEvent::TurnEnd { .. }
         ),
         KernelEvent::Stream(_) => true,
+        KernelEvent::Ui(_) => false,
         KernelEvent::Audit(audit) => matches!(
             audit,
             crate::kernel::event::AuditEvent::ToolResult { .. }

@@ -15,7 +15,7 @@ use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::{DaemonState, DaemonStatus};
 use crate::kernel::agent_manager::SessionEventReceiver;
-use crate::kernel::event::KernelEvent;
+use crate::kernel::event::{KernelEvent, UiEvent};
 
 use super::dispatch::{build_runtime_snapshot, classify_registry_issue, emit_event};
 use filter::EventFilter;
@@ -179,6 +179,16 @@ fn kernel_event_envelope(
     slot_id: &str,
     event: &KernelEvent,
 ) -> EventEnvelope {
+    if let KernelEvent::Ui(UiEvent::Intent { intent }) = event {
+        let mut data = serde_json::to_value(intent).unwrap_or_else(|_| json!({}));
+        if let serde_json::Value::Object(ref mut map) = data {
+            map.insert("agent_id".to_string(), json!(agent_id));
+            map.insert("session_id".to_string(), json!(session_id));
+            map.insert("slot_id".to_string(), json!(slot_id));
+        }
+        return EventEnvelope::new(turin_daemon_protocol::UI_INTENT_EVENT, data);
+    }
+
     let mut data = serde_json::to_value(event).unwrap_or_else(|_| json!({}));
     if let serde_json::Value::Object(ref mut map) = data {
         map.insert("agent_id".to_string(), json!(agent_id));

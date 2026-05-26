@@ -16,6 +16,7 @@ use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
 };
+use crate::kernel::event::{KernelEvent, UiEvent};
 
 mod loader;
 #[cfg(test)]
@@ -382,6 +383,7 @@ impl HarnessEngine {
                     let prev_caps = self.get_active_capability_delegation();
                     let module_caps = self.lookup_module_import_capabilities(&script_name);
                     let effective_caps = module_caps.or_else(|| prev_caps.clone());
+                    let ui_start = ui_bindings::ui_intent_count(&self.lua)?;
                     self.set_active_harness_module(Some(&script_name));
                     self.set_active_capability_delegation(effective_caps);
                     let result = func.call::<MultiValue>(lua_payload.clone()).map_err(|e| {
@@ -398,6 +400,7 @@ impl HarnessEngine {
                     self.set_active_capability_delegation(prev_caps);
 
                     let verdict = parse_verdict(&self.lua, result)?;
+                    self.emit_ui_intents_since(ui_start)?;
                     verdicts.push(verdict);
                 }
                 _ => {
@@ -440,6 +443,7 @@ impl HarnessEngine {
                 let prev_caps = self.get_active_capability_delegation();
                 let module_caps = self.lookup_module_import_capabilities(&name);
                 let effective_caps = module_caps.or_else(|| prev_caps.clone());
+                let ui_start = ui_bindings::ui_intent_count(&self.lua)?;
                 self.set_active_harness_module(Some(&name));
                 self.set_active_capability_delegation(effective_caps);
                 self.set_active_hook_context(Some(ud.clone()));
@@ -449,6 +453,7 @@ impl HarnessEngine {
                         self.set_active_capability_delegation(prev_caps);
                         self.set_active_hook_context(None);
                         if let Ok(v) = parse_verdict(&self.lua, result) {
+                            self.emit_ui_intents_since(ui_start)?;
                             verdicts.push(v);
                         }
                     }
@@ -463,6 +468,36 @@ impl HarnessEngine {
         }
 
         Ok(verdicts)
+    }
+
+    fn emit_ui_intents_since(&self, start_index: usize) -> Result<()> {
+        let intents = ui_bindings::ui_intents_from(&self.lua, start_index)?;
+        if intents.is_empty() {
+            return Ok(());
+        }
+
+        let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>() else {
+            return Ok(());
+        };
+
+        let Some((agent_id, internal_id, event_tx)) =
+            app_data.execution_ctx.lock().ok().and_then(|lock| {
+                lock.event_context
+                    .as_ref()
+                    .map(|ctx| (lock.agent_id.clone(), ctx.internal_id, ctx.event_tx.clone()))
+            })
+        else {
+            return Ok(());
+        };
+
+        for mut intent in intents {
+            if intent.source.agent_id.is_none() {
+                intent.source.agent_id.clone_from(&agent_id);
+            }
+            let _ = event_tx.send((internal_id, KernelEvent::Ui(UiEvent::Intent { intent })));
+        }
+
+        Ok(())
     }
 
     /// Get the names of active hook-contributing scripts/modules.

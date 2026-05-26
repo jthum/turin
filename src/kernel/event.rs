@@ -5,6 +5,7 @@ use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::{ContextCompactionCheckpoint, ExecutionStatusSnapshot};
+use turin_daemon_protocol::UiIntentMessage;
 
 /// Describes durable branch changes caused by a completed task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +195,13 @@ pub enum AuditEvent {
     },
 }
 
+/// Ephemeral UI events produced by harness scripts for connected clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UiEvent {
+    Intent { intent: UiIntentMessage },
+}
+
 /// Every action in Turin produces a typed `KernelEvent`.
 ///
 /// Refactored to separate events by purpose:
@@ -206,6 +214,7 @@ pub enum KernelEvent {
     Lifecycle(LifecycleEvent),
     Stream(StreamEvent),
     Audit(AuditEvent),
+    Ui(UiEvent),
 }
 
 impl KernelEvent {
@@ -244,6 +253,9 @@ impl KernelEvent {
                 AuditEvent::GovernanceGrantUse { .. } => "governance_grant_use",
                 AuditEvent::GovernanceGrantRevoke { .. } => "governance_grant_revoke",
                 AuditEvent::ContextCompaction { .. } => "context_compaction",
+            },
+            KernelEvent::Ui(e) => match e {
+                UiEvent::Intent { .. } => turin_daemon_protocol::UI_INTENT_EVENT,
             },
         }
     }

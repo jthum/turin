@@ -87,9 +87,17 @@ pub fn register_ui_globals(lua: &Lua) -> LuaResult<()> {
 }
 
 pub(crate) fn ui_intents(lua: &Lua) -> LuaResult<Vec<UiIntentMessage>> {
+    ui_intents_from(lua, 0)
+}
+
+pub(crate) fn ui_intent_count(lua: &Lua) -> LuaResult<usize> {
+    Ok(ensure_ui_intent_registry(lua)?.raw_len())
+}
+
+pub(crate) fn ui_intents_from(lua: &Lua, start_index: usize) -> LuaResult<Vec<UiIntentMessage>> {
     let registry = ensure_ui_intent_registry(lua)?;
     let mut out = Vec::new();
-    for index in 1..=registry.raw_len() {
+    for index in (start_index + 1)..=registry.raw_len() {
         let value: Value = registry.raw_get(index)?;
         let json = object_refs::encode_lua_payload(lua, value)?;
         let message = serde_json::from_value(json).map_err(mlua::Error::external)?;

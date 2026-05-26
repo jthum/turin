@@ -279,6 +279,31 @@ fn ui_intent_parser_ignores_unrelated_events() {
 }
 
 #[test]
+fn ui_intent_parser_ignores_event_routing_metadata() {
+    let event = EventEnvelope::new(
+        UI_INTENT_EVENT,
+        json!({
+            "version": UI_INTENT_VERSION,
+            "type": "notify",
+            "app_id": "release",
+            "title": "Release blocked",
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "slot_id": "slot-1"
+        }),
+    );
+
+    let decoded = UiIntentMessage::from_event(&event)
+        .expect("parse event")
+        .expect("ui intent event");
+    let UiIntent::Notify(notice) = decoded.intent else {
+        panic!("expected notice intent");
+    };
+    assert_eq!(notice.app_id, "release");
+    assert_eq!(notice.title, "Release blocked");
+}
+
+#[test]
 fn ui_dynamic_intents_have_small_wire_shapes() {
     let notice = UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
         app_id: "release".to_string(),

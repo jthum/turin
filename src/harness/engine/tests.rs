@@ -319,6 +319,70 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
 }
 
 #[test]
+fn test_ui_dynamic_intents_are_emitted_as_ephemeral_session_events() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            local app = ui.app("Release Operator", { id = "release" })
+
+            function on_turn_prepare(_ctx)
+                app:notice("Release blocked", {
+                    body = "QA failed",
+                    level = "warning",
+                })
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(8);
+    let app_data = test_app_data();
+    {
+        let mut lock = app_data.execution_ctx.lock().unwrap();
+        lock.event_context = Some(crate::harness::globals::HarnessEventContext {
+            json: false,
+            internal_id: Some(42),
+            branch_head_id: None,
+            execution_id: "exec-1".to_string(),
+            event_tx,
+            durability_tx: None,
+        });
+    }
+
+    let mut engine = HarnessEngine::new(app_data).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    assert!(
+        event_rx.try_recv().is_err(),
+        "load-time app intent is static"
+    );
+
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+
+    let (internal_id, event) = event_rx.try_recv().expect("dynamic ui intent event");
+    assert_eq!(internal_id, Some(42));
+    assert_eq!(event.event_type(), turin_daemon_protocol::UI_INTENT_EVENT);
+
+    let crate::kernel::event::KernelEvent::Ui(crate::kernel::event::UiEvent::Intent { intent }) =
+        event
+    else {
+        panic!("expected ui intent kernel event");
+    };
+    assert_eq!(intent.source.agent_id.as_deref(), Some("test-agent"));
+    let turin_daemon_protocol::UiIntent::Notify(notice) = intent.intent else {
+        panic!("expected notice intent");
+    };
+    assert_eq!(notice.app_id, "release");
+    assert_eq!(notice.title, "Release blocked");
+    assert_eq!(notice.body.as_deref(), Some("QA failed"));
+}
+
+#[test]
 fn test_runtime_inference_available_reports_named_contexts() {
     let mut app_data = test_app_data();
     let mut config = crate::kernel::config::TurinConfig::default();
