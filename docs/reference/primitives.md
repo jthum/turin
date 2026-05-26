@@ -152,19 +152,13 @@ These are layered on top of the existing scoped aliases.
 - `schedule.delete(public_id) -> job`
 - `worklist(name, opts?) -> list_proxy`
 - `code.find(query, opts?)`
-- `ui.app(title, opts?)`
-- `ui.home(title, nodes?)`
-- `ui.show(area, node)`
+- `ui.app(title, opts?) -> app_proxy`
 - `ui.notice(title, opts?)`
+- `ui.open(target, opts?)`
+- `ui.show(target, opts?)`
+- `ui.badge(target, opts?)`
 - `ui.focus(target)`
 - `ui.refresh(binding)`
-- `ui.section(title, nodes?)`
-- `ui.text(text, opts?)`
-- `ui.action(label, action, opts?)`
-- `ui.worklist(title, opts?)`
-- `ui.activity(title, opts?)`
-- `ui.detail(title, opts?)`
-- `ui.approval_queue(title, opts?)`
 
 Notes:
 
@@ -208,50 +202,95 @@ parallel.
 Load-time example:
 
 ```lua
-ui.app("Release Operator", {
-  subtitle = "Coordinate release checks",
+local app = ui.app("Release Operator", {
+  id = "release",
+  about = "Coordinate release checks",
 })
 
-ui.home("Release Desk", {
-  ui.worklist("Open Work", {
+app:home("Release Desk", function(screen)
+  screen:list("Open Work", {
     id = "open-work",
     from = "worklists.release",
-  }),
+    where = { kind = "approval" },
+    intent = "approval",
+    as = "table",
+  })
 
-  ui.section("Controls", {
-    ui.action("Run Smoke Tests", "qa.run_smoke", {
+  screen:section("Controls", function(section)
+    section:action("Run Smoke Tests", "qa.run_smoke", {
       id = "run-smoke",
       params = { suite = "smoke" },
-    }),
-  }),
+    })
+  end)
 
-  ui.activity("Release Activity", {
+  screen:activity("Release Activity", {
     from = "signals.release",
-  }),
-})
+  })
+end)
+
+app:menu("Main", function(menu)
+  menu:item("Dashboard", "home")
+end)
 ```
 
 Dynamic intent example:
 
 ```lua
+local app = ui.app("Release Operator", { id = "release" })
+
 function on_turn_prepare(_ctx)
-  ui.notice("Release blocked", {
+  app:notice("Release blocked", {
     body = "QA failed",
     level = "warning",
   })
 
-  ui.focus("open-work")
-  ui.refresh("worklists.release")
+  app:open("home")
+  app:badge("home", { count = 1, level = "warning" })
+  app:focus("open-work")
+  app:refresh("worklists.release")
 
   return ALLOW
 end
 ```
 
+`app_proxy` structure methods:
+
+- `app:home(title, fn, opts?)`
+- `app:screen(id, title, fn, opts?)`
+- `app:opens_with(screen_id)`
+- `app:menu(title, fn)`
+- `app:pane(id, title, fn, opts?)`
+
+`app_proxy` dynamic intent methods:
+
+- `app:notice(title, opts?)`
+- `app:open(target, opts?)`
+- `app:show(target, opts?)`
+- `app:badge(target, opts?)`
+- `app:focus(target)`
+- `app:refresh(binding)`
+
+`screen` / `section` / `pane` methods:
+
+- `screen:list(title, opts?)`
+- `screen:worklist(title, opts?)`
+- `screen:section(title, fn)`
+- `screen:text(text, opts?)`
+- `screen:action(label, action, opts?)`
+- `screen:activity(title, opts?)`
+- `screen:detail(title, opts?)`
+- `screen:form(title, opts)`
+- `screen:report(title, opts?)`
+- `screen:chart(title, opts?)`
+
 Current v0 behavior:
 
-- `ui.app(...)`, `ui.home(...)`, and `ui.show(...)` record app/workspace intent
-- `ui.notice(...)`, `ui.focus(...)`, and `ui.refresh(...)` record dynamic client-facing intent
-- node constructors such as `ui.action(...)` and `ui.worklist(...)` return semantic nodes for use inside higher-level intents
+- `ui.app(...)` returns an app object and records app intent
+- `app:home(...)` is sugar for a `home` screen plus default screen intent
+- `screen:list(...)` is the generic collection primitive
+- `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
+- `intent` and `as` fields are advisory signals; clients may degrade or ignore them
+- app-scoped methods such as `app:notice(...)` and `app:open(...)` record dynamic client-facing intent
 - actions reference named Turin actions; durable side effects should stay in actions/runtime primitives
 - clients are responsible for rendering, degrading, or ignoring UI intent according to their capabilities
 

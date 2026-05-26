@@ -162,25 +162,41 @@ fn test_ui_load_time_intents_are_collected() {
     std::fs::write(
         dir.path().join("ui.lua"),
         r#"
-            ui.app("Release Operator", {
-                subtitle = "Coordinate release checks",
+            local app = ui.app("Release Operator", {
+                id = "release",
+                about = "Coordinate release checks",
             })
 
-            ui.home("Release Desk", {
-                ui.worklist("Open Work", {
+            app:home("Release Desk", function(screen)
+                screen:list("Open Work", {
                     id = "open-work",
                     from = "worklists.release",
-                }),
-                ui.section("Controls", {
-                    ui.action("Run Smoke Tests", "qa.run_smoke", {
+                    where = { kind = "approval" },
+                    intent = "approval",
+                    as = "table",
+                })
+                screen:section("Controls", function(section)
+                    section:action("Run Smoke Tests", "qa.run_smoke", {
                         id = "run-smoke",
                         params = { suite = "smoke" },
-                    }),
-                }),
-                ui.activity("Release Activity", {
+                    })
+                end)
+                screen:activity("Release Activity", {
                     from = "signals.release",
-                }),
-            })
+                })
+            end)
+
+            app:screen("approvals", "Approvals", function(screen)
+                screen:worklist("Pending Reviews", {
+                    from = "release",
+                    where = { kind = "approval" },
+                })
+            end)
+
+            app:menu("Main", function(menu)
+                menu:item("Dashboard", "home")
+                menu:item("Approvals", "approvals", { badge = "approvals" })
+            end)
         "#,
     )
     .unwrap();
@@ -189,23 +205,29 @@ fn test_ui_load_time_intents_are_collected() {
     engine.load_dir(dir.path()).unwrap();
 
     let intents = engine.ui_intents().unwrap();
-    assert_eq!(intents.len(), 2);
-    assert!(matches!(
-        intents[0].intent,
-        turin_daemon_protocol::UiIntent::App(_)
-    ));
+    assert_eq!(intents.len(), 5);
+    let turin_daemon_protocol::UiIntent::App(app) = &intents[0].intent else {
+        panic!("expected app intent");
+    };
+    assert_eq!(app.id, "release");
+    assert_eq!(app.about.as_deref(), Some("Coordinate release checks"));
 
-    let turin_daemon_protocol::UiIntent::Home(home) = &intents[1].intent else {
-        panic!("expected home intent");
+    let turin_daemon_protocol::UiIntent::Screen(home) = &intents[1].intent else {
+        panic!("expected screen intent");
     };
     assert_eq!(home.title, "Release Desk");
+    assert_eq!(home.id, "home");
+    assert_eq!(home.app_id, "release");
     assert_eq!(home.nodes.len(), 3);
 
-    let turin_daemon_protocol::UiNode::Worklist(worklist) = &home.nodes[0] else {
-        panic!("expected worklist node");
+    let turin_daemon_protocol::UiNode::List(list) = &home.nodes[0] else {
+        panic!("expected list node");
     };
-    assert_eq!(worklist.id.as_deref(), Some("open-work"));
-    assert_eq!(worklist.source, "worklists.release");
+    assert_eq!(list.id.as_deref(), Some("open-work"));
+    assert_eq!(list.source, "worklists.release");
+    assert_eq!(list.intent.as_deref(), Some("approval"));
+    assert_eq!(list.render_as.as_deref(), Some("table"));
+    assert_eq!(list.filter["kind"], "approval");
 
     let turin_daemon_protocol::UiNode::Section(section) = &home.nodes[1] else {
         panic!("expected section node");
@@ -217,6 +239,27 @@ fn test_ui_load_time_intents_are_collected() {
     assert_eq!(action.label, "Run Smoke Tests");
     assert_eq!(action.action, "qa.run_smoke");
     assert_eq!(action.params["suite"], "smoke");
+
+    assert!(matches!(
+        intents[2].intent,
+        turin_daemon_protocol::UiIntent::OpensWith(_)
+    ));
+
+    let turin_daemon_protocol::UiIntent::Screen(approvals) = &intents[3].intent else {
+        panic!("expected approvals screen");
+    };
+    let turin_daemon_protocol::UiNode::List(list) = &approvals.nodes[0] else {
+        panic!("expected worklist sugar to create list node");
+    };
+    assert_eq!(list.source, "worklists.release");
+    assert_eq!(list.intent.as_deref(), Some("tasks"));
+    assert_eq!(list.render_as.as_deref(), Some("table"));
+
+    let turin_daemon_protocol::UiIntent::Menu(menu) = &intents[4].intent else {
+        panic!("expected menu intent");
+    };
+    assert_eq!(menu.items.len(), 2);
+    assert_eq!(menu.items[1].badge.as_deref(), Some("approvals"));
 }
 
 #[test]
@@ -225,13 +268,17 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
     std::fs::write(
         dir.path().join("ui.lua"),
         r#"
+            local app = ui.app("Release Operator", { id = "release" })
+
             function on_turn_prepare(_ctx)
-                ui.notice("Release blocked", {
+                app:notice("Release blocked", {
                     body = "QA failed",
                     level = "warning",
                 })
-                ui.focus("open-work")
-                ui.refresh("worklists.release")
+                app:open("approvals")
+                app:badge("approvals", { count = 3, level = "warning" })
+                app:focus("open-work")
+                app:refresh("worklists.release")
                 return ALLOW
             end
         "#,
@@ -240,7 +287,7 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
 
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(dir.path()).unwrap();
-    assert!(engine.ui_intents().unwrap().is_empty());
+    assert_eq!(engine.ui_intents().unwrap().len(), 1);
 
     let verdict = engine
         .evaluate("on_turn_prepare", serde_json::json!({}))
@@ -248,17 +295,25 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
     assert_eq!(verdict, Verdict::Allow);
 
     let intents = engine.ui_intents().unwrap();
-    assert_eq!(intents.len(), 3);
+    assert_eq!(intents.len(), 6);
     assert!(matches!(
-        intents[0].intent,
+        intents[1].intent,
         turin_daemon_protocol::UiIntent::Notify(_)
     ));
     assert!(matches!(
-        intents[1].intent,
+        intents[2].intent,
+        turin_daemon_protocol::UiIntent::Open(_)
+    ));
+    assert!(matches!(
+        intents[3].intent,
+        turin_daemon_protocol::UiIntent::Badge(_)
+    ));
+    assert!(matches!(
+        intents[4].intent,
         turin_daemon_protocol::UiIntent::Focus(_)
     ));
     assert!(matches!(
-        intents[2].intent,
+        intents[5].intent,
         turin_daemon_protocol::UiIntent::Refresh(_)
     ));
 }

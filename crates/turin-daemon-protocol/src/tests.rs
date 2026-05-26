@@ -159,16 +159,23 @@ fn handshake_round_trips_typed_shape() {
 }
 
 #[test]
-fn ui_home_intent_round_trips_as_event_payload() {
-    let message = UiIntentMessage::new(UiIntent::Home(UiHomeIntent {
+fn ui_screen_intent_round_trips_as_event_payload() {
+    let message = UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+        app_id: "release".to_string(),
+        id: "dashboard".to_string(),
         title: "Release Desk".to_string(),
-        subtitle: Some("Coordinate release checks".to_string()),
+        presentation: None,
         nodes: vec![
-            UiNode::Worklist(UiWorklistNode {
+            UiNode::List(UiListNode {
                 id: Some("open-work".to_string()),
                 title: "Open Work".to_string(),
                 source: "worklists.release".to_string(),
-                filters: serde_json::Map::new(),
+                filter: serde_json::Map::from_iter([("kind".to_string(), json!("approval"))]),
+                fields: Vec::new(),
+                sort: Vec::new(),
+                limit: None,
+                intent: Some("approval".to_string()),
+                render_as: Some("table".to_string()),
             }),
             UiNode::Section(UiSectionNode {
                 id: Some("controls".to_string()),
@@ -189,17 +196,24 @@ fn ui_home_intent_round_trips_as_event_payload() {
         ],
     }))
     .from_harness("release")
+    .for_app("release")
     .for_session("ui_123");
 
     let event = message.into_event().expect("serialize ui intent event");
 
     assert_eq!(event.event, UI_INTENT_EVENT);
     assert_eq!(event.data["version"], UI_INTENT_VERSION);
-    assert_eq!(event.data["type"], "home");
+    assert_eq!(event.data["type"], "screen");
     assert_eq!(event.data["source"]["harness_id"], "release");
+    assert_eq!(event.data["source"]["app_id"], "release");
     assert_eq!(event.data["recipient"]["ui_session_id"], "ui_123");
+    assert_eq!(event.data["app_id"], "release");
+    assert_eq!(event.data["id"], "dashboard");
     assert_eq!(event.data["title"], "Release Desk");
-    assert_eq!(event.data["nodes"][0]["kind"], "worklist");
+    assert_eq!(event.data["nodes"][0]["kind"], "list");
+    assert_eq!(event.data["nodes"][0]["intent"], "approval");
+    assert_eq!(event.data["nodes"][0]["as"], "table");
+    assert_eq!(event.data["nodes"][0]["where"]["kind"], "approval");
     assert_eq!(event.data["nodes"][1]["nodes"][0]["kind"], "action");
     assert_eq!(
         event.data["nodes"][1]["nodes"][0]["params"]["suite"],
@@ -210,15 +224,51 @@ fn ui_home_intent_round_trips_as_event_payload() {
         .expect("deserialize ui intent")
         .expect("ui intent event");
     match decoded.intent {
-        UiIntent::Home(home) => {
-            assert_eq!(home.title, "Release Desk");
-            assert_eq!(home.nodes.len(), 3);
-            assert!(matches!(home.nodes[0], UiNode::Worklist(_)));
-            assert!(matches!(home.nodes[1], UiNode::Section(_)));
-            assert!(matches!(home.nodes[2], UiNode::Activity(_)));
+        UiIntent::Screen(screen) => {
+            assert_eq!(screen.app_id, "release");
+            assert_eq!(screen.id, "dashboard");
+            assert_eq!(screen.title, "Release Desk");
+            assert_eq!(screen.nodes.len(), 3);
+            assert!(matches!(screen.nodes[0], UiNode::List(_)));
+            assert!(matches!(screen.nodes[1], UiNode::Section(_)));
+            assert!(matches!(screen.nodes[2], UiNode::Activity(_)));
         }
         other => panic!("unexpected ui intent: {other:?}"),
     }
+}
+
+#[test]
+fn ui_menu_intent_supports_nested_items() {
+    let message = UiIntentMessage::new(UiIntent::Menu(UiMenuIntent {
+        app_id: "ops".to_string(),
+        title: "Main".to_string(),
+        items: vec![UiMenuItem {
+            label: "Release".to_string(),
+            opens: "release.dashboard".to_string(),
+            id: None,
+            icon: Some("rocket".to_string()),
+            badge: Some("release".to_string()),
+            items: vec![UiMenuItem {
+                label: "Approvals".to_string(),
+                opens: "release.approvals".to_string(),
+                id: None,
+                icon: None,
+                badge: None,
+                items: Vec::new(),
+            }],
+        }],
+    }));
+
+    let value = serde_json::to_value(&message).expect("serialize menu");
+    assert_eq!(value["type"], "menu");
+    assert_eq!(value["items"][0]["label"], "Release");
+    assert_eq!(value["items"][0]["items"][0]["opens"], "release.approvals");
+
+    let decoded: UiIntentMessage = serde_json::from_value(value).expect("deserialize menu");
+    let UiIntent::Menu(menu) = decoded.intent else {
+        panic!("expected menu intent");
+    };
+    assert_eq!(menu.items[0].items[0].label, "Approvals");
 }
 
 #[test]
@@ -231,6 +281,7 @@ fn ui_intent_parser_ignores_unrelated_events() {
 #[test]
 fn ui_dynamic_intents_have_small_wire_shapes() {
     let notice = UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+        app_id: "release".to_string(),
         title: "Release blocked".to_string(),
         body: Some("QA failed".to_string()),
         level: Some(UiNoticeLevel::Warning),
@@ -241,6 +292,7 @@ fn ui_dynamic_intents_have_small_wire_shapes() {
     assert_eq!(notice_value["title"], "Release blocked");
 
     let focus = UiIntentMessage::new(UiIntent::Focus(UiFocusIntent {
+        app_id: "release".to_string(),
         target: "open-work".to_string(),
     }));
     let focus_value = serde_json::to_value(&focus).expect("serialize focus");
@@ -248,6 +300,7 @@ fn ui_dynamic_intents_have_small_wire_shapes() {
     assert_eq!(focus_value["target"], "open-work");
 
     let refresh = UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+        app_id: "release".to_string(),
         binding: "worklists.release".to_string(),
     }));
     let refresh_value = serde_json::to_value(&refresh).expect("serialize refresh");
