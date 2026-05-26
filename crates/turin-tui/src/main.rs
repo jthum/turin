@@ -37,8 +37,9 @@ use turin_ui_core::{
     ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
     ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
     ConnectionProfileSummary, DashboardFreshness, DashboardSnapshot, DashboardState,
-    OperatorCommand, UiController, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
-    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
+    OperatorCommand, UiAppRecord, UiController, UiUpdate, connect_dashboard,
+    ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
+    spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -67,6 +68,7 @@ enum TabKind {
     Chat,
     Search,
     Connections,
+    UiApps,
     Agents,
     LiveSessions,
     Sessions,
@@ -77,10 +79,11 @@ enum TabKind {
 }
 
 impl TabKind {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Chat,
         Self::Search,
         Self::Connections,
+        Self::UiApps,
         Self::Agents,
         Self::LiveSessions,
         Self::Sessions,
@@ -95,6 +98,7 @@ impl TabKind {
             Self::Chat => "Chat",
             Self::Search => "Search",
             Self::Connections => "Connections",
+            Self::UiApps => "UI Apps",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
             Self::Sessions => "Sessions",
@@ -126,12 +130,12 @@ impl TabKind {
             '1' => Some(Self::Chat),
             '2' => Some(Self::Search),
             '3' => Some(Self::Connections),
-            '4' => Some(Self::Agents),
-            '5' => Some(Self::LiveSessions),
-            '6' => Some(Self::Sessions),
-            '7' => Some(Self::Tasks),
-            '8' => Some(Self::Channels),
-            '9' => Some(Self::Events),
+            '4' => Some(Self::UiApps),
+            '5' => Some(Self::Agents),
+            '6' => Some(Self::LiveSessions),
+            '7' => Some(Self::Sessions),
+            '8' => Some(Self::Tasks),
+            '9' => Some(Self::Channels),
             '0' => Some(Self::Settings),
             _ => None,
         }
@@ -263,6 +267,7 @@ struct TuiApp {
     profile_index: usize,
     search_index: usize,
     recent_draft_index: usize,
+    ui_app_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -1378,6 +1383,7 @@ fn render_left_panel(frame: &mut Frame<'_>, app: &mut TuiApp, area: ratatui::lay
         TabKind::Chat => "Chat",
         TabKind::Search => "Search",
         TabKind::Connections => "Connections",
+        TabKind::UiApps => "UI Apps",
         TabKind::Agents => "Agents",
         TabKind::LiveSessions => "Live Sessions",
         TabKind::Sessions => "Stored Sessions",
@@ -1766,6 +1772,7 @@ impl TuiApp {
             profile_index: 0,
             search_index: 0,
             recent_draft_index: 0,
+            ui_app_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -1913,6 +1920,7 @@ impl TuiApp {
         self.search_index = clamp_index(self.search_index, self.search_hits().len());
         self.recent_draft_index =
             clamp_index(self.recent_draft_index, self.recent_drafts.drafts().len());
+        self.ui_app_index = clamp_index(self.ui_app_index, self.dashboard.ui.apps().count());
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -1945,6 +1953,7 @@ impl TuiApp {
             TabKind::Chat => self.chat_sidebar_index,
             TabKind::Search => self.search_index,
             TabKind::Connections => self.profile_index,
+            TabKind::UiApps => self.ui_app_index,
             TabKind::Agents => self.agent_index,
             TabKind::LiveSessions => self.live_session_index,
             TabKind::Sessions => self.session_index,
@@ -1960,6 +1969,7 @@ impl TuiApp {
             TabKind::Chat => self.chat_sidebar_index = value,
             TabKind::Search => self.search_index = value,
             TabKind::Connections => self.profile_index = value,
+            TabKind::UiApps => self.ui_app_index = value,
             TabKind::Agents => self.agent_index = value,
             TabKind::LiveSessions => self.live_session_index = value,
             TabKind::Sessions => self.session_index = value,
@@ -1979,6 +1989,7 @@ impl TuiApp {
                 .as_ref()
                 .map(|catalog| catalog.profiles().len())
                 .unwrap_or(0),
+            TabKind::UiApps => self.dashboard.ui.apps().count(),
             TabKind::Agents => self.dashboard.agents().len(),
             TabKind::LiveSessions => self.dashboard.live_sessions.len(),
             TabKind::Sessions => self.dashboard.sessions.len(),
@@ -2023,6 +2034,10 @@ impl TuiApp {
 
     fn selected_recent_draft(&self) -> Option<&ConnectionProfileDraft> {
         self.recent_drafts.drafts().get(self.recent_draft_index)
+    }
+
+    fn selected_ui_app(&self) -> Option<UiAppRecord> {
+        self.dashboard.ui.apps().nth(self.ui_app_index).cloned()
     }
 
     fn set_profile_draft(
@@ -5273,6 +5288,26 @@ impl TuiApp {
                         .collect()
                 })
                 .unwrap_or_default(),
+            TabKind::UiApps => self
+                .dashboard
+                .ui
+                .apps()
+                .map(|app| {
+                    let title = app
+                        .definition
+                        .as_ref()
+                        .map(|definition| definition.title.as_str())
+                        .unwrap_or(app.id.as_str());
+                    ListItem::new(format!(
+                        "{}  screens:{} panes:{} menus:{} badges:{}",
+                        title,
+                        app.screens.len(),
+                        app.panes.len(),
+                        app.menus.len(),
+                        app.badges.len()
+                    ))
+                })
+                .collect(),
             TabKind::Agents => self
                 .dashboard
                 .agents()
@@ -5533,6 +5568,39 @@ impl TuiApp {
                         .collect::<Vec<_>>(),
                 }))
             }
+            TabKind::UiApps => {
+                let selected = self.selected_ui_app();
+                pretty_json(&serde_json::json!({
+                    "app_count": self.dashboard.ui.apps().count(),
+                    "selected_app": selected.as_ref().map(|app| serde_json::json!({
+                        "id": app.id,
+                        "title": app.definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| app.id.clone()),
+                        "opens_with": app.opens_with,
+                        "screens": app.screens.values().map(|screen| serde_json::json!({
+                            "id": screen.id,
+                            "title": screen.title,
+                            "nodes": screen.nodes.len(),
+                        })).collect::<Vec<_>>(),
+                        "panes": app.panes.values().map(|pane| serde_json::json!({
+                            "id": pane.id,
+                            "title": pane.title,
+                            "nodes": pane.nodes.len(),
+                        })).collect::<Vec<_>>(),
+                        "menus": app.menus.iter().map(|menu| serde_json::json!({
+                            "title": menu.title,
+                            "items": menu.items.len(),
+                        })).collect::<Vec<_>>(),
+                        "badges": app.badges,
+                    })),
+                    "dynamic": {
+                        "notices": self.dashboard.ui.notices().iter().rev().take(8).collect::<Vec<_>>(),
+                        "opens": self.dashboard.ui.opens().iter().rev().take(8).collect::<Vec<_>>(),
+                        "shows": self.dashboard.ui.shows().iter().rev().take(8).collect::<Vec<_>>(),
+                        "focuses": self.dashboard.ui.focuses().iter().rev().take(8).collect::<Vec<_>>(),
+                        "refreshes": self.dashboard.ui.refreshes().iter().rev().take(8).collect::<Vec<_>>(),
+                    }
+                }))
+            }
             TabKind::Agents => self
                 .selected_agent()
                 .map(|agent| {
@@ -5745,6 +5813,9 @@ impl TuiApp {
             }
             TabKind::Connections => {
                 "Enter/s connect selected | C connect draft | T test draft | P test selected | E ensure draft local | S update selected | R load recent | [/ ] pick recent | v load current | b load selected | m/o cycle draft | t/g edit draft | a/A save as named | y/Y duplicate | u/U rename | d delete(confirm) | l reload"
+            }
+            TabKind::UiApps => {
+                "Read-only harness UI registry view. Clients own active screen and navigation state."
             }
             TabKind::Agents => "n or Enter opens a live session for the selected agent",
             TabKind::LiveSessions => {

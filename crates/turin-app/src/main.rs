@@ -20,8 +20,9 @@ use turin_ui_core::{
     ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
     ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
     ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
-    OperatorCommand, UiController, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
-    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
+    OperatorCommand, UiAppRecord, UiController, UiUpdate, connect_dashboard,
+    ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
+    spawn_controller,
 };
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,7 @@ struct Args {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
     Connections,
+    UiApps,
     Agents,
     LiveSessions,
     Sessions,
@@ -55,8 +57,9 @@ enum TabKind {
 }
 
 impl TabKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Connections,
+        Self::UiApps,
         Self::Agents,
         Self::LiveSessions,
         Self::Sessions,
@@ -68,6 +71,7 @@ impl TabKind {
     fn title(self) -> &'static str {
         match self {
             Self::Connections => "Connections",
+            Self::UiApps => "UI Apps",
             Self::Agents => "Agents",
             Self::LiveSessions => "Live Sessions",
             Self::Sessions => "Sessions",
@@ -146,6 +150,7 @@ struct TurinDesktopApp {
     tab: TabKind,
     profile_index: usize,
     recent_draft_index: usize,
+    ui_app_index: usize,
     agent_index: usize,
     live_session_index: usize,
     session_index: usize,
@@ -223,6 +228,7 @@ impl TurinDesktopApp {
             tab: TabKind::Connections,
             profile_index: 0,
             recent_draft_index: 0,
+            ui_app_index: 0,
             agent_index: 0,
             live_session_index: 0,
             session_index: 0,
@@ -278,6 +284,7 @@ impl TurinDesktopApp {
         );
         self.recent_draft_index =
             clamp_index(self.recent_draft_index, self.recent_drafts.drafts().len());
+        self.ui_app_index = clamp_index(self.ui_app_index, self.dashboard.ui.apps().count());
         self.agent_index = clamp_index(self.agent_index, self.dashboard.agents().len());
         self.live_session_index =
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
@@ -315,6 +322,10 @@ impl TurinDesktopApp {
 
     fn selected_recent_draft(&self) -> Option<&ConnectionProfileDraft> {
         self.recent_drafts.drafts().get(self.recent_draft_index)
+    }
+
+    fn selected_ui_app(&self) -> Option<UiAppRecord> {
+        self.dashboard.ui.apps().nth(self.ui_app_index).cloned()
     }
 
     fn set_profile_draft(
@@ -1103,6 +1114,7 @@ impl TurinDesktopApp {
     fn render_active_tab(&mut self, ui: &mut egui::Ui) {
         match self.tab {
             TabKind::Connections => self.render_connections_tab(ui),
+            TabKind::UiApps => self.render_ui_apps_tab(ui),
             TabKind::Agents => self.render_agents_tab(ui),
             TabKind::LiveSessions => self.render_live_sessions_tab(ui),
             TabKind::Sessions => self.render_sessions_tab(ui),
@@ -1662,6 +1674,118 @@ impl TurinDesktopApp {
                             );
                         }
                     });
+                }
+            });
+        });
+    }
+
+    fn render_ui_apps_tab(&mut self, ui: &mut egui::Ui) {
+        let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
+        let selected = self.selected_ui_app();
+
+        ui.columns(2, |columns| {
+            columns[0].group(|ui| {
+                ui.heading("Harness UI Apps");
+                ui.add_space(8.0);
+                if apps.is_empty() {
+                    ui.label("No harness UI apps are declared by the current runtime.");
+                } else {
+                    ScrollArea::vertical().show(ui, |ui| {
+                        for (index, app) in apps.iter().enumerate() {
+                            let title = app
+                                .definition
+                                .as_ref()
+                                .map(|definition| definition.title.as_str())
+                                .unwrap_or(app.id.as_str());
+                            let label = format!(
+                                "{}  screens:{} panes:{} menus:{}",
+                                title,
+                                app.screens.len(),
+                                app.panes.len(),
+                                app.menus.len()
+                            );
+                            if ui
+                                .selectable_label(index == self.ui_app_index, label)
+                                .clicked()
+                            {
+                                self.ui_app_index = index;
+                            }
+                        }
+                    });
+                }
+
+                ui.add_space(12.0);
+                ui.label(RichText::new("Dynamic UI Signals").strong());
+                detail_kv(ui, "Notices", self.dashboard.ui.notices().len().to_string());
+                detail_kv(
+                    ui,
+                    "Open Requests",
+                    self.dashboard.ui.opens().len().to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Show Requests",
+                    self.dashboard.ui.shows().len().to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Focus Requests",
+                    self.dashboard.ui.focuses().len().to_string(),
+                );
+                detail_kv(
+                    ui,
+                    "Refresh Requests",
+                    self.dashboard.ui.refreshes().len().to_string(),
+                );
+            });
+
+            columns[1].group(|ui| {
+                ui.heading("UI App Detail");
+                ui.add_space(8.0);
+                let Some(app) = selected else {
+                    ui.label("Select a UI app to inspect its declared surfaces.");
+                    return;
+                };
+
+                detail_kv(ui, "App ID", app.id.clone());
+                detail_kv(
+                    ui,
+                    "Title",
+                    app.definition
+                        .as_ref()
+                        .map(|definition| definition.title.clone())
+                        .unwrap_or_else(|| app.id.clone()),
+                );
+                detail_kv(
+                    ui,
+                    "Opens With",
+                    app.opens_with.clone().unwrap_or_else(|| "None".to_string()),
+                );
+                detail_kv(ui, "Screens", app.screens.len().to_string());
+                detail_kv(ui, "Panes", app.panes.len().to_string());
+                detail_kv(ui, "Menus", app.menus.len().to_string());
+                detail_kv(ui, "Badges", app.badges.len().to_string());
+
+                ui.add_space(10.0);
+                ui.label(RichText::new("Screens").strong());
+                for screen in app.screens.values() {
+                    ui.label(format!("{}  [{} nodes]", screen.title, screen.nodes.len()));
+                }
+
+                ui.add_space(10.0);
+                ui.label(RichText::new("Menus").strong());
+                for menu in &app.menus {
+                    ui.label(format!("{}  [{} items]", menu.title, menu.items.len()));
+                }
+
+                if !self.dashboard.ui.notices().is_empty() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Recent UI Notices").strong());
+                    for notice in self.dashboard.ui.notices().iter().rev().take(5) {
+                        if notice.app_id == app.id {
+                            ui.label(format!("{}: {}", notice.app_id, notice.title));
+                        }
+                    }
                 }
             });
         });
