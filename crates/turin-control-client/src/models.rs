@@ -67,6 +67,26 @@ pub struct HarnessRuntime {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct HarnessRuntimeList {
+    #[serde(default)]
+    pub(crate) harnesses: Vec<HarnessRuntime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessDetail {
+    pub harness_id: String,
+    pub directory: String,
+    #[serde(default)]
+    pub bound_agents: Vec<String>,
+    #[serde(default)]
+    pub watched_roots: Vec<String>,
+    #[serde(default)]
+    pub loaded_scripts: Vec<String>,
+    #[serde(default)]
+    pub ui_intents: Vec<UiIntentMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRuntime {
     pub agent_id: String,
     pub running: bool,
