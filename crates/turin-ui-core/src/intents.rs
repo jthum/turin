@@ -10,20 +10,32 @@ use turin_daemon_protocol::{
 
 pub const DEFAULT_MAX_UI_NOTICES: usize = 32;
 
+/// Client-side registry of UI facts and requests decoded from harness UI intents.
+///
+/// This type deliberately does not own navigation state such as the active app,
+/// screen, pane, modal, selection, or scroll position. Each client decides how
+/// to honor, defer, degrade, or ignore the recorded requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiIntentState {
+pub struct UiRegistry {
     #[serde(default)]
-    apps: BTreeMap<String, UiAppState>,
+    apps: BTreeMap<String, UiAppRecord>,
     #[serde(default = "default_max_notices")]
     max_notices: usize,
     #[serde(default)]
-    recent_notices: Vec<UiNoticeIntent>,
+    notices: Vec<UiNoticeIntent>,
     #[serde(default)]
-    pending_refreshes: Vec<UiRefreshIntent>,
+    opens: Vec<UiOpenIntent>,
+    #[serde(default)]
+    shows: Vec<UiShowIntent>,
+    #[serde(default)]
+    focuses: Vec<UiFocusIntent>,
+    #[serde(default)]
+    refreshes: Vec<UiRefreshIntent>,
 }
 
+/// Declared surfaces for one harness-defined app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UiAppState {
+pub struct UiAppRecord {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<UiAppIntent>,
@@ -35,29 +47,26 @@ pub struct UiAppState {
     pub menus: Vec<UiMenuIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opens_with: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_target: Option<String>,
-    #[serde(default)]
-    pub visible_targets: BTreeMap<String, UiShowIntent>,
     #[serde(default)]
     pub badges: BTreeMap<String, UiBadgeIntent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub focused: Option<UiFocusIntent>,
 }
 
-impl Default for UiIntentState {
+impl Default for UiRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UiIntentState {
+impl UiRegistry {
     pub fn new() -> Self {
         Self {
             apps: BTreeMap::new(),
             max_notices: DEFAULT_MAX_UI_NOTICES,
-            recent_notices: Vec::new(),
-            pending_refreshes: Vec::new(),
+            notices: Vec::new(),
+            opens: Vec::new(),
+            shows: Vec::new(),
+            focuses: Vec::new(),
+            refreshes: Vec::new(),
         }
     }
 
@@ -69,29 +78,41 @@ impl UiIntentState {
     }
 
     pub fn from_messages(messages: impl IntoIterator<Item = UiIntentMessage>) -> Self {
-        let mut state = Self::new();
-        state.apply_messages(messages);
-        state
+        let mut registry = Self::new();
+        registry.apply_messages(messages);
+        registry
     }
 
-    pub fn apps(&self) -> impl Iterator<Item = &UiAppState> {
+    pub fn apps(&self) -> impl Iterator<Item = &UiAppRecord> {
         self.apps.values()
     }
 
-    pub fn app(&self, app_id: &str) -> Option<&UiAppState> {
+    pub fn app(&self, app_id: &str) -> Option<&UiAppRecord> {
         self.apps.get(app_id)
     }
 
-    pub fn recent_notices(&self) -> &[UiNoticeIntent] {
-        &self.recent_notices
+    pub fn notices(&self) -> &[UiNoticeIntent] {
+        &self.notices
     }
 
-    pub fn pending_refreshes(&self) -> &[UiRefreshIntent] {
-        &self.pending_refreshes
+    pub fn opens(&self) -> &[UiOpenIntent] {
+        &self.opens
     }
 
-    pub fn take_pending_refreshes(&mut self) -> Vec<UiRefreshIntent> {
-        std::mem::take(&mut self.pending_refreshes)
+    pub fn shows(&self) -> &[UiShowIntent] {
+        &self.shows
+    }
+
+    pub fn focuses(&self) -> &[UiFocusIntent] {
+        &self.focuses
+    }
+
+    pub fn refreshes(&self) -> &[UiRefreshIntent] {
+        &self.refreshes
+    }
+
+    pub fn take_refreshes(&mut self) -> Vec<UiRefreshIntent> {
+        std::mem::take(&mut self.refreshes)
     }
 
     pub fn apply_event(&mut self, event: &EventEnvelope) -> Result<bool> {
@@ -130,9 +151,8 @@ impl UiIntentState {
             }
             UiIntent::Open(intent) => self.apply_open(intent),
             UiIntent::Show(intent) => {
-                self.ensure_app(intent.app_id.clone())
-                    .visible_targets
-                    .insert(intent.target.clone(), intent);
+                self.ensure_app(intent.app_id.clone());
+                self.shows.push(intent);
             }
             UiIntent::Notify(intent) => self.push_notice(intent),
             UiIntent::Badge(intent) => {
@@ -142,41 +162,40 @@ impl UiIntentState {
             }
             UiIntent::Focus(intent) => {
                 let app_id = intent.app_id.clone();
-                self.ensure_app(app_id).focused = Some(intent);
+                self.ensure_app(app_id);
+                self.focuses.push(intent);
             }
-            UiIntent::Refresh(intent) => self.pending_refreshes.push(intent),
+            UiIntent::Refresh(intent) => self.refreshes.push(intent),
         }
     }
 
     fn apply_opens_with(&mut self, intent: UiOpensWithIntent) {
         let app = self.ensure_app(intent.app_id);
-        if app.active_target.is_none() {
-            app.active_target = Some(intent.screen_id.clone());
-        }
         app.opens_with = Some(intent.screen_id);
     }
 
     fn apply_open(&mut self, intent: UiOpenIntent) {
-        self.ensure_app(intent.app_id).active_target = Some(intent.target);
+        self.ensure_app(intent.app_id.clone());
+        self.opens.push(intent);
     }
 
     fn push_notice(&mut self, intent: UiNoticeIntent) {
         self.ensure_app(intent.app_id.clone());
-        self.recent_notices.push(intent);
-        if self.recent_notices.len() > self.max_notices {
-            let drop_count = self.recent_notices.len() - self.max_notices;
-            self.recent_notices.drain(0..drop_count);
+        self.notices.push(intent);
+        if self.notices.len() > self.max_notices {
+            let drop_count = self.notices.len() - self.max_notices;
+            self.notices.drain(0..drop_count);
         }
     }
 
-    fn ensure_app(&mut self, app_id: String) -> &mut UiAppState {
+    fn ensure_app(&mut self, app_id: String) -> &mut UiAppRecord {
         self.apps
             .entry(app_id.clone())
-            .or_insert_with(|| UiAppState::new(app_id))
+            .or_insert_with(|| UiAppRecord::new(app_id))
     }
 }
 
-impl UiAppState {
+impl UiAppRecord {
     fn new(id: String) -> Self {
         Self {
             id,
@@ -185,10 +204,7 @@ impl UiAppState {
             panes: BTreeMap::new(),
             menus: Vec::new(),
             opens_with: None,
-            active_target: None,
-            visible_targets: BTreeMap::new(),
             badges: BTreeMap::new(),
-            focused: None,
         }
     }
 
@@ -219,7 +235,7 @@ mod tests {
 
     #[test]
     fn static_intents_index_apps_screens_menus_and_default_target() {
-        let state = UiIntentState::from_messages([
+        let registry = UiRegistry::from_messages([
             UiIntentMessage::new(UiIntent::App(UiAppIntent {
                 id: "release".to_string(),
                 title: "Release Operator".to_string(),
@@ -254,27 +270,26 @@ mod tests {
             })),
         ]);
 
-        let app = state.app("release").expect("release app");
+        let app = registry.app("release").expect("release app");
         assert_eq!(
             app.definition.as_ref().map(|app| app.title.as_str()),
             Some("Release Operator")
         );
         assert!(app.screens.contains_key("home"));
         assert_eq!(app.opens_with.as_deref(), Some("home"));
-        assert_eq!(app.active_target.as_deref(), Some("home"));
         assert_eq!(app.menus.len(), 1);
     }
 
     #[test]
-    fn dynamic_intents_update_navigation_badges_focus_and_bounded_notices() {
-        let mut state = UiIntentState::with_max_notices(2);
+    fn dynamic_intents_record_requests_badges_focuses_and_bounded_notices() {
+        let mut registry = UiRegistry::with_max_notices(2);
 
-        state.apply_message(UiIntentMessage::new(UiIntent::Open(UiOpenIntent {
+        registry.apply_message(UiIntentMessage::new(UiIntent::Open(UiOpenIntent {
             app_id: "release".to_string(),
             target: "approvals".to_string(),
             presentation: None,
         })));
-        state.apply_message(UiIntentMessage::new(UiIntent::Badge(UiBadgeIntent {
+        registry.apply_message(UiIntentMessage::new(UiIntent::Badge(UiBadgeIntent {
             app_id: "release".to_string(),
             target: "approvals".to_string(),
             count: Some(3),
@@ -282,42 +297,39 @@ mod tests {
             level: Some(UiNoticeLevel::Warning),
             data: Default::default(),
         })));
-        state.apply_message(UiIntentMessage::new(UiIntent::Focus(UiFocusIntent {
+        registry.apply_message(UiIntentMessage::new(UiIntent::Focus(UiFocusIntent {
             app_id: "release".to_string(),
             target: "open-work".to_string(),
         })));
         for title in ["first", "second", "third"] {
-            state.apply_message(UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+            registry.apply_message(UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
                 app_id: "release".to_string(),
                 title: title.to_string(),
                 body: None,
                 level: None,
             })));
         }
-        state.apply_message(UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+        registry.apply_message(UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
             app_id: "release".to_string(),
             binding: "worklists.release".to_string(),
         })));
 
-        let app = state.app("release").expect("release app");
-        assert_eq!(app.active_target.as_deref(), Some("approvals"));
+        let app = registry.app("release").expect("release app");
+        assert_eq!(registry.opens()[0].target, "approvals");
         assert_eq!(app.badges["approvals"].count, Some(3));
-        assert_eq!(
-            app.focused.as_ref().map(|focus| focus.target.as_str()),
-            Some("open-work")
-        );
-        assert_eq!(state.recent_notices().len(), 2);
-        assert_eq!(state.recent_notices()[0].title, "second");
-        assert_eq!(state.pending_refreshes().len(), 1);
-        assert_eq!(state.take_pending_refreshes().len(), 1);
-        assert!(state.pending_refreshes().is_empty());
+        assert_eq!(registry.focuses()[0].target, "open-work");
+        assert_eq!(registry.notices().len(), 2);
+        assert_eq!(registry.notices()[0].title, "second");
+        assert_eq!(registry.refreshes().len(), 1);
+        assert_eq!(registry.take_refreshes().len(), 1);
+        assert!(registry.refreshes().is_empty());
     }
 
     #[test]
     fn apply_event_ignores_unrelated_events_and_consumes_ui_intents() {
-        let mut state = UiIntentState::new();
+        let mut registry = UiRegistry::new();
         let unrelated = EventEnvelope::new("runtime.snapshot", json!({}));
-        assert!(!state.apply_event(&unrelated).expect("apply unrelated"));
+        assert!(!registry.apply_event(&unrelated).expect("apply unrelated"));
 
         let event = EventEnvelope::new(
             UI_INTENT_EVENT,
@@ -327,8 +339,8 @@ mod tests {
                 "title": "Release blocked"
             }),
         );
-        assert!(state.apply_event(&event).expect("apply ui event"));
-        assert_eq!(state.recent_notices().len(), 1);
-        assert!(state.app("release").is_some());
+        assert!(registry.apply_event(&event).expect("apply ui event"));
+        assert_eq!(registry.notices().len(), 1);
+        assert!(registry.app("release").is_some());
     }
 }

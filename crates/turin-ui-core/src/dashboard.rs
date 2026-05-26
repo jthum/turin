@@ -9,7 +9,7 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::{EventEnvelope, UiIntentMessage};
 
-use crate::{UiIntentState, controller::UiUpdate};
+use crate::{UiRegistry, controller::UiUpdate};
 
 const MAX_RECENT_EVENTS: usize = 64;
 const MAX_RECENT_NOTICES: usize = 16;
@@ -27,7 +27,7 @@ pub struct DashboardState {
     #[serde(default)]
     pub session_details: BTreeMap<String, SessionDetail>,
     #[serde(default)]
-    pub ui: UiIntentState,
+    pub ui: UiRegistry,
     pub recent_events: Vec<EventEnvelope>,
     #[serde(default)]
     pub recent_notices: Vec<DashboardNotice>,
@@ -106,7 +106,7 @@ impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
         let now = now_unix_ms();
-        let ui = UiIntentState::from_messages(ui_intents_from_status(&snapshot.status));
+        let ui = UiRegistry::from_messages(ui_intents_from_status(&snapshot.status));
         Ok(Self {
             connection_kind: snapshot.connection_kind,
             connection_target: snapshot.connection_target,
@@ -474,8 +474,8 @@ mod tests {
         dashboard.record_event(event);
 
         assert_eq!(dashboard.recent_events.len(), 1);
-        assert_eq!(dashboard.ui.recent_notices().len(), 1);
-        assert_eq!(dashboard.ui.recent_notices()[0].title, "Release blocked");
+        assert_eq!(dashboard.ui.notices().len(), 1);
+        assert_eq!(dashboard.ui.notices()[0].title, "Release blocked");
         assert!(dashboard.ui.app("release").is_some());
     }
 }

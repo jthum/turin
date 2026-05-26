@@ -17,4 +17,4 @@ pub use dashboard::{
     DashboardFreshness, DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot,
     DashboardState, format_relative_age,
 };
-pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppState, UiIntentState};
+pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
