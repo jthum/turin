@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use eframe::egui::{self, Color32, RichText, ScrollArea, TextEdit, Vec2};
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use turin_control_client::{
     AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
     SessionBranchDetail, SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::EventEnvelope;
+use turin_daemon_protocol::{EventEnvelope, UiNode, WorkItemList};
 use turin_types::layout::{
     DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_BOOTSTRAP_DAEMON_ENDPOINT_PATH, DEFAULT_UI_PROFILES_PATH,
 };
@@ -20,7 +21,7 @@ use turin_ui_core::{
     ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
     ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
     ConnectionProfileSummary, DashboardFreshness, DashboardNoticeLevel, DashboardState,
-    OperatorCommand, UiAppRecord, UiController, UiUpdate, connect_dashboard,
+    OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate, connect_dashboard,
     ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
     spawn_controller,
 };
@@ -130,6 +131,22 @@ fn connection_options(args: &Args) -> ConnectionOptions {
     }
 }
 
+fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
+    for node in nodes {
+        match node {
+            UiNode::Section(section) => collect_ui_list_requests(&section.nodes, out),
+            UiNode::List(list) if list.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: list.source.clone(),
+                    filter: list.filter.clone(),
+                    limit: list.limit,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
 fn configure_visuals(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.override_text_color = Some(Color32::from_rgb(240, 234, 224));
@@ -177,6 +194,8 @@ struct TurinDesktopApp {
     events_paused: bool,
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
+    ui_lists: BTreeMap<String, WorkItemList>,
+    requested_ui_lists: BTreeSet<String>,
     _runtime: Arc<Runtime>,
 }
 
@@ -255,6 +274,8 @@ impl TurinDesktopApp {
             events_paused: false,
             events_follow_latest: true,
             paused_events: Vec::new(),
+            ui_lists: BTreeMap::new(),
+            requested_ui_lists: BTreeSet::new(),
             _runtime: runtime,
         }
     }
@@ -266,6 +287,10 @@ impl TurinDesktopApp {
         if matches!(&update, UiUpdate::SessionEvent(_)) {
             self.clamp_selection_indices();
             return;
+        }
+        if let UiUpdate::UiListLoaded { request, items } = &update {
+            self.ui_lists
+                .insert(request.cache_key(), items.as_ref().clone());
         }
         self.dashboard.apply_update(update);
         if auto_follow_event {
@@ -326,6 +351,35 @@ impl TurinDesktopApp {
 
     fn selected_ui_app(&self) -> Option<UiAppRecord> {
         self.dashboard.ui.apps().nth(self.ui_app_index).cloned()
+    }
+
+    fn selected_ui_list_requests(&self) -> Vec<UiListRequest> {
+        let Some(app) = self.selected_ui_app() else {
+            return Vec::new();
+        };
+        let mut requests = Vec::new();
+        for screen in app.screens.values() {
+            collect_ui_list_requests(&screen.nodes, &mut requests);
+        }
+        for pane in app.panes.values() {
+            collect_ui_list_requests(&pane.nodes, &mut requests);
+        }
+        requests
+    }
+
+    fn request_selected_ui_lists(&mut self, force: bool) {
+        for request in self.selected_ui_list_requests() {
+            let key = request.cache_key();
+            if !force
+                && (self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key))
+            {
+                continue;
+            }
+            self.requested_ui_lists.insert(key);
+            self.send_command(OperatorCommand::LoadUiList {
+                request: Box::new(request),
+            });
+        }
     }
 
     fn set_profile_draft(
@@ -1680,8 +1734,10 @@ impl TurinDesktopApp {
     }
 
     fn render_ui_apps_tab(&mut self, ui: &mut egui::Ui) {
+        self.request_selected_ui_lists(false);
         let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
         let selected = self.selected_ui_app();
+        let list_requests = self.selected_ui_list_requests();
 
         ui.columns(2, |columns| {
             columns[0].group(|ui| {
@@ -1715,6 +1771,10 @@ impl TurinDesktopApp {
                 }
 
                 ui.add_space(12.0);
+                if ui.button("Refresh Selected Lists").clicked() {
+                    self.request_selected_ui_lists(true);
+                }
+                ui.add_space(8.0);
                 ui.label(RichText::new("Dynamic UI Signals").strong());
                 detail_kv(ui, "Notices", self.dashboard.ui.notices().len().to_string());
                 detail_kv(
@@ -1776,6 +1836,36 @@ impl TurinDesktopApp {
                 ui.label(RichText::new("Menus").strong());
                 for menu in &app.menus {
                     ui.label(format!("{}  [{} items]", menu.title, menu.items.len()));
+                }
+
+                if !list_requests.is_empty() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("List Data").strong());
+                    for request in &list_requests {
+                        let key = request.cache_key();
+                        ui.separator();
+                        ui.label(RichText::new(&request.source).strong());
+                        match self.ui_lists.get(&key) {
+                            Some(items) => {
+                                ui.label(format!("{} items", items.items.len()));
+                                for item in items.items.iter().take(8) {
+                                    ui.label(format!(
+                                        "{}  [{}]  {}",
+                                        item.title, item.status, item.public_id
+                                    ));
+                                }
+                                if items.items.len() > 8 {
+                                    ui.label(format!("... and {} more", items.items.len() - 8));
+                                }
+                            }
+                            None if self.requested_ui_lists.contains(&key) => {
+                                ui.label("Loading...");
+                            }
+                            None => {
+                                ui.label("Not loaded.");
+                            }
+                        }
+                    }
                 }
 
                 if !self.dashboard.ui.notices().is_empty() {

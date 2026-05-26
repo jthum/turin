@@ -21,7 +21,7 @@ use settings::{
     ChatInspectorPane, ChatSidebarPane, LoadedTuiSettings, TuiSettings, load_settings,
     save_settings,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::stdout;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -30,14 +30,16 @@ use turin_control_client::{
     ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, PendingChannelRoom,
     SessionSearchHit as PersistedSessionSearchHit, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, SessionSearchHitKind, SessionSearchScope};
+use turin_daemon_protocol::{
+    EventEnvelope, SessionSearchHitKind, SessionSearchScope, UiNode, WorkItemList,
+};
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightOutcome,
     ConnectionPreflightReport, ConnectionProfileActivityBook, ConnectionProfileAuth,
     ConnectionProfileCatalog, ConnectionProfileDraft, ConnectionProfileDraftAuthMode,
     ConnectionProfileDraftDiff, ConnectionProfileDraftValidation, ConnectionProfileKind,
     ConnectionProfileSummary, DashboardFreshness, DashboardSnapshot, DashboardState,
-    OperatorCommand, UiAppRecord, UiController, UiUpdate, connect_dashboard,
+    OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate, connect_dashboard,
     ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
     spawn_controller,
 };
@@ -304,6 +306,8 @@ struct TuiApp {
     events_paused: bool,
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
+    ui_lists: BTreeMap<String, WorkItemList>,
+    requested_ui_lists: BTreeSet<String>,
     live_transcripts: BTreeMap<String, LiveTranscriptState>,
     channel_access: BTreeMap<String, ChannelAccessState>,
     channel_details: BTreeMap<String, ChannelDetail>,
@@ -516,6 +520,22 @@ fn connection_options(args: &Args) -> ConnectionOptions {
     }
 }
 
+fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
+    for node in nodes {
+        match node {
+            UiNode::Section(section) => collect_ui_list_requests(&section.nodes, out),
+            UiNode::List(list) if list.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: list.source.clone(),
+                    filter: list.filter.clone(),
+                    limit: list.limit,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn run_shell(
     terminal: &mut DefaultTerminal,
     initial_connection_options: ConnectionOptions,
@@ -629,6 +649,7 @@ fn run_app(
         app.ensure_session_detail_loaded(&controller.command_tx)?;
         app.ensure_channel_access_loaded(&controller.command_tx)?;
         app.ensure_channel_detail_loaded(&controller.command_tx)?;
+        app.ensure_ui_lists_loaded(&controller.command_tx)?;
 
         if event::poll(Duration::from_millis(16)).context("Failed to poll terminal events")? {
             loop {
@@ -659,6 +680,7 @@ fn run_app(
         app.ensure_session_detail_loaded(&controller.command_tx)?;
         app.ensure_channel_access_loaded(&controller.command_tx)?;
         app.ensure_channel_detail_loaded(&controller.command_tx)?;
+        app.ensure_ui_lists_loaded(&controller.command_tx)?;
 
         terminal.draw(|frame| render(frame, app))?;
     }
@@ -1809,6 +1831,8 @@ impl TuiApp {
             events_paused: false,
             events_follow_latest: true,
             paused_events: Vec::new(),
+            ui_lists: BTreeMap::new(),
+            requested_ui_lists: BTreeSet::new(),
             live_transcripts: BTreeMap::new(),
             channel_access: BTreeMap::new(),
             channel_details: BTreeMap::new(),
@@ -1893,6 +1917,10 @@ impl TuiApp {
                     self.search_loading = false;
                     self.search_has_more = *has_more;
                 }
+            }
+            UiUpdate::UiListLoaded { request, items } => {
+                self.ui_lists
+                    .insert(request.cache_key(), items.as_ref().clone());
             }
             UiUpdate::RefreshTelemetry { .. } | UiUpdate::Info(_) => {}
             UiUpdate::Error(_) => {
@@ -2038,6 +2066,53 @@ impl TuiApp {
 
     fn selected_ui_app(&self) -> Option<UiAppRecord> {
         self.dashboard.ui.apps().nth(self.ui_app_index).cloned()
+    }
+
+    fn selected_ui_list_requests(&self) -> Vec<UiListRequest> {
+        let Some(app) = self.selected_ui_app() else {
+            return Vec::new();
+        };
+        let mut requests = Vec::new();
+        for screen in app.screens.values() {
+            collect_ui_list_requests(&screen.nodes, &mut requests);
+        }
+        for pane in app.panes.values() {
+            collect_ui_list_requests(&pane.nodes, &mut requests);
+        }
+        requests
+    }
+
+    fn ensure_ui_lists_loaded(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+    ) -> Result<()> {
+        if self.tab != TabKind::UiApps {
+            return Ok(());
+        }
+        self.request_selected_ui_lists(command_tx, false)
+    }
+
+    fn request_selected_ui_lists(
+        &mut self,
+        command_tx: &tokio::sync::mpsc::UnboundedSender<OperatorCommand>,
+        force: bool,
+    ) -> Result<()> {
+        for request in self.selected_ui_list_requests() {
+            let key = request.cache_key();
+            if !force
+                && (self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key))
+            {
+                continue;
+            }
+            self.requested_ui_lists.insert(key);
+            send_command(
+                command_tx,
+                OperatorCommand::LoadUiList {
+                    request: Box::new(request),
+                },
+            )?;
+        }
+        Ok(())
     }
 
     fn set_profile_draft(
@@ -5570,6 +5645,7 @@ impl TuiApp {
             }
             TabKind::UiApps => {
                 let selected = self.selected_ui_app();
+                let list_requests = self.selected_ui_list_requests();
                 pretty_json(&serde_json::json!({
                     "app_count": self.dashboard.ui.apps().count(),
                     "selected_app": selected.as_ref().map(|app| serde_json::json!({
@@ -5592,6 +5668,26 @@ impl TuiApp {
                         })).collect::<Vec<_>>(),
                         "badges": app.badges,
                     })),
+                    "lists": list_requests.iter().map(|request| {
+                        let key = request.cache_key();
+                        serde_json::json!({
+                            "source": request.source,
+                            "where": request.filter,
+                            "limit": request.limit,
+                            "loaded": self.ui_lists.get(&key).map(|items| serde_json::json!({
+                                "worklist_id": items.worklist_id,
+                                "count": items.items.len(),
+                                "items": items.items.iter().take(12).map(|item| serde_json::json!({
+                                    "id": item.public_id,
+                                    "title": item.title,
+                                    "status": item.status,
+                                    "kind": item.kind,
+                                    "priority": item.priority,
+                                })).collect::<Vec<_>>(),
+                            })),
+                            "loading": self.requested_ui_lists.contains(&key) && !self.ui_lists.contains_key(&key),
+                        })
+                    }).collect::<Vec<_>>(),
                     "dynamic": {
                         "notices": self.dashboard.ui.notices().iter().rev().take(8).collect::<Vec<_>>(),
                         "opens": self.dashboard.ui.opens().iter().rev().take(8).collect::<Vec<_>>(),

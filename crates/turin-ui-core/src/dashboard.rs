@@ -187,6 +187,7 @@ impl DashboardState {
             UiUpdate::ChannelDetail { .. } => {}
             UiUpdate::ChannelAccess { .. } => {}
             UiUpdate::SearchResults { .. } => {}
+            UiUpdate::UiListLoaded { .. } => {}
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::SessionEvent(_) => {}
             UiUpdate::RefreshTelemetry {

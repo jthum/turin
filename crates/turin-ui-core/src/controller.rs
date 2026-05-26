@@ -14,7 +14,10 @@ use turin_control_client::{
     ChannelAccessState, ChannelDetail, ConnectionSpec, ControlClient, SessionDetail,
     SessionSearchHit,
 };
-use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope};
+use turin_daemon_protocol::{
+    EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope, WorkItemList,
+    WorklistItemsParams, WorklistListParams,
+};
 use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_UI_PROFILES_PATH};
 
 use crate::{DashboardSnapshot, DashboardState};
@@ -61,6 +64,10 @@ pub enum UiUpdate {
         has_more: bool,
         hits: Vec<SessionSearchHit>,
     },
+    UiListLoaded {
+        request: Box<UiListRequest>,
+        items: Box<WorkItemList>,
+    },
     Event(EventEnvelope),
     SessionEvent(EventEnvelope),
     RefreshTelemetry {
@@ -91,6 +98,9 @@ pub enum OperatorCommand {
         scope: SessionSearchScope,
         limit: usize,
         offset: usize,
+    },
+    LoadUiList {
+        request: Box<UiListRequest>,
     },
     OpenSession {
         agent_id: String,
@@ -147,6 +157,25 @@ pub enum OperatorCommand {
     CancelTask {
         request_id: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UiListRequest {
+    pub source: String,
+    #[serde(
+        default,
+        rename = "where",
+        skip_serializing_if = "serde_json::Map::is_empty"
+    )]
+    pub filter: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl UiListRequest {
+    pub fn cache_key(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| self.source.clone())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1756,6 +1785,28 @@ fn spawn_command_task(
                 continue;
             }
 
+            if let OperatorCommand::LoadUiList { request } = &command {
+                match load_ui_list(&client, request.as_ref()).await {
+                    Ok(items) => {
+                        if tx
+                            .send(UiUpdate::UiListLoaded {
+                                request: request.clone(),
+                                items: Box::new(items),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if let OperatorCommand::ApproveChannelRoom {
                 channel_id,
                 workspace_id,
@@ -1967,6 +2018,44 @@ fn spawn_command_task(
     });
 }
 
+async fn load_ui_list(client: &ControlClient, request: &UiListRequest) -> Result<WorkItemList> {
+    let worklist_name = request
+        .source
+        .strip_prefix("worklists.")
+        .ok_or_else(|| anyhow!("unsupported UI list source '{}'", request.source))?;
+    if worklist_name.is_empty() {
+        return Err(anyhow!(
+            "UI list source '{}' is missing a worklist name",
+            request.source
+        ));
+    }
+
+    let worklists = client
+        .list_worklists(WorklistListParams {
+            persistence: None,
+            name: Some(worklist_name.to_string()),
+            scope: None,
+        })
+        .await?;
+    let Some(worklist) = worklists.first() else {
+        return Err(anyhow!("worklist '{}' was not found", worklist_name));
+    };
+
+    client
+        .list_worklist_items(WorklistItemsParams {
+            id: worklist.public_id.clone(),
+            persistence: worklist.persistence.clone(),
+            status: None,
+            parent_id: None,
+            r#where: (!request.filter.is_empty()).then(|| request.filter.clone()),
+            claimed_only: false,
+            paused_only: false,
+            due_only: false,
+            limit: request.limit,
+        })
+        .await
+}
+
 pub async fn execute_operator_command(
     client: &ControlClient,
     command: OperatorCommand,
@@ -1982,6 +2071,7 @@ pub async fn execute_operator_command(
         OperatorCommand::SearchSessions { .. } => {
             Ok("Loaded persisted session search results".to_string())
         }
+        OperatorCommand::LoadUiList { .. } => Ok("Loaded UI list".to_string()),
         OperatorCommand::OpenSession { agent_id } => {
             let session = client.open_session(&agent_id, None).await?;
             Ok(format!(
