@@ -252,3 +252,35 @@ pub(super) fn start_task_event_poller(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turin_daemon_protocol::{UiIntent, UiIntentMessage, UiNoticeIntent};
+
+    #[test]
+    fn ui_kernel_events_emit_protocol_payload_with_scope_metadata() {
+        let event = KernelEvent::Ui(UiEvent::Intent {
+            intent: UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+                app_id: "release".to_string(),
+                title: "Release blocked".to_string(),
+                body: None,
+                level: None,
+            })),
+        });
+
+        let envelope = kernel_event_envelope("agent-1", "session-1", "slot-1", &event);
+
+        assert_eq!(envelope.event, turin_daemon_protocol::UI_INTENT_EVENT);
+        assert_eq!(envelope.data["type"], "notify");
+        assert_eq!(envelope.data["app_id"], "release");
+        assert_eq!(envelope.data["agent_id"], "agent-1");
+        assert_eq!(envelope.data["session_id"], "session-1");
+        assert_eq!(envelope.data["slot_id"], "slot-1");
+
+        let decoded = UiIntentMessage::from_event(&envelope)
+            .expect("parse ui event")
+            .expect("ui intent event");
+        assert!(matches!(decoded.intent, UiIntent::Notify(_)));
+    }
+}

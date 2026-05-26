@@ -290,7 +290,9 @@ Current v0 behavior:
 - `screen:list(...)` is the generic collection primitive
 - `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
-- app-scoped methods such as `app:notice(...)` and `app:open(...)` record dynamic client-facing intent
+- load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots
+- hook-time app-scoped methods such as `app:notice(...)` and `app:open(...)` emit ephemeral `ui.intent` session events
+- dynamic UI intent events are client-facing signals; they are not persisted into session history
 - actions reference named Turin actions; durable side effects should stay in actions/runtime primitives
 - clients are responsible for rendering, degrading, or ignoring UI intent according to their capabilities
 
