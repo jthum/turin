@@ -223,6 +223,16 @@ app:home("Release Desk", function(screen)
     })
   end)
 
+  screen:form("Create Demo Work", {
+    id = "seed-demo-form",
+    action = "release.seed_demo_work",
+    params = { release = "2026.06", count = 1 },
+    fields = {
+      { name = "release", label = "Release", type = "text", default = "2026.06" },
+      { name = "count", label = "Count", type = "number", default = 1, required = true },
+    },
+  })
+
   screen:activity("Release Activity", {
     from = "signals.release",
   })
@@ -283,6 +293,16 @@ end
 - `screen:report(title, opts?)`
 - `screen:chart(title, opts?)`
 
+Form options:
+
+- `opts.action` names the Turin action to run on submit.
+- `opts.params` supplies base action params. Client-entered field values are
+  merged over these params by field name.
+- `opts.fields` is an array of `{ name, label, type?/kind?, default?, required?, options? }`.
+- `type` is accepted as DX sugar for the protocol field `kind`.
+- clients may validate and coerce common field kinds such as `text`, `number`,
+  `integer`, and `boolean`; unsupported kinds should degrade to text input.
+
 Current v0 behavior:
 
 - `ui.app(...)` returns an app object and records app intent
@@ -290,6 +310,8 @@ Current v0 behavior:
 - `screen:list(...)` is the generic collection primitive
 - `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
+- desktop clients can render editable forms; terminal clients may expose form
+  metadata and submit defaults until a terminal input mode exists
 - load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots
 - hook-time app-scoped methods such as `app:notice(...)` and `app:open(...)` emit ephemeral `ui.intent` session events
 - dynamic UI intent events are client-facing signals; they are not persisted into session history

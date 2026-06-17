@@ -207,6 +207,7 @@ struct TurinDesktopApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
+    ui_form_values: BTreeMap<String, String>,
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
@@ -313,6 +314,7 @@ impl TurinDesktopApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
+            ui_form_values: BTreeMap::new(),
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
@@ -338,6 +340,7 @@ impl TurinDesktopApp {
             self.ui_lists.insert(key, items.as_ref().clone());
         }
         self.dashboard.apply_update(update);
+        self.apply_ui_navigation_intents();
         let refreshed = self.apply_ui_refresh_intents();
         if harness_action_ran && refreshed == 0 {
             self.request_selected_ui_lists(true);
@@ -475,6 +478,94 @@ impl TurinDesktopApp {
             self.request_ui_list(request, true);
         }
         count
+    }
+
+    fn apply_ui_navigation_intents(&mut self) {
+        for open in self.dashboard.ui.take_opens() {
+            self.apply_ui_open_request(&open.app_id, &open.target, "open");
+        }
+        for show in self.dashboard.ui.take_shows() {
+            self.apply_ui_show_request(&show.app_id, &show.target);
+        }
+        for focus in self.dashboard.ui.take_focuses() {
+            self.apply_ui_focus_request(&focus.app_id, &focus.target);
+        }
+    }
+
+    fn apply_ui_open_request(&mut self, app_id: &str, target: &str, label: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        let Some(screen_index) = harness_ui::screen_index_for_target(&app, target) else {
+            self.dashboard.record_error(format!(
+                "UI {label} target '{target}' is not a screen in '{app_id}'"
+            ));
+            return;
+        };
+        self.open_harness_screen(&app, screen_index);
+        self.dashboard
+            .record_info(format!("Opened '{target}' from ui.{label}"));
+    }
+
+    fn apply_ui_show_request(&mut self, app_id: &str, target: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        if harness_ui::screen_index_for_target(&app, target).is_some() {
+            self.apply_ui_open_request(app_id, target, "show");
+            return;
+        }
+        if app.panes.contains_key(target) {
+            self.dashboard.record_info(format!(
+                "turin-app noted ui.show pane '{target}' in '{app_id}', but panes are not rendered yet"
+            ));
+        } else {
+            self.dashboard.record_error(format!(
+                "UI show target '{target}' is not a screen or pane in '{app_id}'"
+            ));
+        }
+    }
+
+    fn apply_ui_focus_request(&mut self, app_id: &str, target: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        let Some(target) = harness_ui::find_focus_target(&app, target) else {
+            self.dashboard.record_error(format!(
+                "UI focus target '{target}' was not found in '{app_id}'"
+            ));
+            return;
+        };
+        match target {
+            harness_ui::HarnessFocusTarget::Screen { screen_index }
+            | harness_ui::HarnessFocusTarget::Node { screen_index } => {
+                self.open_harness_screen(&app, screen_index);
+            }
+        }
+    }
+
+    fn select_ui_app_by_id(&mut self, app_id: &str) -> Option<UiAppRecord> {
+        let Some((index, app)) = self
+            .dashboard
+            .ui
+            .apps()
+            .cloned()
+            .enumerate()
+            .find(|(_, app)| app.id == app_id)
+        else {
+            self.dashboard
+                .record_error(format!("UI app '{app_id}' is not declared"));
+            return None;
+        };
+        self.ui_app_index = index;
+        Some(app)
+    }
+
+    fn open_harness_screen(&mut self, app: &UiAppRecord, screen_index: usize) {
+        self.tab = TabKind::UiApps;
+        self.ui_screen_indices.insert(app.id.clone(), screen_index);
+        self.request_selected_ui_lists(false);
+        self.clamp_selection_indices();
     }
 
     fn set_profile_draft(
@@ -2081,6 +2172,7 @@ impl TurinDesktopApp {
                     &mut screen_index,
                     &self.ui_lists,
                     &self.requested_ui_lists,
+                    &mut self.ui_form_values,
                 );
                 self.ui_screen_indices.insert(app.id.clone(), screen_index);
                 if let Some(event) = event {
@@ -2200,11 +2292,7 @@ impl TurinDesktopApp {
     fn handle_harness_ui_event(&mut self, app: &UiAppRecord, event: HarnessUiEvent) {
         match event {
             HarnessUiEvent::OpenScreen(target) => {
-                if let Some(target_index) = app
-                    .screens
-                    .values()
-                    .position(|screen| screen.id == target || screen.title == target)
-                {
+                if let Some(target_index) = harness_ui::screen_index_for_target(app, &target) {
                     self.ui_screen_indices.insert(app.id.clone(), target_index);
                 } else {
                     self.dashboard.record_error(format!(
@@ -2226,6 +2314,9 @@ impl TurinDesktopApp {
                     self.pending_harness_ui_action = None;
                     self.run_harness_ui_action(pending);
                 }
+            }
+            HarnessUiEvent::FormError(message) => {
+                self.dashboard.record_error(message);
             }
         }
     }

@@ -219,6 +219,20 @@ fn ui_screen_intent_round_trips_as_event_payload() {
                     confirm: false,
                 })],
             }),
+            UiNode::Form(UiFormNode {
+                id: Some("seed-demo-form".to_string()),
+                title: "Create Demo Work".to_string(),
+                action: "release.seed_demo_work".to_string(),
+                fields: vec![UiFormField {
+                    name: "count".to_string(),
+                    label: "Count".to_string(),
+                    kind: Some("number".to_string()),
+                    default: Some(json!(4)),
+                    required: Some(true),
+                    options: Vec::new(),
+                }],
+                params: json!({ "release": "2026.06" }),
+            }),
             UiNode::Activity(UiActivityNode {
                 id: Some("activity".to_string()),
                 title: "Release Activity".to_string(),
@@ -250,6 +264,9 @@ fn ui_screen_intent_round_trips_as_event_payload() {
         event.data["nodes"][1]["nodes"][0]["params"]["suite"],
         "smoke"
     );
+    assert_eq!(event.data["nodes"][2]["kind"], "form");
+    assert_eq!(event.data["nodes"][2]["fields"][0]["kind"], "number");
+    assert_eq!(event.data["nodes"][2]["fields"][0]["default"], 4);
 
     let decoded = UiIntentMessage::from_event(&event)
         .expect("deserialize ui intent")
@@ -259,13 +276,30 @@ fn ui_screen_intent_round_trips_as_event_payload() {
             assert_eq!(screen.app_id, "release");
             assert_eq!(screen.id, "dashboard");
             assert_eq!(screen.title, "Release Desk");
-            assert_eq!(screen.nodes.len(), 3);
+            assert_eq!(screen.nodes.len(), 4);
             assert!(matches!(screen.nodes[0], UiNode::List(_)));
             assert!(matches!(screen.nodes[1], UiNode::Section(_)));
-            assert!(matches!(screen.nodes[2], UiNode::Activity(_)));
+            assert!(matches!(screen.nodes[2], UiNode::Form(_)));
+            assert!(matches!(screen.nodes[3], UiNode::Activity(_)));
         }
         other => panic!("unexpected ui intent: {other:?}"),
     }
+}
+
+#[test]
+fn ui_form_field_accepts_type_alias_and_default() {
+    let decoded: UiFormField = serde_json::from_value(json!({
+        "name": "release",
+        "label": "Release",
+        "type": "text",
+        "default": "2026.06",
+        "required": true
+    }))
+    .expect("deserialize form field");
+
+    assert_eq!(decoded.kind.as_deref(), Some("text"));
+    assert_eq!(decoded.default.as_ref(), Some(&json!("2026.06")));
+    assert_eq!(decoded.required, Some(true));
 }
 
 #[test]

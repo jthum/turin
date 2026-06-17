@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use eframe::egui::{self, RichText};
-use serde_json::Value;
+use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
     UiActionNode, UiActivityNode, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
     UiNode, UiReportNode, UiSectionNode, UiTextNode, WorkItemDetail, WorkItemList,
@@ -19,14 +19,68 @@ pub(super) enum HarnessUiEvent {
         params: Value,
         confirm: bool,
     },
+    FormError(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HarnessFocusTarget {
+    Screen { screen_index: usize },
+    Node { screen_index: usize },
 }
 
 pub(super) fn default_screen_index(app: &UiAppRecord) -> usize {
-    let screens = app.screens.values().collect::<Vec<_>>();
     app.opens_with
         .as_deref()
-        .and_then(|target| screens.iter().position(|screen| screen.id == target))
+        .and_then(|target| screen_index_for_target(app, target))
         .unwrap_or_default()
+}
+
+pub(super) fn screen_index_for_target(app: &UiAppRecord, target: &str) -> Option<usize> {
+    app.screens
+        .values()
+        .position(|screen| screen.id == target || screen.title == target)
+}
+
+pub(super) fn find_focus_target(app: &UiAppRecord, target: &str) -> Option<HarnessFocusTarget> {
+    if let Some(screen_index) = screen_index_for_target(app, target) {
+        return Some(HarnessFocusTarget::Screen { screen_index });
+    }
+
+    for (screen_index, screen) in app.screens.values().enumerate() {
+        if nodes_contain_target(&screen.nodes, target) {
+            return Some(HarnessFocusTarget::Node { screen_index });
+        }
+    }
+    None
+}
+
+fn nodes_contain_target(nodes: &[UiNode], target: &str) -> bool {
+    nodes.iter().any(|node| match node {
+        UiNode::Section(section) => {
+            node_id_matches(section.id.as_deref(), target)
+                || nodes_contain_target(&section.nodes, target)
+        }
+        UiNode::Text(text) => node_id_matches(text.id.as_deref(), target),
+        UiNode::Action(action) => {
+            node_id_matches(action.id.as_deref(), target)
+                || action.action == target
+                || action.label == target
+        }
+        UiNode::List(list) => node_id_matches(list.id.as_deref(), target),
+        UiNode::Activity(activity) => node_id_matches(activity.id.as_deref(), target),
+        UiNode::Detail(detail) => node_id_matches(detail.id.as_deref(), target),
+        UiNode::Form(form) => {
+            node_id_matches(form.id.as_deref(), target)
+                || form.action == target
+                || form.title == target
+        }
+        UiNode::Report(report) => node_id_matches(report.id.as_deref(), target),
+        UiNode::Chart(chart) => node_id_matches(chart.id.as_deref(), target),
+    })
+}
+
+fn node_id_matches(id: Option<&str>, target: &str) -> bool {
+    id == Some(target)
 }
 
 pub(super) fn render_harness_app(
@@ -35,6 +89,7 @@ pub(super) fn render_harness_app(
     screen_index: &mut usize,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    form_values: &mut BTreeMap<String, String>,
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     let screens = app.screens.values().collect::<Vec<_>>();
@@ -76,7 +131,15 @@ pub(super) fn render_harness_app(
                 }
             });
             ui.add_space(8.0);
-            render_nodes(ui, &screen.nodes, lists, requested_lists, &mut event);
+            render_nodes(
+                ui,
+                app,
+                &screen.nodes,
+                lists,
+                requested_lists,
+                form_values,
+                &mut event,
+            );
         } else {
             ui.label("This app has no declared screens yet.");
         }
@@ -142,9 +205,11 @@ fn render_menu_items(ui: &mut egui::Ui, items: &[UiMenuItem], event: &mut Option
 
 fn render_nodes(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     nodes: &[UiNode],
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    form_values: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     if nodes.is_empty() {
@@ -154,13 +219,15 @@ fn render_nodes(
 
     for node in nodes {
         match node {
-            UiNode::Section(section) => render_section(ui, section, lists, requested_lists, event),
+            UiNode::Section(section) => {
+                render_section(ui, app, section, lists, requested_lists, form_values, event)
+            }
             UiNode::Text(text) => render_text(ui, text),
             UiNode::Action(action) => render_action(ui, action, event),
             UiNode::List(list) => render_list(ui, list, lists, requested_lists),
             UiNode::Activity(activity) => render_activity(ui, activity),
             UiNode::Detail(detail) => render_detail(ui, detail),
-            UiNode::Form(form) => render_form(ui, form, event),
+            UiNode::Form(form) => render_form(ui, app, form, form_values, event),
             UiNode::Report(report) => render_report(ui, report),
             UiNode::Chart(chart) => render_chart(ui, chart),
         }
@@ -170,15 +237,25 @@ fn render_nodes(
 
 fn render_section(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     section: &UiSectionNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    form_values: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.heading(section.title.clone());
         ui.add_space(8.0);
-        render_nodes(ui, &section.nodes, lists, requested_lists, event);
+        render_nodes(
+            ui,
+            app,
+            &section.nodes,
+            lists,
+            requested_lists,
+            form_values,
+            event,
+        );
     });
 }
 
@@ -324,7 +401,13 @@ fn render_detail(ui: &mut egui::Ui, detail: &UiDetailNode) {
     );
 }
 
-fn render_form(ui: &mut egui::Ui, form: &UiFormNode, event: &mut Option<HarnessUiEvent>) {
+fn render_form(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    form: &UiFormNode,
+    form_values: &mut BTreeMap<String, String>,
+    event: &mut Option<HarnessUiEvent>,
+) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(form.title.clone()).strong());
@@ -332,16 +415,8 @@ fn render_form(ui: &mut egui::Ui, form: &UiFormNode, event: &mut Option<HarnessU
         });
         ui.add_space(8.0);
         for field in &form.fields {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(field.label.clone()).strong());
-                ui.add(cast::Badge::new(field.name.clone()));
-                if let Some(kind) = &field.kind {
-                    ui.add(cast::Badge::new(kind.clone()).variant(cast::Variant::Outline));
-                }
-                if field.required.unwrap_or(false) {
-                    ui.add(cast::Badge::new("required").intent(cast::Intent::Warning));
-                }
-            });
+            render_form_field(ui, app, form, field, form_values);
+            ui.add_space(6.0);
         }
         ui.add_space(8.0);
         if ui
@@ -352,14 +427,179 @@ fn render_form(ui: &mut egui::Ui, form: &UiFormNode, event: &mut Option<HarnessU
             )
             .clicked()
         {
-            *event = Some(HarnessUiEvent::RunAction {
-                label: form.title.clone(),
-                action: form.action.clone(),
-                params: form.params.clone(),
-                confirm: false,
-            });
+            match form_params(app, form, form_values) {
+                Ok(params) => {
+                    *event = Some(HarnessUiEvent::RunAction {
+                        label: form.title.clone(),
+                        action: form.action.clone(),
+                        params,
+                        confirm: false,
+                    });
+                }
+                Err(message) => *event = Some(HarnessUiEvent::FormError(message)),
+            }
         }
     });
+}
+
+fn render_form_field(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    form: &UiFormNode,
+    field: &turin_daemon_protocol::UiFormField,
+    form_values: &mut BTreeMap<String, String>,
+) {
+    let key = form_field_key(app, form, field);
+    form_values
+        .entry(key.clone())
+        .or_insert_with(|| default_form_value(form, field));
+
+    let kind = normalized_field_kind(field);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(field.label.clone()).strong());
+        ui.add(cast::Badge::new(field.name.clone()));
+        ui.add(cast::Badge::new(kind.clone()).variant(cast::Variant::Outline));
+        if field.required.unwrap_or(false) {
+            ui.add(cast::Badge::new("required").intent(cast::Intent::Warning));
+        }
+    });
+
+    if !field.options.is_empty() {
+        let labels = field
+            .options
+            .iter()
+            .map(form_value_string)
+            .collect::<Vec<_>>();
+        let current = form_values.get(&key).cloned().unwrap_or_default();
+        let mut selected = labels
+            .iter()
+            .position(|label| *label == current)
+            .unwrap_or_default();
+        ui.add(cast::Select::new(&mut selected, labels.clone()).width(240.0));
+        if let Some(label) = labels.get(selected) {
+            form_values.insert(key, label.clone());
+        }
+        return;
+    }
+
+    if matches!(kind.as_str(), "bool" | "boolean" | "checkbox" | "switch") {
+        let mut checked = form_values
+            .get(&key)
+            .is_some_and(|value| matches!(value.as_str(), "true" | "1" | "yes" | "on"));
+        ui.add(cast::Checkbox::new(&mut checked, ""));
+        form_values.insert(key, checked.to_string());
+        return;
+    }
+
+    let value = form_values.get_mut(&key).expect("form value initialized");
+    if kind == "textarea" || kind == "markdown" {
+        ui.add(
+            cast::TextArea::new(value)
+                .rows(3)
+                .width(ui.available_width()),
+        );
+    } else {
+        ui.add(
+            cast::TextInput::new(value)
+                .hint_text(field.name.clone())
+                .width(260.0),
+        );
+    }
+}
+
+fn form_params(
+    app: &UiAppRecord,
+    form: &UiFormNode,
+    form_values: &BTreeMap<String, String>,
+) -> Result<Value, String> {
+    let mut params = form.params.as_object().cloned().unwrap_or_else(Map::new);
+    for field in &form.fields {
+        let key = form_field_key(app, form, field);
+        let value = form_values
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| default_form_value(form, field));
+        if field.required.unwrap_or(false) && value.trim().is_empty() {
+            return Err(format!("Form field '{}' is required", field.label));
+        }
+        if value.trim().is_empty() && !field.required.unwrap_or(false) {
+            continue;
+        }
+        params.insert(field.name.clone(), parse_form_value(field, &value)?);
+    }
+    Ok(Value::Object(params))
+}
+
+fn parse_form_value(
+    field: &turin_daemon_protocol::UiFormField,
+    value: &str,
+) -> Result<Value, String> {
+    match normalized_field_kind(field).as_str() {
+        "number" | "float" | "decimal" => {
+            let parsed = value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("Form field '{}' must be a valid number", field.label))?;
+            Number::from_f64(parsed)
+                .map(Value::Number)
+                .ok_or_else(|| format!("Form field '{}' must be a finite number", field.label))
+        }
+        "int" | "integer" => value
+            .trim()
+            .parse::<i64>()
+            .map(|value| Value::Number(value.into()))
+            .map_err(|_| format!("Form field '{}' must be a valid integer", field.label)),
+        "bool" | "boolean" | "checkbox" | "switch" => {
+            Ok(Value::Bool(matches!(value, "true" | "1" | "yes" | "on")))
+        }
+        _ => Ok(Value::String(value.to_string())),
+    }
+}
+
+fn form_field_key(
+    app: &UiAppRecord,
+    form: &UiFormNode,
+    field: &turin_daemon_protocol::UiFormField,
+) -> String {
+    format!(
+        "{}:{}:{}",
+        app.id,
+        form.id.as_deref().unwrap_or(&form.title),
+        field.name
+    )
+}
+
+fn default_form_value(form: &UiFormNode, field: &turin_daemon_protocol::UiFormField) -> String {
+    field
+        .default
+        .as_ref()
+        .or_else(|| form.params.get(&field.name))
+        .map(form_value_string)
+        .or_else(|| field.options.first().map(form_value_string))
+        .unwrap_or_else(|| {
+            if matches!(
+                normalized_field_kind(field).as_str(),
+                "bool" | "boolean" | "checkbox" | "switch"
+            ) {
+                "false".to_string()
+            } else {
+                String::new()
+            }
+        })
+}
+
+fn normalized_field_kind(field: &turin_daemon_protocol::UiFormField) -> String {
+    field.kind.as_deref().unwrap_or("text").to_ascii_lowercase()
+}
+
+fn form_value_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
+    }
 }
 
 fn render_report(ui: &mut egui::Ui, report: &UiReportNode) {

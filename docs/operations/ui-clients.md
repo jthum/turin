@@ -34,8 +34,8 @@ Both clients can talk to:
   suggestions
 
 `turin-app` is the broader graphical operator console. It currently has more
-desktop-specific surface area, including the connection profile editor and wider
-runtime tabs.
+desktop-specific surface area, including the connection profile editor, editable
+harness forms, dynamic UI navigation, and wider runtime tabs.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those
@@ -184,6 +184,7 @@ The TUI renders harness UI contracts semantically:
 - screens and menus become terminal navigation
 - nested menu items are flattened with indentation
 - worklist-backed lists become compact terminal tables
+- forms show field metadata, defaults, and the submit action
 - unsupported list sources remain visible with source/intent/rendering metadata
 - desktop-only surfaces such as panes degrade to notices until the TUI has a
   native terminal representation for them
@@ -194,6 +195,8 @@ The TUI renders harness UI contracts semantically:
 - `turin-tui` does not currently include an interactive connection profile
   editor.
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
+- `turin-tui` does not yet have an interactive form input mode; `turin-app`
+  renders editable harness forms.
 - `turin-tui` does not yet render pane/detail/report/chart nodes beyond
   semantic placeholders.
 - `turin-app` remains the richer graphical surface while the TUI proves the

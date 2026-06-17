@@ -281,7 +281,12 @@ async fn control_client_release_operator_ui_smoke() -> Result<()> {
                 if screen.id == "intake"
                     && screen.nodes.iter().any(|node| {
                         matches!(node, turin_daemon_protocol::UiNode::Form(form)
-                            if form.id.as_deref() == Some("seed-demo-form"))
+                            if form.id.as_deref() == Some("seed-demo-form")
+                                && form.fields.iter().any(|field| {
+                                    field.name == "count"
+                                        && field.kind.as_deref() == Some("number")
+                                        && field.default.as_ref() == Some(&serde_json::json!(1))
+                                }))
                     })
         )
     }));

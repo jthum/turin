@@ -543,9 +543,22 @@ fn render_form(form: &UiFormNode, lines: &mut Vec<Line<'static>>, depth: usize) 
     ));
     for field in &form.fields {
         let kind = field.kind.as_deref().unwrap_or("value");
+        let required = if field.required.unwrap_or(false) {
+            " required"
+        } else {
+            ""
+        };
+        let default = field
+            .default
+            .as_ref()
+            .or_else(|| form.params.get(&field.name))
+            .map(json_value)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!(" default={value}"))
+            .unwrap_or_default();
         lines.push(indent_line(
             depth + 1,
-            format!("{}: {kind}", field.label),
+            format!("{}: {kind}{required}{default}", field.label),
             theme::base(),
         ));
     }

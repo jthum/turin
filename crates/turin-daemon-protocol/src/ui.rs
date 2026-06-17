@@ -332,8 +332,10 @@ pub struct UiFormNode {
 pub struct UiFormField {
     pub name: String,
     pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "type", skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
