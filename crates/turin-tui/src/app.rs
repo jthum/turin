@@ -1282,9 +1282,16 @@ fn json_preview(value: &Value, max_chars: usize) -> String {
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
     let mut out = String::new();
+    let take_chars = max_chars - 3;
     for (index, ch) in value.chars().enumerate() {
-        if index >= max_chars {
+        if index >= take_chars {
             out.push_str("...");
             return out;
         }

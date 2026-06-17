@@ -48,6 +48,9 @@ and `turin-daemon-protocol`.
 - Rendering functions should not perform daemon requests directly.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
+- Worklist-backed `list` nodes render as compact terminal tables. Other list
+  sources remain visible with metadata and an explicit unsupported-adapter
+  message until the client has a loader for that source.
 - Keep keyboard behavior discoverable through the help overlay/footer.
 - Prefer small modules over rebuilding a monolithic terminal app.
 

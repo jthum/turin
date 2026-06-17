@@ -309,7 +309,15 @@ pub fn render_harness_screen(
         ]),
         Line::from(""),
     ];
-    render_nodes(&screen.nodes, lists, requested_lists, &mut lines, 0);
+    let max_width = area.width.saturating_sub(4) as usize;
+    render_nodes(
+        &screen.nodes,
+        lists,
+        requested_lists,
+        &mut lines,
+        0,
+        max_width,
+    );
     frame.render_widget(panel("Screen", lines), area);
 }
 
@@ -319,6 +327,7 @@ fn render_nodes(
     requested_lists: &BTreeSet<String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
+    max_width: usize,
 ) {
     for node in nodes {
         match node {
@@ -328,7 +337,14 @@ fn render_nodes(
             }
             UiNode::Section(section) => {
                 lines.push(indent_line(depth, section.title.clone(), theme::accent()));
-                render_nodes(&section.nodes, lists, requested_lists, lines, depth + 1);
+                render_nodes(
+                    &section.nodes,
+                    lists,
+                    requested_lists,
+                    lines,
+                    depth + 1,
+                    max_width,
+                );
             }
             UiNode::Action(action) => {
                 let marker = if action.confirm { "!" } else { "→" };
@@ -342,7 +358,9 @@ fn render_nodes(
                     },
                 ));
             }
-            UiNode::List(list) => render_list(list, lists, requested_lists, lines, depth),
+            UiNode::List(list) => {
+                render_list(list, lists, requested_lists, lines, depth, max_width)
+            }
             UiNode::Form(form) => render_form(form, lines, depth),
             UiNode::Activity(activity) => lines.push(indent_line(
                 depth,
@@ -374,18 +392,41 @@ fn render_list(
     requested_lists: &BTreeSet<String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
+    max_width: usize,
 ) {
+    let mut meta = vec![list.source.clone()];
+    if let Some(intent) = &list.intent {
+        meta.push(format!("intent={intent}"));
+    }
+    if let Some(render_as) = &list.render_as {
+        meta.push(format!("as={render_as}"));
+    }
+    if let Some(limit) = list.limit {
+        meta.push(format!("limit={limit}"));
+    }
     lines.push(indent_line(
         depth,
-        format!("{}  {}", list.title, list.source),
+        format!("{}  {}", list.title, meta.join("  ")),
         theme::accent(),
     ));
+    if list
+        .render_as
+        .as_deref()
+        .is_some_and(|render_as| render_as != "table")
+    {
+        lines.push(indent_line(
+            depth + 1,
+            "Terminal fallback: rendering this list as a compact table".to_string(),
+            theme::muted(),
+        ));
+    }
     if !list.source.starts_with("worklists.") {
         lines.push(indent_line(
             depth + 1,
-            "Unsupported list source in TUI".to_string(),
+            "No terminal data adapter exists for this list source yet".to_string(),
             theme::muted(),
         ));
+        lines.push(Line::from(""));
         return;
     }
 
@@ -396,7 +437,7 @@ fn render_list(
     };
     let key = request.cache_key();
     match lists.get(&key) {
-        Some(items) => render_work_items(list, items, lines, depth + 1),
+        Some(items) => render_work_items(list, items, lines, depth + 1, max_width),
         None if requested_lists.contains(&key) => lines.push(indent_line(
             depth + 1,
             "Loading list data...".to_string(),
@@ -416,6 +457,7 @@ fn render_work_items(
     items: &WorkItemList,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
+    max_width: usize,
 ) {
     if items.items.is_empty() {
         lines.push(indent_line(depth, "No items".to_string(), theme::muted()));
@@ -432,22 +474,60 @@ fn render_work_items(
     } else {
         list.fields.clone()
     };
-    lines.push(indent_line(depth, fields.join("  |  "), theme::muted()));
-    for item in items.items.iter().take(10) {
-        let row = fields
+    let widths = table_widths(&fields, max_width.saturating_sub(depth * 2));
+    lines.push(indent_line(
+        depth,
+        table_row(&fields, &widths),
+        theme::muted(),
+    ));
+    for item in items.items.iter().take(12) {
+        let values = fields
             .iter()
             .map(|field| work_item_field(item, field))
-            .collect::<Vec<_>>()
-            .join("  |  ");
-        lines.push(indent_line(depth, truncate(&row, 110), theme::base()));
-    }
-    if items.items.len() > 10 {
+            .collect::<Vec<_>>();
         lines.push(indent_line(
             depth,
-            format!("… {} more", items.items.len() - 10),
+            table_row(&values, &widths),
+            theme::base(),
+        ));
+    }
+    if items.items.len() > 12 {
+        lines.push(indent_line(
+            depth,
+            format!("... {} more", items.items.len() - 12),
             theme::muted(),
         ));
     }
+}
+
+fn table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    let separator_width = fields.len().saturating_sub(1) * 3;
+    let available = max_width
+        .saturating_sub(separator_width)
+        .max(fields.len() * 6);
+    let width = (available / fields.len()).clamp(6, 28);
+    vec![width; fields.len()]
+}
+
+fn table_row(values: &[String], widths: &[usize]) -> String {
+    values
+        .iter()
+        .zip(widths.iter())
+        .map(|(value, width)| pad_cell(value, *width))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn pad_cell(value: &str, width: usize) -> String {
+    let value = truncate(value, width);
+    let len = value.chars().count();
+    if len >= width {
+        return value;
+    }
+    format!("{value}{}", " ".repeat(width - len))
 }
 
 fn render_form(form: &UiFormNode, lines: &mut Vec<Line<'static>>, depth: usize) {
@@ -533,9 +613,16 @@ fn indent_line(depth: usize, text: String, style: Style) -> Line<'static> {
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
     let mut out = String::new();
+    let take_chars = max_chars - 3;
     for (index, ch) in value.chars().enumerate() {
-        if index >= max_chars {
+        if index >= take_chars {
             out.push_str("...");
             return out;
         }
@@ -724,5 +811,28 @@ mod tests {
                 if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("home")
         ));
         assert_eq!(find_focus_target(&app, "unknown"), None);
+    }
+
+    #[test]
+    fn table_rows_are_bounded_and_padded() {
+        let fields = vec![
+            "title".to_string(),
+            "status".to_string(),
+            "priority".to_string(),
+        ];
+        let widths = table_widths(&fields, 36);
+        let row = table_row(
+            &[
+                "A very long release approval title".to_string(),
+                "pending".to_string(),
+                "10".to_string(),
+            ],
+            &widths,
+        );
+
+        assert!(widths.iter().all(|width| (6..=28).contains(width)));
+        assert!(row.len() <= 36);
+        assert!(row.contains("..."));
+        assert!(row.contains("pending"));
     }
 }
