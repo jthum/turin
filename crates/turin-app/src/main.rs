@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use turin_control_client::{
-    AgentRuntime, AgentSummary, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession,
-    SessionBranchDetail, SessionDetail, SessionSummary, TaskStatus,
+    AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
+    SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{EventEnvelope, UiNode, WorkItemList};
 use turin_types::layout::{
@@ -944,10 +944,6 @@ impl TurinDesktopApp {
                     .record_error(format!("Failed to connect UI client: {err}"));
             }
         }
-    }
-
-    fn selected_agent(&self) -> Option<AgentSummary> {
-        self.dashboard.agents().get(self.agent_index).cloned()
     }
 
     fn selected_agent_runtime(&self, agent_id: &str) -> Option<AgentRuntime> {
@@ -1956,30 +1952,46 @@ impl TurinDesktopApp {
 
     fn render_agents_tab(&mut self, ui: &mut egui::Ui) {
         let agents = self.dashboard.agents().to_vec();
-        let selected_agent = self.selected_agent();
+        self.agent_index = clamp_index(self.agent_index, agents.len());
+        let selected_agent = agents.get(self.agent_index).cloned();
         let selected_runtime = selected_agent
             .as_ref()
             .and_then(|agent| self.selected_agent_runtime(&agent.id));
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Agents");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Agents");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} agents", agents.len())));
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, agent) in agents.iter().enumerate() {
-                        let label = format!("{}  [{} / {}]", agent.id, agent.provider, agent.model);
-                        if ui
-                            .selectable_label(index == self.agent_index, label)
-                            .clicked()
-                        {
-                            self.agent_index = index;
-                        }
-                    }
+                    let labels = agents
+                        .iter()
+                        .map(|agent| format!("{} · {} / {}", agent.id, agent.provider, agent.model))
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.agent_index, labels).size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Agent Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Agent Detail");
+                    if let Some(agent) = &selected_agent {
+                        ui.add(
+                            cast::Badge::new(if agent.enabled { "Enabled" } else { "Disabled" })
+                                .intent(if agent.enabled {
+                                    cast::Intent::Success
+                                } else {
+                                    cast::Intent::Warning
+                                })
+                                .status_dot(),
+                        );
+                    }
+                });
                 ui.add_space(8.0);
                 if let Some(agent) = selected_agent {
                     detail_kv(ui, "Agent", &agent.id);
@@ -1990,7 +2002,18 @@ impl TurinDesktopApp {
 
                     if let Some(runtime) = selected_runtime {
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Runtime").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("Runtime").strong());
+                            ui.add(
+                                cast::Badge::new(if runtime.running { "Running" } else { "Idle" })
+                                    .intent(if runtime.running {
+                                        cast::Intent::Success
+                                    } else {
+                                        cast::Intent::Neutral
+                                    })
+                                    .status_dot(),
+                            );
+                        });
                         detail_kv(ui, "Running", yes_no(runtime.running));
                         detail_kv(ui, "Active Tasks", runtime.active_tasks.to_string());
                         detail_kv(ui, "Queued Tasks", runtime.queued_tasks.to_string());
@@ -2005,7 +2028,7 @@ impl TurinDesktopApp {
                     }
 
                     ui.add_space(12.0);
-                    if ui.button("Open Live Session").clicked() {
+                    if ui.add(cast::Button::new("Open Live Session")).clicked() {
                         self.send_command(OperatorCommand::OpenSession {
                             agent_id: agent.id.clone(),
                         });
@@ -2020,31 +2043,54 @@ impl TurinDesktopApp {
 
     fn render_live_sessions_tab(&mut self, ui: &mut egui::Ui) {
         let live_sessions = self.dashboard.live_sessions.clone();
-        let selected = self.selected_live_session();
+        self.live_session_index = clamp_index(self.live_session_index, live_sessions.len());
+        let selected = live_sessions.get(self.live_session_index).cloned();
         let selected_detail = self.selected_session_detail().cloned();
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Live Sessions");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Live Sessions");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} live", live_sessions.len())));
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, session) in live_sessions.iter().enumerate() {
-                        let label = format!(
-                            "{}  [{} | slot {}]",
-                            session.session_id, session.agent_id, session.slot_id
-                        );
-                        if ui
-                            .selectable_label(index == self.live_session_index, label)
-                            .clicked()
-                        {
-                            self.live_session_index = index;
-                        }
-                    }
+                    let labels = live_sessions
+                        .iter()
+                        .map(|session| {
+                            format!(
+                                "{} · {} · slot {}",
+                                session.session_id, session.agent_id, session.slot_id
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.live_session_index, labels)
+                            .size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Live Session Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Live Session Detail");
+                    if let Some(session) = &selected {
+                        ui.add(
+                            cast::Badge::new(if session.running {
+                                "Running"
+                            } else {
+                                "Stopped"
+                            })
+                            .intent(if session.running {
+                                cast::Intent::Success
+                            } else {
+                                cast::Intent::Warning
+                            })
+                            .status_dot(),
+                        );
+                    }
+                });
                 ui.add_space(8.0);
                 if let Some(session) = selected {
                     detail_kv(ui, "Session", &session.session_id);
@@ -2064,37 +2110,57 @@ impl TurinDesktopApp {
 
                     ui.add_space(12.0);
                     ui.label(RichText::new("Prompt Composer").strong());
-                    ui.add(
-                        TextEdit::multiline(&mut self.prompt_input)
-                            .desired_rows(8)
-                            .hint_text("Write a prompt for the selected live session"),
-                    );
+                    let composer = cast::AgentComposer::new(&mut self.prompt_input)
+                        .placeholder("Write a prompt for the selected live session")
+                        .send_label("Submit Prompt")
+                        .tool_label("Tools")
+                        .rows(8)
+                        .enabled(session.running)
+                        .show(ui)
+                        .inner;
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        let can_submit = !self.prompt_input.trim().is_empty();
-                        if ui
-                            .add_enabled(can_submit, egui::Button::new("Submit Prompt"))
-                            .clicked()
-                        {
+                        if composer.submitted && !self.prompt_input.trim().is_empty() {
                             let prompt = mem::take(&mut self.prompt_input);
                             self.send_command(OperatorCommand::SubmitPrompt {
                                 session_id: session.session_id.clone(),
                                 prompt,
                             });
                         }
-                        if ui.button("Clear").clicked() {
+                        if ui
+                            .add(
+                                cast::Button::new("Clear")
+                                    .size(cast::Size::Small)
+                                    .variant(cast::Variant::Ghost),
+                            )
+                            .clicked()
+                        {
                             self.prompt_input.clear();
                         }
                     });
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel Session").clicked() {
+                        if ui
+                            .add(
+                                cast::Button::new("Cancel Session")
+                                    .intent(cast::Intent::Warning)
+                                    .variant(cast::Variant::Outline),
+                            )
+                            .clicked()
+                        {
                             self.send_command(OperatorCommand::CancelSession {
                                 session_id: session.session_id.clone(),
                             });
                         }
-                        if ui.button("Kill Session").clicked() {
+                        if ui
+                            .add(
+                                cast::Button::new("Kill Session")
+                                    .intent(cast::Intent::Danger)
+                                    .variant(cast::Variant::Outline),
+                            )
+                            .clicked()
+                        {
                             self.send_command(OperatorCommand::KillSession {
                                 session_id: session.session_id.clone(),
                             });
