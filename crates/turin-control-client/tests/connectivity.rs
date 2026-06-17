@@ -194,67 +194,7 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn control_client_local_health_and_events_work() -> Result<()> {
-    let daemon = DaemonHarness::start().await?;
-    let client = ControlClient::connect(&ConnectionSpec::LocalEndpoint {
-        endpoint: daemon.endpoint.clone(),
-    })
-    .await?;
-
-    let health = client.health().await?;
-    assert!(health.ready);
-    assert_eq!(
-        health.connection_kind,
-        turin_control_client::ConnectionKind::Local
-    );
-
-    let mut stream = client
-        .subscribe_managed(RuntimeEventsSubscribeParams::default())
-        .await?;
-    let event = stream.next_event().await?;
-    assert_eq!(event.event, "runtime.snapshot");
-    assert_session_and_task_workflow(&client).await?;
-
-    daemon.stop().await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn control_client_remote_health_and_events_work() -> Result<()> {
-    let daemon = DaemonHarness::start().await?;
-    let remote = RemoteHarness::start(&daemon.config_path).await?;
-    let client = ControlClient::connect(&ConnectionSpec::Remote {
-        base_url: remote.base_url.clone(),
-        auth_token: "test-token".to_string(),
-    })
-    .await?;
-
-    let health = client.health().await?;
-    assert!(health.ready);
-    assert_eq!(health.connection_kind, ConnectionKind::Remote);
-
-    let mut stream = client
-        .subscribe_managed(RuntimeEventsSubscribeParams::default())
-        .await?;
-    let event = stream.next_event().await?;
-    assert_eq!(event.event, "runtime.snapshot");
-    assert_session_and_task_workflow(&client).await?;
-
-    remote.stop().await?;
-    daemon.stop().await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn control_client_release_operator_ui_smoke() -> Result<()> {
-    let daemon = DaemonHarness::start_with_harness(include_str!(
-        "../../../examples/harnesses/ui_release_operator/main.lua"
-    ))
-    .await?;
-    let client = ControlClient::connect(&ConnectionSpec::LocalEndpoint {
-        endpoint: daemon.endpoint.clone(),
-    })
-    .await?;
-
+async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<()> {
     let intents = client.list_harness_ui_intents("default").await?;
     assert!(intents.iter().any(|message| {
         matches!(
@@ -365,5 +305,93 @@ async fn control_client_release_operator_ui_smoke() -> Result<()> {
         .await?;
     assert_eq!(remaining.items.len(), 3);
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_client_local_health_and_events_work() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let client = ControlClient::connect(&ConnectionSpec::LocalEndpoint {
+        endpoint: daemon.endpoint.clone(),
+    })
+    .await?;
+
+    let health = client.health().await?;
+    assert!(health.ready);
+    assert_eq!(
+        health.connection_kind,
+        turin_control_client::ConnectionKind::Local
+    );
+
+    let mut stream = client
+        .subscribe_managed(RuntimeEventsSubscribeParams::default())
+        .await?;
+    let event = stream.next_event().await?;
+    assert_eq!(event.event, "runtime.snapshot");
+    assert_session_and_task_workflow(&client).await?;
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_client_remote_health_and_events_work() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+    let remote = RemoteHarness::start(&daemon.config_path).await?;
+    let client = ControlClient::connect(&ConnectionSpec::Remote {
+        base_url: remote.base_url.clone(),
+        auth_token: "test-token".to_string(),
+    })
+    .await?;
+
+    let health = client.health().await?;
+    assert!(health.ready);
+    assert_eq!(health.connection_kind, ConnectionKind::Remote);
+
+    let mut stream = client
+        .subscribe_managed(RuntimeEventsSubscribeParams::default())
+        .await?;
+    let event = stream.next_event().await?;
+    assert_eq!(event.event, "runtime.snapshot");
+    assert_session_and_task_workflow(&client).await?;
+
+    remote.stop().await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_client_release_operator_ui_smoke() -> Result<()> {
+    let daemon = DaemonHarness::start_with_harness(include_str!(
+        "../../../examples/harnesses/ui_release_operator/main.lua"
+    ))
+    .await?;
+    let client = ControlClient::connect(&ConnectionSpec::LocalEndpoint {
+        endpoint: daemon.endpoint.clone(),
+    })
+    .await?;
+
+    assert_release_operator_ui_workflow(&client).await?;
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_client_release_operator_ui_smoke_remote() -> Result<()> {
+    let daemon = DaemonHarness::start_with_harness(include_str!(
+        "../../../examples/harnesses/ui_release_operator/main.lua"
+    ))
+    .await?;
+    let remote = RemoteHarness::start(&daemon.config_path).await?;
+    let client = ControlClient::connect(&ConnectionSpec::Remote {
+        base_url: remote.base_url.clone(),
+        auth_token: "test-token".to_string(),
+    })
+    .await?;
+
+    let health = client.health().await?;
+    assert!(health.ready);
+    assert_eq!(health.connection_kind, ConnectionKind::Remote);
+    assert_release_operator_ui_workflow(&client).await?;
+
+    remote.stop().await?;
     daemon.stop().await
 }
