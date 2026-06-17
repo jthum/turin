@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use clap::Parser;
-use eframe::egui::{self, Color32, RichText, ScrollArea, TextEdit, Vec2};
+use eframe::egui::{self, Color32, RichText, ScrollArea, Vec2};
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 use std::path::PathBuf;
@@ -1364,12 +1364,9 @@ impl TurinDesktopApp {
                     }
                     ui.add_space(6.0);
                     if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::InlineToken {
-                        ui.label(
-                            RichText::new(profile_auth_value_label(self.profile_draft.auth_mode))
-                                .strong(),
-                        );
                         ui.add(
-                            TextEdit::singleline(&mut self.profile_draft.auth_value)
+                            cast::TextInput::new(&mut self.profile_draft.auth_value)
+                                .label(profile_auth_value_label(self.profile_draft.auth_mode))
                                 .password(true)
                                 .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
                         );
