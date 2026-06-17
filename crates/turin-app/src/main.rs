@@ -207,6 +207,7 @@ struct TurinDesktopApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
+    ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
     _runtime: Arc<Runtime>,
@@ -312,6 +313,7 @@ impl TurinDesktopApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
+            ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
             _runtime: runtime,
@@ -322,15 +324,24 @@ impl TurinDesktopApp {
         let auto_follow_event = matches!(&update, UiUpdate::Event(_))
             && !self.events_paused
             && self.events_follow_latest;
+        let harness_action_ran =
+            matches!(&update, UiUpdate::Event(event) if event.event == "harness.action_ran");
         if matches!(&update, UiUpdate::SessionEvent(_)) {
             self.clamp_selection_indices();
             return;
         }
         if let UiUpdate::UiListLoaded { request, items } = &update {
-            self.ui_lists
-                .insert(request.cache_key(), items.as_ref().clone());
+            let key = request.cache_key();
+            self.ui_list_requests
+                .insert(key.clone(), request.as_ref().clone());
+            self.requested_ui_lists.remove(&key);
+            self.ui_lists.insert(key, items.as_ref().clone());
         }
         self.dashboard.apply_update(update);
+        let refreshed = self.apply_ui_refresh_intents();
+        if harness_action_ran && refreshed == 0 {
+            self.request_selected_ui_lists(true);
+        }
         if auto_follow_event {
             self.event_index = 0;
         }
@@ -407,17 +418,63 @@ impl TurinDesktopApp {
 
     fn request_selected_ui_lists(&mut self, force: bool) {
         for request in self.selected_ui_list_requests() {
-            let key = request.cache_key();
-            if !force
-                && (self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key))
-            {
-                continue;
-            }
-            self.requested_ui_lists.insert(key);
-            self.send_command(OperatorCommand::LoadUiList {
-                request: Box::new(request),
-            });
+            self.request_ui_list(request, force);
         }
+    }
+
+    fn request_ui_list(&mut self, request: UiListRequest, force: bool) {
+        let key = request.cache_key();
+        self.ui_list_requests.insert(key.clone(), request.clone());
+        if force {
+            self.ui_lists.remove(&key);
+            self.requested_ui_lists.remove(&key);
+        } else if self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key) {
+            return;
+        }
+        self.requested_ui_lists.insert(key);
+        self.send_command(OperatorCommand::LoadUiList {
+            request: Box::new(request),
+        });
+    }
+
+    fn apply_ui_refresh_intents(&mut self) -> usize {
+        let refreshes = self.dashboard.ui.take_refreshes();
+        let mut reloads = 0;
+        for refresh in refreshes {
+            reloads += self.refresh_ui_binding(&refresh.binding);
+        }
+        reloads
+    }
+
+    fn refresh_ui_binding(&mut self, binding: &str) -> usize {
+        let mut requests = Vec::new();
+        let mut keys = BTreeSet::new();
+
+        for (key, request) in &self.ui_list_requests {
+            if request.source == binding {
+                keys.insert(key.clone());
+                requests.push(request.clone());
+            }
+        }
+
+        for request in self.selected_ui_list_requests() {
+            let key = request.cache_key();
+            if request.source == binding && keys.insert(key) {
+                requests.push(request);
+            }
+        }
+
+        for request in &requests {
+            let key = request.cache_key();
+            self.ui_lists.remove(&key);
+            self.requested_ui_lists.remove(&key);
+        }
+
+        let count = requests.len();
+        for request in requests {
+            self.request_ui_list(request, true);
+        }
+        count
     }
 
     fn set_profile_draft(

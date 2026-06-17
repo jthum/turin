@@ -263,6 +263,59 @@ fn test_ui_load_time_intents_are_collected() {
 }
 
 #[test]
+fn test_ui_release_operator_example_loads() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/harnesses/ui_release_operator");
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(&dir).unwrap();
+
+    let intents = engine.ui_intents().unwrap();
+    let mut app_seen = false;
+    let mut screen_count = 0;
+    let mut confirmed_action_seen = false;
+    let mut form_seen = false;
+    let mut nested_menu_seen = false;
+
+    for intent in intents {
+        match intent.intent {
+            turin_daemon_protocol::UiIntent::App(app) => {
+                app_seen = app.id == "release-operator";
+            }
+            turin_daemon_protocol::UiIntent::Screen(screen) => {
+                screen_count += 1;
+                for node in screen.nodes {
+                    match node {
+                        turin_daemon_protocol::UiNode::Action(action) => {
+                            confirmed_action_seen |= action.confirm;
+                        }
+                        turin_daemon_protocol::UiNode::Form(_) => {
+                            form_seen = true;
+                        }
+                        turin_daemon_protocol::UiNode::Section(section) => {
+                            for child in section.nodes {
+                                if let turin_daemon_protocol::UiNode::Action(action) = child {
+                                    confirmed_action_seen |= action.confirm;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            turin_daemon_protocol::UiIntent::Menu(menu) => {
+                nested_menu_seen = menu.items.iter().any(|item| !item.items.is_empty());
+            }
+            _ => {}
+        }
+    }
+
+    assert!(app_seen);
+    assert!(screen_count >= 4);
+    assert!(confirmed_action_seen);
+    assert!(form_seen);
+    assert!(nested_menu_seen);
+}
+
+#[test]
 fn test_ui_dynamic_intents_are_collected_from_hooks() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
