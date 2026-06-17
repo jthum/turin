@@ -165,6 +165,7 @@ impl TuiApp {
         }
 
         self.dashboard.apply_update(update);
+        self.apply_ui_navigation_intents();
         let refreshed = self.apply_ui_refresh_intents();
         if harness_action_ran && refreshed == 0 {
             let _ = self.request_current_harness_lists(true);
@@ -560,6 +561,113 @@ impl TuiApp {
         count
     }
 
+    fn apply_ui_navigation_intents(&mut self) {
+        for open in self.dashboard.ui.take_opens() {
+            self.apply_ui_open_request(&open.app_id, &open.target, "open");
+        }
+        for show in self.dashboard.ui.take_shows() {
+            self.apply_ui_show_request(&show.app_id, &show.target);
+        }
+        for focus in self.dashboard.ui.take_focuses() {
+            self.apply_ui_focus_request(&focus.app_id, &focus.target);
+        }
+    }
+
+    fn apply_ui_open_request(&mut self, app_id: &str, target: &str, label: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        let Some(screen_index) = harness_ui::screen_index_for_target(&app, target) else {
+            self.dashboard.record_error(format!(
+                "UI {label} target '{target}' is not a screen in '{app_id}'"
+            ));
+            return;
+        };
+        self.open_harness_screen(&app, screen_index, HarnessFocus::Navigation, 0);
+        self.dashboard
+            .record_info(format!("Opened '{target}' from ui.{label}"));
+    }
+
+    fn apply_ui_show_request(&mut self, app_id: &str, target: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        if harness_ui::screen_index_for_target(&app, target).is_some() {
+            self.apply_ui_open_request(app_id, target, "show");
+            return;
+        }
+        if app.panes.contains_key(target) {
+            self.dashboard.record_info(format!(
+                "TUI noted ui.show pane '{target}' in '{app_id}', but panes are not rendered yet"
+            ));
+        } else {
+            self.dashboard.record_error(format!(
+                "UI show target '{target}' is not a screen or pane in '{app_id}'"
+            ));
+        }
+    }
+
+    fn apply_ui_focus_request(&mut self, app_id: &str, target: &str) {
+        let Some(app) = self.select_ui_app_by_id(app_id) else {
+            return;
+        };
+        let Some(target) = harness_ui::find_focus_target(&app, target) else {
+            self.dashboard.record_error(format!(
+                "UI focus target '{target}' was not found in '{app_id}'"
+            ));
+            return;
+        };
+
+        match target {
+            harness_ui::HarnessFocusTarget::Screen { screen_index }
+            | harness_ui::HarnessFocusTarget::Node { screen_index } => {
+                self.open_harness_screen(&app, screen_index, HarnessFocus::Navigation, 0);
+            }
+            harness_ui::HarnessFocusTarget::Action {
+                screen_index,
+                action_index,
+            } => {
+                self.open_harness_screen(&app, screen_index, HarnessFocus::Actions, action_index);
+            }
+        }
+    }
+
+    fn select_ui_app_by_id(&mut self, app_id: &str) -> Option<turin_ui_core::UiAppRecord> {
+        let Some((index, app)) = self
+            .dashboard
+            .ui
+            .apps()
+            .cloned()
+            .enumerate()
+            .find(|(_, app)| app.id == app_id)
+        else {
+            self.dashboard
+                .record_error(format!("UI app '{app_id}' is not declared"));
+            return None;
+        };
+        self.ui_app_index = index;
+        Some(app)
+    }
+
+    fn open_harness_screen(
+        &mut self,
+        app: &turin_ui_core::UiAppRecord,
+        screen_index: usize,
+        focus: HarnessFocus,
+        action_index: usize,
+    ) {
+        self.tab = TabKind::Harness;
+        self.ui_screen_indices.insert(app.id.clone(), screen_index);
+        self.harness_focus = focus;
+        self.ui_action_index = action_index;
+        self.sync_harness_nav_to_screen();
+        if let Err(err) = self.request_current_harness_lists(false) {
+            self.dashboard
+                .record_error(format!("Failed to load harness UI lists: {err}"));
+        }
+        self.clamp_selection();
+    }
+
     fn clamp_selection(&mut self) {
         self.ui_app_index = self.ui_app_index.min(self.ui_app_count().saturating_sub(1));
         self.task_index = self
@@ -703,6 +811,9 @@ impl TuiApp {
         }
         if let Some(info) = &self.dashboard.last_info {
             notice_lines.push(Line::from(Span::styled(info.clone(), theme::success())));
+        }
+        for notice in self.dashboard.ui.notices().iter().rev().take(4) {
+            notice_lines.push(ui_notice_line(notice));
         }
         if notice_lines.is_empty() {
             notice_lines.push(Line::from(Span::styled(
@@ -1027,6 +1138,24 @@ fn event_line(event: &EventEnvelope) -> ListItem<'static> {
         Span::styled("● ", theme::accent()),
         Span::styled(event.event.clone(), theme::base()),
     ]))
+}
+
+fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'static> {
+    let style = match notice.level {
+        Some(turin_daemon_protocol::UiNoticeLevel::Success) => theme::success(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Warning) => theme::warning(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Error) => theme::danger(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Info) | None => theme::base(),
+    };
+    let body = notice
+        .body
+        .as_ref()
+        .map(|body| format!(" - {body}"))
+        .unwrap_or_default();
+    Line::from(vec![
+        Span::styled(format!("{}: ", notice.app_id), theme::muted()),
+        Span::styled(format!("{}{}", notice.title, body), style),
+    ])
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

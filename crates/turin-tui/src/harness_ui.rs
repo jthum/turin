@@ -32,6 +32,20 @@ pub enum HarnessNavTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HarnessFocusTarget {
+    Screen {
+        screen_index: usize,
+    },
+    Action {
+        screen_index: usize,
+        action_index: usize,
+    },
+    Node {
+        screen_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessNavItem {
     pub label: String,
     pub group: String,
@@ -167,6 +181,104 @@ fn collect_actions_into(app: &UiAppRecord, nodes: &[UiNode], out: &mut Vec<Harne
             _ => {}
         }
     }
+}
+
+pub fn find_focus_target(app: &UiAppRecord, target: &str) -> Option<HarnessFocusTarget> {
+    if let Some(screen_index) = screen_index_for_target(app, target) {
+        return Some(HarnessFocusTarget::Screen { screen_index });
+    }
+
+    for (screen_index, screen) in app.screens.values().enumerate() {
+        if let Some(target) = find_focus_target_in_nodes(&screen.nodes, target, screen_index) {
+            return Some(target);
+        }
+    }
+
+    None
+}
+
+fn find_focus_target_in_nodes(
+    nodes: &[UiNode],
+    target: &str,
+    screen_index: usize,
+) -> Option<HarnessFocusTarget> {
+    let mut action_index = 0;
+    find_focus_target_in_nodes_with_action_index(nodes, target, screen_index, &mut action_index)
+}
+
+fn find_focus_target_in_nodes_with_action_index(
+    nodes: &[UiNode],
+    target: &str,
+    screen_index: usize,
+    action_index: &mut usize,
+) -> Option<HarnessFocusTarget> {
+    for node in nodes {
+        match node {
+            UiNode::Section(section) => {
+                if node_id_matches(section.id.as_deref(), target) {
+                    return Some(HarnessFocusTarget::Node { screen_index });
+                }
+                if let Some(found) = find_focus_target_in_nodes_with_action_index(
+                    &section.nodes,
+                    target,
+                    screen_index,
+                    action_index,
+                ) {
+                    return Some(found);
+                }
+            }
+            UiNode::Action(action) => {
+                let current_action_index = *action_index;
+                *action_index += 1;
+                if node_id_matches(action.id.as_deref(), target)
+                    || action.action == target
+                    || action.label == target
+                {
+                    return Some(HarnessFocusTarget::Action {
+                        screen_index,
+                        action_index: current_action_index,
+                    });
+                }
+            }
+            UiNode::Form(form) => {
+                let current_action_index = *action_index;
+                *action_index += 1;
+                if node_id_matches(form.id.as_deref(), target)
+                    || form.action == target
+                    || form.title == target
+                {
+                    return Some(HarnessFocusTarget::Action {
+                        screen_index,
+                        action_index: current_action_index,
+                    });
+                }
+            }
+            UiNode::Text(text) if node_id_matches(text.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            UiNode::List(list) if node_id_matches(list.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            UiNode::Activity(activity) if node_id_matches(activity.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            UiNode::Detail(detail) if node_id_matches(detail.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            UiNode::Report(report) if node_id_matches(report.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            UiNode::Chart(chart) if node_id_matches(chart.id.as_deref(), target) => {
+                return Some(HarnessFocusTarget::Node { screen_index });
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn node_id_matches(id: Option<&str>, target: &str) -> bool {
+    id == Some(target)
 }
 
 pub fn render_harness_screen(
@@ -435,9 +547,10 @@ fn truncate(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use turin_daemon_protocol::{
-        UiAppIntent, UiIntent, UiIntentMessage, UiMenuIntent, UiMenuItem, UiNode,
-        UiOpensWithIntent, UiScreenIntent,
+        UiActionNode, UiAppIntent, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem,
+        UiNode, UiOpensWithIntent, UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -454,10 +567,30 @@ mod tests {
                 id: "home".to_string(),
                 title: "Release Desk".to_string(),
                 presentation: Some("dashboard".to_string()),
-                nodes: vec![UiNode::Text(turin_daemon_protocol::UiTextNode {
-                    id: None,
-                    text: "Ready".to_string(),
-                })],
+                nodes: vec![
+                    UiNode::Text(turin_daemon_protocol::UiTextNode {
+                        id: None,
+                        text: "Ready".to_string(),
+                    }),
+                    UiNode::Action(UiActionNode {
+                        id: Some("seed-demo-work".to_string()),
+                        label: "Seed Demo Work".to_string(),
+                        action: "release.seed_demo_work".to_string(),
+                        params: Value::Null,
+                        confirm: false,
+                    }),
+                    UiNode::List(UiListNode {
+                        id: Some("recent-release-work".to_string()),
+                        title: "Recent Release Work".to_string(),
+                        source: "worklists.release".to_string(),
+                        filter: Default::default(),
+                        fields: Vec::new(),
+                        sort: Vec::new(),
+                        limit: Some(8),
+                        intent: Some("tasks".to_string()),
+                        render_as: Some("table".to_string()),
+                    }),
+                ],
             })),
             UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
                 app_id: "release".to_string(),
@@ -567,5 +700,29 @@ mod tests {
             .expect("nested intake menu item");
         assert_eq!(intake.depth, 1);
         assert!(matches!(intake.target, HarnessNavTarget::Menu { ref opens } if opens == "intake"));
+    }
+
+    #[test]
+    fn focus_targets_resolve_screens_actions_and_node_ids() {
+        let app = release_app();
+
+        assert!(matches!(
+            find_focus_target(&app, "home"),
+            Some(HarnessFocusTarget::Screen { screen_index })
+                if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "seed-demo-work"),
+            Some(HarnessFocusTarget::Action {
+                screen_index,
+                action_index: 0,
+            }) if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "recent-release-work"),
+            Some(HarnessFocusTarget::Node { screen_index })
+                if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("home")
+        ));
+        assert_eq!(find_focus_target(&app, "unknown"), None);
     }
 }

@@ -32,7 +32,9 @@ and `turin-daemon-protocol`.
 3. `TuiApp` applies updates to `DashboardState` and TUI-local state.
 4. Keyboard input mutates TUI-local state or sends `OperatorCommand`.
 5. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
-6. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
+6. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
+   local TUI navigation state.
+7. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
 
 ## Invariants
 
@@ -41,6 +43,8 @@ and `turin-daemon-protocol`.
 - Harness menu items are semantic navigation targets. The TUI may flatten nested
   menus into terminal navigation, but it must not mutate the harness contract to
   fit terminal layout.
+- Dynamic UI requests are suggestions to this client. Applying `ui.open` or
+  `ui.focus` changes only local TUI selection/focus state.
 - Rendering functions should not perform daemon requests directly.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
@@ -83,6 +87,7 @@ git diff --check
 
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
-navigation, task list, event list, confirmation flow, and list invalidation.
-Chat, search, connection profile editing, and deeper inspectors should be
-reintroduced only as they fit the new terminal UX model.
+navigation, dynamic open/focus handling, task list, event list, confirmation
+flow, UI notices, and list invalidation. Chat, search, connection profile
+editing, and deeper inspectors should be reintroduced only as they fit the new
+terminal UX model.

@@ -113,6 +113,18 @@ impl UiRegistry {
         &self.refreshes
     }
 
+    pub fn take_opens(&mut self) -> Vec<UiOpenIntent> {
+        std::mem::take(&mut self.opens)
+    }
+
+    pub fn take_shows(&mut self) -> Vec<UiShowIntent> {
+        std::mem::take(&mut self.shows)
+    }
+
+    pub fn take_focuses(&mut self) -> Vec<UiFocusIntent> {
+        std::mem::take(&mut self.focuses)
+    }
+
     pub fn take_refreshes(&mut self) -> Vec<UiRefreshIntent> {
         std::mem::take(&mut self.refreshes)
     }
@@ -336,6 +348,12 @@ mod tests {
             app_id: "release".to_string(),
             target: "open-work".to_string(),
         })));
+        registry.apply_message(UiIntentMessage::new(UiIntent::Show(UiShowIntent {
+            app_id: "release".to_string(),
+            target: "release-panel".to_string(),
+            area: Some("side".to_string()),
+            presentation: None,
+        })));
         for title in ["first", "second", "third"] {
             registry.apply_message(UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
                 app_id: "release".to_string(),
@@ -353,9 +371,16 @@ mod tests {
         assert_eq!(registry.opens()[0].target, "approvals");
         assert_eq!(app.badges["approvals"].count, Some(3));
         assert_eq!(registry.focuses()[0].target, "open-work");
+        assert_eq!(registry.shows()[0].target, "release-panel");
         assert_eq!(registry.notices().len(), 2);
         assert_eq!(registry.notices()[0].title, "second");
         assert_eq!(registry.refreshes().len(), 1);
+        assert_eq!(registry.take_opens().len(), 1);
+        assert!(registry.opens().is_empty());
+        assert_eq!(registry.take_shows().len(), 1);
+        assert!(registry.shows().is_empty());
+        assert_eq!(registry.take_focuses().len(), 1);
+        assert!(registry.focuses().is_empty());
         assert_eq!(registry.take_refreshes().len(), 1);
         assert!(registry.refreshes().is_empty());
     }
