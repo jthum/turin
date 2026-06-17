@@ -3,12 +3,13 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BindHarnessParams, ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHeartbeatParams,
     ChannelRunnerHelloParams, CreateAgentParams, CreateChannelParams, EntityIdParams,
-    LiveSessionTargetParams, NoParams, OpenSessionParams, PromoteTaskParams, ResumeSessionParams,
-    ScheduleCreateParams, ScheduleRunsParams, ScheduleUpdateParams, SessionBranchCheckoutParams,
-    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionIdParams, SessionListParams,
-    SessionSearchParams, SessionTitleParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams,
-    UpdateAgentParams, UpdateChannelParams, WaitTaskParams, WorkItemTargetParams,
-    WorklistItemsParams, WorklistListParams, WorklistTargetParams,
+    HarnessActionRunParams, LiveSessionTargetParams, NoParams, OpenSessionParams,
+    PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams,
+    ScheduleUpdateParams, SessionBranchCheckoutParams, SessionBranchCreateParams,
+    SessionBranchSiblingsParams, SessionIdParams, SessionListParams, SessionSearchParams,
+    SessionTitleParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateAgentParams,
+    UpdateChannelParams, WaitTaskParams, WorkItemTargetParams, WorklistItemsParams,
+    WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -128,6 +129,8 @@ pub enum DaemonRequest {
     HarnessReload(EntityIdParams),
     #[serde(rename = "harness.validate")]
     HarnessValidate(EntityIdParams),
+    #[serde(rename = "harness.action_run")]
+    HarnessActionRun(HarnessActionRunParams),
     #[serde(rename = "harness.delete")]
     HarnessDelete(EntityIdParams),
     #[serde(rename = "channel.list")]

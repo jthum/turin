@@ -1,4 +1,5 @@
 mod channel_validation;
+mod harness_actions;
 mod helpers;
 mod registry_ops;
 mod runtime_sessions;

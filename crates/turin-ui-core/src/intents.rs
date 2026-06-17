@@ -4,8 +4,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use turin_daemon_protocol::{
     EventEnvelope, UiAppIntent, UiBadgeIntent, UiFocusIntent, UiIntent, UiIntentMessage,
-    UiMenuIntent, UiNoticeIntent, UiOpenIntent, UiOpensWithIntent, UiPaneIntent, UiRefreshIntent,
-    UiScreenIntent, UiShowIntent,
+    UiIntentSource, UiMenuIntent, UiNoticeIntent, UiOpenIntent, UiOpensWithIntent, UiPaneIntent,
+    UiRefreshIntent, UiScreenIntent, UiShowIntent,
 };
 
 pub const DEFAULT_MAX_UI_NOTICES: usize = 32;
@@ -37,6 +37,8 @@ pub struct UiRegistry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiAppRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "UiIntentSource::is_empty")]
+    pub source: UiIntentSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<UiAppIntent>,
     #[serde(default)]
@@ -130,57 +132,62 @@ impl UiRegistry {
     }
 
     pub fn apply_message(&mut self, message: UiIntentMessage) {
+        let source = message.source;
         match message.intent {
             UiIntent::App(intent) => {
-                let app = self.ensure_app(intent.id.clone());
+                let app = self.ensure_app_with_source(intent.id.clone(), &source);
                 app.definition = Some(intent);
             }
             UiIntent::Screen(intent) => {
-                self.ensure_app(intent.app_id.clone())
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
                     .screens
                     .insert(intent.id.clone(), intent);
             }
             UiIntent::Menu(intent) => {
-                self.ensure_app(intent.app_id.clone()).upsert_menu(intent);
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
+                    .upsert_menu(intent);
             }
-            UiIntent::OpensWith(intent) => self.apply_opens_with(intent),
+            UiIntent::OpensWith(intent) => self.apply_opens_with(intent, &source),
             UiIntent::Pane(intent) => {
-                self.ensure_app(intent.app_id.clone())
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
                     .panes
                     .insert(intent.id.clone(), intent);
             }
-            UiIntent::Open(intent) => self.apply_open(intent),
+            UiIntent::Open(intent) => self.apply_open(intent, &source),
             UiIntent::Show(intent) => {
-                self.ensure_app(intent.app_id.clone());
+                self.ensure_app_with_source(intent.app_id.clone(), &source);
                 self.shows.push(intent);
             }
-            UiIntent::Notify(intent) => self.push_notice(intent),
+            UiIntent::Notify(intent) => self.push_notice(intent, &source),
             UiIntent::Badge(intent) => {
-                self.ensure_app(intent.app_id.clone())
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
                     .badges
                     .insert(intent.target.clone(), intent);
             }
             UiIntent::Focus(intent) => {
                 let app_id = intent.app_id.clone();
-                self.ensure_app(app_id);
+                self.ensure_app_with_source(app_id, &source);
                 self.focuses.push(intent);
             }
-            UiIntent::Refresh(intent) => self.refreshes.push(intent),
+            UiIntent::Refresh(intent) => {
+                self.ensure_app_with_source(intent.app_id.clone(), &source);
+                self.refreshes.push(intent);
+            }
         }
     }
 
-    fn apply_opens_with(&mut self, intent: UiOpensWithIntent) {
-        let app = self.ensure_app(intent.app_id);
+    fn apply_opens_with(&mut self, intent: UiOpensWithIntent, source: &UiIntentSource) {
+        let app = self.ensure_app_with_source(intent.app_id, source);
         app.opens_with = Some(intent.screen_id);
     }
 
-    fn apply_open(&mut self, intent: UiOpenIntent) {
-        self.ensure_app(intent.app_id.clone());
+    fn apply_open(&mut self, intent: UiOpenIntent, source: &UiIntentSource) {
+        self.ensure_app_with_source(intent.app_id.clone(), source);
         self.opens.push(intent);
     }
 
-    fn push_notice(&mut self, intent: UiNoticeIntent) {
-        self.ensure_app(intent.app_id.clone());
+    fn push_notice(&mut self, intent: UiNoticeIntent, source: &UiIntentSource) {
+        self.ensure_app_with_source(intent.app_id.clone(), source);
         self.notices.push(intent);
         if self.notices.len() > self.max_notices {
             let drop_count = self.notices.len() - self.max_notices;
@@ -193,18 +200,44 @@ impl UiRegistry {
             .entry(app_id.clone())
             .or_insert_with(|| UiAppRecord::new(app_id))
     }
+
+    fn ensure_app_with_source(
+        &mut self,
+        app_id: String,
+        source: &UiIntentSource,
+    ) -> &mut UiAppRecord {
+        let app = self.ensure_app(app_id);
+        app.merge_source(source);
+        app
+    }
 }
 
 impl UiAppRecord {
     fn new(id: String) -> Self {
         Self {
             id,
+            source: UiIntentSource::default(),
             definition: None,
             screens: BTreeMap::new(),
             panes: BTreeMap::new(),
             menus: Vec::new(),
             opens_with: None,
             badges: BTreeMap::new(),
+        }
+    }
+
+    fn merge_source(&mut self, source: &UiIntentSource) {
+        if self.source.harness_id.is_none() {
+            self.source.harness_id.clone_from(&source.harness_id);
+        }
+        if self.source.app_id.is_none() {
+            self.source.app_id.clone_from(&source.app_id);
+        }
+        if self.source.agent_id.is_none() {
+            self.source.agent_id.clone_from(&source.agent_id);
+        }
+        if self.source.package_id.is_none() {
+            self.source.package_id.clone_from(&source.package_id);
         }
     }
 
@@ -241,7 +274,8 @@ mod tests {
                 title: "Release Operator".to_string(),
                 about: None,
                 icon: None,
-            })),
+            }))
+            .from_harness("release-harness"),
             UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
                 app_id: "release".to_string(),
                 id: "home".to_string(),
@@ -278,6 +312,7 @@ mod tests {
         assert!(app.screens.contains_key("home"));
         assert_eq!(app.opens_with.as_deref(), Some("home"));
         assert_eq!(app.menus.len(), 1);
+        assert_eq!(app.source.harness_id.as_deref(), Some("release-harness"));
     }
 
     #[test]

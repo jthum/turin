@@ -159,13 +159,23 @@ impl Kernel {
                     .collect();
                 watched_roots.sort();
                 watched_roots.dedup();
+                let ui_intents = runtime
+                    .ui_intents()
+                    .into_iter()
+                    .map(|mut intent| {
+                        if intent.source.harness_id.is_none() {
+                            intent.source.harness_id = Some(harness_id.clone());
+                        }
+                        intent
+                    })
+                    .collect();
                 HarnessRuntimeSnapshot {
                     harness_id: harness_id.clone(),
                     directory: runtime.directory().display().to_string(),
                     bound_agents: agents,
                     watched_roots,
                     loaded_scripts,
-                    ui_intents: runtime.ui_intents(),
+                    ui_intents,
                 }
             })
             .collect();

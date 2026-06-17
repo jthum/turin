@@ -16,6 +16,8 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
   - Shared no-params, id, store target, and persistence selector DTOs.
 - `crates/turin-daemon-protocol/src/agents.rs`
   - Agent create/update and harness binding request DTOs.
+- `crates/turin-daemon-protocol/src/harnesses.rs`
+  - Harness action invocation DTOs.
 - `crates/turin-daemon-protocol/src/channels.rs`
   - Channel config, access, runner hello, and runner heartbeat DTOs.
 - `crates/turin-daemon-protocol/src/tasks.rs`

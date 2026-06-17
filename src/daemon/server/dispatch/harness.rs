@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::daemon::protocol::ErrorCode;
-use crate::daemon::protocol::{EntityIdParams, NoParams, ResponseEnvelope};
+use crate::daemon::protocol::{EntityIdParams, HarnessActionRunParams, NoParams, ResponseEnvelope};
 
 use super::{
     DispatchContext, build_runtime_snapshot, emit_event, emit_registry_issue_events,
@@ -114,6 +114,24 @@ pub(super) async fn validate(
             emit_event(&ctx.event_tx, "harness.validated", result.clone());
             ResponseEnvelope::ok(id, result)
         }
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn action_run(
+    id: Option<String>,
+    params: HarnessActionRunParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.run_harness_action(params) {
+        Ok(result) => serialize_response_with_event(
+            id,
+            result,
+            "harness action result",
+            &ctx.event_tx,
+            "harness.action_ran",
+        ),
         Err(err) => validation_error(id, err),
     }
 }

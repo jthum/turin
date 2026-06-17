@@ -122,6 +122,7 @@ pub(super) async fn dispatch(
         DaemonRequest::HarnessIssues(params) => harness::issues(id, params, &context).await,
         DaemonRequest::HarnessReload(params) => harness::reload(id, params, &context).await,
         DaemonRequest::HarnessValidate(params) => harness::validate(id, params, &context).await,
+        DaemonRequest::HarnessActionRun(params) => harness::action_run(id, params, &context).await,
         DaemonRequest::HarnessDelete(params) => harness::delete(id, params, &context).await,
         DaemonRequest::ChannelList(params) => channel::list(id, params, &context).await,
         DaemonRequest::ChannelCreate(params) => channel::create(id, params, &context).await,

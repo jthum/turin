@@ -22,6 +22,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   - Live and persisted session convenience methods.
 - `crates/turin-control-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
+- `crates/turin-control-client/src/harnesses.rs`
+  - Harness detail, UI intent, and action invocation convenience methods.
 - `crates/turin-control-client/src/worklists.rs`
   - Worklist and work-item convenience methods.
 - `crates/turin-control-client/src/channels.rs`

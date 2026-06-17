@@ -2004,10 +2004,18 @@ impl TurinDesktopApp {
                 params,
                 confirm,
             } => {
-                self.dashboard.record_info(format!(
-                    "Harness UI action '{}' ({}) selected; confirm={} params={}",
-                    label, action, confirm, params
-                ));
+                if confirm {
+                    self.dashboard.record_info(format!(
+                        "Running confirmed harness UI action '{}' ({})",
+                        label, action
+                    ));
+                }
+                self.send_command(OperatorCommand::RunHarnessAction {
+                    agent_id: app.source.agent_id.clone(),
+                    harness_id: app.source.harness_id.clone(),
+                    action,
+                    params,
+                });
             }
         }
     }

@@ -1,5 +1,8 @@
 use anyhow::Result;
-use turin_daemon_protocol::{DaemonRequest, EntityIdParams, NoParams, UiIntentMessage};
+use turin_daemon_protocol::{
+    DaemonRequest, EntityIdParams, HarnessActionRunParams, HarnessActionRunResult, NoParams,
+    UiIntentMessage,
+};
 
 use crate::client::ControlClient;
 use crate::models::{HarnessDetail, HarnessRuntime, HarnessRuntimeList};
@@ -27,5 +30,13 @@ impl ControlClient {
         harness_id: impl Into<String>,
     ) -> Result<Vec<UiIntentMessage>> {
         Ok(self.get_harness(harness_id).await?.ui_intents)
+    }
+
+    pub async fn run_harness_action(
+        &self,
+        params: HarnessActionRunParams,
+    ) -> Result<HarnessActionRunResult> {
+        self.request_ok(None, DaemonRequest::HarnessActionRun(params))
+            .await
     }
 }

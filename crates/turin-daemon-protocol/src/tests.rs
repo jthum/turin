@@ -103,6 +103,37 @@ fn promote_task_request_round_trips_typed_shape() {
 }
 
 #[test]
+fn harness_action_run_request_round_trips_typed_shape() {
+    let request = RequestEnvelope::new(
+        Some("req_action".to_string()),
+        DaemonRequest::HarnessActionRun(HarnessActionRunParams {
+            action: "release.approve".to_string(),
+            agent_id: Some("release-agent".to_string()),
+            harness_id: Some("release".to_string()),
+            params: json!({ "item": "work_1" }),
+        }),
+    );
+
+    let value = serde_json::to_value(&request).expect("serialize request");
+    assert_eq!(value["op"], "harness.action_run");
+    assert_eq!(value["params"]["action"], "release.approve");
+    assert_eq!(value["params"]["agent_id"], "release-agent");
+    assert_eq!(value["params"]["harness_id"], "release");
+    assert_eq!(value["params"]["params"]["item"], "work_1");
+
+    let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+    match decoded.request {
+        DaemonRequest::HarnessActionRun(params) => {
+            assert_eq!(params.action, "release.approve");
+            assert_eq!(params.agent_id.as_deref(), Some("release-agent"));
+            assert_eq!(params.harness_id.as_deref(), Some("release"));
+            assert_eq!(params.params["item"], "work_1");
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+}
+
+#[test]
 fn raw_daemon_wire_shape_deserializes_into_typed_request() {
     let decoded: RequestEnvelope = serde_json::from_value(json!({
         "id": "req_2",

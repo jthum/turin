@@ -15,8 +15,8 @@ use turin_control_client::{
     SessionSearchHit,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, RuntimeEventsSubscribeParams, SessionSearchScope, WorkItemList,
-    WorklistItemsParams, WorklistListParams,
+    EventEnvelope, HarnessActionRunParams, RuntimeEventsSubscribeParams, SessionSearchScope,
+    WorkItemList, WorklistItemsParams, WorklistListParams,
 };
 use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_UI_PROFILES_PATH};
 
@@ -101,6 +101,12 @@ pub enum OperatorCommand {
     },
     LoadUiList {
         request: Box<UiListRequest>,
+    },
+    RunHarnessAction {
+        agent_id: Option<String>,
+        harness_id: Option<String>,
+        action: String,
+        params: serde_json::Value,
     },
     OpenSession {
         agent_id: String,
@@ -2072,6 +2078,25 @@ pub async fn execute_operator_command(
             Ok("Loaded persisted session search results".to_string())
         }
         OperatorCommand::LoadUiList { .. } => Ok("Loaded UI list".to_string()),
+        OperatorCommand::RunHarnessAction {
+            agent_id,
+            harness_id,
+            action,
+            params,
+        } => {
+            let result = client
+                .run_harness_action(HarnessActionRunParams {
+                    action,
+                    agent_id,
+                    harness_id,
+                    params,
+                })
+                .await?;
+            Ok(format!(
+                "Ran harness action '{}' for agent {}",
+                result.action, result.agent_id
+            ))
+        }
         OperatorCommand::OpenSession { agent_id } => {
             let session = client.open_session(&agent_id, None).await?;
             Ok(format!(
