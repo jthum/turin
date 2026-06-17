@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::Value;
 use turin_daemon_protocol::{
-    UiFormNode, UiListNode, UiNode, UiScreenIntent, WorkItemDetail, WorkItemList,
+    UiFormNode, UiListNode, UiMenuItem, UiNode, UiScreenIntent, WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{UiAppRecord, UiListRequest};
 
@@ -23,6 +23,21 @@ pub struct HarnessAction {
     pub confirm: bool,
     pub agent_id: Option<String>,
     pub harness_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HarnessNavTarget {
+    Screen { index: usize },
+    Menu { opens: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessNavItem {
+    pub label: String,
+    pub group: String,
+    pub badge: Option<String>,
+    pub depth: usize,
+    pub target: HarnessNavTarget,
 }
 
 impl HarnessAction {
@@ -41,16 +56,60 @@ impl HarnessAction {
 pub fn default_screen_index(app: &UiAppRecord) -> usize {
     app.opens_with
         .as_deref()
-        .and_then(|screen_id| {
-            app.screens
-                .values()
-                .position(|screen| screen.id == screen_id || screen.title == screen_id)
-        })
+        .and_then(|screen_id| screen_index_for_target(app, screen_id))
         .unwrap_or(0)
 }
 
 pub fn screen_at(app: &UiAppRecord, index: usize) -> Option<&UiScreenIntent> {
     app.screens.values().nth(index)
+}
+
+pub fn screen_index_for_target(app: &UiAppRecord, target: &str) -> Option<usize> {
+    app.screens
+        .values()
+        .position(|screen| screen.id == target || screen.title == target)
+}
+
+pub fn collect_nav_items(app: &UiAppRecord) -> Vec<HarnessNavItem> {
+    let mut out = Vec::new();
+
+    for (index, screen) in app.screens.values().enumerate() {
+        out.push(HarnessNavItem {
+            label: screen.title.clone(),
+            group: "Screens".to_string(),
+            badge: screen.presentation.clone(),
+            depth: 0,
+            target: HarnessNavTarget::Screen { index },
+        });
+    }
+
+    for menu in &app.menus {
+        collect_menu_nav_items(&menu.title, &menu.items, 0, &mut out);
+    }
+
+    out
+}
+
+fn collect_menu_nav_items(
+    group: &str,
+    items: &[UiMenuItem],
+    depth: usize,
+    out: &mut Vec<HarnessNavItem>,
+) {
+    for item in items {
+        out.push(HarnessNavItem {
+            label: item.label.clone(),
+            group: group.to_string(),
+            badge: item.badge.clone(),
+            depth,
+            target: HarnessNavTarget::Menu {
+                opens: item.opens.clone(),
+            },
+        });
+        if !item.items.is_empty() {
+            collect_menu_nav_items(group, &item.items, depth + 1, out);
+        }
+    }
 }
 
 pub fn collect_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
@@ -371,4 +430,142 @@ fn truncate(value: &str, max_chars: usize) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turin_daemon_protocol::{
+        UiAppIntent, UiIntent, UiIntentMessage, UiMenuIntent, UiMenuItem, UiNode,
+        UiOpensWithIntent, UiScreenIntent,
+    };
+    use turin_ui_core::UiRegistry;
+
+    fn release_app() -> UiAppRecord {
+        let registry = UiRegistry::from_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "home".to_string(),
+                title: "Release Desk".to_string(),
+                presentation: Some("dashboard".to_string()),
+                nodes: vec![UiNode::Text(turin_daemon_protocol::UiTextNode {
+                    id: None,
+                    text: "Ready".to_string(),
+                })],
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "approvals".to_string(),
+                title: "Approvals".to_string(),
+                presentation: None,
+                nodes: Vec::new(),
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "intake".to_string(),
+                title: "Intake".to_string(),
+                presentation: None,
+                nodes: Vec::new(),
+            })),
+            UiIntentMessage::new(UiIntent::OpensWith(UiOpensWithIntent {
+                app_id: "release".to_string(),
+                screen_id: "approvals".to_string(),
+            })),
+            UiIntentMessage::new(UiIntent::Menu(UiMenuIntent {
+                app_id: "release".to_string(),
+                title: "Main".to_string(),
+                items: vec![
+                    UiMenuItem {
+                        label: "Dashboard".to_string(),
+                        opens: "home".to_string(),
+                        id: None,
+                        icon: None,
+                        badge: None,
+                        items: Vec::new(),
+                    },
+                    UiMenuItem {
+                        label: "Work".to_string(),
+                        opens: "approvals".to_string(),
+                        id: None,
+                        icon: None,
+                        badge: Some("approvals".to_string()),
+                        items: vec![UiMenuItem {
+                            label: "Intake".to_string(),
+                            opens: "intake".to_string(),
+                            id: None,
+                            icon: None,
+                            badge: None,
+                            items: Vec::new(),
+                        }],
+                    },
+                ],
+            })),
+        ]);
+
+        registry.app("release").expect("release app").clone()
+    }
+
+    #[test]
+    fn default_screen_uses_declared_opens_with() {
+        let app = release_app();
+        let default = default_screen_index(&app);
+
+        assert_eq!(
+            screen_at(&app, default).map(|screen| screen.id.as_str()),
+            Some("approvals")
+        );
+        assert_eq!(
+            screen_index_for_target(&app, "home")
+                .and_then(|index| screen_at(&app, index))
+                .map(|screen| screen.id.as_str()),
+            Some("home")
+        );
+        assert_eq!(
+            screen_index_for_target(&app, "Approvals")
+                .and_then(|index| screen_at(&app, index))
+                .map(|screen| screen.id.as_str()),
+            Some("approvals")
+        );
+        assert_eq!(screen_index_for_target(&app, "missing"), None);
+    }
+
+    #[test]
+    fn nav_items_include_screens_and_nested_menu_entries() {
+        let app = release_app();
+        let items = collect_nav_items(&app);
+
+        let home = items
+            .iter()
+            .find(|item| item.label == "Release Desk")
+            .expect("home screen item");
+        assert_eq!(home.group, "Screens");
+        assert_eq!(home.badge.as_deref(), Some("dashboard"));
+        assert!(matches!(
+            home.target,
+            HarnessNavTarget::Screen { index } if screen_at(&app, index).map(|screen| screen.id.as_str()) == Some("home")
+        ));
+
+        let work = items
+            .iter()
+            .find(|item| item.label == "Work")
+            .expect("work menu item");
+        assert_eq!(work.group, "Main");
+        assert_eq!(work.badge.as_deref(), Some("approvals"));
+        assert!(
+            matches!(work.target, HarnessNavTarget::Menu { ref opens } if opens == "approvals")
+        );
+
+        let intake = items
+            .iter()
+            .find(|item| item.label == "Intake" && item.group == "Main")
+            .expect("nested intake menu item");
+        assert_eq!(intake.depth, 1);
+        assert!(matches!(intake.target, HarnessNavTarget::Menu { ref opens } if opens == "intake"));
+    }
 }

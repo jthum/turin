@@ -20,7 +20,8 @@ and `turin-daemon-protocol`.
   - TUI-owned state, keyboard handling, command dispatch, list cache
     invalidation, and top-level screen rendering.
 - `crates/turin-tui/src/harness_ui.rs`
-  - Terminal renderer for harness UI app/screen/node contracts.
+  - Terminal renderer and pure navigation helpers for harness UI app/screen/menu/node
+    contracts.
 - `crates/turin-tui/src/theme.rs`
   - Terminal color/style tokens.
 
@@ -37,6 +38,9 @@ and `turin-daemon-protocol`.
 
 - TUI state is client-owned: selected tab, screen, action, modal, and cache
   state must not become runtime state.
+- Harness menu items are semantic navigation targets. The TUI may flatten nested
+  menus into terminal navigation, but it must not mutate the harness contract to
+  fit terminal layout.
 - Rendering functions should not perform daemon requests directly.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
@@ -78,7 +82,7 @@ git diff --check
 ## Current Shape
 
 The current TUI foundation is intentionally smaller than the previous terminal
-client. It starts with an operator overview, harness app rendering, task list,
-event list, confirmation flow, and list invalidation. Chat, search, connection
-profile editing, and deeper inspectors should be reintroduced only as they fit
-the new terminal UX model.
+client. It starts with an operator overview, harness app rendering, nested menu
+navigation, task list, event list, confirmation flow, and list invalidation.
+Chat, search, connection profile editing, and deeper inspectors should be
+reintroduced only as they fit the new terminal UX model.

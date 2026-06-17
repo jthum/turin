@@ -59,6 +59,28 @@ impl TabKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HarnessFocus {
+    Navigation,
+    Actions,
+}
+
+impl HarnessFocus {
+    fn next(self) -> Self {
+        match self {
+            Self::Navigation => Self::Actions,
+            Self::Actions => Self::Navigation,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Navigation => "navigation",
+            Self::Actions => "actions",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PendingHarnessAction {
     pub app_id: String,
@@ -78,7 +100,9 @@ pub struct TuiApp {
     show_help: bool,
     ui_app_index: usize,
     ui_screen_indices: BTreeMap<String, usize>,
+    ui_nav_indices: BTreeMap<String, usize>,
     ui_action_index: usize,
+    harness_focus: HarnessFocus,
     task_index: usize,
     event_index: usize,
     ui_list_requests: BTreeMap<String, UiListRequest>,
@@ -102,7 +126,9 @@ impl TuiApp {
             show_help: false,
             ui_app_index: 0,
             ui_screen_indices: BTreeMap::new(),
+            ui_nav_indices: BTreeMap::new(),
             ui_action_index: 0,
+            harness_focus: HarnessFocus::Navigation,
             task_index: 0,
             event_index: 0,
             ui_list_requests: BTreeMap::new(),
@@ -192,6 +218,11 @@ impl TuiApp {
                 }
                 Ok(TuiSignal::Continue)
             }
+            KeyCode::Char('f') if self.tab == TabKind::Harness => {
+                self.harness_focus = self.harness_focus.next();
+                self.clamp_selection();
+                Ok(TuiSignal::Continue)
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_selection(1);
                 Ok(TuiSignal::Continue)
@@ -203,11 +234,13 @@ impl TuiApp {
             KeyCode::Char(']') if self.tab == TabKind::Harness => {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), 1);
                 self.ui_action_index = 0;
+                self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char('[') if self.tab == TabKind::Harness => {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), -1);
                 self.ui_action_index = 0;
+                self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char('h') if key.modifiers.is_empty() => {
@@ -247,14 +280,19 @@ impl TuiApp {
     fn move_selection(&mut self, delta: isize) {
         match self.tab {
             TabKind::Overview => {}
-            TabKind::Harness => {
-                let actions = self.current_harness_actions();
-                if actions.is_empty() {
-                    self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), delta);
-                } else {
-                    self.ui_action_index = offset_index(self.ui_action_index, actions.len(), delta);
+            TabKind::Harness => match self.harness_focus {
+                HarnessFocus::Navigation => self.move_harness_nav(delta),
+                HarnessFocus::Actions => {
+                    let actions = self.current_harness_actions();
+                    if actions.is_empty() {
+                        self.harness_focus = HarnessFocus::Navigation;
+                        self.move_harness_nav(delta);
+                    } else {
+                        self.ui_action_index =
+                            offset_index(self.ui_action_index, actions.len(), delta);
+                    }
                 }
-            }
+            },
             TabKind::Tasks => {
                 self.task_index = offset_index(self.task_index, self.dashboard.tasks.len(), delta);
             }
@@ -276,11 +314,16 @@ impl TuiApp {
         let current = self.selected_screen_index(&app);
         self.ui_screen_indices
             .insert(app.id.clone(), offset_index(current, screen_count, delta));
+        self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
     }
 
     fn activate_selection(&mut self) -> Result<()> {
         if self.tab != TabKind::Harness {
+            return Ok(());
+        }
+        if self.harness_focus == HarnessFocus::Navigation {
+            self.open_selected_harness_nav()?;
             return Ok(());
         }
         let Some(action) = self
@@ -297,6 +340,48 @@ impl TuiApp {
             self.run_harness_action(action.into_pending())?;
         }
         Ok(())
+    }
+
+    fn move_harness_nav(&mut self, delta: isize) {
+        let Some(app) = self.selected_ui_app() else {
+            return;
+        };
+        let items = harness_ui::collect_nav_items(&app);
+        if items.is_empty() {
+            self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), delta);
+            return;
+        }
+        let index = self.selected_nav_index(&app, &items);
+        self.ui_nav_indices
+            .insert(app.id.clone(), offset_index(index, items.len(), delta));
+    }
+
+    fn open_selected_harness_nav(&mut self) -> Result<()> {
+        let Some(app) = self.selected_ui_app() else {
+            return Ok(());
+        };
+        let items = harness_ui::collect_nav_items(&app);
+        let Some(item) = items.get(self.selected_nav_index(&app, &items)) else {
+            return Ok(());
+        };
+
+        let screen_index = match &item.target {
+            harness_ui::HarnessNavTarget::Screen { index } => Some(*index),
+            harness_ui::HarnessNavTarget::Menu { opens } => {
+                harness_ui::screen_index_for_target(&app, opens)
+            }
+        };
+        let Some(screen_index) = screen_index else {
+            self.dashboard.record_error(format!(
+                "Navigation target '{}' is not a screen in '{}'",
+                item.label, app.id
+            ));
+            return Ok(());
+        };
+
+        self.ui_screen_indices.insert(app.id.clone(), screen_index);
+        self.ui_action_index = 0;
+        self.request_current_harness_lists(false)
     }
 
     fn confirm_pending_action(&mut self) -> Result<()> {
@@ -349,6 +434,48 @@ impl TuiApp {
             .copied()
             .unwrap_or_else(|| harness_ui::default_screen_index(app))
             .min(app.screens.len().saturating_sub(1))
+    }
+
+    fn selected_nav_index(
+        &self,
+        app: &turin_ui_core::UiAppRecord,
+        items: &[harness_ui::HarnessNavItem],
+    ) -> usize {
+        self.ui_nav_indices
+            .get(&app.id)
+            .copied()
+            .unwrap_or_else(|| self.screen_nav_index(app, items))
+            .min(items.len().saturating_sub(1))
+    }
+
+    fn screen_nav_index(
+        &self,
+        app: &turin_ui_core::UiAppRecord,
+        items: &[harness_ui::HarnessNavItem],
+    ) -> usize {
+        let screen_index = self.selected_screen_index(app);
+        items
+            .iter()
+            .position(|item| {
+                matches!(
+                    item.target,
+                    harness_ui::HarnessNavTarget::Screen { index } if index == screen_index
+                )
+            })
+            .unwrap_or(0)
+    }
+
+    fn sync_harness_nav_to_screen(&mut self) {
+        let Some(app) = self.selected_ui_app() else {
+            return;
+        };
+        let items = harness_ui::collect_nav_items(&app);
+        if items.is_empty() {
+            self.ui_nav_indices.remove(&app.id);
+            return;
+        }
+        self.ui_nav_indices
+            .insert(app.id.clone(), self.screen_nav_index(&app, &items));
     }
 
     fn current_harness_actions(&self) -> Vec<harness_ui::HarnessAction> {
@@ -443,6 +570,15 @@ impl TuiApp {
             .min(self.dashboard.recent_events.len().saturating_sub(1));
         let action_count = self.current_harness_actions().len();
         self.ui_action_index = self.ui_action_index.min(action_count.saturating_sub(1));
+        if let Some(app) = self.selected_ui_app() {
+            let items = harness_ui::collect_nav_items(&app);
+            if items.is_empty() {
+                self.ui_nav_indices.remove(&app.id);
+            } else {
+                let index = self.selected_nav_index(&app, &items);
+                self.ui_nav_indices.insert(app.id.clone(), index);
+            }
+        }
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
@@ -600,10 +736,19 @@ impl TuiApp {
 
     fn render_harness_nav(&self, frame: &mut Frame<'_>, area: Rect) {
         let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
-        let mut items = apps
-            .iter()
-            .enumerate()
-            .map(|(index, app)| {
+        let mut items = Vec::new();
+
+        items.push(ListItem::new(Line::from(Span::styled(
+            "Apps",
+            theme::muted(),
+        ))));
+        if apps.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                "  No harness UI apps",
+                theme::muted(),
+            ))));
+        } else {
+            for (index, app) in apps.iter().enumerate() {
                 let title = app
                     .definition
                     .as_ref()
@@ -614,7 +759,7 @@ impl TuiApp {
                 } else {
                     theme::base()
                 };
-                ListItem::new(Line::from(vec![
+                items.push(ListItem::new(Line::from(vec![
                     Span::styled(
                         if index == self.ui_app_index {
                             "● "
@@ -624,46 +769,63 @@ impl TuiApp {
                         style,
                     ),
                     Span::styled(title.to_string(), style),
-                ]))
-            })
-            .collect::<Vec<_>>();
-
-        if let Some(app) = self.selected_ui_app() {
-            items.push(ListItem::new(Line::from("")));
-            items.push(ListItem::new(Line::from(Span::styled(
-                "Screens",
-                theme::muted(),
-            ))));
-            let selected_screen = self.selected_screen_index(&app);
-            for (index, screen) in app.screens.values().enumerate() {
-                let style = if index == selected_screen {
-                    theme::selected()
-                } else {
-                    theme::base()
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(
-                        if index == selected_screen {
-                            "● "
-                        } else {
-                            "  "
-                        },
-                        style,
-                    ),
-                    Span::styled(screen.title.clone(), style),
                 ])));
             }
         }
 
-        let list = if items.is_empty() {
-            List::new(vec![ListItem::new(Line::from(Span::styled(
-                "No harness UI apps",
-                theme::muted(),
-            )))])
-        } else {
-            List::new(items)
-        };
-        frame.render_widget(list.block(block("Apps")), area);
+        if let Some(app) = self.selected_ui_app() {
+            items.push(ListItem::new(Line::from("")));
+            let nav_items = harness_ui::collect_nav_items(&app);
+            let selected_nav = self.selected_nav_index(&app, &nav_items);
+            let active_screen = self.selected_screen_index(&app);
+            let mut group = String::new();
+
+            for (index, item) in nav_items.iter().enumerate() {
+                if item.group != group {
+                    group = item.group.clone();
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        group.clone(),
+                        theme::muted(),
+                    ))));
+                }
+                let selected =
+                    self.harness_focus == HarnessFocus::Navigation && index == selected_nav;
+                let active = match &item.target {
+                    harness_ui::HarnessNavTarget::Screen { index } => *index == active_screen,
+                    harness_ui::HarnessNavTarget::Menu { opens } => {
+                        harness_ui::screen_index_for_target(&app, opens) == Some(active_screen)
+                    }
+                };
+                let style = if selected {
+                    theme::selected()
+                } else if active {
+                    theme::accent()
+                } else {
+                    theme::base()
+                };
+                let prefix = if selected {
+                    "● "
+                } else if active {
+                    "◆ "
+                } else {
+                    "  "
+                };
+                let indent = "  ".repeat(item.depth);
+                let badge = item
+                    .badge
+                    .as_ref()
+                    .map(|badge| format!("  [{badge}]"))
+                    .unwrap_or_default();
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(prefix, style),
+                    Span::raw(indent),
+                    Span::styled(item.label.clone(), style),
+                    Span::styled(badge, theme::muted()),
+                ])));
+            }
+        }
+
+        frame.render_widget(List::new(items).block(block("Navigation")), area);
     }
 
     fn render_harness_inspector(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -679,7 +841,9 @@ impl TuiApp {
 
         let mut lines = vec![
             kv_line("Screen", screen_title),
+            kv_line("Focus", self.harness_focus.label()),
             kv_line("Screens", app.screens.len().to_string()),
+            kv_line("Menus", app.menus.len().to_string()),
             kv_line("Actions", actions.len().to_string()),
             Line::from(""),
             Line::from(Span::styled("Actions", theme::title())),
@@ -692,12 +856,10 @@ impl TuiApp {
             )));
         } else {
             for (index, action) in actions.iter().enumerate() {
-                let marker = if index == self.ui_action_index {
-                    "●"
-                } else {
-                    " "
-                };
-                let style = if index == self.ui_action_index {
+                let selected =
+                    self.harness_focus == HarnessFocus::Actions && index == self.ui_action_index;
+                let marker = if selected { "●" } else { " " };
+                let style = if selected {
                     theme::selected()
                 } else if action.confirm {
                     theme::warning()
@@ -713,7 +875,7 @@ impl TuiApp {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "h/l screen  enter action",
+            "f focus  enter open/run  h/l screen",
             theme::muted(),
         )));
         frame.render_widget(panel("Inspector", lines), area);
@@ -768,7 +930,7 @@ impl TuiApp {
             .as_deref()
             .or(self.dashboard.last_error.as_deref())
             .unwrap_or(
-                "Tab/←/→ switch  j/k move  h/l screen  Enter act  r refresh  ? help  q quit",
+                "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit",
             );
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
@@ -787,10 +949,11 @@ impl TuiApp {
             Line::from(Span::styled("Keyboard", theme::title())),
             Line::from(""),
             kv_line("Tab / ← →", "switch workspace"),
+            kv_line("f", "cycle harness focus"),
             kv_line("j / k", "move selection"),
             kv_line("[ / ]", "switch harness app"),
             kv_line("h / l", "switch harness screen"),
-            kv_line("Enter", "run selected harness action"),
+            kv_line("Enter", "open selected nav item or run selected action"),
             kv_line("r", "refresh current view"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
