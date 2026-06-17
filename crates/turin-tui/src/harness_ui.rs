@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use serde_json::Value;
+use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
     UiFormNode, UiListNode, UiMenuItem, UiNode, UiScreenIntent, WorkItemDetail, WorkItemList,
 };
@@ -23,6 +23,7 @@ pub struct HarnessAction {
     pub confirm: bool,
     pub agent_id: Option<String>,
     pub harness_id: Option<String>,
+    pub form: Option<UiFormNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +167,7 @@ fn collect_actions_into(app: &UiAppRecord, nodes: &[UiNode], out: &mut Vec<Harne
                 confirm: action.confirm,
                 agent_id: app.source.agent_id.clone(),
                 harness_id: app.source.harness_id.clone(),
+                form: None,
             }),
             UiNode::Form(form) => {
                 out.push(HarnessAction {
@@ -176,6 +178,7 @@ fn collect_actions_into(app: &UiAppRecord, nodes: &[UiNode], out: &mut Vec<Harne
                     confirm: false,
                     agent_id: app.source.agent_id.clone(),
                     harness_id: app.source.harness_id.clone(),
+                    form: Some(form.clone()),
                 });
             }
             _ => {}
@@ -599,6 +602,95 @@ fn json_value(value: &Value) -> String {
     }
 }
 
+pub fn form_params(form: &UiFormNode, values: &BTreeMap<String, String>) -> Result<Value, String> {
+    let mut params = form.params.as_object().cloned().unwrap_or_else(Map::new);
+    for field in &form.fields {
+        let value = values
+            .get(&field.name)
+            .cloned()
+            .unwrap_or_else(|| default_form_value(form, field));
+        if field.required.unwrap_or(false) && value.trim().is_empty() {
+            return Err(format!("Form field '{}' is required", field.label));
+        }
+        if value.trim().is_empty() && !field.required.unwrap_or(false) {
+            continue;
+        }
+        params.insert(field.name.clone(), parse_form_value(field, &value)?);
+    }
+    Ok(Value::Object(params))
+}
+
+pub fn default_form_value(form: &UiFormNode, field: &turin_daemon_protocol::UiFormField) -> String {
+    field
+        .default
+        .as_ref()
+        .or_else(|| form.params.get(&field.name))
+        .map(form_value_string)
+        .or_else(|| field.options.first().map(form_value_string))
+        .unwrap_or_else(|| {
+            if is_bool_field(field) {
+                "false".to_string()
+            } else {
+                String::new()
+            }
+        })
+}
+
+pub fn normalized_form_field_kind(field: &turin_daemon_protocol::UiFormField) -> String {
+    field.kind.as_deref().unwrap_or("text").to_ascii_lowercase()
+}
+
+pub fn form_value_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
+    }
+}
+
+pub fn is_bool_field(field: &turin_daemon_protocol::UiFormField) -> bool {
+    matches!(
+        normalized_form_field_kind(field).as_str(),
+        "bool" | "boolean" | "checkbox" | "switch"
+    )
+}
+
+fn parse_form_value(
+    field: &turin_daemon_protocol::UiFormField,
+    value: &str,
+) -> Result<Value, String> {
+    if let Some(option) = field
+        .options
+        .iter()
+        .find(|option| form_value_string(option) == value)
+    {
+        return Ok(option.clone());
+    }
+
+    match normalized_form_field_kind(field).as_str() {
+        "number" | "float" | "decimal" => {
+            let parsed = value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("Form field '{}' must be a valid number", field.label))?;
+            Number::from_f64(parsed)
+                .map(Value::Number)
+                .ok_or_else(|| format!("Form field '{}' must be a finite number", field.label))
+        }
+        "int" | "integer" => value
+            .trim()
+            .parse::<i64>()
+            .map(|value| Value::Number(value.into()))
+            .map_err(|_| format!("Form field '{}' must be a valid integer", field.label)),
+        "bool" | "boolean" | "checkbox" | "switch" => {
+            Ok(Value::Bool(matches!(value, "true" | "1" | "yes" | "on")))
+        }
+        _ => Ok(Value::String(value.to_string())),
+    }
+}
+
 fn panel(title: &'static str, lines: Vec<Line<'static>>) -> Paragraph<'static> {
     Paragraph::new(lines)
         .block(
@@ -647,10 +739,10 @@ fn truncate(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use turin_daemon_protocol::{
-        UiActionNode, UiAppIntent, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem,
-        UiNode, UiOpensWithIntent, UiScreenIntent,
+        UiActionNode, UiAppIntent, UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode,
+        UiMenuIntent, UiMenuItem, UiNode, UiOpensWithIntent, UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -847,5 +939,152 @@ mod tests {
         assert!(row.len() <= 36);
         assert!(row.contains("..."));
         assert!(row.contains("pending"));
+    }
+
+    #[test]
+    fn collect_actions_preserves_form_metadata_for_terminal_editing() {
+        let registry = UiRegistry::from_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "intake".to_string(),
+                title: "Intake".to_string(),
+                presentation: None,
+                nodes: vec![UiNode::Form(UiFormNode {
+                    id: Some("seed-demo-form".to_string()),
+                    title: "Create Demo Approval Batch".to_string(),
+                    action: "release.seed_demo_work".to_string(),
+                    fields: vec![UiFormField {
+                        name: "release".to_string(),
+                        label: "Release".to_string(),
+                        kind: Some("text".to_string()),
+                        default: Some(json!("2026.06")),
+                        required: Some(true),
+                        options: Vec::new(),
+                    }],
+                    params: json!({ "count": 1 }),
+                })],
+            })),
+        ]);
+        let app = registry.app("release").expect("release app");
+        let screen = screen_at(app, 0).expect("intake screen");
+
+        let actions = collect_actions(app, &screen.nodes);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label, "Submit Create Demo Approval Batch");
+        assert_eq!(actions[0].action, "release.seed_demo_work");
+        assert!(actions[0].form.is_some());
+    }
+
+    #[test]
+    fn form_params_merge_typed_values_over_static_params() {
+        let form = UiFormNode {
+            id: Some("intake".to_string()),
+            title: "Intake".to_string(),
+            action: "release.create_item".to_string(),
+            fields: vec![
+                UiFormField {
+                    name: "title".to_string(),
+                    label: "Title".to_string(),
+                    kind: Some("text".to_string()),
+                    default: None,
+                    required: Some(true),
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "priority".to_string(),
+                    label: "Priority".to_string(),
+                    kind: Some("integer".to_string()),
+                    default: Some(json!(3)),
+                    required: None,
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "kind".to_string(),
+                    label: "Kind".to_string(),
+                    kind: Some("text".to_string()),
+                    default: None,
+                    required: None,
+                    options: vec![json!("approval"), json!("qa")],
+                },
+                UiFormField {
+                    name: "urgent".to_string(),
+                    label: "Urgent".to_string(),
+                    kind: Some("bool".to_string()),
+                    default: None,
+                    required: None,
+                    options: Vec::new(),
+                },
+            ],
+            params: json!({
+                "kind": "task",
+                "source": "tui",
+            }),
+        };
+        let values = BTreeMap::from([
+            ("title".to_string(), "Ship 0.31.0".to_string()),
+            ("priority".to_string(), "8".to_string()),
+            ("kind".to_string(), "approval".to_string()),
+            ("urgent".to_string(), "true".to_string()),
+        ]);
+
+        let params = form_params(&form, &values).expect("form params");
+
+        assert_eq!(params["title"], json!("Ship 0.31.0"));
+        assert_eq!(params["priority"], json!(8));
+        assert_eq!(params["kind"], json!("approval"));
+        assert_eq!(params["urgent"], json!(true));
+        assert_eq!(params["source"], json!("tui"));
+    }
+
+    #[test]
+    fn form_params_validate_required_and_numeric_fields() {
+        let form = UiFormNode {
+            id: None,
+            title: "Schedule".to_string(),
+            action: "release.schedule".to_string(),
+            fields: vec![
+                UiFormField {
+                    name: "title".to_string(),
+                    label: "Title".to_string(),
+                    kind: Some("text".to_string()),
+                    default: None,
+                    required: Some(true),
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "count".to_string(),
+                    label: "Count".to_string(),
+                    kind: Some("integer".to_string()),
+                    default: None,
+                    required: None,
+                    options: Vec::new(),
+                },
+            ],
+            params: Value::Null,
+        };
+
+        let missing_title = BTreeMap::from([("count".to_string(), "2".to_string())]);
+        let bad_count = BTreeMap::from([
+            ("title".to_string(), "Run checks".to_string()),
+            ("count".to_string(), "two".to_string()),
+        ]);
+
+        assert!(
+            form_params(&form, &missing_title)
+                .expect_err("required error")
+                .contains("Title")
+        );
+        assert!(
+            form_params(&form, &bad_count)
+                .expect_err("integer error")
+                .contains("Count")
+        );
     }
 }

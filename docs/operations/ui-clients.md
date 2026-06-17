@@ -27,6 +27,8 @@ Both clients can talk to:
 - runtime overview and notices
 - harness UI apps, screens, nested menus, lists, forms, and actions
 - confirmation for destructive or explicit-confirm harness actions
+- interactive terminal forms with local drafts, basic validation, and typed
+  action params
 - task and event tables with detail inspectors
 - event-driven harness list refresh through `ui.refresh(...)` and
   `harness.action_ran`
@@ -184,7 +186,9 @@ The TUI renders harness UI contracts semantically:
 - screens and menus become terminal navigation
 - nested menu items are flattened with indentation
 - worklist-backed lists become compact terminal tables
-- forms show field metadata, defaults, and the submit action
+- forms open a terminal editor that keeps draft values local to the client,
+  validates required/numeric fields, coerces common scalar types, and submits
+  merged action params
 - unsupported list sources remain visible with source/intent/rendering metadata
 - desktop-only surfaces such as panes degrade to notices until the TUI has a
   native terminal representation for them
@@ -195,8 +199,8 @@ The TUI renders harness UI contracts semantically:
 - `turin-tui` does not currently include an interactive connection profile
   editor.
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
-- `turin-tui` does not yet have an interactive form input mode; `turin-app`
-  renders editable harness forms.
+- `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
+  to single-value text editing for now.
 - `turin-tui` does not yet render pane/detail/report/chart nodes beyond
   semantic placeholders.
 - `turin-app` remains the richer graphical surface while the TUI proves the

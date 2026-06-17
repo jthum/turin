@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
 use turin_control_client::TaskStatus;
-use turin_daemon_protocol::{EventEnvelope, WorkItemList};
+use turin_daemon_protocol::{EventEnvelope, UiFormNode, WorkItemList};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, OperatorCommand, UiController,
     UiListRequest, UiUpdate,
@@ -92,6 +92,46 @@ pub struct PendingHarnessAction {
     pub params: Value,
 }
 
+#[derive(Debug, Clone)]
+struct TuiFormSession {
+    app_id: String,
+    form: UiFormNode,
+    agent_id: Option<String>,
+    harness_id: Option<String>,
+    values: BTreeMap<String, String>,
+    field_index: usize,
+    error: Option<String>,
+}
+
+impl TuiFormSession {
+    fn from_action(action: harness_ui::HarnessAction) -> Option<Self> {
+        let form = action.form?;
+        let values = form
+            .fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.clone(),
+                    harness_ui::default_form_value(&form, field),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        Some(Self {
+            app_id: action.app_id,
+            form,
+            agent_id: action.agent_id,
+            harness_id: action.harness_id,
+            values,
+            field_index: 0,
+            error: None,
+        })
+    }
+
+    fn selected_field(&self) -> Option<&turin_daemon_protocol::UiFormField> {
+        self.form.fields.get(self.field_index)
+    }
+}
+
 pub struct TuiApp {
     dashboard: DashboardState,
     controller: UiController,
@@ -110,6 +150,7 @@ pub struct TuiApp {
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
     pending_action: Option<PendingHarnessAction>,
+    active_form: Option<TuiFormSession>,
 }
 
 impl TuiApp {
@@ -136,6 +177,7 @@ impl TuiApp {
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
             pending_action: None,
+            active_form: None,
         }
     }
 
@@ -187,6 +229,10 @@ impl TuiApp {
         };
         if key.kind != KeyEventKind::Press {
             return Ok(TuiSignal::Continue);
+        }
+
+        if self.active_form.is_some() {
+            return self.handle_form_key(key);
         }
 
         if self.pending_action.is_some() {
@@ -279,6 +325,81 @@ impl TuiApp {
         }
     }
 
+    fn handle_form_key(&mut self, key: KeyEvent) -> Result<TuiSignal> {
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_active_form();
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Enter => {
+                self.submit_active_form()?;
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Tab | KeyCode::Down => {
+                self.move_form_field(1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                self.move_form_field(-1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Left => {
+                self.cycle_active_option(-1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Right => {
+                self.cycle_active_option(1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Backspace => {
+                self.delete_active_form_char();
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Delete => {
+                self.clear_active_form_field();
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.clear_active_form_field();
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char(' ') => {
+                if !self.toggle_active_bool() {
+                    self.append_active_form_char(' ');
+                }
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('h') if self.active_form_field_has_options() => {
+                self.cycle_active_option(-1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('l') if self.active_form_field_has_options() => {
+                self.cycle_active_option(1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('y') => {
+                if !self.set_active_bool(true) {
+                    self.append_active_form_char('y');
+                }
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('n') => {
+                if !self.set_active_bool(false) {
+                    self.append_active_form_char('n');
+                }
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char(ch)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.append_active_form_char(ch);
+                Ok(TuiSignal::Continue)
+            }
+            _ => Ok(TuiSignal::Continue),
+        }
+    }
+
     fn move_selection(&mut self, delta: isize) {
         match self.tab {
             TabKind::Overview => {}
@@ -335,6 +456,17 @@ impl TuiApp {
         else {
             return Ok(());
         };
+
+        if action.form.is_some() {
+            if let Some(form_session) = TuiFormSession::from_action(action) {
+                self.dashboard.record_info(format!(
+                    "Editing harness UI form '{}' ({})",
+                    form_session.form.title, form_session.form.action
+                ));
+                self.active_form = Some(form_session);
+            }
+            return Ok(());
+        }
 
         if action.confirm {
             self.pending_action = Some(action.into_pending());
@@ -400,6 +532,179 @@ impl TuiApp {
                 action.label, action.action
             ));
         }
+    }
+
+    fn submit_active_form(&mut self) -> Result<()> {
+        let Some(mut form_session) = self.active_form.take() else {
+            return Ok(());
+        };
+        match harness_ui::form_params(&form_session.form, &form_session.values) {
+            Ok(params) => self.run_harness_action(PendingHarnessAction {
+                app_id: form_session.app_id,
+                label: format!("Submit {}", form_session.form.title),
+                action: form_session.form.action,
+                agent_id: form_session.agent_id,
+                harness_id: form_session.harness_id,
+                params,
+            }),
+            Err(message) => {
+                form_session.error = Some(message.clone());
+                self.dashboard.record_error(message);
+                self.active_form = Some(form_session);
+                Ok(())
+            }
+        }
+    }
+
+    fn cancel_active_form(&mut self) {
+        if let Some(form_session) = self.active_form.take() {
+            self.dashboard.record_info(format!(
+                "Cancelled harness UI form '{}' ({})",
+                form_session.form.title, form_session.form.action
+            ));
+        }
+    }
+
+    fn move_form_field(&mut self, delta: isize) {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return;
+        };
+        form_session.field_index = offset_index(
+            form_session.field_index,
+            form_session.form.fields.len(),
+            delta,
+        );
+        form_session.error = None;
+    }
+
+    fn append_active_form_char(&mut self, ch: char) {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return;
+        };
+        if !field.options.is_empty() || harness_ui::is_bool_field(&field) {
+            return;
+        }
+        form_session.values.entry(field.name).or_default().push(ch);
+        form_session.error = None;
+    }
+
+    fn delete_active_form_char(&mut self) {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return;
+        };
+        if !field.options.is_empty() || harness_ui::is_bool_field(&field) {
+            return;
+        }
+        if let Some(value) = form_session.values.get_mut(&field.name) {
+            value.pop();
+        }
+        form_session.error = None;
+    }
+
+    fn clear_active_form_field(&mut self) {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return;
+        };
+        if !field.options.is_empty() {
+            if let Some(first) = field.options.first() {
+                form_session
+                    .values
+                    .insert(field.name, harness_ui::form_value_string(first));
+            }
+            return;
+        }
+        if harness_ui::is_bool_field(&field) {
+            form_session.values.insert(field.name, "false".to_string());
+            return;
+        }
+        form_session.values.insert(field.name, String::new());
+        form_session.error = None;
+    }
+
+    fn toggle_active_bool(&mut self) -> bool {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return false;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return false;
+        };
+        if !harness_ui::is_bool_field(&field) {
+            return false;
+        }
+        let current = form_session
+            .values
+            .get(&field.name)
+            .is_some_and(|value| matches!(value.as_str(), "true" | "1" | "yes" | "on"));
+        form_session
+            .values
+            .insert(field.name, (!current).to_string());
+        form_session.error = None;
+        true
+    }
+
+    fn set_active_bool(&mut self, value: bool) -> bool {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return false;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return false;
+        };
+        if !harness_ui::is_bool_field(&field) {
+            return false;
+        }
+        form_session.values.insert(field.name, value.to_string());
+        form_session.error = None;
+        true
+    }
+
+    fn active_form_field_has_options(&self) -> bool {
+        self.active_form
+            .as_ref()
+            .and_then(TuiFormSession::selected_field)
+            .is_some_and(|field| !field.options.is_empty())
+    }
+
+    fn cycle_active_option(&mut self, delta: isize) -> bool {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return false;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return false;
+        };
+        if field.options.is_empty() {
+            return false;
+        }
+        let labels = field
+            .options
+            .iter()
+            .map(harness_ui::form_value_string)
+            .collect::<Vec<_>>();
+        let current = form_session
+            .values
+            .get(&field.name)
+            .cloned()
+            .unwrap_or_else(|| harness_ui::default_form_value(&form_session.form, &field));
+        let index = labels
+            .iter()
+            .position(|label| *label == current)
+            .unwrap_or_default();
+        let next = offset_index(index, labels.len(), delta);
+        if let Some(label) = labels.get(next) {
+            form_session
+                .values
+                .insert(field.name.clone(), label.clone());
+            form_session.error = None;
+        }
+        true
     }
 
     fn run_harness_action(&mut self, action: PendingHarnessAction) -> Result<()> {
@@ -709,6 +1014,9 @@ impl TuiApp {
 
         if self.show_help {
             self.render_help(frame, centered_rect(70, 55, area));
+        }
+        if self.active_form.is_some() {
+            self.render_active_form(frame, centered_rect(72, 58, area));
         }
         if self.pending_action.is_some() {
             self.render_pending_action(frame, centered_rect(68, 42, area));
@@ -1080,14 +1388,17 @@ impl TuiApp {
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
+        let fallback = if self.active_form.is_some() {
+            "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
+        } else {
+            "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit"
+        };
         let info = self
             .dashboard
             .last_info
             .as_deref()
             .or(self.dashboard.last_error.as_deref())
-            .unwrap_or(
-                "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit",
-            );
+            .unwrap_or(fallback);
         frame.render_widget(
             Paragraph::new(Line::from(vec![Span::styled(
                 info.to_string(),
@@ -1113,10 +1424,71 @@ impl TuiApp {
             kv_line("r", "refresh current view"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
+            kv_line("Form Tab / ↑ ↓", "move between form fields"),
+            kv_line(
+                "Form type",
+                "edit text, number, integer, and textarea fields",
+            ),
+            kv_line("Form Space", "toggle boolean fields"),
+            kv_line("Form h/l / ← →", "cycle option fields"),
+            kv_line("Form Enter", "submit form"),
+            kv_line("Form Esc", "cancel form"),
             kv_line("?", "toggle this help"),
             kv_line("q", "quit"),
         ];
         frame.render_widget(panel("Help", lines), area);
+    }
+
+    fn render_active_form(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(form_session) = self.active_form.as_ref() else {
+            return;
+        };
+        frame.render_widget(Clear, area);
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!(
+                    "{}  ({})",
+                    form_session.form.title, form_session.form.action
+                ),
+                theme::title(),
+            )),
+            Line::from(""),
+        ];
+        if form_session.form.fields.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "This form has no editable fields.",
+                theme::muted(),
+            )));
+        }
+        for (index, field) in form_session.form.fields.iter().enumerate() {
+            let selected = index == form_session.field_index;
+            let style = if selected {
+                theme::selected()
+            } else {
+                theme::base()
+            };
+            let value = form_session
+                .values
+                .get(&field.name)
+                .cloned()
+                .unwrap_or_else(|| harness_ui::default_form_value(&form_session.form, field));
+            lines.push(Line::from(vec![
+                Span::styled(if selected { "● " } else { "  " }, style),
+                Span::styled(format!("{:<18}", field.label), style),
+                Span::styled(format!("{:<22}", form_field_meta(field)), theme::muted()),
+                Span::styled(form_field_value_preview(field, &value), style),
+            ]));
+        }
+        if let Some(error) = form_session.error.as_ref() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(error.clone(), theme::danger())));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ options  Enter submit  Esc cancel",
+            theme::muted(),
+        )));
+        frame.render_widget(panel("Form", lines), area);
     }
 
     fn render_pending_action(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1269,6 +1641,33 @@ fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'stati
         Span::styled(format!("{}: ", notice.app_id), theme::muted()),
         Span::styled(format!("{}{}", notice.title, body), style),
     ])
+}
+
+fn form_field_meta(field: &turin_daemon_protocol::UiFormField) -> String {
+    let mut parts = vec![harness_ui::normalized_form_field_kind(field)];
+    if field.required.unwrap_or(false) {
+        parts.push("required".to_string());
+    }
+    if !field.options.is_empty() {
+        parts.push(format!("{} options", field.options.len()));
+    }
+    truncate(&parts.join(" "), 20)
+}
+
+fn form_field_value_preview(field: &turin_daemon_protocol::UiFormField, value: &str) -> String {
+    if harness_ui::is_bool_field(field) {
+        if matches!(value, "true" | "1" | "yes" | "on") {
+            return "[x]".to_string();
+        }
+        return "[ ]".to_string();
+    }
+    if !field.options.is_empty() {
+        return format!("< {} >", truncate(value, 44));
+    }
+    if value.is_empty() {
+        return "<empty>".to_string();
+    }
+    truncate(value, 52)
 }
 
 fn json_preview(value: &Value, max_chars: usize) -> String {

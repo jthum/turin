@@ -310,8 +310,8 @@ Current v0 behavior:
 - `screen:list(...)` is the generic collection primitive
 - `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
-- desktop clients can render editable forms; terminal clients may expose form
-  metadata and submit defaults until a terminal input mode exists
+- desktop and terminal clients can render editable forms; terminal clients may
+  degrade rich text areas to line-oriented text input
 - load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots
 - hook-time app-scoped methods such as `app:notice(...)` and `app:open(...)` emit ephemeral `ui.intent` session events
 - dynamic UI intent events are client-facing signals; they are not persisted into session history
