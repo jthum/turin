@@ -180,7 +180,8 @@ turin daemon session branch-checkout 018f... alt
 Current scope:
 
 - branch create / list / checkout: supported
-- branch creation from focused turns: supported in the TUI
+- branch creation from focused turns: supported by older UI surfaces, but not
+  currently exposed in the rebuilt TUI
 - branch rename / delete / archive: not implemented yet
 - merge/rebase semantics: intentionally not implemented
 

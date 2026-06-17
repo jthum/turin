@@ -366,7 +366,7 @@ See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavio
 
 Turin also ships two operator-facing daemon clients:
 
-- `turin-tui` — chat-first terminal UI with optional live-inspection panes
+- `turin-tui` — lean terminal UI for overview, harness apps, tasks, and events
 - `turin-app` — native desktop shell over the same shared control layer
 
 Both clients can connect either:
@@ -376,10 +376,11 @@ Both clients can connect either:
 
 Both clients now share:
 
-- `.turin/ui-profiles.toml` connection profiles
-- in-UI profile switching and draft editing
-- draft/selected-profile preflight checks before reconnecting
-- task, channel, and event filtering in the operator views
+- local and remote daemon transport
+- `.turin/ui-profiles.toml` connection-profile loading at startup
+- dashboard refreshes and event streaming through `turin-ui-core`
+- semantic harness UI contracts for screens, menus, lists, forms, actions, and
+  notices
 
 Examples:
 
@@ -392,7 +393,6 @@ target/release/turin-app --profile lab
 ```
 
 Shared connection profiles live in `.turin/ui-profiles.toml` by convention. A copyable example is included at `examples/config/ui-profiles.toml.example`.
-`turin-tui` also supports a separate `turin-tui.toml` settings file for chat layout, transcript budget, live preview controls, and the UI-only user label. A copyable example is included at `examples/config/turin-tui.toml.example`.
 
 See `docs/operations/ui-clients.md` for local/remote usage, profile files, and current UI scope.
 
