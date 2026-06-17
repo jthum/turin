@@ -192,6 +192,7 @@ struct TurinDesktopApp {
     recent_drafts: ConnectionDraftHistory,
     profile_activity: ConnectionProfileActivityBook,
     pending_discard_action: Option<PendingDraftAction>,
+    pending_harness_ui_action: Option<PendingHarnessUiAction>,
     last_preflight_report: Option<ConnectionPreflightReport>,
     save_profile_as_default: bool,
     pending_delete_profile: Option<String>,
@@ -218,6 +219,29 @@ enum PendingDraftAction {
     LatestRecentDraft,
     SelectedRecentDraft,
     BlankDraft,
+}
+
+#[derive(Debug, Clone)]
+struct PendingHarnessUiAction {
+    app_id: String,
+    label: String,
+    action: String,
+    agent_id: Option<String>,
+    harness_id: Option<String>,
+    params: serde_json::Value,
+}
+
+impl PendingHarnessUiAction {
+    fn new(app: &UiAppRecord, label: String, action: String, params: serde_json::Value) -> Self {
+        Self {
+            app_id: app.id.clone(),
+            label,
+            action,
+            agent_id: app.source.agent_id.clone(),
+            harness_id: app.source.harness_id.clone(),
+            params,
+        }
+    }
 }
 
 impl PendingDraftAction {
@@ -273,6 +297,7 @@ impl TurinDesktopApp {
             recent_drafts: ConnectionDraftHistory::default(),
             profile_activity: ConnectionProfileActivityBook::default(),
             pending_discard_action: None,
+            pending_harness_ui_action: None,
             last_preflight_report: None,
             save_profile_as_default: false,
             pending_delete_profile: None,
@@ -448,6 +473,48 @@ impl TurinDesktopApp {
         self.pending_discard_action = None;
         self.dashboard
             .record_info("Kept the current editor draft and cancelled the pending discard");
+    }
+
+    fn request_harness_ui_action_confirmation(&mut self, action: PendingHarnessUiAction) {
+        self.dashboard.record_info(format!(
+            "Harness UI action '{}' requires confirmation before running",
+            action.label
+        ));
+        self.pending_harness_ui_action = Some(action);
+    }
+
+    fn confirm_pending_harness_ui_action(&mut self) {
+        let Some(action) = self.pending_harness_ui_action.take() else {
+            self.dashboard
+                .record_error("No harness UI action is waiting for confirmation");
+            return;
+        };
+        self.run_harness_ui_action(action);
+    }
+
+    fn cancel_pending_harness_ui_action(&mut self) {
+        let Some(action) = self.pending_harness_ui_action.take() else {
+            self.dashboard
+                .record_error("No harness UI action is waiting for cancellation");
+            return;
+        };
+        self.dashboard.record_info(format!(
+            "Cancelled harness UI action '{}' ({})",
+            action.label, action.action
+        ));
+    }
+
+    fn run_harness_ui_action(&mut self, action: PendingHarnessUiAction) {
+        self.dashboard.record_info(format!(
+            "Running harness UI action '{}' ({})",
+            action.label, action.action
+        ));
+        self.send_command(OperatorCommand::RunHarnessAction {
+            agent_id: action.agent_id,
+            harness_id: action.harness_id,
+            action: action.action,
+            params: action.params,
+        });
     }
 
     fn apply_draft_action(&mut self, action: PendingDraftAction) {
@@ -1963,6 +2030,8 @@ impl TurinDesktopApp {
                     self.handle_harness_ui_event(&app, event);
                 }
 
+                self.render_pending_harness_ui_action(ui, &app.id);
+
                 if !self.dashboard.ui.notices().is_empty() {
                     ui.add_space(10.0);
                     ui.label(RichText::new("Recent UI Notices").strong());
@@ -1980,6 +2049,95 @@ impl TurinDesktopApp {
                 }
             });
         });
+    }
+
+    fn render_pending_harness_ui_action(&mut self, ui: &mut egui::Ui, app_id: &str) {
+        let Some(pending) = self
+            .pending_harness_ui_action
+            .as_ref()
+            .filter(|pending| pending.app_id == app_id)
+        else {
+            return;
+        };
+
+        let label = pending.label.clone();
+        let action = pending.action.clone();
+        let agent_id = pending.agent_id.clone();
+        let harness_id = pending.harness_id.clone();
+        let params = pending.params.clone();
+        let mut run = false;
+        let mut cancel = false;
+
+        let response = egui::Modal::new(egui::Id::new("harness_ui_action_confirmation")).show(
+            ui.ctx(),
+            |ui| {
+                ui.set_min_width(420.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        cast::Badge::new("Confirmation required")
+                            .intent(cast::Intent::Warning)
+                            .variant(cast::Variant::Subtle),
+                    );
+                    ui.label(RichText::new(label.clone()).strong());
+                });
+                ui.add_space(6.0);
+                ui.label("Run this harness UI action?");
+                ui.separator();
+                ui.label(format!("Action: {action}"));
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(harness_id) = harness_id.as_ref() {
+                        ui.add(
+                            cast::Badge::new(format!("Harness: {harness_id}"))
+                                .variant(cast::Variant::Outline),
+                        );
+                    }
+                    if let Some(agent_id) = agent_id.as_ref() {
+                        ui.add(
+                            cast::Badge::new(format!("Agent: {agent_id}"))
+                                .variant(cast::Variant::Outline),
+                        );
+                    }
+                });
+                if !params.is_null() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("Params: {params}")).monospace());
+                }
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add(
+                            cast::Button::new("Run Action")
+                                .size(cast::Size::Small)
+                                .intent(cast::Intent::Warning)
+                                .variant(cast::Variant::Solid),
+                        )
+                        .clicked()
+                    {
+                        run = true;
+                    }
+                    if ui
+                        .add(
+                            cast::Button::new("Cancel")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Ghost),
+                        )
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                });
+            },
+        );
+
+        if response.should_close() {
+            cancel = true;
+        }
+
+        if run {
+            self.confirm_pending_harness_ui_action();
+        } else if cancel {
+            self.cancel_pending_harness_ui_action();
+        }
     }
 
     fn handle_harness_ui_event(&mut self, app: &UiAppRecord, event: HarnessUiEvent) {
@@ -2004,18 +2162,13 @@ impl TurinDesktopApp {
                 params,
                 confirm,
             } => {
+                let pending = PendingHarnessUiAction::new(app, label, action, params);
                 if confirm {
-                    self.dashboard.record_info(format!(
-                        "Running confirmed harness UI action '{}' ({})",
-                        label, action
-                    ));
+                    self.request_harness_ui_action_confirmation(pending);
+                } else {
+                    self.pending_harness_ui_action = None;
+                    self.run_harness_ui_action(pending);
                 }
-                self.send_command(OperatorCommand::RunHarnessAction {
-                    agent_id: app.source.agent_id.clone(),
-                    harness_id: app.source.harness_id.clone(),
-                    action,
-                    params,
-                });
             }
         }
     }
