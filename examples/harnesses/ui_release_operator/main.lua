@@ -34,13 +34,13 @@ action.define("release.seed_demo_work", function(_ctx, params)
   for i = 1, count do
     list:add({
       title = "Approve " .. release .. " checkpoint " .. tostring(i),
+      kind = "approval",
       action = "release.approve_next",
       params = {
         release = release,
       },
       priority = count - i + 1,
       metadata = {
-        kind = "approval",
         lane = i % 2 == 0 and "qa" or "ops",
         release = release,
       },
