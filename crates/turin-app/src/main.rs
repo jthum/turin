@@ -1203,8 +1203,12 @@ impl TurinDesktopApp {
             .unwrap_or_else(|| "new-profile".to_string());
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Connection Profiles");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Connection Profiles");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} profiles", profiles.len())));
+                });
                 ui.add_space(6.0);
                 ui.label(format!("Source: {}", profiles_source.display()));
                 ui.add_space(8.0);
@@ -1214,24 +1218,28 @@ impl TurinDesktopApp {
                         DEFAULT_UI_PROFILES_PATH
                     ));
                 } else {
-                    ScrollArea::vertical().show(ui, |ui| {
-                        for (index, profile) in profiles.iter().enumerate() {
-                            let label = format!(
-                                "{}{} [{} | {}]",
+                    let labels = profiles
+                        .iter()
+                        .map(|profile| {
+                            format!(
+                                "{}{} · {} · {}",
                                 profile.name,
                                 if profile.is_default { " (default)" } else { "" },
                                 profile_kind_label(profile.kind),
                                 profile_auth_label(profile.auth.as_ref())
-                            );
-                            if ui
-                                .selectable_label(index == self.profile_index, label)
-                                .clicked()
-                            {
-                                self.profile_index = index;
-                                self.pending_delete_profile = None;
-                            }
-                        }
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let mut profile_index = self.profile_index;
+                    ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            cast::NavList::new(&mut profile_index, labels).size(cast::Size::Small),
+                        );
                     });
+                    if profile_index != self.profile_index {
+                        self.profile_index = profile_index;
+                        self.pending_delete_profile = None;
+                    }
                 }
 
                 ui.add_space(10.0);
@@ -1240,16 +1248,32 @@ impl TurinDesktopApp {
                 ui.label(RichText::new("Manage Profiles").strong());
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Load Current").clicked() {
+                    if ui
+                        .add(cast::Button::new("Load Current").size(cast::Size::Small))
+                        .clicked()
+                    {
                         self.load_current_connection_into_editor();
                     }
-                    if ui.button("Load Selected").clicked() {
+                    if ui
+                        .add(cast::Button::new("Load Selected").size(cast::Size::Small))
+                        .clicked()
+                    {
                         self.load_selected_profile_into_editor();
                     }
-                    if ui.button("Load Latest Recent").clicked() {
+                    if ui
+                        .add(cast::Button::new("Load Latest Recent").size(cast::Size::Small))
+                        .clicked()
+                    {
                         self.load_latest_recent_draft();
                     }
-                    if ui.button("New Draft").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("New Draft")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.reset_profile_editor();
                     }
                 });
@@ -1259,106 +1283,115 @@ impl TurinDesktopApp {
                 if recent_drafts.is_empty() {
                     ui.label("No successful draft connections yet.");
                 } else {
+                    let labels = recent_drafts
+                        .iter()
+                        .map(ConnectionProfileDraft::summary_label)
+                        .collect::<Vec<_>>();
                     ScrollArea::vertical().max_height(132.0).show(ui, |ui| {
-                        for (index, draft) in recent_drafts.iter().enumerate() {
-                            if ui
-                                .selectable_label(
-                                    index == self.recent_draft_index,
-                                    draft.summary_label(),
-                                )
-                                .clicked()
-                            {
-                                self.recent_draft_index = index;
-                            }
-                        }
+                        ui.add(
+                            cast::NavList::new(&mut self.recent_draft_index, labels)
+                                .size(cast::Size::Small),
+                        );
                     });
                     ui.add_space(6.0);
-                    if ui.button("Load Selected Recent").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Load Selected Recent")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.load_selected_recent_draft();
                     }
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new("Save As Name").strong());
                 ui.add(
-                    TextEdit::singleline(&mut self.profile_name_input)
+                    cast::TextInput::new(&mut self.profile_name_input)
+                        .label("Save As Name")
                         .hint_text(profile_name_hint.clone()),
                 );
                 ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Kind").strong());
-                    ui.selectable_value(
-                        &mut self.profile_draft.kind,
-                        ConnectionProfileKind::LocalConfig,
-                        "Local Config",
-                    );
-                    ui.selectable_value(
-                        &mut self.profile_draft.kind,
-                        ConnectionProfileKind::LocalEndpoint,
-                        "Local Endpoint",
-                    );
-                    ui.selectable_value(
-                        &mut self.profile_draft.kind,
-                        ConnectionProfileKind::Remote,
-                        "Remote",
-                    );
-                });
+                ui.label(RichText::new("Kind").strong());
+                let mut kind_index = profile_kind_index(self.profile_draft.kind);
+                if ui
+                    .add(
+                        cast::SegmentedControl::new(
+                            &mut kind_index,
+                            ["Local Config", "Local Endpoint", "Remote"],
+                        )
+                        .size(cast::Size::Small),
+                    )
+                    .changed()
+                {
+                    self.profile_draft.kind = profile_kind_from_index(kind_index);
+                }
                 ui.add_space(6.0);
-                ui.label(RichText::new(profile_target_label(self.profile_draft.kind)).strong());
                 ui.add(
-                    TextEdit::singleline(&mut self.profile_draft.target)
+                    cast::TextInput::new(&mut self.profile_draft.target)
+                        .label(profile_target_label(self.profile_draft.kind))
                         .hint_text(profile_target_hint(self.profile_draft.kind)),
                 );
                 let target_validation = self.profile_draft.validate();
                 if let Some(message) = target_validation.target_error.as_ref() {
-                    ui.label(
-                        RichText::new(message.clone()).color(Color32::from_rgb(255, 138, 128)),
+                    ui.add(
+                        cast::Badge::new(message.clone())
+                            .intent(cast::Intent::Danger)
+                            .variant(cast::Variant::Subtle),
                     );
                 } else if let Some(message) = target_validation.target_notice.as_ref() {
-                    ui.label(
-                        RichText::new(message.clone()).color(Color32::from_rgb(255, 209, 128)),
+                    ui.add(
+                        cast::Badge::new(message.clone())
+                            .intent(cast::Intent::Warning)
+                            .variant(cast::Variant::Subtle),
                     );
                 }
                 if self.profile_draft.kind == ConnectionProfileKind::Remote {
                     ui.add_space(8.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Auth").strong());
-                        ui.selectable_value(
-                            &mut self.profile_draft.auth_mode,
-                            ConnectionProfileDraftAuthMode::TokenEnv,
-                            "Token Env",
-                        );
-                        ui.selectable_value(
-                            &mut self.profile_draft.auth_mode,
-                            ConnectionProfileDraftAuthMode::InlineToken,
-                            "Inline Token",
-                        );
-                        ui.selectable_value(
-                            &mut self.profile_draft.auth_mode,
-                            ConnectionProfileDraftAuthMode::None,
-                            "None",
-                        );
-                    });
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(profile_auth_value_label(self.profile_draft.auth_mode))
-                            .strong(),
-                    );
-                    ui.add(
-                        TextEdit::singleline(&mut self.profile_draft.auth_value)
-                            .password(
-                                self.profile_draft.auth_mode
-                                    == ConnectionProfileDraftAuthMode::InlineToken,
+                    ui.label(RichText::new("Auth").strong());
+                    let mut auth_index = profile_auth_mode_index(self.profile_draft.auth_mode);
+                    if ui
+                        .add(
+                            cast::SegmentedControl::new(
+                                &mut auth_index,
+                                ["Token Env", "Inline Token", "None"],
                             )
-                            .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
-                    );
+                            .size(cast::Size::Small),
+                        )
+                        .changed()
+                    {
+                        self.profile_draft.auth_mode = profile_auth_mode_from_index(auth_index);
+                    }
+                    ui.add_space(6.0);
+                    if self.profile_draft.auth_mode == ConnectionProfileDraftAuthMode::InlineToken {
+                        ui.label(
+                            RichText::new(profile_auth_value_label(self.profile_draft.auth_mode))
+                                .strong(),
+                        );
+                        ui.add(
+                            TextEdit::singleline(&mut self.profile_draft.auth_value)
+                                .password(true)
+                                .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
+                        );
+                    } else {
+                        ui.add(
+                            cast::TextInput::new(&mut self.profile_draft.auth_value)
+                                .label(profile_auth_value_label(self.profile_draft.auth_mode))
+                                .hint_text(profile_auth_value_hint(self.profile_draft.auth_mode)),
+                        );
+                    }
                     let auth_validation = self.profile_draft.validate();
                     if let Some(message) = auth_validation.auth_error.as_ref() {
-                        ui.label(
-                            RichText::new(message.clone()).color(Color32::from_rgb(255, 138, 128)),
+                        ui.add(
+                            cast::Badge::new(message.clone())
+                                .intent(cast::Intent::Danger)
+                                .variant(cast::Variant::Subtle),
                         );
                     } else if let Some(message) = auth_validation.auth_notice.as_ref() {
-                        ui.label(
-                            RichText::new(message.clone()).color(Color32::from_rgb(255, 209, 128)),
+                        ui.add(
+                            cast::Badge::new(message.clone())
+                                .intent(cast::Intent::Warning)
+                                .variant(cast::Variant::Subtle),
                         );
                     }
                 } else {
@@ -1368,74 +1401,111 @@ impl TurinDesktopApp {
                 let draft_validation = self.profile_draft_validation();
                 ui.add_space(8.0);
                 ui.label(RichText::new("Draft Validation").strong());
-                ui.label(RichText::new(draft_validation.summary()).color(
-                    if draft_validation.is_valid() {
-                        Color32::from_rgb(168, 228, 160)
-                    } else {
-                        Color32::from_rgb(255, 138, 128)
-                    },
-                ));
+                ui.add(
+                    cast::Badge::new(draft_validation.summary())
+                        .intent(if draft_validation.is_valid() {
+                            cast::Intent::Success
+                        } else {
+                            cast::Intent::Danger
+                        })
+                        .status_dot(),
+                );
                 if self.editor_is_dirty() {
-                    ui.label(
-                        RichText::new(format!(
+                    ui.add(
+                        cast::Badge::new(format!(
                             "Unsaved editor changes vs {}",
                             self.draft_baseline_label
                         ))
-                        .color(Color32::from_rgb(255, 209, 128)),
+                        .intent(cast::Intent::Warning)
+                        .variant(cast::Variant::Subtle),
                     );
                 }
-                ui.checkbox(&mut self.save_profile_as_default, "Set as default");
+                ui.add(
+                    cast::Checkbox::new(&mut self.save_profile_as_default, "Set as default")
+                        .size(cast::Size::Small),
+                );
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add_enabled(draft_validation.is_valid(), egui::Button::new("Test Draft"))
+                        .add(
+                            cast::Button::new("Test Draft")
+                                .size(cast::Size::Small)
+                                .enabled(draft_validation.is_valid()),
+                        )
                         .clicked()
                     {
                         self.preflight_draft();
                     }
                     if ui
-                        .add_enabled(
-                            draft_validation.is_valid(),
-                            egui::Button::new("Connect Draft"),
+                        .add(
+                            cast::Button::new("Connect Draft")
+                                .size(cast::Size::Small)
+                                .enabled(draft_validation.is_valid()),
                         )
                         .clicked()
                     {
                         self.connect_profile_draft();
                     }
                     if ui
-                        .add_enabled(selected.is_some(), egui::Button::new("Test Selected"))
+                        .add(
+                            cast::Button::new("Test Selected")
+                                .size(cast::Size::Small)
+                                .enabled(selected.is_some()),
+                        )
                         .clicked()
                     {
                         self.preflight_selected_profile();
                     }
                     if ui
-                        .add_enabled(
-                            self.profile_draft.kind == ConnectionProfileKind::LocalConfig,
-                            egui::Button::new("Ensure Draft Local"),
+                        .add(
+                            cast::Button::new("Ensure Draft Local")
+                                .size(cast::Size::Small)
+                                .enabled(
+                                    self.profile_draft.kind == ConnectionProfileKind::LocalConfig,
+                                ),
                         )
                         .clicked()
                     {
                         self.ensure_local_daemon_for_draft();
                     }
                     if ui
-                        .add_enabled(update_selected_ready, egui::Button::new("Update Selected"))
+                        .add(
+                            cast::Button::new("Update Selected")
+                                .size(cast::Size::Small)
+                                .enabled(update_selected_ready),
+                        )
                         .clicked()
                     {
                         self.update_selected_profile();
                     }
                     if ui
-                        .add_enabled(
-                            draft_validation.is_valid() && typed_name_ready,
-                            egui::Button::new("Save As Name"),
+                        .add(
+                            cast::Button::new("Save As Name")
+                                .size(cast::Size::Small)
+                                .enabled(draft_validation.is_valid() && typed_name_ready),
                         )
                         .clicked()
                     {
                         self.save_current_profile();
                     }
-                    if ui.button("Duplicate Selected").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Duplicate Selected")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.duplicate_selected_profile();
                     }
-                    if ui.button("Rename Selected").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Rename Selected")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.rename_selected_profile();
                     }
                 });
@@ -1443,14 +1513,30 @@ impl TurinDesktopApp {
                     let action_description = action.description();
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new(format!("Pending: {}", action_description))
-                                .color(Color32::from_rgb(255, 209, 128)),
+                        ui.add(
+                            cast::Badge::new(format!("Pending: {}", action_description))
+                                .intent(cast::Intent::Warning)
+                                .variant(cast::Variant::Subtle),
                         );
-                        if ui.button("Discard Pending Action").clicked() {
+                        if ui
+                            .add(
+                                cast::Button::new("Discard Pending Action")
+                                    .size(cast::Size::Small)
+                                    .intent(cast::Intent::Warning)
+                                    .variant(cast::Variant::Outline),
+                            )
+                            .clicked()
+                        {
                             self.confirm_pending_discard_action();
                         }
-                        if ui.button("Cancel Pending Action").clicked() {
+                        if ui
+                            .add(
+                                cast::Button::new("Cancel Pending Action")
+                                    .size(cast::Size::Small)
+                                    .variant(cast::Variant::Ghost),
+                            )
+                            .clicked()
+                        {
                             self.cancel_pending_discard_action();
                         }
                     });
@@ -1459,11 +1545,16 @@ impl TurinDesktopApp {
                 ui.horizontal(|ui| {
                     let armed = self.is_delete_armed_for_selected();
                     if ui
-                        .button(if armed {
-                            "Confirm Delete"
-                        } else {
-                            "Arm Delete"
-                        })
+                        .add(
+                            cast::Button::new(if armed {
+                                "Confirm Delete"
+                            } else {
+                                "Arm Delete"
+                            })
+                            .size(cast::Size::Small)
+                            .intent(cast::Intent::Danger)
+                            .variant(cast::Variant::Outline),
+                        )
                         .clicked()
                     {
                         if armed {
@@ -1472,25 +1563,46 @@ impl TurinDesktopApp {
                             self.arm_delete_selected_profile();
                         }
                     }
-                    if armed && ui.button("Cancel Delete").clicked() {
+                    if armed
+                        && ui
+                            .add(
+                                cast::Button::new("Cancel Delete")
+                                    .size(cast::Size::Small)
+                                    .variant(cast::Variant::Ghost),
+                            )
+                            .clicked()
+                    {
                         self.cancel_delete_selected_profile();
                     }
                 });
                 if let Some(profile_name) = self.pending_delete_profile.as_deref() {
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(format!(
+                    ui.add(
+                        cast::Badge::new(format!(
                             "Delete armed for '{}'. Confirm to remove it from the profiles file.",
                             profile_name
                         ))
-                        .color(Color32::from_rgb(255, 171, 145)),
+                        .intent(cast::Intent::Danger)
+                        .variant(cast::Variant::Subtle),
                     );
                 }
             });
 
-            columns[1].group(|ui| {
+            cast::Panel::new().show(&mut columns[1], |ui| {
                 let draft_validation = self.profile_draft_validation();
-                ui.heading("Connection Detail");
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Connection Detail");
+                    ui.add(
+                        cast::Badge::new(connection_kind_label(self.dashboard.connection_kind))
+                            .intent(cast::Intent::Info)
+                            .variant(cast::Variant::Outline),
+                    );
+                    ui.add(
+                        cast::Badge::new(freshness_label(self.dashboard.snapshot_freshness()))
+                            .intent(freshness_intent(self.dashboard.snapshot_freshness()))
+                            .status_dot(),
+                    );
+                });
                 ui.add_space(8.0);
                 detail_kv(
                     ui,
@@ -1565,24 +1677,43 @@ impl TurinDesktopApp {
 
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Reconnect Current").clicked() {
+                    if ui
+                        .add(cast::Button::new("Reconnect Current").size(cast::Size::Small))
+                        .clicked()
+                    {
                         self.reconnect_current();
                     }
-                    if ui.button("Reload Profiles").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Reload Profiles")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.reload_profiles();
                     }
                 });
 
                 if let Some(profile) = selected.as_ref() {
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Selected Profile").strong());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Selected Profile").strong());
+                        ui.add(
+                            cast::Badge::new(profile_kind_label(profile.kind))
+                                .variant(cast::Variant::Outline),
+                        );
+                    });
                     detail_kv(ui, "Name", profile.name.clone());
                     detail_kv(ui, "Kind", profile_kind_label(profile.kind));
                     detail_kv(ui, "Target", profile.target.clone());
                     detail_kv(ui, "Default", yes_no(profile.is_default));
                     detail_kv(ui, "Auth", profile_auth_label(profile.auth.as_ref()));
                     ui.add_space(10.0);
-                    if ui.button("Connect Selected Profile").clicked() {
+                    if ui
+                        .add(cast::Button::new("Connect Selected Profile").size(cast::Size::Small))
+                        .clicked()
+                    {
                         self.connect_selected_profile();
                     }
                 }
@@ -2608,40 +2739,61 @@ impl TurinDesktopApp {
         session_id: &str,
         detail: Option<&SessionDetail>,
     ) {
-        ui.label(RichText::new("Branches").strong());
-        ui.add_space(8.0);
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Branches").strong());
+                if let Some(detail) = detail {
+                    ui.add(cast::Badge::new(format!(
+                        "{} branches",
+                        detail.branches.len()
+                    )));
+                }
+            });
+            ui.add_space(8.0);
 
-        let Some(detail) = detail else {
-            ui.label("Loading branch detail...");
-            return;
-        };
+            let Some(detail) = detail else {
+                ui.label("Loading branch detail...");
+                return;
+            };
 
-        let active_branch = detail.branches.iter().find(|branch| branch.active);
-        detail_kv(ui, "Branch Count", detail.branches.len().to_string());
-        detail_kv(
-            ui,
-            "Active Branch",
-            active_branch
-                .map(branch_descriptor)
-                .unwrap_or_else(|| "main".to_string()),
-        );
+            let active_branch = detail.branches.iter().find(|branch| branch.active);
+            detail_kv(
+                ui,
+                "Active Branch",
+                active_branch
+                    .map(branch_descriptor)
+                    .unwrap_or_else(|| "main".to_string()),
+            );
 
-        ui.add_space(6.0);
-        ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
-            for branch in &detail.branches {
-                ui.group(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        let mut label = branch_descriptor(branch);
+            ui.add_space(6.0);
+            cast::Table::new(["Branch", "Created", "State", "Action"])
+                .column_weights([2.4, 1.4, 0.8, 0.9])
+                .size(cast::Size::Small)
+                .show(ui, detail.branches.len(), |row, index| {
+                    let branch = &detail.branches[index];
+                    row.text(branch_descriptor(branch));
+                    row.text(truncate_for_list(&branch.created_at, 22));
+                    row.cell(|ui| {
                         if branch.active {
-                            label.push_str("  [active]");
+                            ui.add(
+                                cast::Badge::new("Active")
+                                    .intent(cast::Intent::Success)
+                                    .status_dot(),
+                            );
+                        } else {
+                            ui.add(cast::Badge::new("Available"));
                         }
-                        ui.label(
-                            RichText::new(label)
-                                .strong()
-                                .color(Color32::from_rgb(173, 214, 255)),
-                        );
-                        ui.label(truncate_for_list(&branch.created_at, 22));
-                        if !branch.active && ui.button("Checkout").clicked() {
+                    });
+                    row.cell(|ui| {
+                        if !branch.active
+                            && ui
+                                .add(
+                                    cast::Button::new("Checkout")
+                                        .size(cast::Size::Small)
+                                        .variant(cast::Variant::Outline),
+                                )
+                                .clicked()
+                        {
                             self.send_command(OperatorCommand::CheckoutSessionBranch {
                                 session_id: session_id.to_string(),
                                 branch: branch.branch_id.clone(),
@@ -2649,33 +2801,39 @@ impl TurinDesktopApp {
                         }
                     });
                 });
-                ui.add_space(4.0);
+
+            ui.add_space(8.0);
+            ui.add(
+                cast::TextInput::new(&mut self.branch_name_input)
+                    .label("New Branch")
+                    .hint_text("branch name"),
+            );
+            ui.add(
+                cast::Checkbox::new(
+                    &mut self.activate_new_branch,
+                    "Activate immediately after create",
+                )
+                .size(cast::Size::Small),
+            );
+            let can_create = !self.branch_name_input.trim().is_empty();
+            if ui
+                .add(
+                    cast::Button::new("Create Branch")
+                        .enabled(can_create)
+                        .variant(cast::Variant::Outline),
+                )
+                .clicked()
+            {
+                let name = self.branch_name_input.trim().to_string();
+                self.branch_name_input.clear();
+                self.send_command(OperatorCommand::CreateSessionBranch {
+                    session_id: session_id.to_string(),
+                    name,
+                    from_turn_index: None,
+                    activate: self.activate_new_branch,
+                });
             }
         });
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label("New Branch");
-            ui.text_edit_singleline(&mut self.branch_name_input);
-        });
-        ui.checkbox(
-            &mut self.activate_new_branch,
-            "Activate immediately after create",
-        );
-        let can_create = !self.branch_name_input.trim().is_empty();
-        if ui
-            .add_enabled(can_create, egui::Button::new("Create Branch"))
-            .clicked()
-        {
-            let name = self.branch_name_input.trim().to_string();
-            self.branch_name_input.clear();
-            self.send_command(OperatorCommand::CreateSessionBranch {
-                session_id: session_id.to_string(),
-                name,
-                from_turn_index: None,
-                activate: self.activate_new_branch,
-            });
-        }
     }
 }
 
@@ -2843,6 +3001,28 @@ fn status_intent(status: &str) -> cast::Intent {
     }
 }
 
+fn chat_role_from_label(role: &str) -> cast::ChatRole {
+    match role.to_ascii_lowercase().as_str() {
+        "user" => cast::ChatRole::User,
+        "system" => cast::ChatRole::System,
+        "tool" => cast::ChatRole::Tool,
+        _ => cast::ChatRole::Assistant,
+    }
+}
+
+fn tool_status_from_verdict(verdict: &str) -> cast::ToolCallStatus {
+    let normalized = verdict.to_ascii_lowercase();
+    if normalized.contains("fail") || normalized.contains("error") {
+        cast::ToolCallStatus::Failed
+    } else if normalized.contains("run") || normalized.contains("active") {
+        cast::ToolCallStatus::Running
+    } else if normalized.contains("queue") || normalized.contains("pending") {
+        cast::ToolCallStatus::Queued
+    } else {
+        cast::ToolCallStatus::Succeeded
+    }
+}
+
 fn metric_row(
     ui: &mut egui::Ui,
     left_label: &str,
@@ -2922,6 +3102,22 @@ fn profile_kind_label(kind: ConnectionProfileKind) -> &'static str {
     }
 }
 
+fn profile_kind_index(kind: ConnectionProfileKind) -> usize {
+    match kind {
+        ConnectionProfileKind::LocalConfig => 0,
+        ConnectionProfileKind::LocalEndpoint => 1,
+        ConnectionProfileKind::Remote => 2,
+    }
+}
+
+fn profile_kind_from_index(index: usize) -> ConnectionProfileKind {
+    match index {
+        1 => ConnectionProfileKind::LocalEndpoint,
+        2 => ConnectionProfileKind::Remote,
+        _ => ConnectionProfileKind::LocalConfig,
+    }
+}
+
 fn profile_target_label(kind: ConnectionProfileKind) -> &'static str {
     match kind {
         ConnectionProfileKind::LocalConfig => "Config Path",
@@ -2951,6 +3147,22 @@ fn profile_draft_auth_label(mode: ConnectionProfileDraftAuthMode) -> &'static st
         ConnectionProfileDraftAuthMode::None => "none",
         ConnectionProfileDraftAuthMode::TokenEnv => "token-env",
         ConnectionProfileDraftAuthMode::InlineToken => "inline-token",
+    }
+}
+
+fn profile_auth_mode_index(mode: ConnectionProfileDraftAuthMode) -> usize {
+    match mode {
+        ConnectionProfileDraftAuthMode::TokenEnv => 0,
+        ConnectionProfileDraftAuthMode::InlineToken => 1,
+        ConnectionProfileDraftAuthMode::None => 2,
+    }
+}
+
+fn profile_auth_mode_from_index(index: usize) -> ConnectionProfileDraftAuthMode {
+    match index {
+        0 => ConnectionProfileDraftAuthMode::TokenEnv,
+        1 => ConnectionProfileDraftAuthMode::InlineToken,
+        _ => ConnectionProfileDraftAuthMode::None,
     }
 }
 
@@ -2985,72 +3197,84 @@ fn notice_level_color(level: DashboardNoticeLevel) -> Color32 {
 }
 
 fn render_session_detail_panel(ui: &mut egui::Ui, detail: Option<&SessionDetail>) {
-    ui.label(RichText::new("Session Detail").strong());
-    ui.add_space(8.0);
-
-    let Some(detail) = detail else {
-        ui.label("Loading detailed transcript and tool history...");
-        return;
-    };
-
-    detail_kv(ui, "Messages", detail.messages.len().to_string());
-    detail_kv(ui, "Events", detail.events.len().to_string());
-    detail_kv(ui, "Tool Calls", detail.tool_executions.len().to_string());
-
-    ui.add_space(8.0);
-    ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-        if !detail.messages.is_empty() {
-            ui.label(RichText::new("Transcript").strong());
-            ui.add_space(4.0);
-        }
-        for message in detail.messages.iter().rev().take(8).rev() {
-            ui.group(|ui| {
-                ui.label(
-                    RichText::new(format!("{} · turn {}", message.role, message.turn_index))
-                        .strong()
-                        .color(Color32::from_rgb(142, 214, 255)),
-                );
-                ui.code(json_preview(&message.content, 360));
-            });
-            ui.add_space(6.0);
-        }
-
-        if !detail.events.is_empty() {
-            ui.add_space(8.0);
-            ui.label(RichText::new("Recent Events").strong());
-            ui.add_space(4.0);
-            for event in detail.events.iter().rev().take(4).rev() {
-                ui.group(|ui| {
-                    ui.label(
-                        RichText::new(event.event_type.clone())
-                            .strong()
-                            .color(Color32::from_rgb(173, 167, 159)),
-                    );
-                    ui.code(json_preview(&event.payload, 220));
-                });
-                ui.add_space(6.0);
+    cast::Panel::new().show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Session Detail").strong());
+            if let Some(detail) = detail {
+                ui.add(cast::Badge::new(format!(
+                    "{} messages",
+                    detail.messages.len()
+                )));
+                ui.add(cast::Badge::new(format!("{} events", detail.events.len())));
+                ui.add(cast::Badge::new(format!(
+                    "{} tool calls",
+                    detail.tool_executions.len()
+                )));
             }
-        }
+        });
+        ui.add_space(8.0);
 
-        if !detail.tool_executions.is_empty() {
-            ui.add_space(8.0);
-            ui.label(RichText::new("Recent Tool Calls").strong());
-            ui.add_space(4.0);
-            for tool in detail.tool_executions.iter().rev().take(4).rev() {
-                ui.group(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} · {}", tool.tool_name, tool.verdict))
-                            .strong()
-                            .color(Color32::from_rgb(255, 196, 107)),
-                    );
-                    ui.code(json_preview(&tool.args, 260));
-                    if let Some(output) = &tool.output {
-                        ui.code(json_preview(output, 260));
+        let Some(detail) = detail else {
+            ui.label("Loading detailed transcript and tool history...");
+            return;
+        };
+
+        ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+            if !detail.messages.is_empty() {
+                ui.label(RichText::new("Transcript").strong());
+                ui.add_space(4.0);
+                cast::MessageThread::new().compact(true).show(ui, |thread| {
+                    for message in detail.messages.iter().rev().take(8).rev() {
+                        thread.message(
+                            cast::ChatMessage::new(
+                                chat_role_from_label(&message.role),
+                                json_preview(&message.content, 360),
+                            )
+                            .title(format!("{} · turn {}", message.role, message.turn_index)),
+                        );
                     }
                 });
-                ui.add_space(6.0);
             }
-        }
+
+            if !detail.events.is_empty() {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Recent Events").strong());
+                ui.add_space(4.0);
+                for event in detail.events.iter().rev().take(4).rev() {
+                    ui.add(
+                        cast::CodeOutputPanel::new(
+                            event.event_type.clone(),
+                            json_preview(&event.payload, 220),
+                        )
+                        .kind(cast::ToolOutputKind::Json)
+                        .height(120.0),
+                    );
+                    ui.add_space(6.0);
+                }
+            }
+
+            if !detail.tool_executions.is_empty() {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Recent Tool Calls").strong());
+                ui.add_space(4.0);
+                for tool in detail.tool_executions.iter().rev().take(4).rev() {
+                    ui.add(
+                        cast::ToolCall::new(tool.tool_name.clone())
+                            .status(tool_status_from_verdict(&tool.verdict))
+                            .metadata(tool.verdict.clone())
+                            .body(json_preview(&tool.args, 260)),
+                    );
+                    if let Some(output) = &tool.output {
+                        ui.add(
+                            cast::CodeOutputPanel::new("Output", json_preview(output, 260))
+                                .kind(cast::ToolOutputKind::Json)
+                                .height(120.0),
+                        );
+                    }
+                    ui.add_space(6.0);
+                }
+            }
+        });
     });
 }
 
