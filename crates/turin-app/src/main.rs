@@ -967,14 +967,6 @@ impl TurinDesktopApp {
         self.dashboard.sessions.get(self.session_index).cloned()
     }
 
-    fn selected_task(&self) -> Option<TaskStatus> {
-        self.filtered_tasks().get(self.task_index).cloned()
-    }
-
-    fn selected_channel(&self) -> Option<ChannelSummary> {
-        self.filtered_channels().get(self.channel_index).cloned()
-    }
-
     fn selected_channel_runtime(&self, channel_id: &str) -> Option<ChannelRuntime> {
         self.dashboard
             .status
@@ -983,10 +975,6 @@ impl TurinDesktopApp {
             .iter()
             .find(|runtime| runtime.id == channel_id)
             .cloned()
-    }
-
-    fn selected_event(&self) -> Option<EventEnvelope> {
-        self.filtered_events().get(self.event_index).cloned()
     }
 
     fn filtered_tasks(&self) -> Vec<TaskStatus> {
@@ -1907,9 +1895,7 @@ impl TurinDesktopApp {
                                             row.cell(|ui| {
                                                 ui.add(
                                                     cast::Badge::new(item.status.clone())
-                                                        .intent(work_item_status_intent(
-                                                            &item.status,
-                                                        ))
+                                                        .intent(status_intent(&item.status))
                                                         .status_dot(),
                                                 );
                                             });
@@ -2185,32 +2171,46 @@ impl TurinDesktopApp {
 
     fn render_sessions_tab(&mut self, ui: &mut egui::Ui) {
         let sessions = self.dashboard.sessions.clone();
-        let selected = self.selected_session();
+        self.session_index = clamp_index(self.session_index, sessions.len());
+        let selected = sessions.get(self.session_index).cloned();
         let selected_detail = self.selected_session_detail().cloned();
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Stored Sessions");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Stored Sessions");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} stored", sessions.len())));
+                });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, session) in sessions.iter().enumerate() {
-                        let label = format!(
-                            "{}  [{}]",
-                            session.session_id,
-                            truncate_for_list(&session.created_at, 22)
-                        );
-                        if ui
-                            .selectable_label(index == self.session_index, label)
-                            .clicked()
-                        {
-                            self.session_index = index;
-                        }
-                    }
+                    let labels = sessions
+                        .iter()
+                        .map(|session| {
+                            format!(
+                                "{} · {}",
+                                session.session_id,
+                                truncate_for_list(&session.created_at, 22)
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.session_index, labels).size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Stored Session Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Stored Session Detail");
+                    if let Some(session) = &selected {
+                        ui.add(
+                            cast::Badge::new(session.agent_id.clone())
+                                .intent(cast::Intent::Info)
+                                .variant(cast::Variant::Outline),
+                        );
+                    }
+                });
                 ui.add_space(8.0);
                 if let Some(session) = selected {
                     detail_kv(ui, "Session", &session.session_id);
@@ -2227,7 +2227,10 @@ impl TurinDesktopApp {
                             .unwrap_or_else(|| "null".to_string()),
                     );
                     ui.add_space(12.0);
-                    if ui.button("Resume Into Live Session").clicked() {
+                    if ui
+                        .add(cast::Button::new("Resume Into Live Session"))
+                        .clicked()
+                    {
                         self.send_command(OperatorCommand::ResumeSession {
                             session_id: session.session_id.clone(),
                         });
@@ -2252,43 +2255,64 @@ impl TurinDesktopApp {
 
     fn render_tasks_tab(&mut self, ui: &mut egui::Ui) {
         let tasks = self.filtered_tasks();
-        let selected = self.selected_task();
+        self.task_index = clamp_index(self.task_index, tasks.len());
+        let selected = tasks.get(self.task_index).cloned();
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Tasks");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Tasks");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} visible", tasks.len())));
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Filter").strong());
                     ui.add(
-                        TextEdit::singleline(&mut self.task_filter)
-                            .hint_text("request id, agent, or state"),
+                        cast::SearchInput::new(&mut self.task_filter)
+                            .hint_text("request id, agent, or state")
+                            .size(cast::Size::Small),
                     );
-                    if ui.button("Clear").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Clear")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Ghost),
+                        )
+                        .clicked()
+                    {
                         self.task_filter.clear();
                     }
                 });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, task) in tasks.iter().enumerate() {
-                        let label = format!(
-                            "{}  [{} / {}]",
-                            truncate_for_list(&task.request_id, 18),
-                            task.agent_id,
-                            task.state
-                        );
-                        if ui
-                            .selectable_label(index == self.task_index, label)
-                            .clicked()
-                        {
-                            self.task_index = index;
-                        }
-                    }
+                    let labels = tasks
+                        .iter()
+                        .map(|task| {
+                            format!(
+                                "{} · {} · {}",
+                                truncate_for_list(&task.request_id, 18),
+                                task.agent_id,
+                                task.state
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.task_index, labels).size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Task Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Task Detail");
+                    if let Some(task) = &selected {
+                        ui.add(
+                            cast::Badge::new(task.state.clone())
+                                .intent(status_intent(&task.state))
+                                .status_dot(),
+                        );
+                    }
+                });
                 ui.add_space(8.0);
                 if let Some(task) = selected {
                     detail_kv(ui, "Request", &task.request_id);
@@ -2317,22 +2341,25 @@ impl TurinDesktopApp {
                     );
                     if let Some(output) = &task.output {
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Output").strong());
-                        ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                            ui.code(output);
-                        });
+                        ui.add(cast::CodeOutputPanel::new("Output", output).height(180.0));
                     }
                     if let Some(error) = &task.error {
                         ui.add_space(8.0);
-                        ui.label(
-                            RichText::new("Error")
-                                .strong()
-                                .color(Color32::from_rgb(255, 171, 145)),
+                        ui.add(
+                            cast::CodeOutputPanel::new("Error", error)
+                                .kind(cast::ToolOutputKind::Error)
+                                .height(160.0),
                         );
-                        ui.code(error);
                     }
                     ui.add_space(12.0);
-                    if ui.button("Cancel Task").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Cancel Task")
+                                .intent(cast::Intent::Danger)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.send_command(OperatorCommand::CancelTask {
                             request_id: task.request_id.clone(),
                         });
@@ -2346,42 +2373,70 @@ impl TurinDesktopApp {
 
     fn render_channels_tab(&mut self, ui: &mut egui::Ui) {
         let channels = self.filtered_channels();
-        let selected = self.selected_channel();
+        self.channel_index = clamp_index(self.channel_index, channels.len());
+        let selected = channels.get(self.channel_index).cloned();
         let selected_runtime = selected
             .as_ref()
             .and_then(|channel| self.selected_channel_runtime(&channel.id));
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Channels");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Channels");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} visible", channels.len())));
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Filter").strong());
                     ui.add(
-                        TextEdit::singleline(&mut self.channel_filter)
-                            .hint_text("channel id, kind, or agent"),
+                        cast::SearchInput::new(&mut self.channel_filter)
+                            .hint_text("channel id, kind, or agent")
+                            .size(cast::Size::Small),
                     );
-                    if ui.button("Clear").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Clear")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Ghost),
+                        )
+                        .clicked()
+                    {
                         self.channel_filter.clear();
                     }
                 });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, channel) in channels.iter().enumerate() {
-                        let label =
-                            format!("{}  [{} -> {}]", channel.id, channel.kind, channel.agent_id);
-                        if ui
-                            .selectable_label(index == self.channel_index, label)
-                            .clicked()
-                        {
-                            self.channel_index = index;
-                        }
-                    }
+                    let labels = channels
+                        .iter()
+                        .map(|channel| {
+                            format!("{} · {} -> {}", channel.id, channel.kind, channel.agent_id)
+                        })
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.channel_index, labels).size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Channel Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Channel Detail");
+                    if let Some(channel) = &selected {
+                        ui.add(
+                            cast::Badge::new(if channel.enabled {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            })
+                            .intent(if channel.enabled {
+                                cast::Intent::Success
+                            } else {
+                                cast::Intent::Warning
+                            })
+                            .status_dot(),
+                        );
+                    }
+                });
                 ui.add_space(8.0);
                 if let Some(channel) = selected {
                     detail_kv(ui, "Channel", &channel.id);
@@ -2391,7 +2446,14 @@ impl TurinDesktopApp {
 
                     if let Some(runtime) = selected_runtime {
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Runtime").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("Runtime").strong());
+                            ui.add(
+                                cast::Badge::new(runtime.state.clone())
+                                    .intent(status_intent(&runtime.state))
+                                    .status_dot(),
+                            );
+                        });
                         detail_kv(ui, "State", &runtime.state);
                         detail_kv(ui, "Start Count", runtime.start_count.to_string());
                         detail_kv(ui, "Restart Count", runtime.restart_count.to_string());
@@ -2419,56 +2481,96 @@ impl TurinDesktopApp {
 
     fn render_events_tab(&mut self, ui: &mut egui::Ui) {
         let events = self.filtered_events();
-        let selected = self.selected_event();
+        self.event_index = clamp_index(self.event_index, events.len());
+        let selected = events.get(self.event_index).cloned();
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Recent Events");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Recent Events");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} visible", events.len())));
+                });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Filter").strong());
                     ui.add(
-                        TextEdit::singleline(&mut self.event_filter)
-                            .hint_text("event name or payload text"),
+                        cast::SearchInput::new(&mut self.event_filter)
+                            .hint_text("event name or payload text")
+                            .size(cast::Size::Small),
                     );
-                    if ui.button("Clear").clicked() {
+                    if ui
+                        .add(
+                            cast::Button::new("Clear")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Ghost),
+                        )
+                        .clicked()
+                    {
                         self.event_filter.clear();
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
                     let mut paused = self.events_paused;
-                    if ui.checkbox(&mut paused, "Pause").changed() {
+                    if ui
+                        .add(cast::Checkbox::new(&mut paused, "Pause").size(cast::Size::Small))
+                        .changed()
+                    {
                         self.set_events_paused(paused);
                     }
-                    ui.checkbox(&mut self.events_follow_latest, "Follow Latest");
-                    if ui.button("Jump Latest").clicked() {
+                    ui.add(
+                        cast::Checkbox::new(&mut self.events_follow_latest, "Follow Latest")
+                            .size(cast::Size::Small),
+                    );
+                    if ui
+                        .add(
+                            cast::Button::new("Jump Latest")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
                         self.event_index = 0;
                     }
                 });
                 ui.add_space(8.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (index, event) in events.iter().enumerate() {
-                        let label = format!(
-                            "{}  [{}]",
-                            event.event,
-                            truncate_for_list(
-                                &serde_json::to_string(&event.data)
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                                40,
+                    let labels = events
+                        .iter()
+                        .map(|event| {
+                            format!(
+                                "{} · {}",
+                                event.event,
+                                truncate_for_list(
+                                    &serde_json::to_string(&event.data)
+                                        .unwrap_or_else(|_| "{}".to_string()),
+                                    40,
+                                )
                             )
-                        );
-                        if ui
-                            .selectable_label(index == self.event_index, label)
-                            .clicked()
-                        {
-                            self.event_index = index;
-                        }
-                    }
+                        })
+                        .collect::<Vec<_>>();
+                    ui.add(
+                        cast::NavList::new(&mut self.event_index, labels).size(cast::Size::Small),
+                    );
                 });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("Event Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Event Detail");
+                    ui.add(
+                        cast::Badge::new(if self.events_paused {
+                            "Paused snapshot"
+                        } else {
+                            "Live stream"
+                        })
+                        .intent(if self.events_paused {
+                            cast::Intent::Warning
+                        } else {
+                            cast::Intent::Success
+                        })
+                        .status_dot(),
+                    );
+                });
                 ui.add_space(8.0);
                 detail_kv(
                     ui,
@@ -2484,13 +2586,15 @@ impl TurinDesktopApp {
                 if let Some(event) = selected {
                     detail_kv(ui, "Event", &event.event);
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Payload").strong());
-                    ScrollArea::vertical().show(ui, |ui| {
-                        ui.code(
+                    ui.add(
+                        cast::CodeOutputPanel::new(
+                            "Payload",
                             serde_json::to_string_pretty(&event.data)
                                 .unwrap_or_else(|_| "{}".to_string()),
-                        );
-                    });
+                        )
+                        .kind(cast::ToolOutputKind::Json)
+                        .height(360.0),
+                    );
                 } else {
                     ui.label("No events have been observed yet.");
                 }
@@ -2718,7 +2822,7 @@ fn ui_app_title(app: &UiAppRecord) -> String {
         .unwrap_or_else(|| app.id.clone())
 }
 
-fn work_item_status_intent(status: &str) -> cast::Intent {
+fn status_intent(status: &str) -> cast::Intent {
     let normalized = status.to_ascii_lowercase();
     if normalized.contains("fail") || normalized.contains("error") {
         cast::Intent::Danger
