@@ -22,8 +22,10 @@ use turin_ui_core::{
     preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
 };
 
+mod harness_ui;
 mod presentation;
 
+use harness_ui::HarnessUiEvent;
 use presentation::*;
 
 #[derive(Parser, Debug)]
@@ -203,6 +205,7 @@ struct TurinDesktopApp {
     events_paused: bool,
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
+    ui_screen_indices: BTreeMap<String, usize>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
     _runtime: Arc<Runtime>,
@@ -283,6 +286,7 @@ impl TurinDesktopApp {
             events_paused: false,
             events_follow_latest: true,
             paused_events: Vec::new(),
+            ui_screen_indices: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
             _runtime: runtime,
@@ -1866,7 +1870,6 @@ impl TurinDesktopApp {
         let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
         self.ui_app_index = clamp_index(self.ui_app_index, apps.len());
         let selected = apps.get(self.ui_app_index).cloned();
-        let list_requests = self.selected_ui_list_requests();
 
         ui.columns(2, |columns| {
             cast::Panel::new().show(&mut columns[0], |ui| {
@@ -1935,114 +1938,29 @@ impl TurinDesktopApp {
                 });
             });
 
-            cast::Panel::new().show(&mut columns[1], |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.heading("UI App Detail");
-                    if let Some(app) = &selected {
-                        ui.add(cast::Badge::new(app.id.clone()).variant(cast::Variant::Outline));
-                    }
-                });
-                ui.add_space(8.0);
+            ScrollArea::vertical().show(&mut columns[1], |ui| {
                 let Some(app) = selected else {
-                    ui.label("Select a UI app to inspect its declared surfaces.");
+                    cast::Panel::new().show(ui, |ui| {
+                        ui.label("Select a UI app to render its declared screens.");
+                    });
                     return;
                 };
 
-                detail_kv(ui, "App ID", app.id.clone());
-                detail_kv(ui, "Title", ui_app_title(&app));
-                detail_kv(
+                let mut screen_index = self
+                    .ui_screen_indices
+                    .get(&app.id)
+                    .copied()
+                    .unwrap_or_else(|| harness_ui::default_screen_index(&app));
+                let event = harness_ui::render_harness_app(
                     ui,
-                    "Opens With",
-                    app.opens_with.clone().unwrap_or_else(|| "None".to_string()),
+                    &app,
+                    &mut screen_index,
+                    &self.ui_lists,
+                    &self.requested_ui_lists,
                 );
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Badge::new(format!("{} screens", app.screens.len())));
-                    ui.add(cast::Badge::new(format!("{} panes", app.panes.len())));
-                    ui.add(cast::Badge::new(format!("{} menus", app.menus.len())));
-                    ui.add(cast::Badge::new(format!("{} badges", app.badges.len())));
-                });
-
-                ui.add_space(10.0);
-                ui.label(RichText::new("Screens").strong());
-                let screens = app.screens.values().collect::<Vec<_>>();
-                if screens.is_empty() {
-                    ui.label("No screens declared.");
-                } else {
-                    cast::Table::new(["Screen", "Nodes"])
-                        .column_weights([3.0, 1.0])
-                        .right_aligned_columns([1])
-                        .size(cast::Size::Small)
-                        .show(ui, screens.len(), |row, index| {
-                            let screen = screens[index];
-                            row.text(screen.title.clone());
-                            row.text(screen.nodes.len().to_string());
-                        });
-                }
-
-                ui.add_space(10.0);
-                ui.label(RichText::new("Menus").strong());
-                if app.menus.is_empty() {
-                    ui.label("No menus declared.");
-                } else {
-                    cast::Table::new(["Menu", "Items"])
-                        .column_weights([3.0, 1.0])
-                        .right_aligned_columns([1])
-                        .size(cast::Size::Small)
-                        .show(ui, app.menus.len(), |row, index| {
-                            let menu = &app.menus[index];
-                            row.text(menu.title.clone());
-                            row.text(menu.items.len().to_string());
-                        });
-                }
-
-                if !list_requests.is_empty() {
-                    ui.add_space(10.0);
-                    ui.label(RichText::new("List Data").strong());
-                    for request in &list_requests {
-                        let key = request.cache_key();
-                        ui.separator();
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(&request.source).strong());
-                            ui.add(cast::Badge::new("worklist source").intent(cast::Intent::Info));
-                        });
-                        match self.ui_lists.get(&key) {
-                            Some(items) => {
-                                ui.add(cast::Badge::new(format!("{} items", items.items.len())));
-                                let visible = items.items.iter().take(8).collect::<Vec<_>>();
-                                if visible.is_empty() {
-                                    ui.label("No items returned.");
-                                } else {
-                                    cast::Table::new(["Title", "Status", "ID", "Priority"])
-                                        .column_weights([3.0, 1.0, 1.2, 0.8])
-                                        .right_aligned_columns([3])
-                                        .size(cast::Size::Small)
-                                        .show(ui, visible.len(), |row, index| {
-                                            let item = visible[index];
-                                            row.text(item.title.clone());
-                                            row.cell(|ui| {
-                                                ui.add(
-                                                    cast::Badge::new(item.status.clone())
-                                                        .intent(status_intent(&item.status))
-                                                        .status_dot(),
-                                                );
-                                            });
-                                            row.text(item.public_id.clone());
-                                            row.text(item.priority.to_string());
-                                        });
-                                }
-                                if items.items.len() > 8 {
-                                    ui.label(format!("... and {} more", items.items.len() - 8));
-                                }
-                            }
-                            None if self.requested_ui_lists.contains(&key) => {
-                                ui.label("Loading...");
-                            }
-                            None => {
-                                ui.label("Not loaded.");
-                            }
-                        }
-                    }
+                self.ui_screen_indices.insert(app.id.clone(), screen_index);
+                if let Some(event) = event {
+                    self.handle_harness_ui_event(&app, event);
                 }
 
                 if !self.dashboard.ui.notices().is_empty() {
@@ -2062,6 +1980,36 @@ impl TurinDesktopApp {
                 }
             });
         });
+    }
+
+    fn handle_harness_ui_event(&mut self, app: &UiAppRecord, event: HarnessUiEvent) {
+        match event {
+            HarnessUiEvent::OpenScreen(target) => {
+                if let Some(target_index) = app
+                    .screens
+                    .values()
+                    .position(|screen| screen.id == target || screen.title == target)
+                {
+                    self.ui_screen_indices.insert(app.id.clone(), target_index);
+                } else {
+                    self.dashboard.record_error(format!(
+                        "Harness UI app '{}' requested unknown screen '{}'",
+                        app.id, target
+                    ));
+                }
+            }
+            HarnessUiEvent::RunAction {
+                label,
+                action,
+                params,
+                confirm,
+            } => {
+                self.dashboard.record_info(format!(
+                    "Harness UI action '{}' ({}) selected; confirm={} params={}",
+                    label, action, confirm, params
+                ));
+            }
+        }
     }
 
     fn render_agents_tab(&mut self, ui: &mut egui::Ui) {
