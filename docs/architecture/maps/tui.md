@@ -87,7 +87,7 @@ git diff --check
 
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
-navigation, dynamic open/focus handling, task list, event list, confirmation
-flow, UI notices, and list invalidation. Chat, search, connection profile
-editing, and deeper inspectors should be reintroduced only as they fit the new
-terminal UX model.
+navigation, dynamic open/focus handling, task and event inspectors,
+confirmation flow, UI notices, and list invalidation. Chat, search, connection
+profile editing, and deeper inspectors should be reintroduced only as they fit
+the new terminal UX model.

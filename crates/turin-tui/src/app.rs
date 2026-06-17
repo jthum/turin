@@ -8,6 +8,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
+use turin_control_client::TaskStatus;
 use turin_daemon_protocol::{EventEnvelope, WorkItemList};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, OperatorCommand, UiController,
@@ -993,14 +994,29 @@ impl TuiApp {
     }
 
     fn render_tasks(&self, frame: &mut Frame<'_>, area: Rect) {
-        let rows = self.dashboard.tasks.iter().map(|task| {
-            Row::new(vec![
-                task.request_id.clone(),
-                task.agent_id.clone(),
-                task.state.clone(),
-                task.status.clone().unwrap_or_default(),
-            ])
-        });
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+            .split(area);
+        let rows = self
+            .dashboard
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| {
+                let style = if index == self.task_index {
+                    theme::selected()
+                } else {
+                    theme::base()
+                };
+                Row::new(vec![
+                    task.request_id.clone(),
+                    task.agent_id.clone(),
+                    task.state.clone(),
+                    task.status.clone().unwrap_or_default(),
+                ])
+                .style(style)
+            });
         let table = Table::new(
             rows,
             [
@@ -1012,16 +1028,22 @@ impl TuiApp {
         )
         .header(Row::new(vec!["Request", "Agent", "State", "Status"]).style(theme::accent()))
         .block(block("Tasks"));
-        frame.render_widget(table, area);
+        frame.render_widget(table, chunks[0]);
+        self.render_task_detail(frame, chunks[1]);
     }
 
     fn render_events(&self, frame: &mut Frame<'_>, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .split(area);
         let items = self
             .dashboard
             .recent_events
             .iter()
             .rev()
-            .map(event_line)
+            .enumerate()
+            .map(|(index, event)| event_line(event, index == self.event_index))
             .collect::<Vec<_>>();
         let items = if items.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
@@ -1031,7 +1053,30 @@ impl TuiApp {
         } else {
             items
         };
-        frame.render_widget(List::new(items).block(block("Events")), area);
+        frame.render_widget(List::new(items).block(block("Events")), chunks[0]);
+        self.render_event_detail(frame, chunks[1]);
+    }
+
+    fn render_task_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(task) = self.dashboard.tasks.get(self.task_index) else {
+            frame.render_widget(empty_panel("Task Detail", "No task selected"), area);
+            return;
+        };
+        frame.render_widget(panel("Task Detail", task_detail_lines(task)), area);
+    }
+
+    fn render_event_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(event) = self
+            .dashboard
+            .recent_events
+            .iter()
+            .rev()
+            .nth(self.event_index)
+        else {
+            frame.render_widget(empty_panel("Event Detail", "No event selected"), area);
+            return;
+        };
+        frame.render_widget(panel("Event Detail", event_detail_lines(event)), area);
     }
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1133,11 +1178,79 @@ fn kv_line(label: impl Into<String>, value: impl Into<String>) -> Line<'static> 
     ])
 }
 
-fn event_line(event: &EventEnvelope) -> ListItem<'static> {
+fn task_detail_lines(task: &TaskStatus) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        kv_line("Request", task.request_id.clone()),
+        kv_line("Agent", task.agent_id.clone()),
+        kv_line("Slot", task.slot_id.clone()),
+        kv_line("Trace", task.trace_id.clone()),
+        kv_line("State", task.state.clone()),
+        kv_line("Execution", task.execution.execution_id.clone()),
+        kv_line("Visibility", task.execution.visibility.clone()),
+        kv_line("Durability", task.execution.durability.clone()),
+    ];
+    if let Some(status) = &task.status {
+        lines.push(kv_line("Status", status.clone()));
+    }
+    if let Some(turns) = task.task_turn_count {
+        lines.push(kv_line("Turns", turns.to_string()));
+    }
+    if let Some(runtime_task_id) = &task.runtime_task_id {
+        lines.push(kv_line("Runtime", runtime_task_id.clone()));
+    }
+    if let Some(error) = &task.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Error", theme::danger())));
+        lines.push(Line::from(Span::styled(
+            truncate(error, 220),
+            theme::danger(),
+        )));
+    }
+    if let Some(output) = &task.output {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Output", theme::title())));
+        lines.push(Line::from(Span::styled(
+            truncate(output, 260),
+            theme::base(),
+        )));
+    }
+    if let Some(branch_outcome) = &task.branch_outcome {
+        lines.push(Line::from(""));
+        lines.push(kv_line("Branch", json_preview(branch_outcome, 160)));
+    }
+    lines
+}
+
+fn event_detail_lines(event: &EventEnvelope) -> Vec<Line<'static>> {
+    let mut lines = vec![kv_line("Event", event.event.clone())];
+    if !event.data.is_null() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Data", theme::title())));
+        lines.push(Line::from(Span::styled(
+            json_preview(&event.data, 700),
+            theme::base(),
+        )));
+    }
+    lines
+}
+
+fn event_line(event: &EventEnvelope, selected: bool) -> ListItem<'static> {
+    let style = if selected {
+        theme::selected()
+    } else {
+        theme::base()
+    };
+    let preview = if event.data.is_null() {
+        String::new()
+    } else {
+        format!("  {}", json_preview(&event.data, 80))
+    };
     ListItem::new(Line::from(vec![
         Span::styled("● ", theme::accent()),
-        Span::styled(event.event.clone(), theme::base()),
+        Span::styled(event.event.clone(), style),
+        Span::styled(preview, theme::muted()),
     ]))
+    .style(style)
 }
 
 fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'static> {
@@ -1156,6 +1269,28 @@ fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'stati
         Span::styled(format!("{}: ", notice.app_id), theme::muted()),
         Span::styled(format!("{}{}", notice.title, body), style),
     ])
+}
+
+fn json_preview(value: &Value, max_chars: usize) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(value) => truncate(value, max_chars),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(_) | Value::Object(_) => truncate(&value.to_string(), max_chars),
+    }
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in value.chars().enumerate() {
+        if index >= max_chars {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
