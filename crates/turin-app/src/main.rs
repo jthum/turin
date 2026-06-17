@@ -81,6 +81,17 @@ impl TabKind {
             Self::Events => "Events",
         }
     }
+
+    fn as_index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default()
+    }
+
+    fn from_index(index: usize) -> Self {
+        Self::ALL.get(index).copied().unwrap_or(Self::Connections)
+    }
 }
 
 fn main() -> Result<()> {
@@ -104,7 +115,7 @@ fn main() -> Result<()> {
         "Turin App",
         native_options,
         Box::new(move |cc| {
-            configure_visuals(&cc.egui_ctx);
+            configure_cast_theme(&cc.egui_ctx);
             Ok(Box::new(TurinDesktopApp::new(
                 dashboard,
                 controller,
@@ -147,15 +158,13 @@ fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
     }
 }
 
-fn configure_visuals(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.override_text_color = Some(Color32::from_rgb(240, 234, 224));
-    visuals.widgets.active.bg_fill = Color32::from_rgb(31, 78, 96);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(23, 33, 40);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(46, 88, 101);
-    visuals.panel_fill = Color32::from_rgb(13, 18, 22);
-    visuals.window_fill = Color32::from_rgb(17, 24, 29);
-    ctx.set_visuals(visuals);
+fn configure_cast_theme(ctx: &egui::Context) {
+    cast::install_cast_fonts(ctx);
+    let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Dark)
+        .with_primary(Color32::from_rgb(38, 166, 194))
+        .with_density(30.0, 8.0)
+        .resolve();
+    cast::set_theme(ctx, theme);
 }
 
 struct TurinDesktopApp {
@@ -1106,8 +1115,15 @@ impl TurinDesktopApp {
     }
 
     fn render_runtime_overview(&self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.heading("Runtime");
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading("Runtime");
+                ui.add_space(8.0);
+                ui.add(cast::Badge::new(match self.dashboard.connection_kind {
+                    ConnectionKind::Local => "Local",
+                    ConnectionKind::Remote => "Remote",
+                }));
+            });
             ui.add_space(8.0);
             if let Some(health) = self.dashboard.health.as_ref() {
                 metric_row(
@@ -1155,14 +1171,14 @@ impl TurinDesktopApp {
     }
 
     fn render_tab_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            for tab in TabKind::ALL {
-                let selected = self.tab == tab;
-                if ui.selectable_label(selected, tab.title()).clicked() {
-                    self.tab = tab;
-                }
-            }
-        });
+        let mut selected = self.tab.as_index();
+        let labels = TabKind::ALL.map(|tab| tab.title());
+        if ui
+            .add(cast::Tabs::new(&mut selected, labels).size(cast::Size::Small))
+            .changed()
+        {
+            self.tab = TabKind::from_index(selected);
+        }
     }
 
     fn render_active_tab(&mut self, ui: &mut egui::Ui) {
@@ -1736,71 +1752,84 @@ impl TurinDesktopApp {
     fn render_ui_apps_tab(&mut self, ui: &mut egui::Ui) {
         self.request_selected_ui_lists(false);
         let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
-        let selected = self.selected_ui_app();
+        self.ui_app_index = clamp_index(self.ui_app_index, apps.len());
+        let selected = apps.get(self.ui_app_index).cloned();
         let list_requests = self.selected_ui_list_requests();
 
         ui.columns(2, |columns| {
-            columns[0].group(|ui| {
-                ui.heading("Harness UI Apps");
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("Harness UI Apps");
+                    ui.add_space(8.0);
+                    ui.add(cast::Badge::new(format!("{} apps", apps.len())));
+                });
                 ui.add_space(8.0);
                 if apps.is_empty() {
                     ui.label("No harness UI apps are declared by the current runtime.");
                 } else {
-                    ScrollArea::vertical().show(ui, |ui| {
-                        for (index, app) in apps.iter().enumerate() {
-                            let title = app
-                                .definition
-                                .as_ref()
-                                .map(|definition| definition.title.as_str())
-                                .unwrap_or(app.id.as_str());
-                            let label = format!(
-                                "{}  screens:{} panes:{} menus:{}",
-                                title,
+                    let labels = apps
+                        .iter()
+                        .map(|app| {
+                            format!(
+                                "{} · {} screens · {} panes",
+                                ui_app_title(app),
                                 app.screens.len(),
-                                app.panes.len(),
-                                app.menus.len()
-                            );
-                            if ui
-                                .selectable_label(index == self.ui_app_index, label)
-                                .clicked()
-                            {
-                                self.ui_app_index = index;
-                            }
-                        }
+                                app.panes.len()
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            cast::NavList::new(&mut self.ui_app_index, labels)
+                                .size(cast::Size::Small),
+                        );
                     });
                 }
 
                 ui.add_space(12.0);
-                if ui.button("Refresh Selected Lists").clicked() {
+                if ui
+                    .add(
+                        cast::Button::new("Refresh Selected Lists")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Outline),
+                    )
+                    .clicked()
+                {
                     self.request_selected_ui_lists(true);
                 }
                 ui.add_space(8.0);
                 ui.label(RichText::new("Dynamic UI Signals").strong());
-                detail_kv(ui, "Notices", self.dashboard.ui.notices().len().to_string());
-                detail_kv(
-                    ui,
-                    "Open Requests",
-                    self.dashboard.ui.opens().len().to_string(),
-                );
-                detail_kv(
-                    ui,
-                    "Show Requests",
-                    self.dashboard.ui.shows().len().to_string(),
-                );
-                detail_kv(
-                    ui,
-                    "Focus Requests",
-                    self.dashboard.ui.focuses().len().to_string(),
-                );
-                detail_kv(
-                    ui,
-                    "Refresh Requests",
-                    self.dashboard.ui.refreshes().len().to_string(),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Badge::new(format!(
+                        "Notices: {}",
+                        self.dashboard.ui.notices().len()
+                    )));
+                    ui.add(cast::Badge::new(format!(
+                        "Opens: {}",
+                        self.dashboard.ui.opens().len()
+                    )));
+                    ui.add(cast::Badge::new(format!(
+                        "Shows: {}",
+                        self.dashboard.ui.shows().len()
+                    )));
+                    ui.add(cast::Badge::new(format!(
+                        "Focuses: {}",
+                        self.dashboard.ui.focuses().len()
+                    )));
+                    ui.add(cast::Badge::new(format!(
+                        "Refreshes: {}",
+                        self.dashboard.ui.refreshes().len()
+                    )));
+                });
             });
 
-            columns[1].group(|ui| {
-                ui.heading("UI App Detail");
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("UI App Detail");
+                    if let Some(app) = &selected {
+                        ui.add(cast::Badge::new(app.id.clone()).variant(cast::Variant::Outline));
+                    }
+                });
                 ui.add_space(8.0);
                 let Some(app) = selected else {
                     ui.label("Select a UI app to inspect its declared surfaces.");
@@ -1808,34 +1837,51 @@ impl TurinDesktopApp {
                 };
 
                 detail_kv(ui, "App ID", app.id.clone());
-                detail_kv(
-                    ui,
-                    "Title",
-                    app.definition
-                        .as_ref()
-                        .map(|definition| definition.title.clone())
-                        .unwrap_or_else(|| app.id.clone()),
-                );
+                detail_kv(ui, "Title", ui_app_title(&app));
                 detail_kv(
                     ui,
                     "Opens With",
                     app.opens_with.clone().unwrap_or_else(|| "None".to_string()),
                 );
-                detail_kv(ui, "Screens", app.screens.len().to_string());
-                detail_kv(ui, "Panes", app.panes.len().to_string());
-                detail_kv(ui, "Menus", app.menus.len().to_string());
-                detail_kv(ui, "Badges", app.badges.len().to_string());
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Badge::new(format!("{} screens", app.screens.len())));
+                    ui.add(cast::Badge::new(format!("{} panes", app.panes.len())));
+                    ui.add(cast::Badge::new(format!("{} menus", app.menus.len())));
+                    ui.add(cast::Badge::new(format!("{} badges", app.badges.len())));
+                });
 
                 ui.add_space(10.0);
                 ui.label(RichText::new("Screens").strong());
-                for screen in app.screens.values() {
-                    ui.label(format!("{}  [{} nodes]", screen.title, screen.nodes.len()));
+                let screens = app.screens.values().collect::<Vec<_>>();
+                if screens.is_empty() {
+                    ui.label("No screens declared.");
+                } else {
+                    cast::Table::new(["Screen", "Nodes"])
+                        .column_weights([3.0, 1.0])
+                        .right_aligned_columns([1])
+                        .size(cast::Size::Small)
+                        .show(ui, screens.len(), |row, index| {
+                            let screen = screens[index];
+                            row.text(screen.title.clone());
+                            row.text(screen.nodes.len().to_string());
+                        });
                 }
 
                 ui.add_space(10.0);
                 ui.label(RichText::new("Menus").strong());
-                for menu in &app.menus {
-                    ui.label(format!("{}  [{} items]", menu.title, menu.items.len()));
+                if app.menus.is_empty() {
+                    ui.label("No menus declared.");
+                } else {
+                    cast::Table::new(["Menu", "Items"])
+                        .column_weights([3.0, 1.0])
+                        .right_aligned_columns([1])
+                        .size(cast::Size::Small)
+                        .show(ui, app.menus.len(), |row, index| {
+                            let menu = &app.menus[index];
+                            row.text(menu.title.clone());
+                            row.text(menu.items.len().to_string());
+                        });
                 }
 
                 if !list_requests.is_empty() {
@@ -1844,15 +1890,36 @@ impl TurinDesktopApp {
                     for request in &list_requests {
                         let key = request.cache_key();
                         ui.separator();
-                        ui.label(RichText::new(&request.source).strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(&request.source).strong());
+                            ui.add(cast::Badge::new("worklist source").intent(cast::Intent::Info));
+                        });
                         match self.ui_lists.get(&key) {
                             Some(items) => {
-                                ui.label(format!("{} items", items.items.len()));
-                                for item in items.items.iter().take(8) {
-                                    ui.label(format!(
-                                        "{}  [{}]  {}",
-                                        item.title, item.status, item.public_id
-                                    ));
+                                ui.add(cast::Badge::new(format!("{} items", items.items.len())));
+                                let visible = items.items.iter().take(8).collect::<Vec<_>>();
+                                if visible.is_empty() {
+                                    ui.label("No items returned.");
+                                } else {
+                                    cast::Table::new(["Title", "Status", "ID", "Priority"])
+                                        .column_weights([3.0, 1.0, 1.2, 0.8])
+                                        .right_aligned_columns([3])
+                                        .size(cast::Size::Small)
+                                        .show(ui, visible.len(), |row, index| {
+                                            let item = visible[index];
+                                            row.text(item.title.clone());
+                                            row.cell(|ui| {
+                                                ui.add(
+                                                    cast::Badge::new(item.status.clone())
+                                                        .intent(work_item_status_intent(
+                                                            &item.status,
+                                                        ))
+                                                        .status_dot(),
+                                                );
+                                            });
+                                            row.text(item.public_id.clone());
+                                            row.text(item.priority.to_string());
+                                        });
                                 }
                                 if items.items.len() > 8 {
                                     ui.label(format!("... and {} more", items.items.len() - 8));
@@ -1873,7 +1940,13 @@ impl TurinDesktopApp {
                     ui.label(RichText::new("Recent UI Notices").strong());
                     for notice in self.dashboard.ui.notices().iter().rev().take(5) {
                         if notice.app_id == app.id {
-                            ui.label(format!("{}: {}", notice.app_id, notice.title));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add(
+                                    cast::Badge::new(notice.app_id.clone())
+                                        .variant(cast::Variant::Outline),
+                                );
+                                ui.label(notice.title.clone());
+                            });
                         }
                     }
                 }
@@ -2437,7 +2510,7 @@ impl TurinDesktopApp {
 }
 
 impl eframe::App for TurinDesktopApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(update) = self.controller.update_rx.try_recv() {
             self.apply_update(update);
         }
@@ -2445,79 +2518,83 @@ impl eframe::App for TurinDesktopApp {
         self.ensure_session_detail_loaded();
 
         ctx.request_repaint_after(Duration::from_millis(250));
+    }
 
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ready = self
             .dashboard
             .health
             .as_ref()
             .is_some_and(|health| health.ready);
-        let accent = if ready {
-            Color32::from_rgb(111, 214, 161)
-        } else {
-            Color32::from_rgb(255, 196, 107)
-        };
         let connection_kind = match self.dashboard.connection_kind {
             ConnectionKind::Local => "Local",
             ConnectionKind::Remote => "Remote",
         };
 
-        egui::TopBottomPanel::top("top_banner").show(ctx, |ui| {
+        egui::Panel::top("top_banner").show_inside(ui, |ui| {
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new("Turin App")
-                        .size(26.0)
-                        .color(Color32::from_rgb(142, 214, 255))
-                        .strong(),
+                ui.label(RichText::new("Turin App").size(26.0).strong());
+                ui.add_space(12.0);
+                ui.add(
+                    cast::Badge::new(if ready { "Connected" } else { "Degraded" })
+                        .intent(if ready {
+                            cast::Intent::Success
+                        } else {
+                            cast::Intent::Warning
+                        })
+                        .status_dot(),
                 );
                 ui.add_space(12.0);
-                ui.label(
-                    RichText::new(if ready { "CONNECTED" } else { "DEGRADED" })
-                        .color(accent)
-                        .strong(),
+                ui.add(cast::Badge::new(format!("{connection_kind} target")));
+                ui.label(self.dashboard.connection_target.clone());
+                ui.add_space(12.0);
+                ui.add(
+                    cast::Badge::new(format!("Source {}", self.active_connection_label()))
+                        .intent(cast::Intent::Info)
+                        .variant(cast::Variant::Outline),
                 );
                 ui.add_space(12.0);
-                ui.label(
-                    RichText::new(format!("{connection_kind} target"))
-                        .color(Color32::from_rgb(201, 195, 187))
-                        .strong(),
-                );
-                ui.label(
-                    RichText::new(self.dashboard.connection_target.clone())
-                        .color(Color32::from_rgb(201, 195, 187)),
-                );
-                ui.add_space(12.0);
-                ui.label(
-                    RichText::new(format!("Source {}", self.active_connection_label()))
-                        .color(Color32::from_rgb(151, 214, 255))
-                        .strong(),
-                );
-                ui.add_space(12.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Sync {} ({} / {} / {})",
-                        freshness_label(self.dashboard.snapshot_freshness()),
-                        self.dashboard.snapshot_age_label(),
-                        self.dashboard.last_refresh_status_label(),
-                        self.dashboard.last_refresh_latency_label()
+                ui.add(
+                    cast::Badge::new(format!(
+                        "Sync {}",
+                        freshness_label(self.dashboard.snapshot_freshness())
                     ))
-                    .color(freshness_color(self.dashboard.snapshot_freshness()))
-                    .strong(),
+                    .intent(freshness_intent(self.dashboard.snapshot_freshness()))
+                    .status_dot(),
                 );
+                ui.label(format!(
+                    "{} / {} / {}",
+                    self.dashboard.snapshot_age_label(),
+                    self.dashboard.last_refresh_status_label(),
+                    self.dashboard.last_refresh_latency_label()
+                ));
                 ui.add_space(12.0);
-                if ui.button("Refresh").clicked() {
+                if ui
+                    .add(
+                        cast::Button::new("Refresh")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Outline),
+                    )
+                    .clicked()
+                {
                     self.send_command(OperatorCommand::Refresh);
                 }
             });
             ui.add_space(6.0);
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_runtime_overview(ui);
             ui.add_space(12.0);
 
             if let Some(error) = &self.dashboard.last_error {
-                ui.group(|ui| {
+                cast::Panel::new().show(ui, |ui| {
+                    ui.add(
+                        cast::Badge::new("Error")
+                            .intent(cast::Intent::Danger)
+                            .status_dot(),
+                    );
                     ui.label(
                         RichText::new(error)
                             .color(Color32::from_rgb(255, 171, 145))
@@ -2528,7 +2605,12 @@ impl eframe::App for TurinDesktopApp {
             }
 
             if let Some(info) = &self.dashboard.last_info {
-                ui.group(|ui| {
+                cast::Panel::new().show(ui, |ui| {
+                    ui.add(
+                        cast::Badge::new("Info")
+                            .intent(cast::Intent::Info)
+                            .status_dot(),
+                    );
                     ui.label(
                         RichText::new(info)
                             .color(Color32::from_rgb(151, 214, 255))
@@ -2563,6 +2645,34 @@ fn detail_kv(ui: &mut egui::Ui, key: &str, value: impl ToString) {
     });
 }
 
+fn ui_app_title(app: &UiAppRecord) -> String {
+    app.definition
+        .as_ref()
+        .map(|definition| definition.title.clone())
+        .unwrap_or_else(|| app.id.clone())
+}
+
+fn work_item_status_intent(status: &str) -> cast::Intent {
+    let normalized = status.to_ascii_lowercase();
+    if normalized.contains("fail") || normalized.contains("error") {
+        cast::Intent::Danger
+    } else if normalized.contains("pause")
+        || normalized.contains("blocked")
+        || normalized.contains("waiting")
+    {
+        cast::Intent::Warning
+    } else if normalized.contains("done")
+        || normalized.contains("complete")
+        || normalized.contains("success")
+    {
+        cast::Intent::Success
+    } else if normalized.contains("run") || normalized.contains("active") {
+        cast::Intent::Info
+    } else {
+        cast::Intent::Neutral
+    }
+}
+
 fn metric_row(
     ui: &mut egui::Ui,
     left_label: &str,
@@ -2580,8 +2690,10 @@ fn metric_row(
 }
 
 fn metric_chip(ui: &mut egui::Ui, label: &str, value: usize) {
-    ui.label(
-        RichText::new(format!("{}: {}", label, value)).color(Color32::from_rgb(240, 234, 224)),
+    ui.add(
+        cast::Badge::new(format!("{label}: {value}"))
+            .intent(cast::Intent::Neutral)
+            .variant(cast::Variant::Subtle),
     );
     ui.add_space(12.0);
 }
@@ -2615,11 +2727,11 @@ fn freshness_label(freshness: DashboardFreshness) -> &'static str {
     }
 }
 
-fn freshness_color(freshness: DashboardFreshness) -> Color32 {
+fn freshness_intent(freshness: DashboardFreshness) -> cast::Intent {
     match freshness {
-        DashboardFreshness::Fresh => Color32::from_rgb(111, 214, 161),
-        DashboardFreshness::Quiet => Color32::from_rgb(255, 214, 102),
-        DashboardFreshness::Stale => Color32::from_rgb(255, 171, 145),
+        DashboardFreshness::Fresh => cast::Intent::Success,
+        DashboardFreshness::Quiet => cast::Intent::Warning,
+        DashboardFreshness::Stale => cast::Intent::Danger,
     }
 }
 

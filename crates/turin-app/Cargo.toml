@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+cast = { package = "cast-ui", git = "https://github.com/jthum/cast", rev = "57d3b926a224e138e3e950cd21b1a3b07846c5a2" }
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
-eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-egui = "0.29"
+eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.34.2"
 serde_json = "1.0"
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 turin-control-client = { path = "../turin-control-client" }
