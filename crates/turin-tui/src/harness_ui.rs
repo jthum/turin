@@ -13,7 +13,7 @@ use turin_daemon_protocol::{
 };
 use turin_ui_core::{
     UiAppRecord, UiListRequest, work_item_field_label, worklist_chart_group_field,
-    worklist_group_counts, worklist_status_counts,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::app::PendingHarnessAction;
@@ -992,12 +992,7 @@ fn render_worklist_snapshot(items: &WorkItemList, lines: &mut Vec<Line<'static>>
         theme::base(),
     ));
 
-    if let Some(next) = items
-        .items
-        .iter()
-        .filter(|item| item.status == "pending")
-        .max_by_key(|item| item.priority)
-    {
+    if let Some(next) = worklist_highest_priority_pending_item(items) {
         lines.push(indent_line(
             depth,
             "Highest priority pending item".to_string(),
@@ -1164,6 +1159,14 @@ fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, 
         ),
         theme::base(),
     ));
+    if let Some(next) = worklist_highest_priority_pending_item(items) {
+        lines.push(indent_line(
+            depth,
+            "Next highest-priority pending item".to_string(),
+            theme::muted(),
+        ));
+        render_work_item_detail(next, lines, depth + 1);
+    }
 }
 
 fn render_worklist_chart(
@@ -1808,6 +1811,7 @@ mod tests {
         assert!(text.contains("Detail: Release Snapshot  worklists.release"));
         assert!(text.contains("action: release.approve_next"));
         assert!(text.contains("Report: Release Readiness  worklists.release"));
+        assert!(text.contains("Next highest-priority pending item"));
         assert!(text.contains("2 loaded  1 pending"));
         assert!(
             text.contains("Chart: Approval Flow  worklists.release as bar  intent=kind_breakdown")

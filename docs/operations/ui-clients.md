@@ -305,8 +305,8 @@ The TUI renders harness UI contracts semantically:
   queued for confirmation from the item focus
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
-- worklist-backed report and chart nodes become lightweight summaries and bar
-  breakdowns
+- worklist-backed report and chart nodes become lightweight summaries, next
+  pending item highlights, and bar breakdowns
 - forms open a terminal editor that keeps draft values local to the client,
   validates required/numeric fields, coerces common scalar types, and submits
   merged action params

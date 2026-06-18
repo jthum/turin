@@ -149,7 +149,8 @@ The current browser shell is intentionally small:
   actions
 - action start/completion/failure feedback, latest action result panels on
   screens and open panes, and duplicate-run suppression
-- lightweight worklist-backed report summaries and chart breakdowns
+- lightweight worklist-backed report summaries with next pending item
+  highlights, plus chart breakdowns
 - SSE invalidation for runtime/UI/action events
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
 - dynamic badge rendering for matching navigation targets and titled node ids

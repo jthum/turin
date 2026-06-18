@@ -21,5 +21,5 @@ pub use dashboard::{
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,
-    worklist_group_counts, worklist_status_counts,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };

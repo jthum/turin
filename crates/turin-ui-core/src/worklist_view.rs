@@ -32,6 +32,14 @@ pub fn worklist_status_counts(items: &WorkItemList) -> WorklistStatusCounts {
     counts
 }
 
+pub fn worklist_highest_priority_pending_item(items: &WorkItemList) -> Option<&WorkItemDetail> {
+    items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .max_by_key(|item| item.priority)
+}
+
 pub fn worklist_chart_group_field(intent: Option<&str>) -> &'static str {
     match intent {
         Some("kind_breakdown") => "kind",
@@ -123,6 +131,23 @@ mod tests {
         assert_eq!(counts.failed, 1);
         assert_eq!(counts.other, 1);
         assert_eq!(counts.total(), 5);
+    }
+
+    #[test]
+    fn highest_priority_pending_item_ignores_non_pending_items() {
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![
+                test_work_item(1, "REL-1", "done", "approval"),
+                test_work_item(2, "REL-2", "pending", "approval"),
+                test_work_item(3, "REL-3", "pending", "qa"),
+                test_work_item(10, "REL-10", "claimed", "ops"),
+            ],
+        };
+
+        let item = worklist_highest_priority_pending_item(&items).expect("pending item");
+
+        assert_eq!(item.public_id, "REL-3");
     }
 
     #[test]

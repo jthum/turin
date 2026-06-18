@@ -332,7 +332,8 @@ Current behavior:
   unsupported-adapter messages that name the source and point authors toward
   `worklists.*` or a deliberate client adapter
 - report and chart nodes currently have lightweight worklist-backed client
-  adapters, not shared analytics/query semantics
+  adapters, including report counts and next pending item highlights, not shared
+  analytics/query semantics
 - desktop, terminal, and web clients can render editable forms; terminal
   clients may degrade rich text areas to line-oriented text input
 - dynamic badges render on matching screen/menu navigation targets when the

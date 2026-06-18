@@ -230,6 +230,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("formDrafts"));
     assert!(js.contains("runningActions"));
     assert!(js.contains("renderReport"));
+    assert!(js.contains("renderReportHighlight"));
+    assert!(js.contains("highestPriorityPendingItem"));
+    assert!(js.contains("Next highest-priority pending item"));
     assert!(js.contains("renderChart"));
     assert!(js.contains("renderActionResult"));
     assert!(js.contains("latestActionResult"));

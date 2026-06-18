@@ -809,6 +809,8 @@ function renderReport(node, app) {
   }
   const items = cached.list?.items ?? [];
   panel.append(renderMetricGrid(reportMetrics(items)));
+  const next = highestPriorityPendingItem(items);
+  if (next) panel.append(renderReportHighlight(next, app));
   return panel;
 }
 
@@ -869,6 +871,15 @@ function renderBars(counts) {
     `;
     wrapper.append(row);
   }
+  return wrapper;
+}
+
+function renderReportHighlight(item, app) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "list-selection";
+  const heading = document.createElement("h4");
+  heading.textContent = "Next highest-priority pending item";
+  wrapper.append(heading, renderWorkItemDetail(item, app));
   return wrapper;
 }
 
@@ -1211,6 +1222,12 @@ function reportMetrics(items) {
     { label: "Done", value: counts.done || 0 },
     { label: "Failed", value: counts.failed || 0 },
   ];
+}
+
+function highestPriorityPendingItem(items) {
+  return items
+    .filter(item => item.status === "pending")
+    .sort((left, right) => (right.priority || 0) - (left.priority || 0))[0] || null;
 }
 
 function chartGroupField(node) {

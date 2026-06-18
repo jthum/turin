@@ -9,7 +9,7 @@ use turin_daemon_protocol::{
 };
 use turin_ui_core::{
     UiAppRecord, UiListRequest, work_item_field_label, work_item_key, worklist_chart_group_field,
-    worklist_group_counts, worklist_status_counts,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
@@ -643,12 +643,7 @@ fn render_worklist_snapshot(
         }
     });
 
-    if let Some(next) = items
-        .items
-        .iter()
-        .filter(|item| item.status == "pending")
-        .max_by_key(|item| item.priority)
-    {
+    if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(8.0);
         ui.label(RichText::new("Highest priority pending item").strong());
         render_work_item_detail(ui, next, event);
@@ -1122,12 +1117,7 @@ fn render_worklist_report(
         }
     });
 
-    if let Some(next) = items
-        .items
-        .iter()
-        .filter(|item| item.status == "pending")
-        .max_by_key(|item| item.priority)
-    {
+    if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(10.0);
         ui.label(RichText::new("Next highest-priority pending item").strong());
         render_work_item_detail(ui, next, event);
