@@ -698,9 +698,22 @@ fn render_work_item_detail(
         );
         ui.add(cast::Badge::new(item.kind.clone()));
         ui.add(cast::Badge::new(format!("priority {}", item.priority)));
+        for label in work_item_context_badges(item) {
+            let badge = cast::Badge::new(label.clone());
+            let badge = if label == "paused" {
+                badge.intent(cast::Intent::Warning)
+            } else {
+                badge.variant(cast::Variant::Outline)
+            };
+            ui.add(badge);
+        }
     });
     ui.add_space(6.0);
     ui.label(RichText::new(item.title.clone()).strong());
+    if let Some(reason) = item.pause_reason.as_ref() {
+        ui.add_space(6.0);
+        ui.label(RichText::new(format!("Pause reason: {reason}")).weak());
+    }
     if let Some(prompt) = item.prompt.as_ref() {
         ui.add_space(6.0);
         ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
@@ -1260,6 +1273,20 @@ fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
     meta
 }
 
+fn work_item_context_badges(item: &WorkItemDetail) -> Vec<String> {
+    let mut badges = vec![format!("worklist {}", item.worklist_id)];
+    if item.paused {
+        badges.push("paused".to_string());
+    }
+    if let Some(agent_id) = item.claim_agent_id.as_ref() {
+        badges.push(format!("claimed by {agent_id}"));
+    }
+    if let Some(parent_id) = item.parent_id.as_ref() {
+        badges.push(format!("parent {parent_id}"));
+    }
+    badges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1362,6 +1389,24 @@ mod tests {
         assert_eq!(
             list_metadata_badges(&list),
             vec!["where 2", "sort 1", "limit 25"]
+        );
+    }
+
+    #[test]
+    fn work_item_context_badges_name_pause_claim_and_parent_context() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.paused = true;
+        item.claim_agent_id = Some("release-bot".to_string());
+        item.parent_id = Some("REL-0".to_string());
+
+        assert_eq!(
+            work_item_context_badges(&item),
+            vec![
+                "worklist release",
+                "paused",
+                "claimed by release-bot",
+                "parent REL-0"
+            ]
         );
     }
 

@@ -955,13 +955,19 @@ function renderWorkItemDetail(item, app) {
   wrapper.className = "detail-grid work-item-detail";
   const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
   const fields = [
+    ["ID", item.public_id || String(item.id)],
     ["Title", item.title],
     ["Status", item.status],
     ["Kind", item.kind],
     ["Priority", item.priority],
     ["Worklist", item.worklist_id],
+    ["Parent", item.parent_id],
+    ["Paused", item.paused ? "yes" : null],
+    ["Pause reason", item.pause_reason],
+    ["Claimed by", item.claim_agent_id],
     ["Release", metadata.release],
     ["Lane", metadata.lane],
+    ["Failure", item.failure_reason],
     ["Updated", item.updated_at],
   ];
   wrapper.innerHTML = fields

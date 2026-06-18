@@ -328,7 +328,8 @@ The current browser shell is intentionally small:
 - click, Enter/Space, ArrowUp/ArrowDown, Home, and End selection for
   worklist-backed list rows
 - inline selected-row detail for worklist-backed lists, with browser-local item
-  identity retained across re-render where possible
+  identity retained across re-render where possible and pause/claim/failure
+  context shown when present
 - explicit client-side fallback copy for unsupported semantic data sources
   without turning them into failed fetches
 - guarded source detection before requesting worklist-backed list, activity,

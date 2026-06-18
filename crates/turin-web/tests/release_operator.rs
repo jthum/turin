@@ -285,6 +285,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("parseListKey"));
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("renderWorkItemDetail"));
+    assert!(js.contains("[\"ID\", item.public_id || String(item.id)]"));
+    assert!(js.contains("[\"Parent\", item.parent_id]"));
+    assert!(js.contains("[\"Paused\", item.paused ? \"yes\" : null]"));
+    assert!(js.contains("[\"Pause reason\", item.pause_reason]"));
+    assert!(js.contains("[\"Claimed by\", item.claim_agent_id]"));
+    assert!(js.contains("[\"Failure\", item.failure_reason]"));
     assert!(js.contains("item.action.name"));
     assert!(js.contains("Review ${item.action.name}"));
     assert!(js.contains("selectedListItems"));

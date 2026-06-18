@@ -73,6 +73,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - The browser shell should keep semantic list constraints such as
   filter/sort/limit visible when rendering list nodes, but those constraints are
   request metadata, not browser session state.
+- Browser selected-row detail should surface existing work-item operational
+  fields such as pause, claim, parent, and failure context without persisting
+  selection in `turin-web`.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes

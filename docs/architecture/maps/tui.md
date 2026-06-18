@@ -77,6 +77,8 @@ and `turin-daemon-protocol`.
 - Worklist row selection is remembered by local item identity across refreshes
   and row reordering where possible, then falls back to a bounded local index if
   the selected row disappears. This must remain TUI-local state.
+- Selected work-item detail should keep operational context visible, including
+  worklist, pause, claim, parent, failure, and action availability when present.
 - Worklist item actions are ordinary harness action runs from the client's
   point of view, but the TUI must queue them for confirmation because work item
   payloads do not carry a UI-specific confirm flag.

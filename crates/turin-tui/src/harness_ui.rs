@@ -1080,12 +1080,40 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
     lines.push(indent_line(
         depth,
         format!(
-            "{}  {}  {}  priority {}",
-            item.public_id, item.status, item.kind, item.priority
+            "{}  {}  {}  priority {}  worklist {}",
+            item.public_id, item.status, item.kind, item.priority, item.worklist_id
         ),
         theme::base(),
     ));
     lines.push(indent_line(depth, truncate(&item.title, 88), theme::base()));
+    if item.paused {
+        lines.push(indent_line(
+            depth,
+            "paused: yes".to_string(),
+            theme::warning(),
+        ));
+    }
+    if let Some(reason) = item.pause_reason.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("pause reason: {}", truncate(reason, 88)),
+            theme::muted(),
+        ));
+    }
+    if let Some(agent_id) = item.claim_agent_id.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("claimed by: {agent_id}"),
+            theme::muted(),
+        ));
+    }
+    if let Some(parent_id) = item.parent_id.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("parent: {parent_id}"),
+            theme::muted(),
+        ));
+    }
     if let Some(prompt) = item.prompt.as_ref() {
         lines.push(indent_line(
             depth,
@@ -1879,6 +1907,25 @@ mod tests {
         let text = line_text(&lines);
 
         assert!(text.contains("No matching items"));
+    }
+
+    #[test]
+    fn work_item_detail_names_pause_claim_and_parent_context() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.paused = true;
+        item.pause_reason = Some("Waiting for sign-off".to_string());
+        item.claim_agent_id = Some("release-bot".to_string());
+        item.parent_id = Some("REL-0".to_string());
+        let mut lines = Vec::new();
+
+        render_work_item_detail(&item, &mut lines, 0);
+        let text = line_text(&lines);
+
+        assert!(text.contains("REL-1  pending  approval  priority 10  worklist release"));
+        assert!(text.contains("paused: yes"));
+        assert!(text.contains("pause reason: Waiting for sign-off"));
+        assert!(text.contains("claimed by: release-bot"));
+        assert!(text.contains("parent: REL-0"));
     }
 
     #[test]
