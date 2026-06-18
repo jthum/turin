@@ -4,8 +4,8 @@
 
 `turin-tui` is the terminal client for Turin. It owns terminal layout, keyboard
 interaction, focus, work-item selection, confirmation modals, and
-terminal-specific degradation of harness UI intent.
-Interactive form drafts and field focus are also TUI-local state.
+terminal-specific degradation of harness UI intent. Interactive form drafts,
+field focus, and shown pane overlays are also TUI-local state.
 
 Keep this crate as a lean Ratatui client. Runtime semantics, daemon transport,
 and shared operator commands belong in `turin-ui-core`, `turin-control-client`,
@@ -41,8 +41,10 @@ and `turin-daemon-protocol`.
 9. Completed harness action results are retained as local operator feedback and
    rendered in the inspector.
 10. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
-   local TUI navigation state.
-11. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
+   local TUI navigation or overlay state.
+11. Shown panes render as terminal-local overlays and reuse the visible
+   screen/list request path for any pane nodes.
+12. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
 
 ## Invariants
 
@@ -57,7 +59,8 @@ and `turin-daemon-protocol`.
   menus into terminal navigation, but it must not mutate the harness contract to
   fit terminal layout.
 - Dynamic UI requests are suggestions to this client. Applying `ui.open` or
-  `ui.focus` changes only local TUI selection/focus state.
+  `ui.focus` changes only local TUI selection/focus state, and applying
+  `ui.show` to a pane changes only local overlay state.
 - Rendering functions should not perform daemon requests directly.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
@@ -77,6 +80,9 @@ and `turin-daemon-protocol`.
 - Form nodes render as editable terminal modals. Unsupported rich form controls
   should degrade to text/option/boolean editing rather than forcing renderer
   concepts into the protocol.
+- Pane targets render as read-only terminal overlays for now. Pane-local action
+  focus should be added deliberately if the terminal UX needs it, rather than
+  overloading the screen action focus model.
 - Keep keyboard behavior discoverable through the help overlay/footer.
 - Harness focus cycling should skip empty item/action regions and fall back to
   navigation rather than trapping the operator on blank panes.
@@ -119,8 +125,9 @@ git diff --check
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, focus cycling that skips empty regions, local work-item selection
-with inspector detail, dynamic open/focus handling, editable forms,
-worklist-backed activity/detail/report/chart surfaces, latest action result
-feedback, task and event inspectors, confirmation flow, UI notices, and list
-invalidation. Chat, search, connection profile editing, and deeper inspectors
-should be reintroduced only as they fit the new terminal UX model.
+with inspector detail, dynamic open/focus handling, shown pane overlays,
+editable forms, worklist-backed activity/detail/report/chart surfaces, latest
+action result feedback, task and event inspectors, confirmation flow, UI
+notices, and list invalidation. Chat, search, connection profile editing, and
+deeper inspectors should be reintroduced only as they fit the new terminal UX
+model.

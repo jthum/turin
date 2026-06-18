@@ -39,6 +39,8 @@ All clients can talk to:
   `harness.action_ran`
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation
   suggestions
+- terminal-local shown pane overlays that reuse the same semantic node/list
+  adapters as screens
 - dynamic navigation/node badges and worklist-backed report/chart summaries
   derived through shared stateless worklist helpers
 
@@ -255,8 +257,8 @@ The TUI renders harness UI contracts semantically:
   validates required/numeric fields, coerces common scalar types, and submits
   merged action params
 - unsupported list/detail/activity sources remain visible with source metadata
-- desktop-only surfaces such as panes degrade to notices until the TUI has a
-  native terminal representation for them
+- shown panes render as read-only terminal overlays and load any visible
+  worklist-backed nodes through the same cache/invalidation path as screens
 
 ## Lightweight Footprint Check
 
@@ -290,6 +292,7 @@ lean and to notice accidental source or binary growth before it becomes normal.
 - `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
   to single-value text editing for now.
 - `turin-tui` work-item selection is local to visible compact list rows.
-- `turin-tui` does not yet render panes beyond semantic notices.
+- `turin-tui` pane overlays are read-only for now; pane-local action focus can
+  be added if the terminal UX needs it.
 - `turin-app` remains the richer graphical surface while the TUI proves the
   lean terminal abstraction.

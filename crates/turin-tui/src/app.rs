@@ -164,6 +164,7 @@ pub struct TuiApp {
     ui_app_index: usize,
     ui_screen_indices: BTreeMap<String, usize>,
     ui_nav_indices: BTreeMap<String, usize>,
+    active_pane_id: Option<String>,
     ui_action_index: usize,
     ui_item_index: usize,
     harness_focus: HarnessFocus,
@@ -193,6 +194,7 @@ impl TuiApp {
             ui_app_index: 0,
             ui_screen_indices: BTreeMap::new(),
             ui_nav_indices: BTreeMap::new(),
+            active_pane_id: None,
             ui_action_index: 0,
             ui_item_index: 0,
             harness_focus: HarnessFocus::Navigation,
@@ -268,6 +270,11 @@ impl TuiApp {
             return self.handle_pending_action_key(key);
         }
 
+        if self.active_pane_id.is_some() && key.code == KeyCode::Esc {
+            self.active_pane_id = None;
+            return Ok(TuiSignal::Continue);
+        }
+
         match key.code {
             KeyCode::Char('q') => {
                 self.quit = true;
@@ -312,6 +319,7 @@ impl TuiApp {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), 1);
                 self.ui_action_index = 0;
                 self.ui_item_index = 0;
+                self.active_pane_id = None;
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
@@ -319,6 +327,7 @@ impl TuiApp {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), -1);
                 self.ui_action_index = 0;
                 self.ui_item_index = 0;
+                self.active_pane_id = None;
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
@@ -477,6 +486,7 @@ impl TuiApp {
         self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
         self.ui_item_index = 0;
+        self.active_pane_id = None;
     }
 
     fn cycle_harness_focus(&mut self) {
@@ -579,6 +589,7 @@ impl TuiApp {
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.ui_action_index = 0;
         self.ui_item_index = 0;
+        self.active_pane_id = None;
         self.request_current_harness_lists(false)
     }
 
@@ -864,9 +875,15 @@ impl TuiApp {
             return Vec::new();
         };
         let screen_index = self.selected_screen_index(&app);
-        harness_ui::screen_at(&app, screen_index)
+        let mut requests = harness_ui::screen_at(&app, screen_index)
             .map(|screen| harness_ui::collect_list_requests(&screen.nodes))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(pane_id) = self.active_pane_id.as_deref()
+            && let Some(pane) = app.panes.get(pane_id)
+        {
+            requests.extend(harness_ui::collect_list_requests(&pane.nodes));
+        }
+        requests
     }
 
     fn current_harness_work_items(&self) -> Vec<harness_ui::HarnessWorkItemSelection> {
@@ -983,9 +1000,14 @@ impl TuiApp {
             return;
         }
         if app.panes.contains_key(target) {
-            self.dashboard.record_info(format!(
-                "TUI noted ui.show pane '{target}' in '{app_id}', but panes are not rendered yet"
-            ));
+            self.tab = TabKind::Harness;
+            self.active_pane_id = Some(target.to_string());
+            if let Err(err) = self.request_current_harness_lists(false) {
+                self.dashboard
+                    .record_error(format!("Failed to load harness UI pane lists: {err}"));
+            }
+            self.dashboard
+                .record_info(format!("Opened pane '{target}' from ui.show"));
         } else {
             self.dashboard.record_error(format!(
                 "UI show target '{target}' is not a screen or pane in '{app_id}'"
@@ -1047,6 +1069,7 @@ impl TuiApp {
         self.harness_focus = focus;
         self.ui_action_index = action_index;
         self.ui_item_index = 0;
+        self.active_pane_id = None;
         self.sync_harness_nav_to_screen();
         if let Err(err) = self.request_current_harness_lists(false) {
             self.dashboard
@@ -1074,6 +1097,11 @@ impl TuiApp {
             self.harness_focus = HarnessFocus::Navigation;
         }
         if let Some(app) = self.selected_ui_app() {
+            if let Some(pane_id) = self.active_pane_id.as_deref()
+                && !app.panes.contains_key(pane_id)
+            {
+                self.active_pane_id = None;
+            }
             let items = harness_ui::collect_nav_items(&app);
             if items.is_empty() {
                 self.ui_nav_indices.remove(&app.id);
@@ -1101,6 +1129,9 @@ impl TuiApp {
         self.render_body(frame, chunks[1]);
         self.render_footer(frame, chunks[2]);
 
+        if self.active_pane_id.is_some() {
+            self.render_active_pane(frame, centered_rect(78, 72, area));
+        }
         if self.show_help {
             self.render_help(frame, centered_rect(70, 55, area));
         }
@@ -1246,6 +1277,17 @@ impl TuiApp {
             selected_item_id,
         );
         self.render_harness_inspector(frame, columns[2]);
+    }
+
+    fn render_active_pane(&self, frame: &mut Frame<'_>, area: Rect) {
+        harness_ui::render_harness_pane(
+            frame,
+            area,
+            self.selected_ui_app().as_ref(),
+            self.active_pane_id.as_deref(),
+            &self.ui_lists,
+            &self.requested_ui_lists,
+        );
     }
 
     fn render_harness_nav(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -1523,6 +1565,8 @@ impl TuiApp {
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let fallback = if self.active_form.is_some() {
             "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
+        } else if self.active_pane_id.is_some() {
+            "Pane: Esc close  r refresh visible data  ? help"
         } else if self.tab == TabKind::Harness {
             "Harness: f focus available region  j/k move  Enter open/item action/run  r refresh  ? help"
         } else {
@@ -1563,6 +1607,7 @@ impl TuiApp {
                 "open nav item, queue selected item action, or run action",
             ),
             kv_line("r", "refresh current view"),
+            kv_line("Pane Esc", "close shown pane"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
             kv_line("Form Tab / ↑ ↓", "move between form fields"),

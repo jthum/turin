@@ -4,11 +4,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
     UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
-    UiNode, UiNoticeLevel, UiReportNode, UiScreenIntent, WorkItemDetail, WorkItemList,
+    UiNode, UiNoticeLevel, UiPaneIntent, UiReportNode, UiScreenIntent, WorkItemDetail,
+    WorkItemList,
 };
 use turin_ui_core::{
     UiAppRecord, UiListRequest, work_item_field_label, worklist_chart_group_field,
@@ -452,6 +453,67 @@ pub fn render_harness_screen(
         selected_work_item_id,
     );
     frame.render_widget(panel("Screen", lines), area);
+}
+
+pub fn render_harness_pane(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: Option<&UiAppRecord>,
+    pane_id: Option<&str>,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+) {
+    let Some(app) = app else {
+        return;
+    };
+    let Some(pane_id) = pane_id else {
+        return;
+    };
+    let Some(pane) = app.panes.get(pane_id) else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        pane_panel(app, pane, lists, requested_lists, area.width),
+        area,
+    );
+}
+
+fn pane_panel(
+    app: &UiAppRecord,
+    pane: &UiPaneIntent,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    width: u16,
+) -> Paragraph<'static> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(pane.title.clone(), theme::title()),
+            Span::styled(format!("  {}", pane.id), theme::muted()),
+        ]),
+        Line::from(""),
+    ];
+    if let Some(presentation) = pane.presentation.as_ref() {
+        lines.push(Line::from(Span::styled(
+            format!("presentation={presentation}"),
+            theme::muted(),
+        )));
+        lines.push(Line::from(""));
+    }
+    let max_width = width.saturating_sub(4) as usize;
+    render_nodes(
+        app,
+        &pane.nodes,
+        lists,
+        requested_lists,
+        &mut lines,
+        0,
+        max_width,
+        None,
+    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Esc closes pane", theme::muted())));
+    panel("Pane", lines)
 }
 
 fn render_nodes(
