@@ -129,6 +129,11 @@ impl WebError {
         )
     }
 
+    fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+
     fn into_response(self) -> Response<WebBody> {
         let body = WebErrorPayload {
             error: WebErrorEnvelope {
@@ -384,6 +389,11 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
             "unsupported_ui_list_source",
             format!("Unsupported UI list source '{}'", source),
         )
+        .with_details(json!({
+            "source": source,
+            "supported_prefixes": ["worklists."],
+            "guidance": "Model this data as a worklist source or add a deliberate UI list adapter."
+        }))
     })?;
     if worklist_name.is_empty() {
         return Err(WebError::bad_request(
@@ -519,6 +529,14 @@ mod tests {
         let err = worklist_name_from_source("tables.release").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
         assert_eq!(err.code, "unsupported_ui_list_source");
+        let details = err.details.expect("unsupported source details");
+        assert_eq!(details["source"], "tables.release");
+        assert_eq!(details["supported_prefixes"][0], "worklists.");
+        assert!(
+            details["guidance"]
+                .as_str()
+                .is_some_and(|guidance| guidance.contains("deliberate UI list adapter"))
+        );
     }
 
     #[test]

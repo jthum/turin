@@ -66,7 +66,12 @@ Errors have the shape:
 {
   "error": {
     "code": "unsupported_ui_list_source",
-    "message": "Unsupported UI list source 'tables.release'"
+    "message": "Unsupported UI list source 'tables.release'",
+    "details": {
+      "source": "tables.release",
+      "supported_prefixes": ["worklists."],
+      "guidance": "Model this data as a worklist source or add a deliberate UI list adapter."
+    }
   }
 }
 ```
@@ -154,9 +159,10 @@ Returns:
 ```
 
 Only `worklists.*` sources are supported today. Other sources return
-`unsupported_ui_list_source`; `worklists.` without a name returns
-`invalid_ui_list_source`. This keeps list intent semantic while avoiding a raw
-daemon-query escape hatch before the UI data model needs one.
+`unsupported_ui_list_source` with structured `details.source`,
+`details.supported_prefixes`, and author guidance; `worklists.` without a name
+returns `invalid_ui_list_source`. This keeps list intent semantic while avoiding
+a raw daemon-query escape hatch before the UI data model needs one.
 
 ### `POST /api/actions/run`
 
