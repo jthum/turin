@@ -14,7 +14,7 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, collect_ui_list_requests as collect_shared_list_requests,
+    UiListRequest, collect_ui_list_requests as collect_shared_list_requests, is_worklist_ui_source,
     ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
     work_item_field_label, worklist_chart_group_field, worklist_group_counts,
     worklist_highest_priority_pending_item, worklist_status_counts,
@@ -213,7 +213,7 @@ fn collect_work_item_selections_into(
             UiNode::Section(section) => {
                 collect_work_item_selections_into(&section.nodes, lists, out)
             }
-            UiNode::List(list) if list.source.starts_with("worklists.") => {
+            UiNode::List(list) if is_worklist_ui_source(&list.source) => {
                 let request = UiListRequest {
                     source: list.source.clone(),
                     filter: list.filter.clone(),
@@ -675,7 +675,7 @@ fn render_list(
             theme::muted(),
         ));
     }
-    if !list.source.starts_with("worklists.") {
+    if !is_worklist_ui_source(&list.source) {
         lines.push(indent_line(
             depth + 1,
             unsupported_source_line("list", &list.source),

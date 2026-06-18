@@ -10,9 +10,10 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, work_item_key, worklist_chart_group_field, worklist_group_counts,
-    worklist_highest_priority_pending_item, worklist_status_counts,
+    UiListRequest, is_worklist_ui_source, ui_data_not_loaded_message, ui_worklist_request,
+    unsupported_ui_source_message, work_item_field_label, work_item_key,
+    worklist_chart_group_field, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
@@ -470,7 +471,7 @@ fn render_list(
         });
         ui.add_space(8.0);
 
-        if !list.source.starts_with("worklists.") {
+        if !is_worklist_ui_source(&list.source) {
             render_unsupported_source(ui, "list", &list.source);
             return;
         }
