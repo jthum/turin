@@ -237,6 +237,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("renderWorkItemDetail"));
     assert!(js.contains("item.action.name"));
+    assert!(js.contains("selectedListItems"));
+    assert!(js.contains("selectedListItem"));
+    assert!(js.contains("aria-selected"));
+    assert!(css.contains(".list-selection"));
+    assert!(css.contains(".list-row"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))

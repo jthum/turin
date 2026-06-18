@@ -4,6 +4,7 @@ const state = {
   selectedAppId: null,
   selectedScreenId: null,
   listCache: new Map(),
+  selectedListItems: new Map(),
   loadingLists: new Set(),
   formDrafts: new Map(),
   runningActions: new Set(),
@@ -376,7 +377,7 @@ function renderNode(node, app) {
     case "action":
       return renderAction(node, app);
     case "list":
-      return renderList(node);
+      return renderList(node, app);
     case "activity":
       return renderActivity(node);
     case "detail":
@@ -420,7 +421,7 @@ function renderAction(node, app) {
   return panel;
 }
 
-function renderList(node) {
+function renderList(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
   panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
@@ -450,6 +451,8 @@ function renderList(node) {
   }
 
   const fields = node.fields?.length ? node.fields : ["title", "status", "kind", "priority"];
+  const selectedItem = selectedListItem(key, items);
+  if (selectedItem) state.selectedListItems.set(key, itemKey(selectedItem));
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
@@ -457,14 +460,35 @@ function renderList(node) {
   const body = document.createElement("tbody");
   for (const item of items) {
     const row = document.createElement("tr");
+    const selected = selectedItem && itemKey(item) === itemKey(selectedItem);
+    row.className = "list-row";
+    row.tabIndex = 0;
+    row.setAttribute("aria-selected", selected ? "true" : "false");
     row.innerHTML = fields
       .map(field => `<td>${escapeHtml(fieldValue(item, field))}</td>`)
       .join("");
+    const select = () => {
+      state.selectedListItems.set(key, itemKey(item));
+      render();
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      select();
+    });
     body.append(row);
   }
   table.append(body);
   wrap.append(table);
   panel.append(wrap);
+  if (selectedItem) {
+    const detail = document.createElement("div");
+    detail.className = "list-selection";
+    detail.innerHTML = `<h4>Selected item</h4>`;
+    detail.append(renderWorkItemDetail(selectedItem, app));
+    panel.append(detail);
+  }
   return panel;
 }
 
@@ -933,6 +957,19 @@ function selectDetailItem(node, items) {
     );
   }
   return items.find(item => item.status === "pending") || items[0] || null;
+}
+
+function selectedListItem(key, items) {
+  const selectedId = state.selectedListItems.get(key);
+  if (selectedId) {
+    const selected = items.find(item => itemKey(item) === selectedId);
+    if (selected) return selected;
+  }
+  return items[0] || null;
+}
+
+function itemKey(item) {
+  return item.public_id || String(item.id);
 }
 
 function fieldValue(item, field) {

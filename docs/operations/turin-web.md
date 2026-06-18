@@ -119,8 +119,9 @@ The current browser shell is intentionally small:
 - no frontend build system
 - no persistent browser-side storage
 - same-origin calls to the `turin-web` API
-- local selected app/screen/list/form draft/action-running state
+- local selected app/screen/list row/form draft/action-running state
 - table rendering for worklist-backed lists
+- inline selected-row detail for worklist-backed lists
 - worklist-backed activity and detail rendering, including confirmed work-item
   action buttons when item action payloads exist
 - typed form defaults, local drafts, required fields, options, and scalar
@@ -163,6 +164,6 @@ The first useful slice is complete:
    client-local dynamic UI navigation handling.
 6. It has an integration smoke using the Release Operator harness.
 
-Next work should tighten richer item-selection detail behavior and shared
-report/chart semantics across app/TUI/web, then decide whether to keep
-iterating on the static shell or introduce a light frontend build step.
+Next work should tighten shared report/chart semantics across app/TUI/web, then
+decide whether to keep iterating on the static shell or introduce a light
+frontend build step.
