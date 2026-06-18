@@ -1863,16 +1863,7 @@ impl TuiApp {
             .as_ref()
             .filter(|result| harness_action_result_matches_app(result, &app))
         {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("Latest Result", theme::title())));
-            lines.push(kv_line("Action", result.action.clone()));
-            lines.push(kv_line("Agent", result.agent_id.clone()));
-            if let Some(harness_id) = result.harness_id.as_ref() {
-                lines.push(kv_line("Harness", harness_id.clone()));
-            }
-            if !result.result.is_null() {
-                lines.push(kv_line("Result", json_preview(&result.result, 220)));
-            }
+            lines.extend(latest_harness_action_result_lines(result));
         }
         if let Some(failure) = self
             .latest_harness_action_failure
@@ -2260,6 +2251,27 @@ fn work_item_selection_lines(
     }
     if let Some(metadata) = item.metadata.as_ref() {
         lines.push(kv_line("Metadata", json_preview(metadata, 90)));
+    }
+    lines
+}
+
+fn latest_harness_action_result_lines(result: &HarnessActionRunResult) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("Latest Result", theme::title())),
+        kv_line("Action", result.action.clone()),
+        kv_line("Agent", result.agent_id.clone()),
+    ];
+    if let Some(harness_id) = result.harness_id.as_ref() {
+        lines.push(kv_line("Harness", harness_id.clone()));
+    }
+    if result.result.is_null() {
+        lines.push(Line::from(Span::styled(
+            "Action completed without a result payload.",
+            theme::muted(),
+        )));
+    } else {
+        lines.push(kv_line("Result", json_preview(&result.result, 220)));
     }
     lines
 }
@@ -2813,6 +2825,43 @@ mod tests {
         };
 
         assert!(harness_action_result_matches_app(&result, &app));
+    }
+
+    #[test]
+    fn latest_harness_action_result_lines_explain_null_payload() {
+        let result = HarnessActionRunResult {
+            action: "release.seed".to_string(),
+            agent_id: "release-agent".to_string(),
+            harness_id: Some("release-harness".to_string()),
+            result: Value::Null,
+            ui_intents: Vec::new(),
+        };
+
+        let text = line_text(&latest_harness_action_result_lines(&result));
+
+        assert!(text.contains("Latest Result"));
+        assert!(text.contains("release.seed"));
+        assert!(text.contains("release-agent"));
+        assert!(text.contains("release-harness"));
+        assert!(text.contains("Action completed without a result payload."));
+    }
+
+    #[test]
+    fn latest_harness_action_result_lines_preview_non_null_payload() {
+        let result = HarnessActionRunResult {
+            action: "release.seed".to_string(),
+            agent_id: "release-agent".to_string(),
+            harness_id: None,
+            result: json!({ "status": "ok" }),
+            ui_intents: Vec::new(),
+        };
+
+        let text = line_text(&latest_harness_action_result_lines(&result));
+
+        assert!(text.contains("Result"));
+        assert!(text.contains("status"));
+        assert!(text.contains("ok"));
+        assert!(!text.contains("without a result payload"));
     }
 
     #[test]
