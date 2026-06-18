@@ -323,7 +323,8 @@ The current browser shell is intentionally small:
 - same-origin calls to the `turin-web` API
 - local selected app/screen/list row/form draft/action-running state
 - browser-local pane overlay state for `ui.show` pane targets
-- table rendering for worklist-backed lists
+- table rendering for worklist-backed lists, including row-count and selected
+  row feedback
 - click, Enter/Space, ArrowUp/ArrowDown, Home, and End selection for
   worklist-backed list rows
 - inline selected-row detail for worklist-backed lists, with browser-local item

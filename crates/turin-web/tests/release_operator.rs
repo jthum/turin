@@ -289,6 +289,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("Review ${item.action.name}"));
     assert!(js.contains("selectedListItems"));
     assert!(js.contains("selectedListItem"));
+    assert!(js.contains("selectedListItemIndex"));
+    assert!(js.contains("appendListSummary"));
+    assert!(js.contains("Rows 1-${itemCount} of ${itemCount}${selected}"));
     assert!(js.contains("selectListItemAt"));
     assert!(js.contains("focusSelectedListRow"));
     assert!(js.contains("event.key === \"ArrowDown\""));
@@ -339,6 +342,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(css.contains(".default-console"));
     assert!(css.contains(".default-grid"));
     assert!(css.contains(".stat-card"));
+    assert!(css.contains(".list-summary"));
     assert!(css.contains(".list-row"));
     assert!(css.contains(".node-badge"));
     assert!(css.contains(".pane-overlay"));

@@ -814,6 +814,8 @@ function renderList(node, app) {
   const fields = node.fields?.length ? node.fields : ["title", "status", "kind", "priority"];
   const selectedItem = selectedListItem(key, items);
   if (selectedItem) state.selectedListItems.set(key, itemKey(selectedItem));
+  const selectedIndex = selectedListItemIndex(selectedItem, items);
+  appendListSummary(panel, items.length, selectedIndex);
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
@@ -1476,6 +1478,20 @@ function selectedListItem(key, items) {
     if (selected) return selected;
   }
   return items[0] || null;
+}
+
+function selectedListItemIndex(selectedItem, items) {
+  if (!selectedItem) return -1;
+  return items.findIndex(item => itemKey(item) === itemKey(selectedItem));
+}
+
+function appendListSummary(panel, itemCount, selectedIndex) {
+  const summary = document.createElement("p");
+  summary.className = "list-summary";
+  const selected =
+    selectedIndex >= 0 && selectedIndex < itemCount ? ` · selected ${selectedIndex + 1}` : "";
+  summary.textContent = `Rows 1-${itemCount} of ${itemCount}${selected}`;
+  panel.append(summary);
 }
 
 function selectListItem(key, item, options = {}) {

@@ -94,8 +94,9 @@ browser shell that consumes those routes.
   possible.
 - TUI pane overlays support pane-local item/action/form selection using
   terminal-local indices separate from screen focus.
-- `turin-web` list rows support click, Enter/Space, ArrowUp/ArrowDown, Home,
-  and End selection with focus restored after browser-local re-render.
+- `turin-web` list rows support row-count and selected-row feedback plus click,
+  Enter/Space, ArrowUp/ArrowDown, Home, and End selection with focus restored
+  after browser-local re-render.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.
 - Unsupported data sources remain visible in app, TUI, and web clients with
