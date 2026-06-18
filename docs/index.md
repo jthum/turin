@@ -38,22 +38,45 @@ If you are trying to explain Turin to someone evaluating the project rather than
 implementing a harness, start with the first three concept pages before diving
 into technical reference material.
 
-### For new users
+### For evaluators
 
 1. `README.md`
 2. `docs/concepts/what-is-turin.md`
 3. `docs/concepts/what-can-you-do.md`
 4. `docs/concepts/scenarios.md`
 5. `docs/getting-started/choose-first-workflow.md`
-6. `docs/getting-started/index.md`
-7. `docs/concepts/turin.md`
-8. `docs/getting-started/harness-cookbook.md`
-9. `docs/reference/hooks.md`
-10. `docs/reference/primitives.md`
-11. `docs/concepts/memory-vs-kv.md`
-12. `docs/concepts/worklists.md`
-13. `docs/guides/inference-routing.md`
-14. `docs/guides/multimodal.md`
+
+This path answers the non-developer questions first: what Turin is, what it can
+be used for, which workflows fit, and when custom UI is worth adding.
+
+### For harness authors
+
+1. `docs/getting-started/choose-first-workflow.md`
+2. `docs/getting-started/index.md`
+3. `docs/getting-started/harness-cookbook.md`
+4. `docs/guides/harness-guide.md`
+5. `docs/concepts/worklists.md`
+6. `docs/concepts/memory-vs-kv.md`
+7. `docs/operations/ui-clients.md`
+8. `docs/reference/hooks.md`
+9. `docs/reference/primitives.md`
+10. `docs/guides/harness-library.md`
+
+This path starts from one concrete workflow, then moves into authoring,
+durable state, UI clients, hooks, and API reference.
+
+### For runtime users
+
+1. `README.md`
+2. `docs/getting-started/index.md`
+3. `docs/getting-started/choose-first-workflow.md`
+4. `docs/concepts/turin.md`
+5. `docs/concepts/worklists.md`
+6. `docs/guides/inference-routing.md`
+7. `docs/guides/multimodal.md`
+
+This path is for users who want to run Turin locally or remotely before
+contributing to the runtime internals.
 
 ### For contributors
 
@@ -78,6 +101,25 @@ into technical reference material.
 5. `docs/reference/primitives.md`
 6. `docs/guides/harness-guide.md`
 7. `docs/operations/live-provider-testing.md`
+
+## Broad Tour
+
+The longer linear path is useful when reading the docs as a broad tour:
+
+1. `README.md`
+2. `docs/concepts/what-is-turin.md`
+3. `docs/concepts/what-can-you-do.md`
+4. `docs/concepts/scenarios.md`
+5. `docs/getting-started/choose-first-workflow.md`
+6. `docs/getting-started/index.md`
+7. `docs/concepts/turin.md`
+8. `docs/getting-started/harness-cookbook.md`
+9. `docs/reference/hooks.md`
+10. `docs/reference/primitives.md`
+11. `docs/concepts/memory-vs-kv.md`
+12. `docs/concepts/worklists.md`
+13. `docs/guides/inference-routing.md`
+14. `docs/guides/multimodal.md`
 
 ## Channel Setup
 

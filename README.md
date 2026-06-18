@@ -7,6 +7,10 @@ The model proposes actions. The harness (Luau scripts) decides what is allowed. 
 
 Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same runtime.
 
+In practical terms, Turin is for turning an AI assistant into an
+application-shaped workflow: a private operator, coding desk, release console,
+triage queue, documentation helper, channel bot, or governed team tool.
+
 ## What Can You Build With It?
 
 Turin is useful when a generic chat assistant is not enough and the workflow
@@ -38,6 +42,23 @@ If you are evaluating Turin rather than implementing a harness yet, start with:
 - [What can you do with Turin?](docs/concepts/what-can-you-do.md)
 - [Scenario blueprints](docs/concepts/scenarios.md)
 - [Choose a first workflow](docs/getting-started/choose-first-workflow.md)
+
+## How It Feels To Use
+
+Without a custom harness, Turin can behave like a default agentic application:
+start a session, ask for work, use configured tools, and keep state durable.
+
+With a harness, the same runtime can become a purpose-built workflow. A release
+harness can expose approval lists, readiness reports, and action buttons. A
+coding harness can expose tasks, review status, and test actions. A personal
+assistant can expose follow-ups, reminders, memory controls, and activity.
+
+The important boundary is deliberate:
+
+- Turin stores durable workflow state.
+- Harness code defines rules, actions, memory, and semantic UI intent.
+- Clients such as `turin-app`, `turin-tui`, and `turin-web` render that intent
+  in their own medium while keeping local presentation state local.
 
 ## What Turin Is (Current Baseline)
 
