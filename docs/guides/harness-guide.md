@@ -599,6 +599,77 @@ end
 Passing a proxy directly sends `_ref` plus serializable public fields. `ref(proxy)`
 sends only `_ref`, so receivers hydrate the current stored state.
 
+### Harness UI surfaces
+
+Harness UI intent lets a harness describe an app-like operator surface without
+binding itself to `egui`, Ratatui, DOM, CSS, or any other renderer. The runtime
+records semantic intent. Each client decides how to render, degrade, or ignore
+that intent according to its capabilities.
+
+Start with one app object and keep the first surface small:
+
+```lua
+local app = ui.app("Release Operator", {
+  id = "release",
+  about = "Coordinate release checks and approvals",
+})
+
+action.define("release.seed_demo_work", function(_ctx, params)
+  return {
+    status = "seeded",
+    release = params.release,
+    count = params.count,
+  }
+end)
+
+app:home("Release Desk", function(screen)
+  screen:worklist("Pending Approvals", {
+    id = "pending-approvals",
+    from = "worklists.release",
+    where = { kind = "approval", status = "pending" },
+    fields = { "title", "priority", "status" },
+    intent = "approval",
+    as = "table",
+  })
+
+  screen:form("Create Demo Work", {
+    id = "seed-demo-form",
+    action = "release.seed_demo_work",
+    fields = {
+      { name = "release", label = "Release", type = "text", default = "2026.06" },
+      { name = "count", label = "Count", type = "integer", default = 3 },
+    },
+  })
+end)
+
+app:menu("Main", function(menu)
+  menu:item("Release Desk", "home")
+end)
+```
+
+Useful rules:
+
+- `screen:list(...)` is the generic collection primitive; `screen:worklist(...)`
+  is DX sugar for worklist-backed lists.
+- `intent` and `as` are advisory rendering hints. A desktop client may render
+  cards or sheets, while the TUI may render the same data as compact tables.
+- UI clients own local view state such as selected screen, selected row, form
+  drafts, open panes, and filters. Persist durable workflow state through
+  runtime primitives such as worklists, KV, memory, events, schedules, or
+  actions.
+- Dynamic methods such as `app:notice(...)`, `app:open(...)`, `app:show(...)`,
+  `app:focus(...)`, `app:badge(...)`, and `app:refresh(...)` are client-facing
+  suggestions, not runtime-owned screen state.
+- Panes are useful for contextual surfaces that should not replace the active
+  screen. Current clients render shown panes as local overlays; TUI pane
+  overlays are intentionally read-only for now.
+- Start with one screen, one useful list, and one action or form. Add reports,
+  charts, activity, detail panes, and badges only when the workflow needs them.
+
+For a runnable example that exercises screens, menus, lists, forms, reports,
+charts, panes, dynamic notices, badges, focus, show, and refresh, see
+`examples/harnesses/ui_release_operator/main.lua`.
+
 ### Grant wrapper
 
 ```lua
