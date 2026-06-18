@@ -534,6 +534,15 @@ fn render_work_items(
         selected_list_items.insert(list_key.to_string(), work_item_key(item));
     }
 
+    ui.label(
+        RichText::new(work_item_selection_summary(
+            items.items.len(),
+            selected_index,
+        ))
+        .weak(),
+    );
+    ui.add_space(4.0);
+
     cast::Table::new(columns)
         .size(cast::Size::Small)
         .selected_rows([selected_index])
@@ -1214,6 +1223,14 @@ fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> 
         .unwrap_or(0)
 }
 
+fn work_item_selection_summary(item_count: usize, selected_index: usize) -> String {
+    if item_count == 0 {
+        return "Rows 0-0 of 0".to_string();
+    }
+    let selected = selected_index.saturating_add(1).min(item_count);
+    format!("Rows 1-{item_count} of {item_count} · selected {selected}")
+}
+
 fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
     cast::EmptyState::new(title)
         .body(body)
@@ -1305,6 +1322,15 @@ mod tests {
         };
 
         assert_eq!(selected_work_item_index(&items, Some(&selected)), 0);
+    }
+
+    #[test]
+    fn work_item_selection_summary_names_rows_and_selection() {
+        assert_eq!(
+            work_item_selection_summary(12, 4),
+            "Rows 1-12 of 12 · selected 5"
+        );
+        assert_eq!(work_item_selection_summary(0, 4), "Rows 0-0 of 0");
     }
 
     #[test]
