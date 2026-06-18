@@ -1157,8 +1157,8 @@ function renderPlaceholder(node, app) {
 }
 
 function unsupportedSourceMessage(kind, source) {
-  if (!source) return `This ${kind} is declared and visible, but no source was provided.`;
-  return `This ${kind} is declared and visible, but source '${source}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter.`;
+  if (!source) return `This ${kind} is declared and visible, but no source was provided. Add a worklists.* source or a deliberate adapter for this client.`;
+  return `This ${kind} is declared and visible, but source '${source}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter for this client.`;
 }
 
 function renderPanel(text, className) {
