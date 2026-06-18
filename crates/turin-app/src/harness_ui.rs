@@ -8,8 +8,9 @@ use turin_daemon_protocol::{
     WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{
-    UiAppRecord, UiListRequest, work_item_field_label, work_item_key, worklist_chart_group_field,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    UiAppRecord, UiListRequest, unsupported_ui_source_message, work_item_field_label,
+    work_item_key, worklist_chart_group_field, worklist_group_counts,
+    worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
@@ -1228,9 +1229,7 @@ fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
 }
 
 fn unsupported_source_message(surface: &str, source: &str) -> String {
-    format!(
-        "This {surface} is declared and visible, but source '{source}' cannot load in this client yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
-    )
+    unsupported_ui_source_message(surface, source, "the desktop app")
 }
 
 #[cfg(test)]
@@ -1296,7 +1295,9 @@ mod tests {
 
         assert!(message.contains("This list is declared and visible"));
         assert!(message.contains("source 'tables.release'"));
+        assert!(message.contains("cannot load in the desktop app yet"));
         assert!(message.contains("Only worklists.* sources load today"));
+        assert!(message.contains("deliberate adapter for this client"));
     }
 
     #[test]

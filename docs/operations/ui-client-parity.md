@@ -94,8 +94,8 @@ browser shell that consumes those routes.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.
 - Unsupported data sources remain visible in app, TUI, and web clients with
-  fallback copy that names the source and points authors toward `worklists.*`
-  or a deliberate client adapter.
+  fallback copy that names the source, names the current client when relevant,
+  and points authors toward `worklists.*` or a deliberate client adapter.
 - There is no automated screenshot/terminal golden test layer. Current coverage
   is semantic helper tests plus app/web/TUI smoke and unit tests.
 

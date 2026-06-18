@@ -12,8 +12,9 @@ use turin_daemon_protocol::{
     WorkItemList,
 };
 use turin_ui_core::{
-    UiAppRecord, UiListRequest, work_item_field_label, worklist_chart_group_field,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    UiAppRecord, UiListRequest, unsupported_ui_source_message, work_item_field_label,
+    worklist_chart_group_field, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };
 
 use crate::app::PendingHarnessAction;
@@ -1392,9 +1393,7 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
 }
 
 fn unsupported_source_line(surface: &str, source: &str) -> String {
-    format!(
-        "This {surface} is declared and visible, but source '{source}' cannot load in the terminal yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
-    )
+    unsupported_ui_source_message(surface, source, "the terminal")
 }
 
 pub fn form_params(form: &UiFormNode, values: &BTreeMap<String, String>) -> Result<Value, String> {
@@ -1667,7 +1666,7 @@ mod tests {
         assert!(line.contains("source 'tables.release'"));
         assert!(line.contains("cannot load in the terminal yet"));
         assert!(line.contains("Only worklists.* sources load today"));
-        assert!(line.contains("deliberate adapter"));
+        assert!(line.contains("deliberate adapter for this client"));
     }
 
     #[test]

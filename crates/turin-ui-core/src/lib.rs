@@ -1,6 +1,7 @@
 mod controller;
 mod dashboard;
 mod intents;
+mod ui_copy;
 mod worklist_view;
 
 pub use controller::{
@@ -19,6 +20,7 @@ pub use dashboard::{
     DashboardState, DefaultOperatorConsoleSummary, format_relative_age,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
+pub use ui_copy::unsupported_ui_source_message;
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,
     worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
