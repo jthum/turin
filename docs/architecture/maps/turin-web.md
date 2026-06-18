@@ -41,6 +41,8 @@ session state, invent renderer-specific harness APIs, or bypass
    directly.
 8. The browser remains responsible for selected app, active screen, form drafts,
    panes, modals, filters, loading, and local error state.
+9. Browser `ui.refresh` handling invalidates cached list requests whose
+   semantic source matches the refresh binding, then reloads visible data.
 
 ## Invariants
 
@@ -54,8 +56,9 @@ session state, invent renderer-specific harness APIs, or bypass
   daemon-query escape hatches only after the UI model proves it needs them.
 - Unsupported sources and planned endpoints should return explicit JSON errors,
   not silent empty responses.
-- `GET /api/events` is an invalidation/event feed. It should not grow into a
-  live-query result cache.
+- `GET /api/events` is an invalidation/event feed. Browser `ui.refresh`
+  handling should stay cache invalidation plus visible-data reload, not grow
+  into a live-query result cache.
 - Static assets are a bootstrap shell, not the final web framework decision.
   Keep them small unless the project deliberately adopts a frontend build step.
 - Non-loopback binds require explicit opt-in.

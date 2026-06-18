@@ -83,8 +83,8 @@ function connectEvents() {
     refresh({ reason: "event" });
   });
   source.addEventListener("ui.intent", event => {
-    applyUiIntentEvent(event);
-    invalidateLists();
+    const applied = applyUiIntentEvent(event, { reloadRefresh: false });
+    if (!applied) invalidateLists();
     refresh({ reason: "ui" });
   });
   source.addEventListener("harness.action_ran", () => {
@@ -134,12 +134,15 @@ function applyStatusUiRequestsOnce() {
   for (const open of ui?.opens ?? []) applyUiIntentPayload({ ...open, type: "open" });
   for (const show of ui?.shows ?? []) applyUiIntentPayload({ ...show, type: "show" });
   for (const focus of ui?.focuses ?? []) applyUiIntentPayload({ ...focus, type: "focus" });
+  for (const refresh of ui?.refreshes ?? []) {
+    applyUiIntentPayload({ ...refresh, type: "refresh" }, { reloadRefresh: false });
+  }
   for (const notice of ui?.notices ?? []) {
     applyUiIntentPayload({ ...notice, type: "notify" });
   }
 }
 
-function applyUiIntentEvent(event) {
+function applyUiIntentEvent(event, options = {}) {
   let payload;
   try {
     payload = JSON.parse(event.data);
@@ -147,10 +150,10 @@ function applyUiIntentEvent(event) {
     pushNotice("error", "UI event parse failed", error.message);
     return false;
   }
-  return applyUiIntentPayload(payload);
+  return applyUiIntentPayload(payload, options);
 }
 
-function applyUiIntentPayload(payload) {
+function applyUiIntentPayload(payload, options = {}) {
   switch (payload?.type) {
     case "open":
       return applyUiOpen(payload.app_id, payload.target, "open");
@@ -161,9 +164,18 @@ function applyUiIntentPayload(payload) {
     case "notify":
       pushNotice(normalizeNoticeLevel(payload.level), payload.title || "UI notice", payload.body || "");
       return true;
+    case "refresh":
+      return applyUiRefresh(payload.binding, options);
     default:
       return false;
   }
+}
+
+function applyUiRefresh(binding, { reloadRefresh = true } = {}) {
+  if (!binding) return false;
+  invalidateListBinding(binding);
+  if (reloadRefresh) loadVisibleLists().then(render);
+  return true;
 }
 
 function applyUiOpen(appId, target, label) {
@@ -1102,6 +1114,21 @@ async function loadDataRequest(request) {
 
 function invalidateLists() {
   state.listCache.clear();
+}
+
+function invalidateListBinding(binding) {
+  for (const key of Array.from(state.listCache.keys())) {
+    const request = parseListKey(key);
+    if (request?.source === binding) state.listCache.delete(key);
+  }
+}
+
+function parseListKey(key) {
+  try {
+    return JSON.parse(key);
+  } catch {
+    return null;
+  }
 }
 
 function selectedApp() {
