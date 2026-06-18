@@ -10,7 +10,8 @@ use turin::remote::{RemoteServeOptions, start as start_remote};
 use turin_control_client::{ConnectionKind, ConnectionSpec, ControlClient};
 use turin_daemon_protocol::{
     DaemonRequest, HarnessActionRunParams, NoParams, RuntimeEventsSubscribeParams, UiIntent,
-    UiNoticeLevel, WorklistItemsParams, WorklistListParams,
+    UiIntentMessage, UiNode, UiNoticeLevel, UiPaneIntent, UiScreenIntent, WorklistItemsParams,
+    WorklistListParams,
 };
 
 const DEFAULT_BOOTSTRAP_CONFIG_PATH: &str = ".turin/config.toml";
@@ -196,40 +197,7 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
 
 async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<()> {
     let intents = client.list_harness_ui_intents("default").await?;
-    assert!(intents.iter().any(|message| {
-        matches!(
-            &message.intent,
-            turin_daemon_protocol::UiIntent::App(app)
-                if app.id == "release-operator" && app.title == "Release Operator"
-        )
-    }));
-    assert!(intents.iter().any(|message| {
-        matches!(
-            &message.intent,
-            turin_daemon_protocol::UiIntent::Menu(menu)
-                if menu.app_id == "release-operator"
-                    && menu
-                        .items
-                        .iter()
-                        .any(|item| item.label == "Work" && !item.items.is_empty())
-        )
-    }));
-    assert!(intents.iter().any(|message| {
-        matches!(
-            &message.intent,
-            turin_daemon_protocol::UiIntent::Screen(screen)
-                if screen.id == "intake"
-                    && screen.nodes.iter().any(|node| {
-                        matches!(node, turin_daemon_protocol::UiNode::Form(form)
-                            if form.id.as_deref() == Some("seed-demo-form")
-                                && form.fields.iter().any(|field| {
-                                    field.name == "count"
-                                        && field.kind.as_deref() == Some("number")
-                                        && field.default.as_ref() == Some(&serde_json::json!(1))
-                                }))
-                    })
-        )
-    }));
+    assert_release_operator_static_ui_intents(&intents);
 
     let seeded = client
         .run_harness_action(HarnessActionRunParams {
@@ -331,6 +299,198 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(remaining.items.len(), 3);
 
     Ok(())
+}
+
+fn assert_release_operator_static_ui_intents(intents: &[UiIntentMessage]) {
+    assert!(intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::App(app)
+                if app.id == "release-operator"
+                    && app.title == "Release Operator"
+                    && app.about.as_deref()
+                        == Some("A UI contract fixture for release workflow clients.")
+        )
+    }));
+    assert!(intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::OpensWith(opens_with)
+                if opens_with.app_id == "release-operator"
+                    && opens_with.screen_id == "home"
+        )
+    }));
+    assert!(intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Menu(menu)
+                if menu.app_id == "release-operator"
+                    && menu.items.iter().any(|item| {
+                        item.label == "Work"
+                            && item.badge.as_deref() == Some("approvals")
+                            && item.items.iter().any(|child| child.opens == "intake")
+                    })
+        )
+    }));
+    assert!(intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Badge(badge)
+                if badge.app_id == "release-operator"
+                    && badge.target == "release-readiness"
+                    && badge.label.as_deref() == Some("live")
+                    && badge.level == Some(UiNoticeLevel::Info)
+        )
+    }));
+
+    let home = release_screen(intents, "home");
+    let home_nodes = flattened_nodes(&home.nodes);
+    assert!(home_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Text(text)
+                if text.text.contains("client-rendered harness UI")
+        )
+    }));
+    assert!(home_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Action(action)
+                if action.id.as_deref() == Some("approve-next")
+                    && action.action == "release.approve_next"
+                    && action.confirm
+        )
+    }));
+    assert!(home_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::List(list)
+                if list.id.as_deref() == Some("recent-release-work")
+                    && list.source == "worklists.release"
+                    && list.limit == Some(8)
+                    && list.intent.as_deref() == Some("tasks")
+                    && list.render_as.as_deref() == Some("table")
+        )
+    }));
+    assert!(home_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Activity(activity)
+                if activity.id.as_deref() == Some("release-activity")
+                    && activity.source == "worklists.release"
+        )
+    }));
+
+    let approvals = release_screen(intents, "approvals");
+    let approvals_nodes = flattened_nodes(&approvals.nodes);
+    assert!(approvals_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::List(list)
+                if list.id.as_deref() == Some("pending-approvals")
+                    && list.source == "worklists.release"
+                    && list.filter.get("kind") == Some(&serde_json::json!("approval"))
+                    && list.filter.get("status") == Some(&serde_json::json!("pending"))
+                    && list.fields.iter().any(|field| field == "lane")
+                    && list.intent.as_deref() == Some("approval")
+                    && list.render_as.as_deref() == Some("table")
+        )
+    }));
+
+    let intake = release_screen(intents, "intake");
+    let intake_nodes = flattened_nodes(&intake.nodes);
+    assert!(intake_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Form(form)
+                if form.id.as_deref() == Some("seed-demo-form")
+                    && form.action == "release.seed_demo_work"
+                    && form.params.get("count") == Some(&serde_json::json!(1))
+                    && form.fields.iter().any(|field| {
+                        field.name == "count"
+                            && field.kind.as_deref() == Some("number")
+                            && field.default.is_none()
+                    })
+        )
+    }));
+
+    let overview = release_screen(intents, "overview");
+    let overview_nodes = flattened_nodes(&overview.nodes);
+    assert!(overview_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Detail(detail)
+                if detail.id.as_deref() == Some("release-snapshot")
+                    && detail.source == "worklists.release"
+        )
+    }));
+    assert!(overview_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Report(report)
+                if report.id.as_deref() == Some("release-readiness")
+                    && report.source == "worklists.release"
+                    && report.prompt.as_deref()
+                        == Some("Summarize current release approval readiness.")
+        )
+    }));
+    assert!(overview_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Chart(chart)
+                if chart.id.as_deref() == Some("approval-flow")
+                    && chart.source == "worklists.release"
+                    && chart.intent.as_deref() == Some("status_breakdown")
+                    && chart.render_as.as_deref() == Some("bar")
+        )
+    }));
+
+    let pane = release_pane(intents, "release-notes");
+    assert_eq!(pane.presentation.as_deref(), Some("sheet"));
+    let pane_nodes = flattened_nodes(&pane.nodes);
+    assert!(pane_nodes.iter().any(|node| {
+        matches!(
+            node,
+            UiNode::Detail(detail)
+                if detail.id.as_deref() == Some("pane-release-snapshot")
+                    && detail.source == "worklists.release"
+        )
+    }));
+}
+
+fn release_screen<'a>(intents: &'a [UiIntentMessage], id: &str) -> &'a UiScreenIntent {
+    intents
+        .iter()
+        .find_map(|message| match &message.intent {
+            UiIntent::Screen(screen) if screen.app_id == "release-operator" && screen.id == id => {
+                Some(screen)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing release-operator screen '{id}'"))
+}
+
+fn release_pane<'a>(intents: &'a [UiIntentMessage], id: &str) -> &'a UiPaneIntent {
+    intents
+        .iter()
+        .find_map(|message| match &message.intent {
+            UiIntent::Pane(pane) if pane.app_id == "release-operator" && pane.id == id => {
+                Some(pane)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing release-operator pane '{id}'"))
+}
+
+fn flattened_nodes(nodes: &[UiNode]) -> Vec<&UiNode> {
+    let mut out = Vec::new();
+    for node in nodes {
+        out.push(node);
+        if let UiNode::Section(section) = node {
+            out.extend(flattened_nodes(&section.nodes));
+        }
+    }
+    out
 }
 
 fn assert_release_operator_seeded_ui_intents(
