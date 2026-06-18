@@ -744,7 +744,11 @@ fn render_work_items(
     };
     let mut columns = Vec::with_capacity(fields.len() + 2);
     columns.push("#".to_string());
-    columns.extend(fields.iter().cloned());
+    columns.extend(
+        fields
+            .iter()
+            .map(|field| sorted_field_label(field, &list.sort)),
+    );
     columns.push("action".to_string());
     let widths = work_item_table_widths(&fields, max_width.saturating_sub(depth * 2));
     let selected_index = selected_work_item_index(items, selected_work_item_id);
@@ -1389,6 +1393,43 @@ fn json_value(value: &Value) -> String {
     }
 }
 
+fn field_label(field: &str) -> String {
+    field
+        .split(['_', '.'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn sorted_field_label(field: &str, sort: &[String]) -> String {
+    let mut label = field_label(field);
+    if let Some(index) = sort_field_index(field, sort) {
+        label.push_str(&format!(" [sort {}]", index + 1));
+    }
+    label
+}
+
+fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
+    sort.iter()
+        .position(|entry| sort_entry_field(entry) == field)
+}
+
+fn sort_entry_field(entry: &str) -> &str {
+    let entry = entry
+        .trim()
+        .trim_start_matches(|ch| ch == '+' || ch == '-')
+        .trim();
+    let entry = entry.split_whitespace().next().unwrap_or(entry);
+    entry.split(':').next().unwrap_or(entry)
+}
+
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
     ui_worklist_request(source, limit)
 }
@@ -1699,6 +1740,26 @@ mod tests {
         };
 
         assert_eq!(list_metadata_parts(&list), vec!["where=2", "sort=1"]);
+    }
+
+    #[test]
+    fn sorted_field_label_marks_sorted_columns() {
+        let sort = vec![
+            "-priority".to_string(),
+            "updated_at desc".to_string(),
+            "+metadata.release".to_string(),
+        ];
+
+        assert_eq!(sorted_field_label("priority", &sort), "Priority [sort 1]");
+        assert_eq!(
+            sorted_field_label("updated_at", &sort),
+            "Updated At [sort 2]"
+        );
+        assert_eq!(
+            sorted_field_label("metadata.release", &sort),
+            "Metadata Release [sort 3]"
+        );
+        assert_eq!(sorted_field_label("status", &sort), "Status");
     }
 
     #[test]

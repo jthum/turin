@@ -529,7 +529,7 @@ fn render_work_items(
     };
     let columns = fields
         .iter()
-        .map(|field| field_label(field))
+        .map(|field| sorted_field_label(field, &list.sort))
         .collect::<Vec<_>>();
     let mut columns = columns;
     columns.insert(0, String::new());
@@ -1230,6 +1230,28 @@ fn field_label(field: &str) -> String {
         .join(" ")
 }
 
+fn sorted_field_label(field: &str, sort: &[String]) -> String {
+    let mut label = field_label(field);
+    if let Some(index) = sort_field_index(field, sort) {
+        label.push_str(&format!(" [sort {}]", index + 1));
+    }
+    label
+}
+
+fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
+    sort.iter()
+        .position(|entry| sort_entry_field(entry) == field)
+}
+
+fn sort_entry_field(entry: &str) -> &str {
+    let entry = entry
+        .trim()
+        .trim_start_matches(|ch| ch == '+' || ch == '-')
+        .trim();
+    let entry = entry.split_whitespace().next().unwrap_or(entry);
+    entry.split(':').next().unwrap_or(entry)
+}
+
 fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> usize {
     selected
         .and_then(|selected| {
@@ -1408,6 +1430,26 @@ mod tests {
                 "parent REL-0"
             ]
         );
+    }
+
+    #[test]
+    fn sorted_field_label_marks_sorted_columns() {
+        let sort = vec![
+            "-priority".to_string(),
+            "updated_at desc".to_string(),
+            "+metadata.release".to_string(),
+        ];
+
+        assert_eq!(sorted_field_label("priority", &sort), "Priority [sort 1]");
+        assert_eq!(
+            sorted_field_label("updated_at", &sort),
+            "Updated At [sort 2]"
+        );
+        assert_eq!(
+            sorted_field_label("metadata.release", &sort),
+            "Metadata Release [sort 3]"
+        );
+        assert_eq!(sorted_field_label("status", &sort), "Status");
     }
 
     #[test]

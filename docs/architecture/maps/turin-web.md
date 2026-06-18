@@ -71,8 +71,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Static assets are a bootstrap shell, not the final web framework decision.
   Keep them small unless the project deliberately adopts a frontend build step.
 - The browser shell should keep semantic list constraints such as
-  filter/sort/limit visible when rendering list nodes, but those constraints are
-  request metadata, not browser session state.
+  filter/sort/limit visible when rendering list nodes and mark sorted columns in
+  table headers, but those constraints are request metadata, not browser
+  session state.
 - Browser selected-row detail should surface existing work-item operational
   fields such as pause, claim, parent, and failure context without persisting
   selection in `turin-web`.

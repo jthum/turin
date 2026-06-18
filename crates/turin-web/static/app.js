@@ -820,7 +820,7 @@ function renderList(node, app) {
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
-  table.innerHTML = `<thead><tr>${fields.map(field => `<th>${escapeHtml(fieldLabel(field))}</th>`).join("")}</tr></thead>`;
+  table.innerHTML = `<thead><tr>${fields.map(field => `<th>${escapeHtml(fieldHeaderLabel(field, node))}</th>`).join("")}</tr></thead>`;
   const body = document.createElement("tbody");
   for (const item of items) {
     const row = document.createElement("tr");
@@ -1561,6 +1561,25 @@ function fieldLabel(field) {
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function fieldHeaderLabel(field, node) {
+  const label = fieldLabel(field);
+  const index = sortFieldIndex(field, node?.sort || []);
+  return index >= 0 ? `${label} [sort ${index + 1}]` : label;
+}
+
+function sortFieldIndex(field, sort) {
+  return sort.findIndex(entry => sortEntryField(entry) === field);
+}
+
+function sortEntryField(entry) {
+  return String(entry || "")
+    .trim()
+    .replace(/^[+-]+/, "")
+    .trim()
+    .split(/\s+/)[0]
+    .split(":")[0];
 }
 
 function reportMetrics(items) {
