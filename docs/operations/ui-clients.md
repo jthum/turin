@@ -39,7 +39,7 @@ All clients can talk to:
   `harness.action_ran`
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation
   suggestions
-- dynamic navigation badges and worklist-backed report/chart summaries
+- dynamic navigation/node badges and worklist-backed report/chart summaries
   derived through shared stateless worklist helpers
 
 `turin-app` is the broader graphical operator console. It currently has more
@@ -79,6 +79,32 @@ See `docs/operations/daemon.md` for the daemon model and
 ```bash
 cargo build --release -p turin-tui -p turin-app -p turin-web
 ```
+
+## Footprint Watchpoint
+
+The UI clients should stay lean enough for older machines. Use the no-build
+footprint report for a quick source and artifact snapshot:
+
+```bash
+tools/footprint-report \
+  --top-files 30 \
+  --binary target/debug/turin-tui \
+  --binary target/debug/turin-app \
+  --binary target/debug/turin-web
+```
+
+Recent local sample:
+
+| area | code lines |
+| --- | ---: |
+| `crates/turin-app` | 4,520 |
+| `crates/turin-tui` | 3,884 |
+| `crates/turin-ui-core` | 3,387 |
+| `crates/turin-web` | 720 |
+
+Debug binaries from the same sample were `25.5 MB` for `turin-tui`, `69.9 MB`
+for `turin-app`, and `23.3 MB` for `turin-web`. Treat those as local debug
+artifacts, not release-size targets.
 
 ## Local Usage
 
@@ -205,7 +231,7 @@ Global keys:
 Harness tab keys:
 
 - `[` / `]`: switch harness app
-- `f`: cycle focus between navigation, visible work items, and actions
+- `f`: cycle focus through navigation and non-empty item/action regions
 - `h` / `l`: switch screens directly
 - `Enter`: open the selected navigation target, queue the selected work-item
   action for confirmation, or run the selected action
