@@ -7,7 +7,7 @@ use turin_control_client::{
     AgentSummary, ChannelSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus,
     LiveSession, SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, UiIntentMessage};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiIntentMessage};
 
 use crate::{UiRegistry, controller::UiUpdate};
 
@@ -188,6 +188,9 @@ impl DashboardState {
             UiUpdate::ChannelAccess { .. } => {}
             UiUpdate::SearchResults { .. } => {}
             UiUpdate::UiListLoaded { .. } => {}
+            UiUpdate::HarnessActionCompleted(result) => {
+                self.record_info(harness_action_completed_message(&result))
+            }
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::SessionEvent(_) => {}
             UiUpdate::RefreshTelemetry {
@@ -303,6 +306,51 @@ impl DashboardState {
     }
 }
 
+fn harness_action_completed_message(result: &HarnessActionRunResult) -> String {
+    if result.result.is_null() {
+        return format!(
+            "Ran harness action '{}' for agent {}",
+            result.action, result.agent_id
+        );
+    }
+    format!(
+        "Ran harness action '{}' for agent {}: {}",
+        result.action,
+        result.agent_id,
+        json_preview(&result.result, 120)
+    )
+}
+
+fn json_preview(value: &serde_json::Value, max_chars: usize) -> String {
+    let rendered = match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => value.to_string(),
+    };
+    truncate(&rendered, max_chars)
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    let mut out = String::new();
+    let take_chars = max_chars - 3;
+    for (index, ch) in value.chars().enumerate() {
+        if index >= take_chars {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 pub fn format_relative_age(age_seconds: Option<u64>) -> String {
     match age_seconds {
         None => "none yet".to_string(),
@@ -371,8 +419,10 @@ mod tests {
     };
     use serde_json::json;
     use turin_control_client::ConnectionKind;
-    use turin_daemon_protocol::{EventEnvelope, UI_INTENT_EVENT};
+    use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UI_INTENT_EVENT};
     use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
+
+    use crate::UiUpdate;
 
     fn empty_dashboard() -> DashboardState {
         DashboardState {
@@ -478,5 +528,31 @@ mod tests {
         assert_eq!(dashboard.ui.notices().len(), 1);
         assert_eq!(dashboard.ui.notices()[0].title, "Release blocked");
         assert!(dashboard.ui.app("release").is_some());
+    }
+
+    #[test]
+    fn harness_action_completion_records_operator_info() {
+        let mut dashboard = empty_dashboard();
+
+        dashboard.apply_update(UiUpdate::HarnessActionCompleted(Box::new(
+            HarnessActionRunResult {
+                action: "release.seed_demo_work".to_string(),
+                agent_id: "default".to_string(),
+                harness_id: Some("default".to_string()),
+                result: json!({
+                    "status": "seeded",
+                    "count": 4,
+                }),
+            },
+        )));
+
+        let info = dashboard.last_info.as_deref().expect("last info");
+        assert!(info.contains("release.seed_demo_work"));
+        assert!(info.contains("default"));
+        assert!(info.contains("seeded"));
+        assert_eq!(
+            dashboard.recent_notices.last().map(|notice| notice.level),
+            Some(DashboardNoticeLevel::Info)
+        );
     }
 }

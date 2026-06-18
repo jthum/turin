@@ -27,6 +27,7 @@ Both clients can talk to:
 - runtime overview and notices
 - harness UI apps, screens, nested menus, lists, forms, and actions
 - confirmation for destructive or explicit-confirm harness actions
+- latest harness action result visibility
 - interactive terminal forms with local drafts, basic validation, and typed
   action params
 - task and event tables with detail inspectors
@@ -37,7 +38,8 @@ Both clients can talk to:
 
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable
-harness forms, dynamic UI navigation, and wider runtime tabs.
+harness forms, dynamic UI navigation, latest action result panels, and wider
+runtime tabs.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those

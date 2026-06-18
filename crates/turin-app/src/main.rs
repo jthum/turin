@@ -11,7 +11,7 @@ use turin_control_client::{
     AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
     SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, UiNode, WorkItemList};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiNode, WorkItemList};
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
@@ -211,6 +211,7 @@ struct TurinDesktopApp {
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
+    latest_harness_action_result: Option<HarnessActionRunResult>,
     _runtime: Arc<Runtime>,
 }
 
@@ -318,6 +319,7 @@ impl TurinDesktopApp {
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
+            latest_harness_action_result: None,
             _runtime: runtime,
         }
     }
@@ -338,6 +340,9 @@ impl TurinDesktopApp {
                 .insert(key.clone(), request.as_ref().clone());
             self.requested_ui_lists.remove(&key);
             self.ui_lists.insert(key, items.as_ref().clone());
+        }
+        if let UiUpdate::HarnessActionCompleted(result) = &update {
+            self.latest_harness_action_result = Some(result.as_ref().clone());
         }
         self.dashboard.apply_update(update);
         self.apply_ui_navigation_intents();
@@ -2180,6 +2185,7 @@ impl TurinDesktopApp {
                 }
 
                 self.render_pending_harness_ui_action(ui, &app.id);
+                self.render_latest_harness_action_result(ui, &app);
 
                 if !self.dashboard.ui.notices().is_empty() {
                     ui.add_space(10.0);
@@ -2197,6 +2203,46 @@ impl TurinDesktopApp {
                     }
                 }
             });
+        });
+    }
+
+    fn render_latest_harness_action_result(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let Some(result) = self.latest_harness_action_result.as_ref() else {
+            return;
+        };
+        if !harness_action_result_matches_app(result, app) {
+            return;
+        }
+
+        ui.add_space(10.0);
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Latest Action Result").strong());
+                ui.add(
+                    cast::Badge::new(result.action.clone())
+                        .intent(cast::Intent::Success)
+                        .variant(cast::Variant::Subtle),
+                );
+                ui.add(
+                    cast::Badge::new(format!("Agent: {}", result.agent_id))
+                        .variant(cast::Variant::Outline),
+                );
+                if let Some(harness_id) = result.harness_id.as_ref() {
+                    ui.add(
+                        cast::Badge::new(format!("Harness: {harness_id}"))
+                            .variant(cast::Variant::Outline),
+                    );
+                }
+            });
+            if result.result.is_null() {
+                ui.add_space(6.0);
+                ui.label("Action completed without a result payload.");
+            } else {
+                ui.add_space(8.0);
+                let rendered = serde_json::to_string_pretty(&result.result)
+                    .unwrap_or_else(|_| result.result.to_string());
+                ui.add(cast::CodeOutputPanel::new("Result", rendered).height(140.0));
+            }
         });
     }
 
@@ -3214,4 +3260,18 @@ impl eframe::App for TurinDesktopApp {
             });
         });
     }
+}
+
+fn harness_action_result_matches_app(result: &HarnessActionRunResult, app: &UiAppRecord) -> bool {
+    if let Some(harness_id) = result.harness_id.as_deref()
+        && app.source.harness_id.as_deref() != Some(harness_id)
+    {
+        return false;
+    }
+    if let Some(agent_id) = app.source.agent_id.as_deref()
+        && result.agent_id != agent_id
+    {
+        return false;
+    }
+    true
 }

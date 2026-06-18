@@ -15,8 +15,8 @@ use turin_control_client::{
     SessionSearchHit,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, HarnessActionRunParams, RuntimeEventsSubscribeParams, SessionSearchScope,
-    WorkItemList, WorklistItemsParams, WorklistListParams,
+    EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
+    SessionSearchScope, WorkItemList, WorklistItemsParams, WorklistListParams,
 };
 use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_UI_PROFILES_PATH};
 
@@ -68,6 +68,7 @@ pub enum UiUpdate {
         request: Box<UiListRequest>,
         items: Box<WorkItemList>,
     },
+    HarnessActionCompleted(Box<HarnessActionRunResult>),
     Event(EventEnvelope),
     SessionEvent(EventEnvelope),
     RefreshTelemetry {
@@ -1799,6 +1800,39 @@ fn spawn_command_task(
                                 request: request.clone(),
                                 items: Box::new(items),
                             })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if let OperatorCommand::RunHarnessAction {
+                agent_id,
+                harness_id,
+                action,
+                params,
+            } = &command
+            {
+                match client
+                    .run_harness_action(HarnessActionRunParams {
+                        action: action.clone(),
+                        agent_id: agent_id.clone(),
+                        harness_id: harness_id.clone(),
+                        params: params.clone(),
+                    })
+                    .await
+                {
+                    Ok(result) => {
+                        if tx
+                            .send(UiUpdate::HarnessActionCompleted(Box::new(result)))
                             .is_err()
                         {
                             break;

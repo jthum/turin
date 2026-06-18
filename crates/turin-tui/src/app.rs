@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
 use turin_control_client::TaskStatus;
-use turin_daemon_protocol::{EventEnvelope, UiFormNode, WorkItemList};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemList};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, OperatorCommand, UiController,
     UiListRequest, UiUpdate,
@@ -151,6 +151,7 @@ pub struct TuiApp {
     requested_ui_lists: BTreeSet<String>,
     pending_action: Option<PendingHarnessAction>,
     active_form: Option<TuiFormSession>,
+    latest_harness_action_result: Option<HarnessActionRunResult>,
 }
 
 impl TuiApp {
@@ -178,6 +179,7 @@ impl TuiApp {
             requested_ui_lists: BTreeSet::new(),
             pending_action: None,
             active_form: None,
+            latest_harness_action_result: None,
         }
     }
 
@@ -205,6 +207,9 @@ impl TuiApp {
                 .insert(key.clone(), request.as_ref().clone());
             self.requested_ui_lists.remove(&key);
             self.ui_lists.insert(key, items.as_ref().clone());
+        }
+        if let UiUpdate::HarnessActionCompleted(result) = &update {
+            self.latest_harness_action_result = Some(result.as_ref().clone());
         }
 
         self.dashboard.apply_update(update);
@@ -1290,6 +1295,19 @@ impl TuiApp {
                     Span::styled(format!("{marker} "), style),
                     Span::styled(action.label.clone(), style),
                 ]));
+            }
+        }
+
+        if let Some(result) = self.latest_harness_action_result.as_ref() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("Latest Result", theme::title())));
+            lines.push(kv_line("Action", result.action.clone()));
+            lines.push(kv_line("Agent", result.agent_id.clone()));
+            if let Some(harness_id) = result.harness_id.as_ref() {
+                lines.push(kv_line("Harness", harness_id.clone()));
+            }
+            if !result.result.is_null() {
+                lines.push(kv_line("Result", json_preview(&result.result, 220)));
             }
         }
 
