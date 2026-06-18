@@ -324,11 +324,11 @@ impl TuiApp {
                 Ok(TuiSignal::Continue)
             }
             KeyCode::PageDown => {
-                self.move_selection(SELECTION_PAGE_SIZE);
+                self.move_selection_page(SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::PageUp => {
-                self.move_selection(-SELECTION_PAGE_SIZE);
+                self.move_selection_page(-SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Home => {
@@ -496,6 +496,30 @@ impl TuiApp {
         }
     }
 
+    fn move_selection_page(&mut self, delta: isize) {
+        match self.tab {
+            TabKind::Overview => {}
+            TabKind::Harness => match self.harness_focus {
+                HarnessFocus::Navigation => self.move_harness_nav_page(delta),
+                HarnessFocus::Items => {
+                    let items = self.current_harness_work_items();
+                    self.ui_item_index = page_index(self.ui_item_index, items.len(), delta);
+                }
+                HarnessFocus::Actions => {
+                    let actions = self.current_harness_actions();
+                    self.ui_action_index = page_index(self.ui_action_index, actions.len(), delta);
+                }
+            },
+            TabKind::Tasks => {
+                self.task_index = page_index(self.task_index, self.dashboard.tasks.len(), delta);
+            }
+            TabKind::Events => {
+                self.event_index =
+                    page_index(self.event_index, self.dashboard.recent_events.len(), delta);
+            }
+        }
+    }
+
     fn move_selection_to_edge(&mut self, edge: SelectionEdge) {
         match self.tab {
             TabKind::Overview => {}
@@ -534,6 +558,20 @@ impl TuiApp {
         self.ui_action_index = 0;
         self.ui_item_index = 0;
         self.active_pane_id = None;
+    }
+
+    fn move_harness_nav_page(&mut self, delta: isize) {
+        let Some(app) = self.selected_ui_app() else {
+            return;
+        };
+        let items = harness_ui::collect_nav_items(&app);
+        if items.is_empty() {
+            self.ui_nav_indices.remove(&app.id);
+            return;
+        }
+        let index = self.selected_nav_index(&app, &items);
+        self.ui_nav_indices
+            .insert(app.id.clone(), page_index(index, items.len(), delta));
     }
 
     fn move_harness_nav_to_edge(&mut self, edge: SelectionEdge) {
@@ -2058,6 +2096,14 @@ fn offset_index(current: usize, len: usize, delta: isize) -> usize {
     (current as isize + delta).rem_euclid(len) as usize
 }
 
+fn page_index(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let last = len.saturating_sub(1) as isize;
+    (current as isize + delta).clamp(0, last) as usize
+}
+
 fn edge_index(len: usize, edge: SelectionEdge) -> usize {
     match edge {
         SelectionEdge::Start => 0,
@@ -2129,9 +2175,12 @@ mod tests {
 
     #[test]
     fn page_and_edge_navigation_helpers_are_bounded() {
-        assert_eq!(offset_index(0, 5, SELECTION_PAGE_SIZE), 3);
-        assert_eq!(offset_index(1, 5, -SELECTION_PAGE_SIZE), 3);
-        assert_eq!(offset_index(0, 0, SELECTION_PAGE_SIZE), 0);
+        assert_eq!(offset_index(0, 5, -1), 4);
+        assert_eq!(page_index(0, 5, SELECTION_PAGE_SIZE), 4);
+        assert_eq!(page_index(4, 5, -SELECTION_PAGE_SIZE), 0);
+        assert_eq!(page_index(2, 5, SELECTION_PAGE_SIZE), 4);
+        assert_eq!(page_index(2, 5, -SELECTION_PAGE_SIZE), 0);
+        assert_eq!(page_index(0, 0, SELECTION_PAGE_SIZE), 0);
         assert_eq!(edge_index(5, SelectionEdge::Start), 0);
         assert_eq!(edge_index(5, SelectionEdge::End), 4);
         assert_eq!(edge_index(0, SelectionEdge::End), 0);

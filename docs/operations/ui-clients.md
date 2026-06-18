@@ -103,7 +103,7 @@ Recent local sample:
 | area | code lines |
 | --- | ---: |
 | `crates/turin-app` | 4,631 |
-| `crates/turin-tui` | 3,336 |
+| `crates/turin-tui` | 3,379 |
 | `crates/turin-ui-core` | 3,041 |
 | `crates/turin-web` | 645 |
 
