@@ -698,9 +698,10 @@ fn render_work_item_detail(
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("Action: {}", action.name)).monospace());
+            ui.label(RichText::new("Requires confirmation before running.").weak());
             if ui
                 .add(
-                    cast::Button::new("Run Item Action")
+                    cast::Button::new("Review Item Action")
                         .size(cast::Size::Small)
                         .intent(cast::Intent::Warning)
                         .variant(cast::Variant::Outline),

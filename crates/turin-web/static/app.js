@@ -677,7 +677,7 @@ function renderActionConfirmation() {
   const run = document.createElement("button");
   run.type = "button";
   run.className = "danger-button";
-  run.textContent = "Run action";
+  run.textContent = "Confirm and run";
   run.disabled = state.runningActions.has(actionRunKey(pending.action));
   run.addEventListener("click", () => {
     const action = state.pendingAction;
@@ -946,7 +946,7 @@ function renderWorkItemDetail(item, app) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "danger-button";
-    button.textContent = `Run ${item.action.name}`;
+    button.textContent = `Review ${item.action.name}`;
     button.addEventListener("click", () => {
       runAction(
         {
@@ -958,7 +958,10 @@ function renderWorkItemDetail(item, app) {
         app,
       );
     });
-    actions.append(button);
+    const hint = document.createElement("p");
+    hint.className = "muted";
+    hint.textContent = "Requires confirmation before running.";
+    actions.append(hint, button);
     wrapper.append(actions);
   }
   return wrapper;

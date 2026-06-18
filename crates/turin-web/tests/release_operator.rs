@@ -242,6 +242,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("pendingAction"));
     assert!(js.contains("renderActionConfirmation"));
     assert!(js.contains("requestActionConfirmation"));
+    assert!(js.contains("Confirm and run"));
+    assert!(js.contains("Requires confirmation before running."));
     assert!(!js.contains("window.confirm"));
     assert!(js.contains("renderDefaultConsole"));
     assert!(js.contains("Default Operator Console"));
@@ -265,6 +267,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("renderWorkItemDetail"));
     assert!(js.contains("item.action.name"));
+    assert!(js.contains("Review ${item.action.name}"));
     assert!(js.contains("selectedListItems"));
     assert!(js.contains("selectedListItem"));
     assert!(js.contains("aria-selected"));
