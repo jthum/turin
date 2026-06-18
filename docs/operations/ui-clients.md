@@ -206,7 +206,8 @@ Harness tab keys:
 - `[` / `]`: switch harness app
 - `f`: cycle focus between navigation, visible work items, and actions
 - `h` / `l`: switch screens directly
-- `Enter`: open the selected navigation target or run the selected action
+- `Enter`: open the selected navigation target, queue the selected work-item
+  action for confirmation, or run the selected action
 - `y` / `Enter`: confirm a pending action
 - `n` / Esc: cancel a pending action
 
@@ -215,6 +216,8 @@ The TUI renders harness UI contracts semantically:
 - screens and menus become terminal navigation
 - nested menu items are flattened with indentation
 - worklist-backed lists become compact terminal tables
+- selected worklist rows appear in the inspector; rows with item actions can be
+  queued for confirmation from the item focus
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
 - worklist-backed report and chart nodes become lightweight summaries and bar

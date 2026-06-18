@@ -33,14 +33,16 @@ and `turin-daemon-protocol`.
 3. `TuiApp` applies updates to `DashboardState` and TUI-local state.
 4. Keyboard input mutates TUI-local state or sends `OperatorCommand`.
 5. Harness UI list rows can be selected locally and rendered in the inspector.
-6. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
-7. Harness UI forms open a terminal-local editor; submit merges typed field
+6. Selected harness UI work items can queue their declared item action for
+   confirmation when an action payload exists.
+7. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
+8. Harness UI forms open a terminal-local editor; submit merges typed field
    values over form params and runs the declared harness action.
-8. Completed harness action results are retained as local operator feedback and
+9. Completed harness action results are retained as local operator feedback and
    rendered in the inspector.
-9. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
+10. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
    local TUI navigation state.
-10. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
+11. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
 
 ## Invariants
 
@@ -62,6 +64,9 @@ and `turin-daemon-protocol`.
 - Worklist-backed `list` nodes render as compact terminal tables. Other list
   sources remain visible with metadata and an explicit unsupported-adapter
   message until the client has a loader for that source.
+- Worklist item actions are ordinary harness action runs from the client's
+  point of view, but the TUI must queue them for confirmation because work item
+  payloads do not carry a UI-specific confirm flag.
 - Worklist-backed `activity` and `detail` nodes render from bounded cached
   worklist data. They are not live queries, and they must remain client-local
   views over existing control-plane data.

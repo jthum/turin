@@ -470,10 +470,20 @@ impl TuiApp {
         }
         if self.harness_focus == HarnessFocus::Items {
             if let Some(selection) = self.selected_harness_work_item() {
-                self.dashboard.record_info(format!(
-                    "Selected work item '{}' from {}",
-                    selection.item.title, selection.list_title
-                ));
+                if let Some(app) = self.selected_ui_app()
+                    && let Some(action) = pending_action_from_work_item(&app, &selection)
+                {
+                    self.dashboard.record_info(format!(
+                        "Work item action '{}' requires confirmation before running",
+                        action.action
+                    ));
+                    self.pending_action = Some(action);
+                } else {
+                    self.dashboard.record_info(format!(
+                        "Selected work item '{}' from {}",
+                        selection.item.title, selection.list_title
+                    ));
+                }
             }
             return Ok(());
         }
@@ -1481,7 +1491,7 @@ impl TuiApp {
         let fallback = if self.active_form.is_some() {
             "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
         } else if self.tab == TabKind::Harness {
-            "Harness: f focus nav/items/actions  j/k move  Enter open/select/run  r refresh  ? help"
+            "Harness: f focus nav/items/actions  j/k move  Enter open/item action/run  r refresh  ? help"
         } else {
             "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit"
         };
@@ -1514,7 +1524,7 @@ impl TuiApp {
             kv_line("h / l", "switch harness screen"),
             kv_line(
                 "Enter",
-                "open selected nav item, select item, or run action",
+                "open nav item, queue selected item action, or run action",
             ),
             kv_line("r", "refresh current view"),
             kv_line("Esc / n", "cancel confirmation"),
@@ -1675,6 +1685,13 @@ fn work_item_selection_lines(
     if let Some(agent_id) = item.claim_agent_id.as_ref() {
         lines.push(kv_line("Claimed by", agent_id.clone()));
     }
+    if let Some(action) = item.action.as_ref() {
+        lines.push(kv_line("Action", action.name.clone()));
+        lines.push(Line::from(Span::styled(
+            "Enter queues this work-item action for confirmation",
+            theme::muted(),
+        )));
+    }
     if let Some(reason) = item.failure_reason.as_ref() {
         lines.push(Line::from(Span::styled(
             format!("Failure: {}", truncate(reason, 38)),
@@ -1685,6 +1702,21 @@ fn work_item_selection_lines(
         lines.push(kv_line("Metadata", json_preview(metadata, 90)));
     }
     lines
+}
+
+fn pending_action_from_work_item(
+    app: &turin_ui_core::UiAppRecord,
+    selection: &harness_ui::HarnessWorkItemSelection,
+) -> Option<PendingHarnessAction> {
+    let action = selection.item.action.as_ref()?;
+    Some(PendingHarnessAction {
+        app_id: app.id.clone(),
+        label: format!("Work item: {}", selection.item.title),
+        action: action.name.clone(),
+        agent_id: app.source.agent_id.clone(),
+        harness_id: app.source.harness_id.clone(),
+        params: action.params.clone().unwrap_or(Value::Null),
+    })
 }
 
 fn task_detail_lines(task: &TaskStatus) -> Vec<Line<'static>> {
@@ -1879,5 +1911,97 @@ fn freshness_label(freshness: DashboardFreshness) -> &'static str {
         DashboardFreshness::Fresh => "fresh",
         DashboardFreshness::Quiet => "quiet",
         DashboardFreshness::Stale => "stale",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use turin_daemon_protocol::{ScheduleActionParams, UiIntentSource, WorkItemDetail};
+    use turin_ui_core::UiAppRecord;
+
+    #[test]
+    fn work_item_action_becomes_pending_harness_action() {
+        let app = test_app();
+        let selection = harness_ui::HarnessWorkItemSelection {
+            list_title: "Approvals".to_string(),
+            list_source: "worklists.release".to_string(),
+            item: test_work_item(Some(ScheduleActionParams {
+                name: "release.approve".to_string(),
+                params: Some(json!({ "item": "REL-1" })),
+            })),
+        };
+
+        let pending = pending_action_from_work_item(&app, &selection).expect("pending action");
+
+        assert_eq!(pending.app_id, "release");
+        assert_eq!(pending.label, "Work item: Approve release");
+        assert_eq!(pending.action, "release.approve");
+        assert_eq!(pending.harness_id.as_deref(), Some("release-harness"));
+        assert_eq!(pending.agent_id.as_deref(), Some("release-agent"));
+        assert_eq!(pending.params, json!({ "item": "REL-1" }));
+    }
+
+    #[test]
+    fn work_item_without_action_is_not_runnable() {
+        let app = test_app();
+        let selection = harness_ui::HarnessWorkItemSelection {
+            list_title: "Approvals".to_string(),
+            list_source: "worklists.release".to_string(),
+            item: test_work_item(None),
+        };
+
+        assert!(pending_action_from_work_item(&app, &selection).is_none());
+    }
+
+    fn test_app() -> UiAppRecord {
+        UiAppRecord {
+            id: "release".to_string(),
+            source: UiIntentSource {
+                harness_id: Some("release-harness".to_string()),
+                app_id: Some("release".to_string()),
+                agent_id: Some("release-agent".to_string()),
+                package_id: None,
+            },
+            definition: None,
+            screens: BTreeMap::new(),
+            panes: BTreeMap::new(),
+            menus: Vec::new(),
+            opens_with: None,
+            badges: BTreeMap::new(),
+        }
+    }
+
+    fn test_work_item(action: Option<ScheduleActionParams>) -> WorkItemDetail {
+        WorkItemDetail {
+            id: 1,
+            public_id: "REL-1".to_string(),
+            worklist_id: "release".to_string(),
+            parent_id: None,
+            title: "Approve release".to_string(),
+            kind: "approval".to_string(),
+            prompt: Some("Check release gates".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action,
+            status: "pending".to_string(),
+            paused: false,
+            pause_reason: None,
+            pause_until_unix_ms: None,
+            priority: 10,
+            after: None,
+            metadata: None,
+            claim_agent_id: None,
+            claim_session_id: None,
+            claim_execution_id: None,
+            claim_heartbeat_unix_ms: None,
+            claimed_at: None,
+            completed_at: None,
+            failure_reason: None,
+            created_at: "2026-06-18T00:00:00Z".to_string(),
+            updated_at: "2026-06-18T00:00:00Z".to_string(),
+        }
     }
 }
