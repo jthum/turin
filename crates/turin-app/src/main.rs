@@ -2158,9 +2158,9 @@ impl TurinDesktopApp {
                 });
                 ui.add_space(8.0);
                 if apps.is_empty() {
-                    cast::EmptyState::new("Turin is ready without custom harness UI")
+                    cast::EmptyState::new("Default operator console is active")
                         .body(
-                            "Use Overview, Tasks, and Events as the default operator console. Declare ui.app(...) in a harness to add workflow-specific screens here.",
+                            "Overview, Tasks, and Events work without custom harness UI. Declare ui.app(...) only when a harness needs workflow-specific screens here.",
                         )
                         .icon("UI")
                         .intent(cast::Intent::Info)

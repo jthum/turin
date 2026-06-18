@@ -428,7 +428,7 @@ pub fn render_harness_screen(
         frame.render_widget(
             empty_panel(
                 "Harness",
-                "Turin is ready. No custom harness UI apps are declared yet; use ui.app(...) in a harness to add workflow-specific screens.",
+                "Default operator console is active. Overview, Tasks, and Events work without custom harness UI; declare ui.app(...) only when a harness needs workflow-specific terminal surfaces.",
             ),
             area,
         );
@@ -1655,8 +1655,8 @@ mod tests {
     fn render_smoke_shows_no_app_fallback() {
         let text = rendered_screen_text(None, BTreeMap::new());
 
-        assert!(text.contains("Turin is ready"));
-        assert!(text.contains("No custom harness UI apps are declared yet"));
+        assert!(text.contains("Default operator console is active"));
+        assert!(text.contains("Overview, Tasks, and Events"));
     }
 
     #[test]

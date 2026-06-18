@@ -1663,7 +1663,7 @@ impl TuiApp {
         ))));
         if apps.is_empty() {
             items.push(ListItem::new(Line::from(Span::styled(
-                "  No custom harness UI yet",
+                "  Default console active",
                 theme::muted(),
             ))));
         } else {
