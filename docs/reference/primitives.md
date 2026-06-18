@@ -196,8 +196,8 @@ local project = scope("project", "my-app", { namespace = "notes" })
 
 The `ui` namespace lets harnesses describe semantic UI intent for Turin clients.
 Clients decide how to react based on their own capabilities. The API is
-experimental and expected to evolve while the TUI and graphical app are built in
-parallel.
+experimental and expected to evolve while `turin-app`, `turin-tui`, and
+`turin-web` are built in parallel.
 
 Load-time example:
 
@@ -234,7 +234,22 @@ app:home("Release Desk", function(screen)
   })
 
   screen:activity("Release Activity", {
-    from = "signals.release",
+    from = "worklists.release",
+  })
+
+  screen:detail("Approval Detail", {
+    from = "worklists.release",
+  })
+
+  screen:report("Release Readiness", {
+    from = "worklists.release",
+    prompt = "Summarize current release readiness.",
+  })
+
+  screen:chart("Approval Flow", {
+    from = "worklists.release",
+    intent = "status_breakdown",
+    as = "bar",
   })
 end)
 
@@ -310,8 +325,17 @@ Current v0 behavior:
 - `screen:list(...)` is the generic collection primitive
 - `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
-- desktop and terminal clients can render editable forms; terminal clients may
-  degrade rich text areas to line-oriented text input
+- current clients load `worklists.*` sources for lists, activity, detail,
+  reports, and charts; other sources should remain visible with explicit
+  unsupported-adapter messages
+- report and chart nodes currently have lightweight worklist-backed client
+  adapters, not shared analytics/query semantics
+- desktop, terminal, and web clients can render editable forms; terminal
+  clients may degrade rich text areas to line-oriented text input
+- dynamic badges render on matching screen/menu navigation targets when the
+  client has a visible navigation surface
+- dynamic `open`, `show`, and `focus` intents are local navigation suggestions;
+  they do not make the runtime own active screen state
 - load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots
 - hook-time app-scoped methods such as `app:notice(...)` and `app:open(...)` emit ephemeral `ui.intent` session events
 - dynamic UI intent events are client-facing signals; they are not persisted into session history
