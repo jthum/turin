@@ -84,6 +84,8 @@ and `turin-daemon-protocol`.
   focus should be added deliberately if the terminal UX needs it, rather than
   overloading the screen action focus model.
 - Keep keyboard behavior discoverable through the help overlay/footer.
+- Page and boundary navigation (`PageUp`, `PageDown`, `Home`, `End`) should stay
+  local to the currently focused region and must not become runtime state.
 - Harness focus cycling should skip empty item/action regions and fall back to
   navigation rather than trapping the operator on blank panes.
 - Prefer small modules over rebuilding a monolithic terminal app.
@@ -125,9 +127,9 @@ git diff --check
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, focus cycling that skips empty regions, local work-item selection
-with inspector detail, dynamic open/focus handling, shown pane overlays,
-editable forms, worklist-backed activity/detail/report/chart surfaces, latest
-action result feedback, task and event inspectors, confirmation flow, UI
-notices, and list invalidation. Chat, search, connection profile editing, and
-deeper inspectors should be reintroduced only as they fit the new terminal UX
-model.
+with inspector detail, page/boundary navigation in focused regions, dynamic
+open/focus handling, shown pane overlays, editable forms, worklist-backed
+activity/detail/report/chart surfaces, latest action result feedback, task and
+event inspectors, confirmation flow, UI notices, and list invalidation. Chat,
+search, connection profile editing, and deeper inspectors should be
+reintroduced only as they fit the new terminal UX model.

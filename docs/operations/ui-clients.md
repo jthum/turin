@@ -35,6 +35,7 @@ All clients can talk to:
 - interactive terminal forms with local drafts, basic validation, and typed
   action params
 - task and event tables with detail inspectors
+- page and boundary navigation inside the currently focused terminal region
 - event-driven harness list refresh through `ui.refresh(...)` and
   `harness.action_ran`
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation

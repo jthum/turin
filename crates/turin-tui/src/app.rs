@@ -67,6 +67,14 @@ enum HarnessFocus {
     Actions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionEdge {
+    Start,
+    End,
+}
+
+const SELECTION_PAGE_SIZE: isize = 8;
+
 impl HarnessFocus {
     fn next_available(self, has_items: bool, has_actions: bool) -> Self {
         const ORDER: [HarnessFocus; 3] = [
@@ -315,6 +323,22 @@ impl TuiApp {
                 self.move_selection(-1);
                 Ok(TuiSignal::Continue)
             }
+            KeyCode::PageDown => {
+                self.move_selection(SELECTION_PAGE_SIZE);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::PageUp => {
+                self.move_selection(-SELECTION_PAGE_SIZE);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Home => {
+                self.move_selection_to_edge(SelectionEdge::Start);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::End => {
+                self.move_selection_to_edge(SelectionEdge::End);
+                Ok(TuiSignal::Continue)
+            }
             KeyCode::Char(']') if self.tab == TabKind::Harness => {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), 1);
                 self.ui_action_index = 0;
@@ -472,6 +496,29 @@ impl TuiApp {
         }
     }
 
+    fn move_selection_to_edge(&mut self, edge: SelectionEdge) {
+        match self.tab {
+            TabKind::Overview => {}
+            TabKind::Harness => match self.harness_focus {
+                HarnessFocus::Navigation => self.move_harness_nav_to_edge(edge),
+                HarnessFocus::Items => {
+                    let items = self.current_harness_work_items();
+                    self.ui_item_index = edge_index(items.len(), edge);
+                }
+                HarnessFocus::Actions => {
+                    let actions = self.current_harness_actions();
+                    self.ui_action_index = edge_index(actions.len(), edge);
+                }
+            },
+            TabKind::Tasks => {
+                self.task_index = edge_index(self.dashboard.tasks.len(), edge);
+            }
+            TabKind::Events => {
+                self.event_index = edge_index(self.dashboard.recent_events.len(), edge);
+            }
+        }
+    }
+
     fn move_harness_screen(&mut self, delta: isize) {
         if self.tab != TabKind::Harness {
             return;
@@ -487,6 +534,19 @@ impl TuiApp {
         self.ui_action_index = 0;
         self.ui_item_index = 0;
         self.active_pane_id = None;
+    }
+
+    fn move_harness_nav_to_edge(&mut self, edge: SelectionEdge) {
+        let Some(app) = self.selected_ui_app() else {
+            return;
+        };
+        let items = harness_ui::collect_nav_items(&app);
+        if items.is_empty() {
+            self.ui_nav_indices.remove(&app.id);
+            return;
+        }
+        self.ui_nav_indices
+            .insert(app.id.clone(), edge_index(items.len(), edge));
     }
 
     fn cycle_harness_focus(&mut self) {
@@ -1560,9 +1620,9 @@ impl TuiApp {
         } else if self.active_pane_id.is_some() {
             "Pane: Esc close  r refresh visible data  ? help"
         } else if self.tab == TabKind::Harness {
-            "Harness: f focus available region  j/k move  Enter open/item action/run  r refresh  ? help"
+            "Harness: f focus  j/k move  PgUp/PgDn/Home/End jump  Enter open/item action/run  r refresh  ? help"
         } else {
-            "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit"
+            "Tab/←/→ tabs  j/k move  PgUp/PgDn/Home/End jump  Enter open/run  r refresh  ? help  q quit"
         };
         let info = self
             .dashboard
@@ -1592,6 +1652,8 @@ impl TuiApp {
                 "cycle harness focus through navigation and non-empty regions",
             ),
             kv_line("j / k", "move selection"),
+            kv_line("PgUp / PgDn", "move selection by a larger stride"),
+            kv_line("Home / End", "jump to first or last selectable row"),
             kv_line("[ / ]", "switch harness app"),
             kv_line("h / l", "switch harness screen"),
             kv_line(
@@ -1996,6 +2058,13 @@ fn offset_index(current: usize, len: usize, delta: isize) -> usize {
     (current as isize + delta).rem_euclid(len) as usize
 }
 
+fn edge_index(len: usize, edge: SelectionEdge) -> usize {
+    match edge {
+        SelectionEdge::Start => 0,
+        SelectionEdge::End => len.saturating_sub(1),
+    }
+}
+
 fn connection_kind_label(kind: turin_control_client::ConnectionKind) -> &'static str {
     match kind {
         turin_control_client::ConnectionKind::Local => "local",
@@ -2056,6 +2125,16 @@ mod tests {
         assert!(HarnessFocus::Items.is_available(true, false));
         assert!(!HarnessFocus::Actions.is_available(true, false));
         assert!(HarnessFocus::Actions.is_available(false, true));
+    }
+
+    #[test]
+    fn page_and_edge_navigation_helpers_are_bounded() {
+        assert_eq!(offset_index(0, 5, SELECTION_PAGE_SIZE), 3);
+        assert_eq!(offset_index(1, 5, -SELECTION_PAGE_SIZE), 3);
+        assert_eq!(offset_index(0, 0, SELECTION_PAGE_SIZE), 0);
+        assert_eq!(edge_index(5, SelectionEdge::Start), 0);
+        assert_eq!(edge_index(5, SelectionEdge::End), 4);
+        assert_eq!(edge_index(0, SelectionEdge::End), 0);
     }
 
     #[test]

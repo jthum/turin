@@ -86,8 +86,8 @@ browser shell that consumes those routes.
 - Dynamic badges currently render on navigation targets and titled node ids;
   field-level or arbitrary inline badge placement remains undefined.
 - TUI item selection is local to visible compact table rows; selected item
-  actions can be queued for confirmation, but richer table navigation can still
-  improve.
+  actions can be queued for confirmation, and page/boundary keys now work
+  within the focused region, but richer table widgets can still improve.
 - TUI pane overlays are read-only semantic renderings for now; pane-local action
   focus can be added when the terminal interaction model needs it.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
