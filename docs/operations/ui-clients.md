@@ -352,8 +352,8 @@ lean and to notice accidental source or binary growth before it becomes normal.
 - `turin-tui` does not currently include an interactive connection profile
   editor.
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
-- `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
-  to single-value text editing for now.
+- `turin-tui` form editing is compact; textarea/markdown fields support
+  `Ctrl+J` newlines but still render as a preview rather than a rich editor.
 - `turin-tui` work-item selection is local to visible compact list rows.
 - `turin-tui` pane overlays use pane-local item/action focus separate from the
   main screen focus.

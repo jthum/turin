@@ -1413,6 +1413,13 @@ pub fn is_bool_field(field: &turin_daemon_protocol::UiFormField) -> bool {
     )
 }
 
+pub fn is_multiline_field(field: &turin_daemon_protocol::UiFormField) -> bool {
+    matches!(
+        normalized_form_field_kind(field).as_str(),
+        "textarea" | "multiline" | "markdown"
+    )
+}
+
 fn parse_form_value(
     field: &turin_daemon_protocol::UiFormField,
     value: &str,

@@ -521,6 +521,10 @@ impl TuiApp {
                 self.clear_active_form_field();
                 Ok(TuiSignal::Continue)
             }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.append_active_form_newline();
+                Ok(TuiSignal::Continue)
+            }
             KeyCode::Char(' ') => {
                 if !self.toggle_active_bool() {
                     self.append_active_form_char(' ');
@@ -962,6 +966,25 @@ impl TuiApp {
         }
         form_session.values.entry(field.name).or_default().push(ch);
         form_session.error = None;
+    }
+
+    fn append_active_form_newline(&mut self) -> bool {
+        let Some(form_session) = self.active_form.as_mut() else {
+            return false;
+        };
+        let Some(field) = form_session.selected_field().cloned() else {
+            return false;
+        };
+        if !harness_ui::is_multiline_field(&field) {
+            return false;
+        }
+        form_session
+            .values
+            .entry(field.name)
+            .or_default()
+            .push('\n');
+        form_session.error = None;
+        true
     }
 
     fn delete_active_form_char(&mut self) {
@@ -1904,7 +1927,7 @@ impl TuiApp {
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let fallback = if self.active_form.is_some() {
-            "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel".to_string()
+            "Form: Tab/↑/↓ fields  type edit  Ctrl+J newline  Space bool  h/l or ←/→ option  Enter submit  Esc cancel".to_string()
         } else if self.active_pane_id.is_some() {
             format!(
                 "Pane ({}): f focus  j/k move  Enter item action/run  r refresh  Esc/q close  ? help",
@@ -1967,6 +1990,7 @@ impl TuiApp {
                 "Form type",
                 "edit text, number, integer, and textarea fields",
             ),
+            kv_line("Form Ctrl+J", "insert newline in textarea/markdown fields"),
             kv_line("Form Space", "toggle boolean fields"),
             kv_line("Form h/l / ← →", "cycle option fields"),
             kv_line("Form Enter", "submit form"),
@@ -2023,7 +2047,7 @@ impl TuiApp {
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ options  Enter submit  Esc cancel",
+            "Tab/↑/↓ fields  type edit  Ctrl+J newline  Space bool  h/l or ←/→ options  Enter submit  Esc cancel",
             theme::muted(),
         )));
         frame.render_widget(panel("Form", lines), area);
@@ -2318,6 +2342,11 @@ fn form_field_value_preview(field: &turin_daemon_protocol::UiFormField, value: &
     if value.is_empty() {
         return "<empty>".to_string();
     }
+    if harness_ui::is_multiline_field(field) {
+        let line_count = value.split('\n').count();
+        let preview = value.replace('\n', " ↵ ");
+        return format!("{line_count} lines · {}", truncate(&preview, 42));
+    }
     truncate(value, 52)
 }
 
@@ -2412,8 +2441,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     use turin_daemon_protocol::{
-        ScheduleActionParams, UiActionNode, UiIntentSource, UiListNode, UiNode, UiPaneIntent,
-        UiScreenIntent, WorkItemDetail,
+        ScheduleActionParams, UiActionNode, UiFormField, UiIntentSource, UiListNode, UiNode,
+        UiPaneIntent, UiScreenIntent, WorkItemDetail,
     };
     use turin_ui_core::UiAppRecord;
 
@@ -2519,6 +2548,23 @@ mod tests {
         assert!(text.contains("Action"));
         assert!(text.contains("release.approve"));
         assert!(text.contains("Enter queues this work-item action for confirmation"));
+    }
+
+    #[test]
+    fn form_field_value_preview_summarizes_multiline_text() {
+        let field = UiFormField {
+            name: "notes".to_string(),
+            label: "Notes".to_string(),
+            kind: Some("textarea".to_string()),
+            default: None,
+            required: None,
+            options: Vec::new(),
+        };
+
+        let preview = form_field_value_preview(&field, "first line\nsecond line");
+
+        assert_eq!(preview, "2 lines · first line ↵ second line");
+        assert!(harness_ui::is_multiline_field(&field));
     }
 
     #[test]

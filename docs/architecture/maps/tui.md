@@ -79,9 +79,10 @@ and `turin-daemon-protocol`.
   summaries from bounded cached worklist data using stateless worklist
   derivation helpers from `turin-ui-core`. This is still a client adapter, not a
   shared analytics/query semantics layer.
-- Form nodes render as editable terminal modals. Unsupported rich form controls
-  should degrade to text/option/boolean editing rather than forcing renderer
-  concepts into the protocol.
+- Form nodes render as editable terminal modals. Textarea/markdown fields can
+  accept `Ctrl+J` newlines but still display as compact previews. Unsupported
+  rich form controls should degrade to text/option/boolean editing rather than
+  forcing renderer concepts into the protocol.
 - Pane targets render as terminal overlays with their own local item/action
   focus. Pane item/action selection must not overload screen item/action focus.
 - Keep keyboard behavior discoverable through the help overlay/footer.
