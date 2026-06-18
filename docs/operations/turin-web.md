@@ -149,6 +149,8 @@ The current browser shell is intentionally small:
   actions
 - action start/completion/failure feedback, latest action result panels on
   screens and open panes, and duplicate-run suppression
+- compact state panels for unsupported, missing, loading, empty, and failed
+  semantic data surfaces
 - lightweight worklist-backed report summaries with next pending item
   highlights, plus chart breakdowns
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`

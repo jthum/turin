@@ -602,11 +602,11 @@ function renderList(node, app) {
   panel.className = "panel";
   appendPanelHeading(panel, node.title, node, app);
   if (!node.source) {
-    panel.append(renderText("List source is missing.", "muted"));
+    appendState(panel, "warning", "List source missing", "This list is declared, but no source was provided.");
     return panel;
   }
   if (!isWorklistSource(node.source)) {
-    panel.append(renderText(unsupportedSourceMessage("list", node.source), "muted"));
+    appendState(panel, "warning", "Unsupported list source", unsupportedSourceMessage("list", node.source));
     return panel;
   }
   const request = dataRequestForNode(node);
@@ -614,20 +614,20 @@ function renderList(node, app) {
   const key = listKey(request);
   const cached = state.listCache.get(key);
   if (state.loadingLists.has(key)) {
-    panel.append(renderText("Loading list...", "muted"));
+    appendState(panel, "loading", "Loading list", "Fetching current worklist rows.");
     return panel;
   }
   if (!cached) {
-    panel.append(renderText("List not loaded yet.", "muted"));
+    appendState(panel, "info", "List not loaded yet", "This visible list has not been fetched yet.");
     return panel;
   }
   if (cached.error) {
-    panel.append(renderText(cached.error, "muted"));
+    appendState(panel, "error", "List failed to load", cached.error);
     return panel;
   }
   const items = cached.list?.items ?? [];
   if (!items.length) {
-    panel.append(renderText("No matching items.", "muted"));
+    appendState(panel, "empty", "No matching items", "This worklist query returned no rows.");
     return panel;
   }
 
@@ -676,27 +676,27 @@ function renderList(node, app) {
 function renderActivity(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
-    return renderPanel(unsupportedSourceMessage("activity", node.source), "muted");
+    return renderStatePanel("Unsupported activity source", unsupportedSourceMessage("activity", node.source), "warning");
   }
   const panel = document.createElement("section");
   panel.className = "panel";
   appendPanelHeading(panel, node.title, node, app);
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
-    panel.append(renderText("Loading activity data...", "muted"));
+    appendState(panel, "loading", "Loading activity", "Fetching recent worklist activity.");
     return panel;
   }
   if (!cached) {
-    panel.append(renderText("Activity data not loaded yet.", "muted"));
+    appendState(panel, "info", "Activity not loaded yet", "This visible activity surface has not been fetched yet.");
     return panel;
   }
   if (cached.error) {
-    panel.append(renderText(cached.error, "muted"));
+    appendState(panel, "error", "Activity failed to load", cached.error);
     return panel;
   }
   const items = cached.list?.items ?? [];
   if (!items.length) {
-    panel.append(renderText("No worklist activity yet.", "muted"));
+    appendState(panel, "empty", "No worklist activity yet", "Activity will appear after work items are created or updated.");
     return panel;
   }
 
@@ -718,32 +718,32 @@ function renderActivity(node, app) {
 function renderDetail(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
-    return renderPanel(unsupportedSourceMessage("detail", node.source), "muted");
+    return renderStatePanel("Unsupported detail source", unsupportedSourceMessage("detail", node.source), "warning");
   }
   const panel = document.createElement("section");
   panel.className = "panel";
   appendPanelHeading(panel, node.title, node, app);
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
-    panel.append(renderText("Loading detail data...", "muted"));
+    appendState(panel, "loading", "Loading detail", "Fetching worklist detail data.");
     return panel;
   }
   if (!cached) {
-    panel.append(renderText("Detail data not loaded yet.", "muted"));
+    appendState(panel, "info", "Detail not loaded yet", "This visible detail surface has not been fetched yet.");
     return panel;
   }
   if (cached.error) {
-    panel.append(renderText(cached.error, "muted"));
+    appendState(panel, "error", "Detail failed to load", cached.error);
     return panel;
   }
   const items = cached.list?.items ?? [];
   if (!items.length) {
-    panel.append(renderText("No worklist items available for detail.", "muted"));
+    appendState(panel, "empty", "No worklist items available", "Detail surfaces need at least one loaded work item.");
     return panel;
   }
   const item = selectDetailItem(node, items);
   if (!item) {
-    panel.append(renderText(`Work item '${node.item_id}' was not found.`, "muted"));
+    appendState(panel, "empty", "Work item not found", `Work item '${node.item_id}' was not found in the loaded detail data.`);
     return panel;
   }
   panel.append(renderWorkItemDetail(item, app));
@@ -808,15 +808,15 @@ function renderReport(node, app) {
   if (node.prompt) panel.append(renderText(node.prompt, "muted"));
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
-    panel.append(renderText("Loading report data...", "muted"));
+    appendState(panel, "loading", "Loading report", "Fetching worklist rows for this report.");
     return panel;
   }
   if (!cached) {
-    panel.append(renderText("Report data not loaded yet.", "muted"));
+    appendState(panel, "info", "Report not loaded yet", "This visible report surface has not been fetched yet.");
     return panel;
   }
   if (cached.error) {
-    panel.append(renderText(cached.error, "muted"));
+    appendState(panel, "error", "Report failed to load", cached.error);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -836,15 +836,15 @@ function renderChart(node, app) {
   panel.append(renderText(label, "muted"));
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
-    panel.append(renderText("Loading chart data...", "muted"));
+    appendState(panel, "loading", "Loading chart", "Fetching worklist rows for this chart.");
     return panel;
   }
   if (!cached) {
-    panel.append(renderText("Chart data not loaded yet.", "muted"));
+    appendState(panel, "info", "Chart not loaded yet", "This visible chart surface has not been fetched yet.");
     return panel;
   }
   if (cached.error) {
-    panel.append(renderText(cached.error, "muted"));
+    appendState(panel, "error", "Chart failed to load", cached.error);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -869,7 +869,7 @@ function renderBars(counts) {
   const wrapper = document.createElement("div");
   wrapper.className = "chart-bars";
   if (!entries.length) {
-    wrapper.append(renderText("No chart data yet.", "muted"));
+    wrapper.append(renderState("No chart data yet", "This chart will populate when the backing worklist has rows.", "empty"));
     return wrapper;
   }
   const max = Math.max(...entries.map(([, count]) => count), 1);
@@ -964,7 +964,12 @@ function renderPlaceholder(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
   appendPanelHeading(panel, node.title || node.kind || "Unsupported", node, app);
-  panel.append(renderText(unsupportedSourceMessage(node.kind || "surface", node.source), "muted"));
+  appendState(
+    panel,
+    "warning",
+    `Unsupported ${node.kind || "surface"} source`,
+    unsupportedSourceMessage(node.kind || "surface", node.source),
+  );
   return panel;
 }
 
@@ -978,6 +983,29 @@ function renderPanel(text, className) {
   panel.className = "panel";
   panel.append(renderText(text, className));
   return panel;
+}
+
+function renderStatePanel(title, body, level = "info") {
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  panel.append(renderState(title, body, level));
+  return panel;
+}
+
+function appendState(panel, level, title, body) {
+  panel.append(renderState(title, body, level));
+}
+
+function renderState(title, body, level = "info") {
+  const node = document.createElement("div");
+  node.className = "surface-state";
+  node.dataset.level = level;
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const message = document.createElement("p");
+  message.textContent = body || "";
+  node.append(heading, message);
+  return node;
 }
 
 function renderText(text, className) {

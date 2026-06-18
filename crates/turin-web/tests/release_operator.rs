@@ -234,6 +234,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("highestPriorityPendingItem"));
     assert!(js.contains("Next highest-priority pending item"));
     assert!(js.contains("renderChart"));
+    assert!(js.contains("renderState"));
+    assert!(js.contains("appendState"));
+    assert!(js.contains("surface-state"));
     assert!(js.contains("renderActionResult"));
     assert!(js.contains("latestActionResult"));
     assert!(js.contains("pendingAction"));
@@ -276,6 +279,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         1
     );
     assert!(css.contains(".list-selection"));
+    assert!(css.contains(".surface-state"));
+    assert!(css.contains(".surface-state[data-level=\"error\"]"));
     assert!(css.contains(".confirm-overlay"));
     assert!(css.contains(".confirm-dialog"));
     assert!(css.contains(".list-row"));
