@@ -21,7 +21,7 @@ session state, invent renderer-specific harness APIs, or bypass
     liveness, and SSE event streaming.
 - `crates/turin-web/tests/release_operator.rs`
   - End-to-end smoke against a temporary daemon and the Release Operator
-    harness.
+    harness, both through local IPC and through `turin-remote`.
 
 ## Data Flow
 

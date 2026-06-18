@@ -105,6 +105,9 @@ For browser SSE/WebSocket auth, prefer a same-origin web server session or
 server-side proxy over putting long-lived Turin remote tokens directly into
 client-side JavaScript.
 
+The Release Operator web smoke covers both deployment modes: direct local IPC
+and `turin-web` connected through `turin-remote`.
+
 ## Technology Bias
 
 The web client should stay lean.

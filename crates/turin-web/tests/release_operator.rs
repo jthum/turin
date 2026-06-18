@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
+use turin::remote::{RemoteServeOptions, start as start_remote};
 use turin_control_client::ConnectionSpec;
 use turin_daemon_protocol::{DaemonRequest, NoParams};
 use turin_web::{WebServeOptions, start as start_web};
@@ -20,6 +21,7 @@ const DEFAULT_LAYOUT_ROOT: &str = ".turin";
 struct DaemonHarness {
     _tempdir: Arc<TempDir>,
     endpoint: PathBuf,
+    config_path: PathBuf,
     join: JoinHandle<Result<()>>,
 }
 
@@ -98,6 +100,7 @@ base_url = "PONG"
         Ok(Self {
             _tempdir: tempdir,
             endpoint,
+            config_path,
             join,
         })
     }
@@ -111,6 +114,35 @@ base_url = "PONG"
             .await
             .context("timed out waiting for daemon to exit")??;
         Ok(())
+    }
+}
+
+struct RemoteHarness {
+    base_url: String,
+    server: turin::remote::RunningRemoteServer,
+}
+
+impl RemoteHarness {
+    async fn start(config_path: &Path) -> Result<Self> {
+        let server = start_remote(
+            config_path,
+            RemoteServeOptions {
+                bind: Some("127.0.0.1:0".to_string()),
+                auth_token: Some("test-token".to_string()),
+                auth_token_env: None,
+                event_keepalive_seconds: Some(1),
+                allow_non_loopback: Some(false),
+            },
+        )
+        .await?;
+        Ok(Self {
+            base_url: format!("http://{}", server.local_addr()),
+            server,
+        })
+    }
+
+    async fn stop(self) -> Result<()> {
+        self.server.stop().await
     }
 }
 
@@ -131,6 +163,39 @@ async fn turin_web_release_operator_smoke() -> Result<()> {
     let base_url = format!("http://{}", server.local_addr());
     let client = reqwest::Client::new();
 
+    assert_release_operator_web(&base_url, &client).await?;
+
+    server.stop().await?;
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turin_web_release_operator_smoke_remote() -> Result<()> {
+    let daemon = DaemonHarness::start_with_harness(include_str!(
+        "../../../examples/harnesses/ui_release_operator/main.lua"
+    ))
+    .await?;
+    let remote = RemoteHarness::start(&daemon.config_path).await?;
+    let server = start_web(WebServeOptions {
+        bind: "127.0.0.1:0".to_string(),
+        connection: ConnectionSpec::Remote {
+            base_url: remote.base_url.clone(),
+            auth_token: "test-token".to_string(),
+        },
+        allow_non_loopback: false,
+    })
+    .await?;
+    let base_url = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+
+    assert_release_operator_web(&base_url, &client).await?;
+
+    server.stop().await?;
+    remote.stop().await?;
+    daemon.stop().await
+}
+
+async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -> Result<()> {
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
         .send()
@@ -225,8 +290,7 @@ async fn turin_web_release_operator_smoke() -> Result<()> {
     assert!(items.iter().all(|item| item["status"] == "pending"));
     assert!(items.iter().all(|item| item["kind"] == "approval"));
 
-    server.stop().await?;
-    daemon.stop().await
+    Ok(())
 }
 
 async fn read_sse_until(response: reqwest::Response, needle: &str) -> Result<String> {
