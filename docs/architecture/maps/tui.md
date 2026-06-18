@@ -65,6 +65,9 @@ and `turin-daemon-protocol`.
 - Worklist-backed `activity` and `detail` nodes render from bounded cached
   worklist data. They are not live queries, and they must remain client-local
   views over existing control-plane data.
+- Worklist-backed `report` and `chart` nodes render lightweight terminal
+  summaries from bounded cached worklist data. This is a client adapter, not a
+  shared analytics/query semantics layer.
 - Form nodes render as editable terminal modals. Unsupported rich form controls
   should degrade to text/option/boolean editing rather than forcing renderer
   concepts into the protocol.
@@ -108,8 +111,8 @@ git diff --check
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, local work-item selection with inspector detail, dynamic open/focus
-handling, editable forms, worklist-backed activity/detail surfaces, latest
-action result feedback, task and event inspectors, confirmation flow, UI
+handling, editable forms, worklist-backed activity/detail/report/chart surfaces,
+latest action result feedback, task and event inspectors, confirmation flow, UI
 notices, and list invalidation. Chat, search, connection profile editing, and
 deeper inspectors should be reintroduced only as they fit the new terminal UX
 model.

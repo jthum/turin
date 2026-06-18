@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
-    UiActivityNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem, UiNode, UiScreenIntent,
-    WorkItemDetail, WorkItemList,
+    UiActivityNode, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem, UiNode,
+    UiReportNode, UiScreenIntent, WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{UiAppRecord, UiListRequest};
 
@@ -17,6 +17,8 @@ use crate::theme;
 
 const ACTIVITY_LIMIT: u32 = 12;
 const DETAIL_LIMIT: u32 = 25;
+const REPORT_LIMIT: u32 = 100;
+const CHART_LIMIT: u32 = 100;
 
 #[derive(Debug, Clone)]
 pub struct HarnessAction {
@@ -167,6 +169,20 @@ fn collect_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
                     source: detail.source.clone(),
                     filter: Map::new(),
                     limit: Some(DETAIL_LIMIT),
+                });
+            }
+            UiNode::Report(report) if report.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: report.source.clone(),
+                    filter: Map::new(),
+                    limit: Some(REPORT_LIMIT),
+                });
+            }
+            UiNode::Chart(chart) if chart.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: chart.source.clone(),
+                    filter: Map::new(),
+                    limit: Some(CHART_LIMIT),
                 });
             }
             _ => {}
@@ -444,16 +460,8 @@ fn render_nodes(
                 render_activity(activity, lists, requested_lists, lines, depth)
             }
             UiNode::Detail(detail) => render_detail(detail, lists, requested_lists, lines, depth),
-            UiNode::Report(report) => lines.push(indent_line(
-                depth,
-                format!("Report: {} ({})", report.title, report.source),
-                theme::muted(),
-            )),
-            UiNode::Chart(chart) => lines.push(indent_line(
-                depth,
-                format!("Chart: {} ({})", chart.title, chart.source),
-                theme::muted(),
-            )),
+            UiNode::Report(report) => render_report(report, lists, requested_lists, lines, depth),
+            UiNode::Chart(chart) => render_chart(chart, lists, requested_lists, lines, depth),
         }
     }
 }
@@ -822,6 +830,186 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
     }
 }
 
+fn render_report(
+    report: &UiReportNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    lines.push(indent_line(
+        depth,
+        format!("Report: {}  {}", report.title, report.source),
+        theme::accent(),
+    ));
+    if let Some(prompt) = report.prompt.as_ref() {
+        lines.push(indent_line(
+            depth + 1,
+            format!("prompt: {}", truncate(prompt, 72)),
+            theme::muted(),
+        ));
+    }
+
+    let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
+        lines.push(indent_line(
+            depth + 1,
+            "No terminal report adapter exists for this source yet".to_string(),
+            theme::muted(),
+        ));
+        lines.push(Line::from(""));
+        return;
+    };
+
+    let key = request.cache_key();
+    match lists.get(&key) {
+        Some(items) => render_worklist_report(items, lines, depth + 1),
+        None if requested_lists.contains(&key) => lines.push(indent_line(
+            depth + 1,
+            "Loading report data...".to_string(),
+            theme::muted(),
+        )),
+        None => lines.push(indent_line(
+            depth + 1,
+            "Report data not requested yet".to_string(),
+            theme::muted(),
+        )),
+    }
+    lines.push(Line::from(""));
+}
+
+fn render_chart(
+    chart: &UiChartNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    let label = chart
+        .render_as
+        .as_ref()
+        .map(|render_as| format!("{} as {}", chart.source, render_as))
+        .unwrap_or_else(|| chart.source.clone());
+    lines.push(indent_line(
+        depth,
+        format!(
+            "Chart: {}  {}  intent={}",
+            chart.title,
+            label,
+            chart.intent.as_deref().unwrap_or("breakdown")
+        ),
+        theme::accent(),
+    ));
+
+    let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
+        lines.push(indent_line(
+            depth + 1,
+            "No terminal chart adapter exists for this source yet".to_string(),
+            theme::muted(),
+        ));
+        lines.push(Line::from(""));
+        return;
+    };
+
+    let key = request.cache_key();
+    match lists.get(&key) {
+        Some(items) => render_worklist_chart(chart, items, lines, depth + 1),
+        None if requested_lists.contains(&key) => lines.push(indent_line(
+            depth + 1,
+            "Loading chart data...".to_string(),
+            theme::muted(),
+        )),
+        None => lines.push(indent_line(
+            depth + 1,
+            "Chart data not requested yet".to_string(),
+            theme::muted(),
+        )),
+    }
+    lines.push(Line::from(""));
+}
+
+fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
+    let counts = status_counts(items);
+    lines.push(indent_line(
+        depth,
+        format!(
+            "{} loaded  {} pending  {} claimed  {} done  {} failed",
+            items.items.len(),
+            counts.pending,
+            counts.claimed,
+            counts.done,
+            counts.failed
+        ),
+        theme::base(),
+    ));
+}
+
+fn render_worklist_chart(
+    chart: &UiChartNode,
+    items: &WorkItemList,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    let field = match chart.intent.as_deref() {
+        Some("kind_breakdown") => "kind",
+        Some("priority_breakdown") => "priority",
+        _ => "status",
+    };
+    let counts = grouped_counts(items, field);
+    if counts.is_empty() {
+        lines.push(indent_line(
+            depth,
+            "No chart data yet".to_string(),
+            theme::muted(),
+        ));
+        return;
+    }
+    let max = counts.values().copied().max().unwrap_or(1);
+    for (label, count) in counts {
+        let width = ((count * 18) / max).max(1);
+        lines.push(indent_line(
+            depth,
+            format!("{:<12} {:<18} {}", label, "█".repeat(width), count),
+            theme::base(),
+        ));
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WorklistStatusCounts {
+    pending: usize,
+    claimed: usize,
+    done: usize,
+    failed: usize,
+}
+
+fn status_counts(items: &WorkItemList) -> WorklistStatusCounts {
+    let mut counts = WorklistStatusCounts::default();
+    for item in &items.items {
+        match item.status.as_str() {
+            "pending" => counts.pending += 1,
+            "claimed" => counts.claimed += 1,
+            "done" => counts.done += 1,
+            "failed" => counts.failed += 1,
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn grouped_counts(items: &WorkItemList, field: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for item in &items.items {
+        let label = work_item_field(item, field);
+        let label = if label.is_empty() {
+            "unknown".to_string()
+        } else {
+            label
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts
+}
+
 fn table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
     if fields.is_empty() {
         return Vec::new();
@@ -1068,9 +1256,9 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use turin_daemon_protocol::{
-        UiActionNode, UiActivityNode, UiAppIntent, UiDetailNode, UiFormField, UiFormNode, UiIntent,
-        UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem, UiNode, UiOpensWithIntent,
-        UiScreenIntent,
+        UiActionNode, UiActivityNode, UiAppIntent, UiChartNode, UiDetailNode, UiFormField,
+        UiFormNode, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem, UiNode,
+        UiOpensWithIntent, UiReportNode, UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -1289,15 +1477,32 @@ mod tests {
                 source: "db.incidents".to_string(),
                 item_id: None,
             }),
+            UiNode::Report(UiReportNode {
+                id: Some("release-readiness".to_string()),
+                title: "Release Readiness".to_string(),
+                source: "worklists.release".to_string(),
+                prompt: Some("Summarize release readiness.".to_string()),
+            }),
+            UiNode::Chart(UiChartNode {
+                id: Some("approval-flow".to_string()),
+                title: "Approval Flow".to_string(),
+                source: "worklists.release".to_string(),
+                intent: Some("status_breakdown".to_string()),
+                render_as: Some("bar".to_string()),
+            }),
         ];
 
         let requests = collect_list_requests(&nodes);
 
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 4);
         assert_eq!(requests[0].source, "worklists.release");
         assert_eq!(requests[0].limit, Some(ACTIVITY_LIMIT));
         assert_eq!(requests[1].source, "worklists.release");
         assert_eq!(requests[1].limit, Some(DETAIL_LIMIT));
+        assert_eq!(requests[2].source, "worklists.release");
+        assert_eq!(requests[2].limit, Some(REPORT_LIMIT));
+        assert_eq!(requests[3].source, "worklists.release");
+        assert_eq!(requests[3].limit, Some(CHART_LIMIT));
     }
 
     #[test]
