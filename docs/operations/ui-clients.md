@@ -43,8 +43,8 @@ All clients can talk to:
 
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable
-harness forms, dynamic UI navigation, latest action result panels, and wider
-runtime tabs.
+harness forms, app-local worklist row detail, dynamic UI navigation, latest
+action result panels, and wider runtime tabs.
 
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE

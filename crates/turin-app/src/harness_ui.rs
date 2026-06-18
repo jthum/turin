@@ -96,6 +96,7 @@ pub(super) fn render_harness_app(
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     form_values: &mut BTreeMap<String, String>,
+    selected_list_items: &mut BTreeMap<String, String>,
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     let screens = app.screens.values().collect::<Vec<_>>();
@@ -144,6 +145,7 @@ pub(super) fn render_harness_app(
                 lists,
                 requested_lists,
                 form_values,
+                selected_list_items,
                 &mut event,
             );
         } else {
@@ -257,6 +259,7 @@ fn render_nodes(
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     form_values: &mut BTreeMap<String, String>,
+    selected_list_items: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     if nodes.is_empty() {
@@ -266,12 +269,21 @@ fn render_nodes(
 
     for node in nodes {
         match node {
-            UiNode::Section(section) => {
-                render_section(ui, app, section, lists, requested_lists, form_values, event)
-            }
+            UiNode::Section(section) => render_section(
+                ui,
+                app,
+                section,
+                lists,
+                requested_lists,
+                form_values,
+                selected_list_items,
+                event,
+            ),
             UiNode::Text(text) => render_text(ui, text),
             UiNode::Action(action) => render_action(ui, action, event),
-            UiNode::List(list) => render_list(ui, list, lists, requested_lists),
+            UiNode::List(list) => {
+                render_list(ui, list, lists, requested_lists, selected_list_items, event)
+            }
             UiNode::Activity(activity) => render_activity(ui, activity, lists, requested_lists),
             UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists, event),
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
@@ -289,6 +301,7 @@ fn render_section(
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     form_values: &mut BTreeMap<String, String>,
+    selected_list_items: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
@@ -301,6 +314,7 @@ fn render_section(
             lists,
             requested_lists,
             form_values,
+            selected_list_items,
             event,
         );
     });
@@ -339,6 +353,8 @@ fn render_list(
     list: &UiListNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    selected_list_items: &mut BTreeMap<String, String>,
+    event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -368,7 +384,7 @@ fn render_list(
         };
         let key = request.cache_key();
         match lists.get(&key) {
-            Some(items) => render_work_items(ui, list, items),
+            Some(items) => render_work_items(ui, list, items, &key, selected_list_items, event),
             None if requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
@@ -382,7 +398,14 @@ fn render_list(
     });
 }
 
-fn render_work_items(ui: &mut egui::Ui, list: &UiListNode, items: &WorkItemList) {
+fn render_work_items(
+    ui: &mut egui::Ui,
+    list: &UiListNode,
+    items: &WorkItemList,
+    list_key: &str,
+    selected_list_items: &mut BTreeMap<String, String>,
+    event: &mut Option<HarnessUiEvent>,
+) {
     if items.items.is_empty() {
         ui.label("No items.");
         return;
@@ -402,11 +425,37 @@ fn render_work_items(ui: &mut egui::Ui, list: &UiListNode, items: &WorkItemList)
         .iter()
         .map(|field| field_label(field))
         .collect::<Vec<_>>();
+    let mut columns = columns;
+    columns.insert(0, String::new());
+    let selected_index = selected_work_item_index(items, selected_list_items.get(list_key));
+    if let Some(item) = items.items.get(selected_index) {
+        selected_list_items.insert(list_key.to_string(), work_item_key(item));
+    }
 
     cast::Table::new(columns)
         .size(cast::Size::Small)
+        .selected_rows([selected_index])
         .show(ui, items.items.len(), |row, index| {
             let item = &items.items[index];
+            row.centered_cell(|ui| {
+                let selected = index == selected_index;
+                let label = if selected { "Viewing" } else { "View" };
+                if ui
+                    .add(
+                        cast::Button::new(label)
+                            .size(cast::Size::Small)
+                            .intent(if selected {
+                                cast::Intent::Info
+                            } else {
+                                cast::Intent::Neutral
+                            })
+                            .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+                {
+                    selected_list_items.insert(list_key.to_string(), work_item_key(item));
+                }
+            });
             for field in &fields {
                 if field == "status" {
                     row.cell(|ui| {
@@ -421,6 +470,15 @@ fn render_work_items(ui: &mut egui::Ui, list: &UiListNode, items: &WorkItemList)
                 }
             }
         });
+
+    if let Some(item) = items.items.get(selected_index) {
+        ui.add_space(10.0);
+        cast::Panel::new().show(ui, |ui| {
+            ui.label(RichText::new("Selected item").strong());
+            ui.add_space(6.0);
+            render_work_item_detail(ui, item, event);
+        });
+    }
 }
 
 fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
@@ -1076,6 +1134,24 @@ fn field_label(field: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> usize {
+    selected
+        .and_then(|selected| {
+            items.items.iter().position(|item| {
+                item.public_id == *selected || item.id.to_string() == selected.as_str()
+            })
+        })
+        .unwrap_or(0)
+}
+
+fn work_item_key(item: &WorkItemDetail) -> String {
+    if item.public_id.is_empty() {
+        item.id.to_string()
+    } else {
+        item.public_id.clone()
+    }
 }
 
 fn work_item_field(item: &WorkItemDetail, field: &str) -> String {

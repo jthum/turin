@@ -241,6 +241,7 @@ struct TurinDesktopApp {
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
     ui_form_values: BTreeMap<String, String>,
+    ui_selected_list_items: BTreeMap<String, String>,
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
@@ -349,6 +350,7 @@ impl TurinDesktopApp {
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
             ui_form_values: BTreeMap::new(),
+            ui_selected_list_items: BTreeMap::new(),
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
@@ -2211,6 +2213,7 @@ impl TurinDesktopApp {
                     &self.ui_lists,
                     &self.requested_ui_lists,
                     &mut self.ui_form_values,
+                    &mut self.ui_selected_list_items,
                 );
                 self.ui_screen_indices.insert(app.id.clone(), screen_index);
                 if let Some(event) = event {
