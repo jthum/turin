@@ -1418,28 +1418,28 @@ function dataRequestForNode(node) {
       limit: node.limit || null,
     };
   }
-  if (node.kind === "activity" && node.source.startsWith("worklists.")) {
+  if (node.kind === "activity" && isWorklistSource(node.source)) {
     return {
       source: node.source,
       where: {},
       limit: ACTIVITY_LIMIT,
     };
   }
-  if (node.kind === "detail" && node.source.startsWith("worklists.")) {
+  if (node.kind === "detail" && isWorklistSource(node.source)) {
     return {
       source: node.source,
       where: {},
       limit: DETAIL_LIMIT,
     };
   }
-  if (node.kind === "report" && node.source.startsWith("worklists.")) {
+  if (node.kind === "report" && isWorklistSource(node.source)) {
     return {
       source: node.source,
       where: {},
       limit: REPORT_LIMIT,
     };
   }
-  if (node.kind === "chart" && node.source.startsWith("worklists.")) {
+  if (node.kind === "chart" && isWorklistSource(node.source)) {
     return {
       source: node.source,
       where: {},

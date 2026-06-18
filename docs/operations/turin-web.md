@@ -331,6 +331,8 @@ The current browser shell is intentionally small:
   identity retained across re-render where possible
 - explicit client-side fallback copy for unsupported semantic data sources
   without turning them into failed fetches
+- guarded source detection before requesting worklist-backed list, activity,
+  detail, report, or chart data
 - worklist-backed activity and detail rendering, including confirmed work-item
   action buttons when item action payloads exist
 - typed form defaults from field definitions or static form params, local

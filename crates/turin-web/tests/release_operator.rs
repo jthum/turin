@@ -314,6 +314,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("Only worklists.* sources load today"));
     assert!(js.contains("deliberate adapter for this client"));
     assert!(js.contains("isWorklistSource"));
+    assert!(js.contains("node.kind === \"activity\" && isWorklistSource(node.source)"));
+    assert!(js.contains("node.kind === \"detail\" && isWorklistSource(node.source)"));
+    assert!(js.contains("node.kind === \"report\" && isWorklistSource(node.source)"));
+    assert!(js.contains("node.kind === \"chart\" && isWorklistSource(node.source)"));
+    assert_eq!(js.matches("startsWith(\"worklists.\")").count(), 1);
     assert!(js.contains("appendNodeBadge"));
     assert!(js.contains("nodeBadge"));
     assert!(js.contains("renderPlaceholder(node, app)"));
