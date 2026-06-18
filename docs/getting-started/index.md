@@ -4,6 +4,7 @@ This section is the fastest path from "what is Turin?" to "I can run and adapt i
 
 ## Pages
 
+- `docs/getting-started/choose-first-workflow.md` — choose a first Turin workflow and decide when custom UI is worth adding
 - `docs/getting-started/harness-cookbook.md` — scaffold a project, generate a harness, and test it quickly
 - `docs/getting-started/examples.md` — where lightweight examples belong versus the Harness Library
 
@@ -13,7 +14,8 @@ This section is the fastest path from "what is Turin?" to "I can run and adapt i
 2. `docs/concepts/what-is-turin.md`
 3. `docs/concepts/what-can-you-do.md`
 4. `docs/concepts/scenarios.md`
-5. `docs/concepts/turin.md`
-6. `docs/getting-started/harness-cookbook.md`
-7. `docs/reference/hooks.md`
-8. `docs/reference/primitives.md`
+5. `docs/getting-started/choose-first-workflow.md`
+6. `docs/concepts/turin.md`
+7. `docs/getting-started/harness-cookbook.md`
+8. `docs/reference/hooks.md`
+9. `docs/reference/primitives.md`

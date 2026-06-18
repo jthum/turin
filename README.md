@@ -607,6 +607,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 ## Documentation Map
 
 - `docs/index.md` — docs landing page and recommended reading paths
+- `docs/getting-started/choose-first-workflow.md` — choose a first Turin workflow and decide when custom UI is worth adding
 - `docs/concepts/turin.md` — philosophy and product framing
 - `docs/concepts/architecture.md` — current runtime architecture and module layout
 - `docs/reference/hooks.md` — stable hook lifecycle, payloads, verdict semantics

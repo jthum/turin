@@ -9,6 +9,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for people asking what Turin is useful for
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
+- `docs/getting-started/choose-first-workflow.md` — choose a first workflow and decide when custom UI is worth adding
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
 - `docs/concepts/capability-charter.md` — capability promises and behavior-preserving refactor guardrails
 - `docs/concepts/security-model.md` — trust boundaries, high-risk surfaces, and hardening guidance
@@ -43,15 +44,16 @@ into technical reference material.
 2. `docs/concepts/what-is-turin.md`
 3. `docs/concepts/what-can-you-do.md`
 4. `docs/concepts/scenarios.md`
-5. `docs/getting-started/index.md`
-6. `docs/concepts/turin.md`
-7. `docs/getting-started/harness-cookbook.md`
-8. `docs/reference/hooks.md`
-9. `docs/reference/primitives.md`
-10. `docs/concepts/memory-vs-kv.md`
-11. `docs/concepts/worklists.md`
-12. `docs/guides/inference-routing.md`
-13. `docs/guides/multimodal.md`
+5. `docs/getting-started/choose-first-workflow.md`
+6. `docs/getting-started/index.md`
+7. `docs/concepts/turin.md`
+8. `docs/getting-started/harness-cookbook.md`
+9. `docs/reference/hooks.md`
+10. `docs/reference/primitives.md`
+11. `docs/concepts/memory-vs-kv.md`
+12. `docs/concepts/worklists.md`
+13. `docs/guides/inference-routing.md`
+14. `docs/guides/multimodal.md`
 
 ### For contributors
 

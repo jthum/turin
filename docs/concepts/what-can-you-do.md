@@ -232,6 +232,7 @@ Once that works, Turin can grow with you.
 Next:
 
 - `docs/concepts/scenarios.md`
+- `docs/getting-started/choose-first-workflow.md`
 - `docs/getting-started/index.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/guides/harness-library.md`
