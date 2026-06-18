@@ -1541,6 +1541,9 @@ fn truncate(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use serde_json::{Value, json};
     use turin_daemon_protocol::{
         ScheduleActionParams, UiActionNode, UiActivityNode, UiAppIntent, UiBadgeIntent,
@@ -1646,6 +1649,29 @@ mod tests {
         ]);
 
         registry.app("release").expect("release app").clone()
+    }
+
+    #[test]
+    fn render_smoke_shows_no_app_fallback() {
+        let text = rendered_screen_text(None, BTreeMap::new());
+
+        assert!(text.contains("Turin is ready"));
+        assert!(text.contains("No custom harness UI apps are declared yet"));
+    }
+
+    #[test]
+    fn render_smoke_shows_declared_screen_nodes() {
+        let app = release_app();
+        let home_index = screen_index_for_target(&app, "home").expect("home screen");
+        let text = rendered_screen_text(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), home_index)]),
+        );
+
+        assert!(text.contains("Release Desk"));
+        assert!(text.contains("Ready"));
+        assert!(text.contains("Seed Demo Work"));
+        assert!(text.contains("Recent Release Work"));
     }
 
     #[test]
@@ -2425,5 +2451,41 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn rendered_screen_text(
+        app: Option<&UiAppRecord>,
+        screen_indices: BTreeMap<String, usize>,
+    ) -> String {
+        let backend = TestBackend::new(96, 32);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_harness_screen(
+                    frame,
+                    frame.area(),
+                    app,
+                    &screen_indices,
+                    &BTreeMap::new(),
+                    &BTreeSet::new(),
+                    None,
+                );
+            })
+            .expect("draw harness screen");
+        buffer_text(terminal.backend().buffer())
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        let area = *buffer.area();
+        let mut out = String::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
+            }
+            out.push('\n');
+        }
+        out
     }
 }
