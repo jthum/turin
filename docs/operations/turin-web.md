@@ -137,7 +137,7 @@ Loads a semantic list request:
 ```json
 {
   "source": "worklists.release",
-  "filter": {},
+  "where": {},
   "limit": 50
 }
 ```
@@ -148,7 +148,7 @@ Returns:
 {
   "request": {
     "source": "worklists.release",
-    "filter": {},
+    "where": {},
     "limit": 50
   },
   "list": {
