@@ -410,6 +410,26 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(seeded["result"]["action"], "release.seed_demo_work");
     assert_eq!(seeded["result"]["result"]["status"], "seeded");
     assert_eq!(seeded["result"]["result"]["count"], 4);
+    let seeded_intents = ui_intents(&seeded)?;
+    assert_has_ui_intent(seeded_intents, "seeded notify", |intent| {
+        intent["type"] == "notify"
+            && intent["app_id"] == "release-operator"
+            && intent["title"] == "Seeded release work"
+            && intent["body"] == "Created 4 approval items for 2026.06."
+            && intent["level"] == "success"
+    });
+    assert_has_ui_intent(seeded_intents, "seeded badge", |intent| {
+        intent["type"] == "badge"
+            && intent["app_id"] == "release-operator"
+            && intent["target"] == "approvals"
+            && intent["count"] == 4
+            && intent["level"] == "info"
+    });
+    assert_has_ui_intent(seeded_intents, "seeded refresh", |intent| {
+        intent["type"] == "refresh"
+            && intent["app_id"] == "release-operator"
+            && intent["binding"] == "worklists.release"
+    });
 
     let shown: Value = client
         .post(format!("{base_url}/api/actions/run"))
@@ -426,6 +446,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(shown["result"]["action"], "release.show_notes");
     assert_eq!(shown["result"]["result"]["status"], "shown");
     assert_eq!(shown["result"]["result"]["target"], "release-notes");
+    assert_has_ui_intent(ui_intents(&shown)?, "show release notes", |intent| {
+        intent["type"] == "show"
+            && intent["app_id"] == "release-operator"
+            && intent["target"] == "release-notes"
+            && intent["presentation"] == "sheet"
+    });
 
     let list: Value = client
         .post(format!("{base_url}/api/ui/list"))
@@ -455,6 +481,24 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     );
 
     Ok(())
+}
+
+fn ui_intents(response: &Value) -> Result<&[Value]> {
+    response["result"]["ui_intents"]
+        .as_array()
+        .map(Vec::as_slice)
+        .context("action response should include result.ui_intents array")
+}
+
+fn assert_has_ui_intent<F>(intents: &[Value], label: &str, predicate: F)
+where
+    F: Fn(&Value) -> bool,
+{
+    assert!(
+        intents.iter().any(predicate),
+        "missing {label} UI intent in {}",
+        serde_json::to_string_pretty(intents).unwrap_or_else(|_| "<invalid json>".to_string())
+    );
 }
 
 fn assert_node(
