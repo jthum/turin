@@ -6,6 +6,9 @@ updates, event streaming, and harness UI intents. They do not share presentation
 state: each client owns its own selected tab, screen, focus, modal, cache, and
 scroll/selection state.
 
+For the current per-client semantic UI support matrix, see
+`docs/operations/ui-client-parity.md`.
+
 Current layering:
 
 - daemon / remote protocol: shared wire surface
