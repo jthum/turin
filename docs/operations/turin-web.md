@@ -90,8 +90,8 @@ For v1 parity:
 - worklist-backed lists should render as tables by default
 - worklist-backed activity/detail can reuse the same bounded adapters as app/TUI
 - forms should support text, number, integer, boolean, options, and textarea
-- reports/charts can begin as semantic placeholders until their data/query
-  shape is clearer
+- worklist-backed reports/charts can render lightweight summary and breakdown
+  adapters until their shared query shape is clearer
 - unsupported sources should show explicit fallback messages rather than fail
   silently
 
@@ -163,6 +163,6 @@ The first useful slice is complete:
    client-local dynamic UI navigation handling.
 6. It has an integration smoke using the Release Operator harness.
 
-Next work should tighten item-selection detail behavior and report/chart
-semantics across app/TUI/web, then decide whether to keep iterating on the
-static shell or introduce a light frontend build step.
+Next work should tighten richer item-selection detail behavior and shared
+report/chart semantics across app/TUI/web, then decide whether to keep
+iterating on the static shell or introduce a light frontend build step.
