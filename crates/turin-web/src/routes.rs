@@ -482,6 +482,7 @@ fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<WebBod
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "application/json")
+        .header(CACHE_CONTROL, "no-store")
         .body(full_body(bytes))
         .expect("JSON response builds")
 }
@@ -531,6 +532,13 @@ mod tests {
     fn error_response_uses_json_envelope() {
         let response = WebError::not_found("missing").into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response
+                .headers()
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
     }
 
     #[test]

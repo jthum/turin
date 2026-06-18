@@ -59,6 +59,22 @@ Start with a small API that mirrors what the current clients already need.
 The current version proxies through `turin-control-client` rather than exposing
 new daemon operations.
 
+API responses use JSON envelopes and are marked `Cache-Control: no-store`.
+Errors have the shape:
+
+```json
+{
+  "error": {
+    "code": "unsupported_ui_list_source",
+    "message": "Unsupported UI list source 'tables.release'"
+  }
+}
+```
+
+SSE responses are also `no-store` and use the runtime event name as the SSE
+event name. Stream failures are emitted as `web.error` events before the stream
+closes.
+
 ## Browser Client State
 
 The browser should own ephemeral UI state:
