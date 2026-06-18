@@ -824,19 +824,36 @@ function renderList(node, app) {
     const selected = selectedItem && itemKey(item) === itemKey(selectedItem);
     row.className = "list-row";
     row.tabIndex = 0;
+    row.dataset.listKey = key;
+    row.dataset.itemKey = itemKey(item);
     row.setAttribute("aria-selected", selected ? "true" : "false");
     row.innerHTML = fields
       .map(field => `<td>${escapeHtml(fieldValue(item, field))}</td>`)
       .join("");
     const select = () => {
-      state.selectedListItems.set(key, itemKey(item));
-      render();
+      selectListItem(key, item);
     };
     row.addEventListener("click", select);
     row.addEventListener("keydown", event => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      select();
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select();
+        return;
+      }
+      const itemIndex = items.findIndex(candidate => itemKey(candidate) === itemKey(item));
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        selectListItemAt(key, items, itemIndex + 1, { focus: true });
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        selectListItemAt(key, items, itemIndex - 1, { focus: true });
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        selectListItemAt(key, items, 0, { focus: true });
+      } else if (event.key === "End") {
+        event.preventDefault();
+        selectListItemAt(key, items, items.length - 1, { focus: true });
+      }
     });
     body.append(row);
   }
@@ -1459,6 +1476,27 @@ function selectedListItem(key, items) {
     if (selected) return selected;
   }
   return items[0] || null;
+}
+
+function selectListItem(key, item, options = {}) {
+  state.selectedListItems.set(key, itemKey(item));
+  render();
+  if (options.focus) queueMicrotask(() => focusSelectedListRow(key));
+}
+
+function selectListItemAt(key, items, index, options = {}) {
+  if (!items.length) return;
+  const boundedIndex = Math.max(0, Math.min(index, items.length - 1));
+  selectListItem(key, items[boundedIndex], options);
+}
+
+function focusSelectedListRow(key) {
+  const selectedId = state.selectedListItems.get(key);
+  if (!selectedId) return;
+  const row = Array.from(document.querySelectorAll(".list-row")).find(
+    candidate => candidate.dataset.listKey === key && candidate.dataset.itemKey === selectedId,
+  );
+  row?.focus();
 }
 
 function itemKey(item) {
