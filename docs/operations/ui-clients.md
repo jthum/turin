@@ -28,14 +28,15 @@ If no harness declares `ui.app(...)`, the clients still behave as default Turin
 operator consoles. Runtime overview, tasks, events, status, and control actions
 remain available; harness-specific screens appear when semantic UI intent is
 declared. `turin-app` and `turin-web` show default console summaries in the UI
-area, while `turin-tui` keeps the same default-console guidance in its harness
-tab.
+area, while `turin-tui` shows default-console guidance plus runtime/work/UI
+signal counts in its harness tab.
 
 ## Current Client Scope
 
 `turin-tui` is currently the keyboard-first low-capability client. It focuses on:
 
 - runtime overview and notices
+- default no-harness console guidance and summary counts in the harness tab
 - harness UI apps, screens, nested menus, lists, forms, and actions
 - confirmation for destructive or explicit-confirm harness actions
 - latest harness action result/failure visibility

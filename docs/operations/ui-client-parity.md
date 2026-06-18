@@ -15,7 +15,7 @@ Core rule:
 | Surface | Current role |
 | --- | --- |
 | `turin-app` | Rich graphical operator client built on egui/Cast, including a default runtime console summary when no harness UI app is declared. |
-| `turin-tui` | Lean keyboard-first terminal client built on Ratatui. |
+| `turin-tui` | Lean keyboard-first terminal client built on Ratatui, including default-console guidance and summary counts when no harness UI app is declared. |
 | `turin-web` | API-first web adapter with a minimal same-origin browser shell and a default runtime console when no harness UI app is declared. See `docs/operations/turin-web.md`. |
 
 ## Static UI Intent
