@@ -416,7 +416,12 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
         return Err(WebError::bad_request(
             "invalid_ui_list_source",
             format!("UI list source '{}' is missing a worklist name", source),
-        ));
+        )
+        .with_details(json!({
+            "source": source,
+            "supported_prefixes": ["worklists.<name>"],
+            "guidance": "Use a non-empty worklist source, for example 'worklists.release'."
+        })));
     }
     Ok(worklist_name)
 }
@@ -561,6 +566,14 @@ mod tests {
         let err = worklist_name_from_source("worklists.").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
         assert_eq!(err.code, "invalid_ui_list_source");
+        let details = err.details.expect("invalid source details");
+        assert_eq!(details["source"], "worklists.");
+        assert_eq!(details["supported_prefixes"][0], "worklists.<name>");
+        assert!(
+            details["guidance"]
+                .as_str()
+                .is_some_and(|guidance| guidance.contains("non-empty worklist source"))
+        );
     }
 
     #[test]

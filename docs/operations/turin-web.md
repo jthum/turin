@@ -161,8 +161,9 @@ Returns:
 Only `worklists.*` sources are supported today. Other sources return
 `unsupported_ui_list_source` with structured `details.source`,
 `details.supported_prefixes`, and author guidance; `worklists.` without a name
-returns `invalid_ui_list_source`. This keeps list intent semantic while avoiding
-a raw daemon-query escape hatch before the UI data model needs one.
+returns `invalid_ui_list_source` with the same structured source/guidance
+details. This keeps list intent semantic while avoiding a raw daemon-query
+escape hatch before the UI data model needs one.
 
 ### `POST /api/actions/run`
 
