@@ -248,6 +248,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("latestActionResult"));
     assert!(js.contains("latestActionResultForApp"));
     assert!(js.contains("appId: app?.id || null"));
+    assert!(js.contains("title: \"Action failed\""));
+    assert!(js.contains("body: error.message"));
+    assert!(js.contains("pushNotice(\"error\", \"Action failed\", error.message)"));
     assert!(js.contains("pendingAction"));
     assert!(js.contains("renderActionConfirmation"));
     assert!(js.contains("requestActionConfirmation"));
@@ -443,6 +446,31 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         invalid_action["error"]["details"]["guidance"]
             .as_str()
             .is_some_and(|guidance| guidance.contains("declared harness action name"))
+    );
+
+    let failed_action = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": "release.fail_diagnostic",
+            "harness_id": "default",
+            "params": {
+                "reason": "Release Operator diagnostic failure"
+            }
+        }))
+        .send()
+        .await?;
+    assert_eq!(failed_action.status().as_u16(), 503);
+    let failed_action: Value = failed_action.json().await?;
+    assert_eq!(failed_action["error"]["code"], "control_unavailable");
+    assert!(
+        failed_action["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Failed to run harness action"))
+    );
+    assert!(
+        failed_action["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Release Operator diagnostic failure"))
     );
 
     let seeded: Value = client

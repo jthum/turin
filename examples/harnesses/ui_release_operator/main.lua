@@ -152,6 +152,11 @@ action.define("release.open_intake", function(_ctx, _params)
   }
 end)
 
+action.define("release.fail_diagnostic", function(_ctx, params)
+  local reason = params and params.reason or "Release Operator diagnostic failure"
+  error(reason)
+end)
+
 app:home("Release Desk", function(screen)
   screen:text("Coordinate a release from a client-rendered harness UI. Seed demo work first, then approve or reject pending approvals.")
 
@@ -182,6 +187,12 @@ app:home("Release Desk", function(screen)
     })
     section:action("Open Intake Form", "release.open_intake", {
       id = "open-intake-form",
+    })
+    section:action("Run Failure Drill", "release.fail_diagnostic", {
+      id = "run-failure-drill",
+      params = {
+        reason = "Release Operator diagnostic failure",
+      },
     })
   end)
 
