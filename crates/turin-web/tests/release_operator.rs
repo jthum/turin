@@ -244,8 +244,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("No browser list adapter exists"));
     assert!(js.contains("isWorklistSource"));
+    assert!(js.contains("appendNodeBadge"));
+    assert!(js.contains("nodeBadge"));
     assert!(css.contains(".list-selection"));
     assert!(css.contains(".list-row"));
+    assert!(css.contains(".node-badge"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -323,6 +326,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         "approval-flow",
         Some("worklists.release"),
     )?;
+    assert_eq!(app["app"]["badges"]["release-readiness"]["label"], "live");
+    assert_eq!(app["app"]["badges"]["release-readiness"]["level"], "info");
     assert!(app["app"]["menus"].as_array().is_some_and(|menus| {
         menus.iter().any(|menu| {
             menu["items"].as_array().is_some_and(|items| {

@@ -223,6 +223,11 @@ app:screen("overview", "Overview", function(screen)
   end)
 end)
 
+app:badge("release-readiness", {
+  label = "live",
+  level = "info",
+})
+
 app:menu("Main", function(menu)
   menu:item("Dashboard", "home", { icon = "layout-dashboard" })
   menu:item("Work", "approvals", { icon = "list-checks", badge = "approvals" }, function(sub)

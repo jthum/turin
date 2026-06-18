@@ -49,7 +49,7 @@ Core rule:
 | `notice` | Recent UI notices and global info panels. | Overview notices panel. | Shell notices/status panel. | Bounded in `UiRegistry`. |
 | `open` | Selects app/screen locally. | Selects app/screen locally. | Selects app/screen locally. | Runtime does not own active screen state. |
 | `show` | Opens screen when target is a screen; panes are recognized. | Opens screen when target is a screen; panes degrade to a notice. | Opens screen targets; panes degrade until a pane model exists. | Pane behavior is intentionally client-specific. |
-| `badge` | Dynamic count/label badges render on matching screen/menu navigation targets. | Dynamic count/label badges render on matching screen/menu navigation targets. | Dynamic count/label badges render on matching navigation targets. | Node-level badge placement remains client-specific future work. |
+| `badge` | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching navigation targets and titled node ids. | Placement remains client-local chrome, not a renderer contract. |
 | `focus` | Selects screen/action target locally. | Selects screen/action target locally. | Selects matching screen/action target locally. | Focus remains client-local. |
 | `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |
 
@@ -83,8 +83,8 @@ browser shell that consumes those routes.
   web shell mirrors the same status/grouping rules, but they still need a
   fuller shared query/data semantics layer before rich rendering.
 - List data loading only supports worklist sources.
-- Dynamic badges currently render on navigation targets; node-level badge
-  placement remains undefined.
+- Dynamic badges currently render on navigation targets and titled node ids;
+  field-level or arbitrary inline badge placement remains undefined.
 - TUI item selection is local to visible compact table rows; selected item
   actions can be queued for confirmation, but richer table navigation can still
   improve.

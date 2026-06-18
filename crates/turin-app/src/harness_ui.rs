@@ -283,15 +283,23 @@ fn render_nodes(
                 event,
             ),
             UiNode::Text(text) => render_text(ui, text),
-            UiNode::Action(action) => render_action(ui, action, event),
-            UiNode::List(list) => {
-                render_list(ui, list, lists, requested_lists, selected_list_items, event)
+            UiNode::Action(action) => render_action(ui, app, action, event),
+            UiNode::List(list) => render_list(
+                ui,
+                app,
+                list,
+                lists,
+                requested_lists,
+                selected_list_items,
+                event,
+            ),
+            UiNode::Activity(activity) => {
+                render_activity(ui, app, activity, lists, requested_lists)
             }
-            UiNode::Activity(activity) => render_activity(ui, activity, lists, requested_lists),
-            UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists, event),
+            UiNode::Detail(detail) => render_detail(ui, app, detail, lists, requested_lists, event),
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
-            UiNode::Report(report) => render_report(ui, report, lists, requested_lists, event),
-            UiNode::Chart(chart) => render_chart(ui, chart, lists, requested_lists),
+            UiNode::Report(report) => render_report(ui, app, report, lists, requested_lists, event),
+            UiNode::Chart(chart) => render_chart(ui, app, chart, lists, requested_lists),
         }
         ui.add_space(10.0);
     }
@@ -308,7 +316,10 @@ fn render_section(
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
-        ui.heading(section.title.clone());
+        ui.horizontal_wrapped(|ui| {
+            ui.heading(section.title.clone());
+            render_node_badge(ui, app, section.id.as_deref());
+        });
         ui.add_space(8.0);
         render_nodes(
             ui,
@@ -327,32 +338,70 @@ fn render_text(ui: &mut egui::Ui, text: &UiTextNode) {
     ui.add(cast::Markdown::new(text.text.clone()).selectable(true));
 }
 
-fn render_action(ui: &mut egui::Ui, action: &UiActionNode, event: &mut Option<HarnessUiEvent>) {
-    let response = ui.add(
-        cast::Button::new(action.label.clone())
-            .intent(if action.confirm {
-                cast::Intent::Warning
-            } else {
-                cast::Intent::Primary
-            })
-            .variant(if action.confirm {
-                cast::Variant::Outline
-            } else {
-                cast::Variant::Solid
-            }),
-    );
-    if response.clicked() {
-        *event = Some(HarnessUiEvent::RunAction {
-            label: action.label.clone(),
-            action: action.action.clone(),
-            params: action.params.clone(),
-            confirm: action.confirm,
-        });
+fn render_action(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    action: &UiActionNode,
+    event: &mut Option<HarnessUiEvent>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        let response = ui.add(
+            cast::Button::new(action.label.clone())
+                .intent(if action.confirm {
+                    cast::Intent::Warning
+                } else {
+                    cast::Intent::Primary
+                })
+                .variant(if action.confirm {
+                    cast::Variant::Outline
+                } else {
+                    cast::Variant::Solid
+                }),
+        );
+        render_node_badge(ui, app, action.id.as_deref());
+        if response.clicked() {
+            *event = Some(HarnessUiEvent::RunAction {
+                label: action.label.clone(),
+                action: action.action.clone(),
+                params: action.params.clone(),
+                confirm: action.confirm,
+            });
+        }
+    });
+}
+
+fn render_node_badge(ui: &mut egui::Ui, app: &UiAppRecord, node_id: Option<&str>) {
+    let Some(node_id) = node_id else {
+        return;
+    };
+    if let Some(badge) = app.badges.get(node_id)
+        && let Some(text) = badge_text(Some(badge), None)
+    {
+        ui.add(
+            cast::Badge::new(text)
+                .intent(badge_intent(Some(badge)))
+                .variant(cast::Variant::Subtle),
+        );
     }
+}
+
+fn node_badge_text(app: &UiAppRecord, node_id: Option<&str>) -> Option<String> {
+    node_id.and_then(|node_id| {
+        app.badges
+            .get(node_id)
+            .and_then(|badge| badge_text(Some(badge), None))
+    })
+}
+
+fn node_title_with_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) -> String {
+    node_badge_text(app, node_id)
+        .map(|badge| format!("{title} · {badge}"))
+        .unwrap_or_else(|| title.to_string())
 }
 
 fn render_list(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     list: &UiListNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -362,6 +411,7 @@ fn render_list(
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(list.title.clone()).strong());
+            render_node_badge(ui, app, list.id.as_deref());
             ui.add(cast::Badge::new(list.source.clone()).variant(cast::Variant::Outline));
             if let Some(intent) = &list.intent {
                 ui.add(cast::Badge::new(intent.clone()).intent(cast::Intent::Info));
@@ -630,6 +680,7 @@ fn render_work_item_detail(
 
 fn render_activity(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     activity: &UiActivityNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -637,6 +688,7 @@ fn render_activity(
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(activity.title.clone()).strong());
+            render_node_badge(ui, app, activity.id.as_deref());
             ui.add(cast::Badge::new("activity").variant(cast::Variant::Outline));
             ui.add(cast::Badge::new(activity.source.clone()).variant(cast::Variant::Outline));
         });
@@ -668,6 +720,7 @@ fn render_activity(
 
 fn render_detail(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     detail: &UiDetailNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -676,6 +729,7 @@ fn render_detail(
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(detail.title.clone()).strong());
+            render_node_badge(ui, app, detail.id.as_deref());
             ui.add(cast::Badge::new("detail").variant(cast::Variant::Outline));
             ui.add(cast::Badge::new(detail.source.clone()).variant(cast::Variant::Outline));
             if let Some(item_id) = detail.item_id.as_ref() {
@@ -726,6 +780,7 @@ fn render_form(
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(form.title.clone()).strong());
+            render_node_badge(ui, app, form.id.as_deref());
             ui.add(cast::Badge::new("form").variant(cast::Variant::Outline));
         });
         ui.add_space(8.0);
@@ -919,12 +974,13 @@ fn form_value_string(value: &Value) -> String {
 
 fn render_report(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     report: &UiReportNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    cast::ReportSection::new(report.title.clone())
+    cast::ReportSection::new(node_title_with_badge(app, report.id.as_deref(), &report.title))
         .description(format!("Report data from {}", report.source))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -963,6 +1019,7 @@ fn render_report(
 
 fn render_chart(
     ui: &mut egui::Ui,
+    app: &UiAppRecord,
     chart: &UiChartNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -973,7 +1030,7 @@ fn render_chart(
         .map(|render_as| format!("{} as {}", chart.source, render_as))
         .unwrap_or_else(|| chart.source.clone());
     let intent = chart.intent.as_deref().unwrap_or("status_breakdown");
-    cast::ReportSection::new(chart.title.clone())
+    cast::ReportSection::new(node_title_with_badge(app, chart.id.as_deref(), &chart.title))
         .description(format!("Chart data from {source}; intent {intent}"))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

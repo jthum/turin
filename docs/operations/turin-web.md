@@ -133,6 +133,7 @@ The current browser shell is intentionally small:
 - lightweight worklist-backed report summaries and chart breakdowns
 - SSE invalidation for runtime/UI/action events
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notify`
+- dynamic badge rendering for matching navigation targets and titled node ids
 - placeholders for unsupported activity/detail/report/chart sources
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should

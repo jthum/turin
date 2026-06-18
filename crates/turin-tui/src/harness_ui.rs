@@ -175,6 +175,17 @@ fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<S
     }
 }
 
+fn title_with_node_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) -> String {
+    let Some(node_id) = node_id else {
+        return title.to_string();
+    };
+    app.badges
+        .get(node_id)
+        .and_then(|badge| badge_text(Some(badge), None))
+        .map(|badge| format!("{title}  [{badge}]"))
+        .unwrap_or_else(|| title.to_string())
+}
+
 pub fn collect_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
     let mut out = Vec::new();
     collect_list_requests_into(nodes, &mut out);
@@ -431,6 +442,7 @@ pub fn render_harness_screen(
     ];
     let max_width = area.width.saturating_sub(4) as usize;
     render_nodes(
+        app,
         &screen.nodes,
         lists,
         requested_lists,
@@ -443,6 +455,7 @@ pub fn render_harness_screen(
 }
 
 fn render_nodes(
+    app: &UiAppRecord,
     nodes: &[UiNode],
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -458,8 +471,13 @@ fn render_nodes(
                 lines.push(Line::from(""));
             }
             UiNode::Section(section) => {
-                lines.push(indent_line(depth, section.title.clone(), theme::accent()));
+                lines.push(indent_line(
+                    depth,
+                    title_with_node_badge(app, section.id.as_deref(), &section.title),
+                    theme::accent(),
+                ));
                 render_nodes(
+                    app,
                     &section.nodes,
                     lists,
                     requested_lists,
@@ -473,7 +491,10 @@ fn render_nodes(
                 let marker = if action.confirm { "!" } else { "→" };
                 lines.push(indent_line(
                     depth,
-                    format!("{marker} {}", action.label),
+                    format!(
+                        "{marker} {}",
+                        title_with_node_badge(app, action.id.as_deref(), &action.label)
+                    ),
                     if action.confirm {
                         theme::warning()
                     } else {
@@ -482,6 +503,7 @@ fn render_nodes(
                 ));
             }
             UiNode::List(list) => render_list(
+                app,
                 list,
                 lists,
                 requested_lists,
@@ -490,18 +512,23 @@ fn render_nodes(
                 max_width,
                 selected_work_item_id,
             ),
-            UiNode::Form(form) => render_form(form, lines, depth),
+            UiNode::Form(form) => render_form(app, form, lines, depth),
             UiNode::Activity(activity) => {
-                render_activity(activity, lists, requested_lists, lines, depth)
+                render_activity(app, activity, lists, requested_lists, lines, depth)
             }
-            UiNode::Detail(detail) => render_detail(detail, lists, requested_lists, lines, depth),
-            UiNode::Report(report) => render_report(report, lists, requested_lists, lines, depth),
-            UiNode::Chart(chart) => render_chart(chart, lists, requested_lists, lines, depth),
+            UiNode::Detail(detail) => {
+                render_detail(app, detail, lists, requested_lists, lines, depth)
+            }
+            UiNode::Report(report) => {
+                render_report(app, report, lists, requested_lists, lines, depth)
+            }
+            UiNode::Chart(chart) => render_chart(app, chart, lists, requested_lists, lines, depth),
         }
     }
 }
 
 fn render_list(
+    app: &UiAppRecord,
     list: &UiListNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -522,7 +549,11 @@ fn render_list(
     }
     lines.push(indent_line(
         depth,
-        format!("{}  {}", list.title, meta.join("  ")),
+        format!(
+            "{}  {}",
+            title_with_node_badge(app, list.id.as_deref(), &list.title),
+            meta.join("  ")
+        ),
         theme::accent(),
     ));
     if list
@@ -632,6 +663,7 @@ fn render_work_items(
 }
 
 fn render_activity(
+    app: &UiAppRecord,
     activity: &UiActivityNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -640,7 +672,11 @@ fn render_activity(
 ) {
     lines.push(indent_line(
         depth,
-        format!("Activity: {}  {}", activity.title, activity.source),
+        format!(
+            "Activity: {}  {}",
+            title_with_node_badge(app, activity.id.as_deref(), &activity.title),
+            activity.source
+        ),
         theme::accent(),
     ));
 
@@ -672,6 +708,7 @@ fn render_activity(
 }
 
 fn render_detail(
+    app: &UiAppRecord,
     detail: &UiDetailNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -685,7 +722,11 @@ fn render_detail(
         .unwrap_or_else(|| detail.source.clone());
     lines.push(indent_line(
         depth,
-        format!("Detail: {}  {}", detail.title, source),
+        format!(
+            "Detail: {}  {}",
+            title_with_node_badge(app, detail.id.as_deref(), &detail.title),
+            source
+        ),
         theme::accent(),
     ));
 
@@ -866,6 +907,7 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
 }
 
 fn render_report(
+    app: &UiAppRecord,
     report: &UiReportNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -874,7 +916,11 @@ fn render_report(
 ) {
     lines.push(indent_line(
         depth,
-        format!("Report: {}  {}", report.title, report.source),
+        format!(
+            "Report: {}  {}",
+            title_with_node_badge(app, report.id.as_deref(), &report.title),
+            report.source
+        ),
         theme::accent(),
     ));
     if let Some(prompt) = report.prompt.as_ref() {
@@ -913,6 +959,7 @@ fn render_report(
 }
 
 fn render_chart(
+    app: &UiAppRecord,
     chart: &UiChartNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -928,7 +975,7 @@ fn render_chart(
         depth,
         format!(
             "Chart: {}  {}  intent={}",
-            chart.title,
+            title_with_node_badge(app, chart.id.as_deref(), &chart.title),
             label,
             chart.intent.as_deref().unwrap_or("breakdown")
         ),
@@ -1035,10 +1082,13 @@ fn pad_cell(value: &str, width: usize) -> String {
     format!("{value}{}", " ".repeat(width - len))
 }
 
-fn render_form(form: &UiFormNode, lines: &mut Vec<Line<'static>>, depth: usize) {
+fn render_form(app: &UiAppRecord, form: &UiFormNode, lines: &mut Vec<Line<'static>>, depth: usize) {
     lines.push(indent_line(
         depth,
-        format!("Form: {}", form.title),
+        format!(
+            "Form: {}",
+            title_with_node_badge(app, form.id.as_deref(), &form.title)
+        ),
         theme::accent(),
     ));
     lines.push(indent_line(
@@ -1564,8 +1614,22 @@ mod tests {
             lists.insert(request.cache_key(), items.clone());
         }
 
+        let mut app = release_app();
+        app.badges.insert(
+            "pending-approvals".to_string(),
+            UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "pending-approvals".to_string(),
+                count: Some(2),
+                label: Some("hot".to_string()),
+                level: Some(UiNoticeLevel::Warning),
+                data: Default::default(),
+            },
+        );
+
         let mut lines = Vec::new();
         render_nodes(
+            &app,
             &nodes,
             &lists,
             &BTreeSet::new(),
@@ -1576,7 +1640,7 @@ mod tests {
         );
         let text = line_text(&lines);
 
-        assert!(text.contains("Pending Approvals"));
+        assert!(text.contains("Pending Approvals  [hot 2]"));
         assert!(text.contains("Approve release"));
         assert!(text.contains("Activity: Release Activity  worklists.release"));
         assert!(text.contains("Detail: Release Snapshot  worklists.release"));

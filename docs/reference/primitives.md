@@ -271,6 +271,7 @@ function on_turn_prepare(_ctx)
 
   app:open("home")
   app:badge("home", { count = 1, level = "warning" })
+  app:badge("open-work", { label = "hot", count = 3, level = "info" })
   app:focus("open-work")
   app:refresh("worklists.release")
 
@@ -334,6 +335,9 @@ Current v0 behavior:
   clients may degrade rich text areas to line-oriented text input
 - dynamic badges render on matching screen/menu navigation targets when the
   client has a visible navigation surface
+- dynamic badges may also target titled node ids such as sections, actions,
+  lists, forms, activity, detail, reports, and charts; clients choose the
+  closest local chrome for displaying them
 - dynamic `open`, `show`, and `focus` intents are local navigation suggestions;
   they do not make the runtime own active screen state
 - load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots

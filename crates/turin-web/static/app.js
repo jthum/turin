@@ -379,13 +379,13 @@ function renderNode(node, app) {
     case "list":
       return renderList(node, app);
     case "activity":
-      return renderActivity(node);
+      return renderActivity(node, app);
     case "detail":
       return renderDetail(node, app);
     case "report":
-      return renderReport(node);
+      return renderReport(node, app);
     case "chart":
-      return renderChart(node);
+      return renderChart(node, app);
     case "form":
       return renderForm(node, app);
     default:
@@ -396,7 +396,7 @@ function renderNode(node, app) {
 function renderSection(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   const stack = document.createElement("div");
   stack.className = "node-stack";
   for (const child of node.nodes ?? []) stack.append(renderNode(child, app));
@@ -417,6 +417,7 @@ function renderAction(node, app) {
   button.textContent = state.runningActions.has(actionKey) ? "Running..." : node.label;
   button.addEventListener("click", () => runAction(node, app));
   row.append(button);
+  appendNodeBadge(row, node, app);
   panel.append(row);
   return panel;
 }
@@ -424,7 +425,7 @@ function renderAction(node, app) {
 function renderList(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   if (!node.source) {
     panel.append(renderText("List source is missing.", "muted"));
     return panel;
@@ -502,7 +503,7 @@ function renderList(node, app) {
   return panel;
 }
 
-function renderActivity(node) {
+function renderActivity(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
     return renderPanel(
@@ -512,7 +513,7 @@ function renderActivity(node) {
   }
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
     panel.append(renderText("Loading activity data...", "muted"));
@@ -557,7 +558,7 @@ function renderDetail(node, app) {
   }
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
     panel.append(renderText("Loading detail data...", "muted"));
@@ -634,12 +635,12 @@ function renderWorkItemDetail(item, app) {
   return wrapper;
 }
 
-function renderReport(node) {
+function renderReport(node, app) {
   const request = dataRequestForNode(node);
   if (!request) return renderPlaceholder(node);
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   if (node.prompt) panel.append(renderText(node.prompt, "muted"));
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
@@ -659,13 +660,14 @@ function renderReport(node) {
   return panel;
 }
 
-function renderChart(node) {
+function renderChart(node, app) {
   const request = dataRequestForNode(node);
   if (!request) return renderPlaceholder(node);
   const panel = document.createElement("section");
   panel.className = "panel";
   const label = node.render_as ? `${node.intent || "breakdown"} · ${node.render_as}` : node.intent || "breakdown";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3><p class="muted">${escapeHtml(label)}</p>`;
+  appendPanelHeading(panel, node.title, node, app);
+  panel.append(renderText(label, "muted"));
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
     panel.append(renderText("Loading chart data...", "muted"));
@@ -721,7 +723,7 @@ function renderBars(counts) {
 function renderForm(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
-  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  appendPanelHeading(panel, node.title, node, app);
   const form = document.createElement("form");
   const formKey = formDraftKey(node);
   form.className = "form-grid";
@@ -800,6 +802,37 @@ function renderText(text, className) {
   paragraph.className = className;
   paragraph.textContent = text;
   return paragraph;
+}
+
+function appendPanelHeading(panel, title, node, app) {
+  const heading = document.createElement("div");
+  heading.className = "node-heading";
+  const h3 = document.createElement("h3");
+  h3.textContent = title;
+  heading.append(h3);
+  appendNodeBadge(heading, node, app);
+  panel.append(heading);
+}
+
+function appendNodeBadge(container, node, app) {
+  const badge = nodeBadge(app, node);
+  if (!badge) return;
+  const pill = document.createElement("span");
+  pill.className = "node-badge";
+  pill.dataset.level = badge.level;
+  pill.textContent = badge.text;
+  container.append(pill);
+}
+
+function nodeBadge(app, node) {
+  if (!node?.id) return null;
+  const badge = app?.badges?.[node.id];
+  const text = badgeText(badge, null);
+  if (!text) return null;
+  return {
+    text,
+    level: badge?.level || "neutral",
+  };
 }
 
 function renderActionResult(result) {
