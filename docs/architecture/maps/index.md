@@ -29,6 +29,7 @@ Maps:
 - [Session Lifecycle](./session-lifecycle.md)
 - [Session Context and Hot History](./session-context-memory.md)
 - [TUI](./tui.md)
+- [Turin App](./turin-app.md)
 - [Turin UI Core](./turin-ui-core.md)
 - [Turin Web](./turin-web.md)
 - [Turn Tool Execution](./turn-tool-execution.md)
