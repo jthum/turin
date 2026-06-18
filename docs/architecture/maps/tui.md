@@ -90,6 +90,8 @@ and `turin-daemon-protocol`.
   accept `Ctrl+J` newlines but still display as compact previews. Unsupported
   rich form controls should degrade to text/option/boolean editing rather than
   forcing renderer concepts into the protocol.
+- Form field edits, clears, option cycles, and boolean toggles clear stale
+  validation feedback locally; validation still runs again on submit.
 - Pane targets render as terminal overlays with their own local item/action
   focus. Pane item/action selection must not overload screen item/action focus.
 - Keep keyboard behavior discoverable through the help overlay/footer.

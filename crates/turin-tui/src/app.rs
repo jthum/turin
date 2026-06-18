@@ -200,6 +200,85 @@ impl TuiFormSession {
     fn selected_field(&self) -> Option<&turin_daemon_protocol::UiFormField> {
         self.form.fields.get(self.field_index)
     }
+
+    fn clear_selected_field(&mut self) -> bool {
+        let Some(field) = self.selected_field().cloned() else {
+            return false;
+        };
+        if !field.options.is_empty() {
+            if let Some(first) = field.options.first() {
+                self.values
+                    .insert(field.name, harness_ui::form_value_string(first));
+            }
+            self.error = None;
+            return true;
+        }
+        if harness_ui::is_bool_field(&field) {
+            self.values.insert(field.name, "false".to_string());
+            self.error = None;
+            return true;
+        }
+        self.values.insert(field.name, String::new());
+        self.error = None;
+        true
+    }
+
+    fn toggle_selected_bool(&mut self) -> bool {
+        let Some(field) = self.selected_field().cloned() else {
+            return false;
+        };
+        if !harness_ui::is_bool_field(&field) {
+            return false;
+        }
+        let current = self
+            .values
+            .get(&field.name)
+            .is_some_and(|value| matches!(value.as_str(), "true" | "1" | "yes" | "on"));
+        self.values.insert(field.name, (!current).to_string());
+        self.error = None;
+        true
+    }
+
+    fn set_selected_bool(&mut self, value: bool) -> bool {
+        let Some(field) = self.selected_field().cloned() else {
+            return false;
+        };
+        if !harness_ui::is_bool_field(&field) {
+            return false;
+        }
+        self.values.insert(field.name, value.to_string());
+        self.error = None;
+        true
+    }
+
+    fn cycle_selected_option(&mut self, delta: isize) -> bool {
+        let Some(field) = self.selected_field().cloned() else {
+            return false;
+        };
+        if field.options.is_empty() {
+            return false;
+        }
+        let labels = field
+            .options
+            .iter()
+            .map(harness_ui::form_value_string)
+            .collect::<Vec<_>>();
+        let current = self
+            .values
+            .get(&field.name)
+            .cloned()
+            .unwrap_or_else(|| harness_ui::default_form_value(&self.form, &field));
+        let index = labels
+            .iter()
+            .position(|label| *label == current)
+            .unwrap_or_default();
+        let next = offset_index(index, labels.len(), delta);
+        if let Some(label) = labels.get(next) {
+            self.values.insert(field.name, label.clone());
+            self.error = None;
+        }
+        true
+    }
 }
 
 pub struct TuiApp {
@@ -1025,59 +1104,21 @@ impl TuiApp {
         let Some(form_session) = self.active_form.as_mut() else {
             return;
         };
-        let Some(field) = form_session.selected_field().cloned() else {
-            return;
-        };
-        if !field.options.is_empty() {
-            if let Some(first) = field.options.first() {
-                form_session
-                    .values
-                    .insert(field.name, harness_ui::form_value_string(first));
-            }
-            return;
-        }
-        if harness_ui::is_bool_field(&field) {
-            form_session.values.insert(field.name, "false".to_string());
-            return;
-        }
-        form_session.values.insert(field.name, String::new());
-        form_session.error = None;
+        form_session.clear_selected_field();
     }
 
     fn toggle_active_bool(&mut self) -> bool {
         let Some(form_session) = self.active_form.as_mut() else {
             return false;
         };
-        let Some(field) = form_session.selected_field().cloned() else {
-            return false;
-        };
-        if !harness_ui::is_bool_field(&field) {
-            return false;
-        }
-        let current = form_session
-            .values
-            .get(&field.name)
-            .is_some_and(|value| matches!(value.as_str(), "true" | "1" | "yes" | "on"));
-        form_session
-            .values
-            .insert(field.name, (!current).to_string());
-        form_session.error = None;
-        true
+        form_session.toggle_selected_bool()
     }
 
     fn set_active_bool(&mut self, value: bool) -> bool {
         let Some(form_session) = self.active_form.as_mut() else {
             return false;
         };
-        let Some(field) = form_session.selected_field().cloned() else {
-            return false;
-        };
-        if !harness_ui::is_bool_field(&field) {
-            return false;
-        }
-        form_session.values.insert(field.name, value.to_string());
-        form_session.error = None;
-        true
+        form_session.set_selected_bool(value)
     }
 
     fn active_form_field_has_options(&self) -> bool {
@@ -1091,34 +1132,7 @@ impl TuiApp {
         let Some(form_session) = self.active_form.as_mut() else {
             return false;
         };
-        let Some(field) = form_session.selected_field().cloned() else {
-            return false;
-        };
-        if field.options.is_empty() {
-            return false;
-        }
-        let labels = field
-            .options
-            .iter()
-            .map(harness_ui::form_value_string)
-            .collect::<Vec<_>>();
-        let current = form_session
-            .values
-            .get(&field.name)
-            .cloned()
-            .unwrap_or_else(|| harness_ui::default_form_value(&form_session.form, &field));
-        let index = labels
-            .iter()
-            .position(|label| *label == current)
-            .unwrap_or_default();
-        let next = offset_index(index, labels.len(), delta);
-        if let Some(label) = labels.get(next) {
-            form_session
-                .values
-                .insert(field.name.clone(), label.clone());
-            form_session.error = None;
-        }
-        true
+        form_session.cycle_selected_option(delta)
     }
 
     fn run_harness_action(&mut self, action: PendingHarnessAction) -> Result<()> {
@@ -2960,6 +2974,86 @@ mod tests {
 
         assert_eq!(preview, "2 lines · first line ↵ second line");
         assert!(harness_ui::is_multiline_field(&field));
+    }
+
+    #[test]
+    fn form_session_field_mutations_clear_stale_errors() {
+        let form = UiFormNode {
+            id: Some("seed".to_string()),
+            title: "Seed".to_string(),
+            action: "release.seed".to_string(),
+            fields: vec![
+                UiFormField {
+                    name: "confirmed".to_string(),
+                    label: "Confirmed".to_string(),
+                    kind: Some("boolean".to_string()),
+                    default: Some(json!(true)),
+                    required: None,
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "lane".to_string(),
+                    label: "Lane".to_string(),
+                    kind: Some("select".to_string()),
+                    default: None,
+                    required: None,
+                    options: vec![json!("dev"), json!("qa")],
+                },
+                UiFormField {
+                    name: "title".to_string(),
+                    label: "Title".to_string(),
+                    kind: Some("text".to_string()),
+                    default: Some(json!("Release")),
+                    required: None,
+                    options: Vec::new(),
+                },
+            ],
+            params: Value::Null,
+        };
+        let mut session = TuiFormSession {
+            app_id: "release".to_string(),
+            form,
+            agent_id: None,
+            harness_id: None,
+            values: BTreeMap::from([
+                ("confirmed".to_string(), "true".to_string()),
+                ("lane".to_string(), "dev".to_string()),
+                ("title".to_string(), "Release".to_string()),
+            ]),
+            field_index: 1,
+            error: Some("stale validation".to_string()),
+        };
+
+        assert!(session.cycle_selected_option(1));
+        assert_eq!(session.values["lane"], "qa");
+        assert_eq!(session.error, None);
+
+        session.error = Some("stale validation".to_string());
+        assert!(session.clear_selected_field());
+        assert_eq!(session.values["lane"], "dev");
+        assert_eq!(session.error, None);
+
+        session.field_index = 0;
+        session.error = Some("stale validation".to_string());
+        assert!(session.toggle_selected_bool());
+        assert_eq!(session.values["confirmed"], "false");
+        assert_eq!(session.error, None);
+
+        session.error = Some("stale validation".to_string());
+        assert!(session.set_selected_bool(true));
+        assert_eq!(session.values["confirmed"], "true");
+        assert_eq!(session.error, None);
+
+        session.error = Some("stale validation".to_string());
+        assert!(session.clear_selected_field());
+        assert_eq!(session.values["confirmed"], "false");
+        assert_eq!(session.error, None);
+
+        session.field_index = 2;
+        session.error = Some("stale validation".to_string());
+        assert!(session.clear_selected_field());
+        assert_eq!(session.values["title"], "");
+        assert_eq!(session.error, None);
     }
 
     #[test]
