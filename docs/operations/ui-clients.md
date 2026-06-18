@@ -112,7 +112,7 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample from `.workspace/perf-reports/footprint-1781790683.md`:
+Recent local sample from `.workspace/perf-reports/footprint-1781791131.md`:
 
 | area | code lines |
 | --- | ---: |
@@ -124,7 +124,7 @@ Recent local sample from `.workspace/perf-reports/footprint-1781790683.md`:
 | static asset | bytes | lines |
 | --- | ---: | ---: |
 | `crates/turin-web/static/app.css` | 12,699 | 720 |
-| `crates/turin-web/static/app.js` | 47,204 | 1,502 |
+| `crates/turin-web/static/app.js` | 47,707 | 1,523 |
 | `crates/turin-web/static/index.html` | 1,547 | 50 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
@@ -350,7 +350,7 @@ The latest local UI-chapter sample on June 18, 2026 reported:
 - `4665` code lines in `crates/turin-app`
 - `3843` code lines in `crates/turin-tui`
 - `646` code lines in `crates/turin-web`
-- `61450` bytes across first-party `turin-web` static assets
+- `61953` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
