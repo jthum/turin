@@ -118,19 +118,19 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample from `.workspace/perf-reports/footprint-1781824783.md`:
+Recent local sample from `.workspace/perf-reports/footprint-1781826919.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,735 |
-| `crates/turin-tui` | 4,002 |
-| `crates/turin-ui-core` | 3,306 |
+| `crates/turin-app` | 4,797 |
+| `crates/turin-tui` | 4,089 |
+| `crates/turin-ui-core` | 3,317 |
 | `crates/turin-web` | 676 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
 | `crates/turin-web/static/app.css` | 13,426 | 766 |
-| `crates/turin-web/static/app.js` | 56,320 | 1,757 |
+| `crates/turin-web/static/app.js` | 57,849 | 1,810 |
 | `crates/turin-web/static/index.html` | 1,547 | 50 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
@@ -155,13 +155,13 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 only want binary sizes.
 
 Recent no-build debug checkpoint from
-`.workspace/perf-reports/ui-client-baseline-1781825494.md`:
+`.workspace/perf-reports/ui-client-baseline-1781826919.md`:
 
 | client | path | bytes | help max RSS KB |
 | --- | --- | ---: | ---: |
-| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,196 |
-| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,676 |
-| `turin-web` | `target/debug/turin-web` | 23,321,064 | 7,644 |
+| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,292 |
+| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,736 |
+| `turin-web` | `target/debug/turin-web` | 23,436,416 | 7,628 |
 
 This is a local debug-artifact checkpoint only. Use release binaries for
 meaningful size comparisons, but the debug sample is useful when disk space
