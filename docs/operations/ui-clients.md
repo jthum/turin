@@ -244,9 +244,9 @@ artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `87333` Rust code lines under `src` and `crates`
-- `4431` code lines in `crates/turin-app`
-- `3552` code lines in `crates/turin-tui`
+- `87665` Rust code lines under `src` and `crates`
+- `4543` code lines in `crates/turin-app`
+- `3772` code lines in `crates/turin-tui`
 - `720` code lines in `crates/turin-web`
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
