@@ -9,8 +9,8 @@ pub use controller::{
     ConnectionProfileAuth, ConnectionProfileCatalog, ConnectionProfileDraft,
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftFieldDiff,
     ConnectionProfileDraftValidation, ConnectionProfileKind, ConnectionProfileSummary,
-    DEFAULT_REFRESH_INTERVAL, MAX_RECENT_CONNECTION_DRAFTS, OperatorCommand, UiController,
-    UiListRequest, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
+    DEFAULT_REFRESH_INTERVAL, HarnessActionFailure, MAX_RECENT_CONNECTION_DRAFTS, OperatorCommand,
+    UiController, UiListRequest, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
     ensure_local_daemon_for_options, execute_operator_command, preflight_connection_blocking,
     preflight_draft_blocking, spawn_controller, spawn_controller_with_interval,
 };

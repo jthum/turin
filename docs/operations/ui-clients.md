@@ -36,7 +36,7 @@ declared.
 - runtime overview and notices
 - harness UI apps, screens, nested menus, lists, forms, and actions
 - confirmation for destructive or explicit-confirm harness actions
-- latest harness action result visibility
+- latest harness action result/failure visibility
 - interactive terminal forms with local drafts, basic validation, and typed
   action params
 - task and event tables with detail inspectors
@@ -54,8 +54,8 @@ declared.
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable
 harness forms, app-local worklist row detail, dynamic UI navigation, latest
-action result panels, returned action UI intent handling, app-local shown panes,
-and wider runtime tabs.
+action result/failure panels, returned action UI intent handling, app-local
+shown panes, and wider runtime tabs.
 
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE

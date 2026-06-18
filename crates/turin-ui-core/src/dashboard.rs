@@ -9,7 +9,10 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiIntentMessage};
 
-use crate::{UiRegistry, controller::UiUpdate};
+use crate::{
+    UiRegistry,
+    controller::{HarnessActionFailure, UiUpdate},
+};
 
 const MAX_RECENT_EVENTS: usize = 64;
 const MAX_RECENT_NOTICES: usize = 16;
@@ -192,6 +195,9 @@ impl DashboardState {
                 self.ui.apply_messages(result.ui_intents.clone());
                 self.record_info(harness_action_completed_message(&result))
             }
+            UiUpdate::HarnessActionFailed(failure) => {
+                self.record_error(harness_action_failed_message(&failure))
+            }
             UiUpdate::Event(event) => self.record_event(event),
             UiUpdate::SessionEvent(_) => {}
             UiUpdate::RefreshTelemetry {
@@ -322,6 +328,30 @@ fn harness_action_completed_message(result: &HarnessActionRunResult) -> String {
     )
 }
 
+fn harness_action_failed_message(failure: &HarnessActionFailure) -> String {
+    let mut target = String::new();
+    if let Some(agent_id) = failure
+        .agent_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        target.push_str(&format!(" for agent {agent_id}"));
+    }
+    if let Some(harness_id) = failure
+        .harness_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        target.push_str(&format!(" in harness {harness_id}"));
+    }
+    format!(
+        "Harness action '{}' failed{}: {}",
+        failure.action,
+        target,
+        truncate(&failure.message, 180)
+    )
+}
+
 fn json_preview(value: &serde_json::Value, max_chars: usize) -> String {
     let rendered = match value {
         serde_json::Value::Null => String::new(),
@@ -426,7 +456,7 @@ mod tests {
     };
     use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
-    use crate::UiUpdate;
+    use crate::{HarnessActionFailure, UiUpdate};
 
     fn empty_dashboard() -> DashboardState {
         DashboardState {
@@ -558,6 +588,29 @@ mod tests {
         assert_eq!(
             dashboard.recent_notices.last().map(|notice| notice.level),
             Some(DashboardNoticeLevel::Info)
+        );
+    }
+
+    #[test]
+    fn harness_action_failure_records_operator_error() {
+        let mut dashboard = empty_dashboard();
+
+        dashboard.apply_update(UiUpdate::HarnessActionFailed(Box::new(
+            HarnessActionFailure {
+                action: "release.fail_diagnostic".to_string(),
+                agent_id: Some("default".to_string()),
+                harness_id: Some("default".to_string()),
+                message: "Release Operator diagnostic failure".to_string(),
+            },
+        )));
+
+        let error = dashboard.last_error.as_deref().expect("last error");
+        assert!(error.contains("release.fail_diagnostic"));
+        assert!(error.contains("default"));
+        assert!(error.contains("Release Operator diagnostic failure"));
+        assert_eq!(
+            dashboard.recent_notices.last().map(|notice| notice.level),
+            Some(DashboardNoticeLevel::Error)
         );
     }
 

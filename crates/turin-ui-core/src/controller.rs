@@ -69,6 +69,7 @@ pub enum UiUpdate {
         items: Box<WorkItemList>,
     },
     HarnessActionCompleted(Box<HarnessActionRunResult>),
+    HarnessActionFailed(Box<HarnessActionFailure>),
     Event(EventEnvelope),
     SessionEvent(EventEnvelope),
     RefreshTelemetry {
@@ -77,6 +78,14 @@ pub enum UiUpdate {
     },
     Error(String),
     Info(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarnessActionFailure {
+    pub action: String,
+    pub agent_id: Option<String>,
+    pub harness_id: Option<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1839,7 +1848,17 @@ fn spawn_command_task(
                         }
                     }
                     Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                        if tx
+                            .send(UiUpdate::HarnessActionFailed(Box::new(
+                                HarnessActionFailure {
+                                    action: action.clone(),
+                                    agent_id: agent_id.clone(),
+                                    harness_id: harness_id.clone(),
+                                    message: err.to_string(),
+                                },
+                            )))
+                            .is_err()
+                        {
                             break;
                         }
                     }

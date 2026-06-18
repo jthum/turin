@@ -11,8 +11,8 @@ use serde_json::Value;
 use turin_control_client::TaskStatus;
 use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemList};
 use turin_ui_core::{
-    ConnectionOptions, DashboardFreshness, DashboardState, OperatorCommand, UiController,
-    UiListRequest, UiUpdate,
+    ConnectionOptions, DashboardFreshness, DashboardState, HarnessActionFailure, OperatorCommand,
+    UiController, UiListRequest, UiUpdate,
 };
 
 use crate::{harness_ui, theme};
@@ -225,6 +225,7 @@ pub struct TuiApp {
     pending_action: Option<PendingHarnessAction>,
     active_form: Option<TuiFormSession>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
+    latest_harness_action_failure: Option<HarnessActionFailure>,
 }
 
 impl TuiApp {
@@ -258,6 +259,7 @@ impl TuiApp {
             pending_action: None,
             active_form: None,
             latest_harness_action_result: None,
+            latest_harness_action_failure: None,
         }
     }
 
@@ -288,6 +290,11 @@ impl TuiApp {
         }
         if let UiUpdate::HarnessActionCompleted(result) = &update {
             self.latest_harness_action_result = Some(result.as_ref().clone());
+            self.latest_harness_action_failure = None;
+        }
+        if let UiUpdate::HarnessActionFailed(failure) = &update {
+            self.latest_harness_action_failure = Some(failure.as_ref().clone());
+            self.latest_harness_action_result = None;
         }
 
         self.dashboard.apply_update(update);
@@ -1830,6 +1837,25 @@ impl TuiApp {
                 lines.push(kv_line("Result", json_preview(&result.result, 220)));
             }
         }
+        if let Some(failure) = self
+            .latest_harness_action_failure
+            .as_ref()
+            .filter(|failure| harness_action_failure_matches_app(failure, &app))
+        {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Latest Action Failure",
+                theme::title(),
+            )));
+            lines.push(kv_line("Action", failure.action.clone()));
+            if let Some(agent_id) = failure.agent_id.as_ref() {
+                lines.push(kv_line("Agent", agent_id.clone()));
+            }
+            if let Some(harness_id) = failure.harness_id.as_ref() {
+                lines.push(kv_line("Harness", harness_id.clone()));
+            }
+            lines.push(kv_line("Error", truncate(&failure.message, 220)));
+        }
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -2195,6 +2221,26 @@ fn harness_action_result_matches_app(
     }
     if let Some(agent_id) = app.source.agent_id.as_deref()
         && result.agent_id != agent_id
+    {
+        return false;
+    }
+    true
+}
+
+fn harness_action_failure_matches_app(
+    failure: &HarnessActionFailure,
+    app: &turin_ui_core::UiAppRecord,
+) -> bool {
+    if let Some(harness_id) = failure.harness_id.as_deref()
+        && app.source.harness_id.as_deref() != Some(harness_id)
+    {
+        return false;
+    }
+    if let Some(agent_id) = app.source.agent_id.as_deref()
+        && failure
+            .agent_id
+            .as_deref()
+            .is_some_and(|value| value != agent_id)
     {
         return false;
     }
@@ -2612,6 +2658,42 @@ mod tests {
         };
 
         assert!(harness_action_result_matches_app(&result, &app));
+    }
+
+    #[test]
+    fn harness_action_failure_matching_filters_other_apps() {
+        let app = test_app();
+        let matching = HarnessActionFailure {
+            action: "release.fail_diagnostic".to_string(),
+            agent_id: Some("release-agent".to_string()),
+            harness_id: Some("release-harness".to_string()),
+            message: "Release Operator diagnostic failure".to_string(),
+        };
+        let other_harness = HarnessActionFailure {
+            harness_id: Some("qa-harness".to_string()),
+            ..matching.clone()
+        };
+        let other_agent = HarnessActionFailure {
+            agent_id: Some("qa-agent".to_string()),
+            ..matching.clone()
+        };
+
+        assert!(harness_action_failure_matches_app(&matching, &app));
+        assert!(!harness_action_failure_matches_app(&other_harness, &app));
+        assert!(!harness_action_failure_matches_app(&other_agent, &app));
+    }
+
+    #[test]
+    fn harness_action_failure_without_agent_matches_selected_harness() {
+        let app = test_app();
+        let failure = HarnessActionFailure {
+            action: "release.fail_diagnostic".to_string(),
+            agent_id: None,
+            harness_id: Some("release-harness".to_string()),
+            message: "Release Operator diagnostic failure".to_string(),
+        };
+
+        assert!(harness_action_failure_matches_app(&failure, &app));
     }
 
     #[test]

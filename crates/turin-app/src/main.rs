@@ -17,9 +17,10 @@ use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
     ConnectionProfileActivityBook, ConnectionProfileCatalog, ConnectionProfileDraft,
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftValidation,
-    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, OperatorCommand, UiAppRecord,
-    UiController, UiListRequest, UiUpdate, connect_dashboard, ensure_local_daemon_for_draft,
-    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
+    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, HarnessActionFailure,
+    OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate, connect_dashboard,
+    ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
+    spawn_controller,
 };
 
 mod harness_ui;
@@ -267,6 +268,7 @@ struct TurinDesktopApp {
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
+    latest_harness_action_failure: Option<HarnessActionFailure>,
     _runtime: Arc<Runtime>,
 }
 
@@ -377,6 +379,7 @@ impl TurinDesktopApp {
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
             latest_harness_action_result: None,
+            latest_harness_action_failure: None,
             _runtime: runtime,
         }
     }
@@ -400,6 +403,11 @@ impl TurinDesktopApp {
         }
         if let UiUpdate::HarnessActionCompleted(result) = &update {
             self.latest_harness_action_result = Some(result.as_ref().clone());
+            self.latest_harness_action_failure = None;
+        }
+        if let UiUpdate::HarnessActionFailed(failure) = &update {
+            self.latest_harness_action_failure = Some(failure.as_ref().clone());
+            self.latest_harness_action_result = None;
         }
         self.dashboard.apply_update(update);
         self.apply_ui_navigation_intents();
@@ -2251,6 +2259,7 @@ impl TurinDesktopApp {
 
                 self.render_pending_harness_ui_action(ui, &app.id);
                 self.render_latest_harness_action_result(ui, &app);
+                self.render_latest_harness_action_failure(ui, &app);
                 self.render_active_harness_pane(ui, &app);
 
                 if !self.dashboard.ui.notices().is_empty() {
@@ -2361,6 +2370,41 @@ impl TurinDesktopApp {
                     .unwrap_or_else(|_| result.result.to_string());
                 ui.add(cast::CodeOutputPanel::new("Result", rendered).height(140.0));
             }
+        });
+    }
+
+    fn render_latest_harness_action_failure(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let Some(failure) = self.latest_harness_action_failure.as_ref() else {
+            return;
+        };
+        if !harness_action_failure_matches_app(failure, app) {
+            return;
+        }
+
+        ui.add_space(10.0);
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Latest Action Failure").strong());
+                ui.add(
+                    cast::Badge::new(failure.action.clone())
+                        .intent(cast::Intent::Danger)
+                        .variant(cast::Variant::Subtle),
+                );
+                if let Some(agent_id) = failure.agent_id.as_ref() {
+                    ui.add(
+                        cast::Badge::new(format!("Agent: {agent_id}"))
+                            .variant(cast::Variant::Outline),
+                    );
+                }
+                if let Some(harness_id) = failure.harness_id.as_ref() {
+                    ui.add(
+                        cast::Badge::new(format!("Harness: {harness_id}"))
+                            .variant(cast::Variant::Outline),
+                    );
+                }
+            });
+            ui.add_space(8.0);
+            ui.add(cast::CodeOutputPanel::new("Error", failure.message.clone()).height(120.0));
         });
     }
 
@@ -3395,6 +3439,23 @@ fn harness_action_result_matches_app(result: &HarnessActionRunResult, app: &UiAp
     true
 }
 
+fn harness_action_failure_matches_app(failure: &HarnessActionFailure, app: &UiAppRecord) -> bool {
+    if let Some(harness_id) = failure.harness_id.as_deref()
+        && app.source.harness_id.as_deref() != Some(harness_id)
+    {
+        return false;
+    }
+    if let Some(agent_id) = app.source.agent_id.as_deref()
+        && failure
+            .agent_id
+            .as_deref()
+            .is_some_and(|value| value != agent_id)
+    {
+        return false;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3432,6 +3493,42 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].source, "worklists.other");
         assert_eq!(requests[0].limit, Some(7));
+    }
+
+    #[test]
+    fn harness_action_failure_matching_filters_other_apps() {
+        let app = test_app();
+        let matching = HarnessActionFailure {
+            action: "release.fail_diagnostic".to_string(),
+            agent_id: Some("release-agent".to_string()),
+            harness_id: Some("release-harness".to_string()),
+            message: "Release Operator diagnostic failure".to_string(),
+        };
+        let other_harness = HarnessActionFailure {
+            harness_id: Some("qa-harness".to_string()),
+            ..matching.clone()
+        };
+        let other_agent = HarnessActionFailure {
+            agent_id: Some("qa-agent".to_string()),
+            ..matching.clone()
+        };
+
+        assert!(harness_action_failure_matches_app(&matching, &app));
+        assert!(!harness_action_failure_matches_app(&other_harness, &app));
+        assert!(!harness_action_failure_matches_app(&other_agent, &app));
+    }
+
+    #[test]
+    fn harness_action_failure_without_agent_matches_selected_harness() {
+        let app = test_app();
+        let failure = HarnessActionFailure {
+            action: "release.fail_diagnostic".to_string(),
+            agent_id: None,
+            harness_id: Some("release-harness".to_string()),
+            message: "Release Operator diagnostic failure".to_string(),
+        };
+
+        assert!(harness_action_failure_matches_app(&failure, &app));
     }
 
     fn test_app() -> UiAppRecord {
