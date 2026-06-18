@@ -78,6 +78,8 @@ and `turin-daemon-protocol`.
   should degrade to text/option/boolean editing rather than forcing renderer
   concepts into the protocol.
 - Keep keyboard behavior discoverable through the help overlay/footer.
+- Harness focus cycling should skip empty item/action regions and fall back to
+  navigation rather than trapping the operator on blank panes.
 - Prefer small modules over rebuilding a monolithic terminal app.
 
 ## Common Changes
@@ -116,9 +118,9 @@ git diff --check
 
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
-navigation, local work-item selection with inspector detail, dynamic open/focus
-handling, editable forms, worklist-backed activity/detail/report/chart surfaces,
-latest action result feedback, task and event inspectors, confirmation flow, UI
-notices, and list invalidation. Chat, search, connection profile editing, and
-deeper inspectors should be reintroduced only as they fit the new terminal UX
-model.
+navigation, focus cycling that skips empty regions, local work-item selection
+with inspector detail, dynamic open/focus handling, editable forms,
+worklist-backed activity/detail/report/chart surfaces, latest action result
+feedback, task and event inspectors, confirmation flow, UI notices, and list
+invalidation. Chat, search, connection profile editing, and deeper inspectors
+should be reintroduced only as they fit the new terminal UX model.

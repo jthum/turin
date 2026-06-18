@@ -68,11 +68,30 @@ enum HarnessFocus {
 }
 
 impl HarnessFocus {
-    fn next(self) -> Self {
+    fn next_available(self, has_items: bool, has_actions: bool) -> Self {
+        const ORDER: [HarnessFocus; 3] = [
+            HarnessFocus::Navigation,
+            HarnessFocus::Items,
+            HarnessFocus::Actions,
+        ];
+        let current = ORDER
+            .iter()
+            .position(|candidate| *candidate == self)
+            .unwrap_or_default();
+        for offset in 1..=ORDER.len() {
+            let candidate = ORDER[(current + offset) % ORDER.len()];
+            if candidate.is_available(has_items, has_actions) {
+                return candidate;
+            }
+        }
+        Self::Navigation
+    }
+
+    fn is_available(self, has_items: bool, has_actions: bool) -> bool {
         match self {
-            Self::Navigation => Self::Items,
-            Self::Items => Self::Actions,
-            Self::Actions => Self::Navigation,
+            Self::Navigation => true,
+            Self::Items => has_items,
+            Self::Actions => has_actions,
         }
     }
 
@@ -277,7 +296,7 @@ impl TuiApp {
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char('f') if self.tab == TabKind::Harness => {
-                self.harness_focus = self.harness_focus.next();
+                self.cycle_harness_focus();
                 self.clamp_selection();
                 Ok(TuiSignal::Continue)
             }
@@ -458,6 +477,12 @@ impl TuiApp {
         self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
         self.ui_item_index = 0;
+    }
+
+    fn cycle_harness_focus(&mut self) {
+        let has_items = !self.current_harness_work_items().is_empty();
+        let has_actions = !self.current_harness_actions().is_empty();
+        self.harness_focus = self.harness_focus.next_available(has_items, has_actions);
     }
 
     fn activate_selection(&mut self) -> Result<()> {
@@ -1042,6 +1067,12 @@ impl TuiApp {
         self.ui_action_index = self.ui_action_index.min(action_count.saturating_sub(1));
         let item_count = self.current_harness_work_items().len();
         self.ui_item_index = self.ui_item_index.min(item_count.saturating_sub(1));
+        if !self
+            .harness_focus
+            .is_available(item_count > 0, action_count > 0)
+        {
+            self.harness_focus = HarnessFocus::Navigation;
+        }
         if let Some(app) = self.selected_ui_app() {
             let items = harness_ui::collect_nav_items(&app);
             if items.is_empty() {
@@ -1493,7 +1524,7 @@ impl TuiApp {
         let fallback = if self.active_form.is_some() {
             "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
         } else if self.tab == TabKind::Harness {
-            "Harness: f focus nav/items/actions  j/k move  Enter open/item action/run  r refresh  ? help"
+            "Harness: f focus available region  j/k move  Enter open/item action/run  r refresh  ? help"
         } else {
             "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit"
         };
@@ -1520,7 +1551,10 @@ impl TuiApp {
             Line::from(Span::styled("Keyboard", theme::title())),
             Line::from(""),
             kv_line("Tab / ← →", "switch workspace"),
-            kv_line("f", "cycle harness focus: navigation, items, actions"),
+            kv_line(
+                "f",
+                "cycle harness focus through navigation and non-empty regions",
+            ),
             kv_line("j / k", "move selection"),
             kv_line("[ / ]", "switch harness app"),
             kv_line("h / l", "switch harness screen"),
@@ -1930,6 +1964,43 @@ mod tests {
     use serde_json::json;
     use turin_daemon_protocol::{ScheduleActionParams, UiIntentSource, WorkItemDetail};
     use turin_ui_core::UiAppRecord;
+
+    #[test]
+    fn harness_focus_cycle_skips_empty_regions() {
+        assert_eq!(
+            HarnessFocus::Navigation.next_available(false, false),
+            HarnessFocus::Navigation
+        );
+        assert_eq!(
+            HarnessFocus::Navigation.next_available(false, true),
+            HarnessFocus::Actions
+        );
+        assert_eq!(
+            HarnessFocus::Navigation.next_available(true, false),
+            HarnessFocus::Items
+        );
+        assert_eq!(
+            HarnessFocus::Items.next_available(true, false),
+            HarnessFocus::Navigation
+        );
+        assert_eq!(
+            HarnessFocus::Items.next_available(true, true),
+            HarnessFocus::Actions
+        );
+        assert_eq!(
+            HarnessFocus::Actions.next_available(true, true),
+            HarnessFocus::Navigation
+        );
+    }
+
+    #[test]
+    fn harness_focus_availability_keeps_navigation_as_fallback() {
+        assert!(HarnessFocus::Navigation.is_available(false, false));
+        assert!(!HarnessFocus::Items.is_available(false, true));
+        assert!(HarnessFocus::Items.is_available(true, false));
+        assert!(!HarnessFocus::Actions.is_available(true, false));
+        assert!(HarnessFocus::Actions.is_available(false, true));
+    }
 
     #[test]
     fn work_item_action_becomes_pending_harness_action() {
