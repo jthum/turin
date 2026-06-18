@@ -5,6 +5,7 @@ This is the documentation landing page for Turin.
 ## Start Here
 
 - `README.md` — quickstart, feature overview, canonical API summary, live smoke commands
+- `docs/concepts/what-is-turin.md` — plain-language answer to what Turin is and why it exists
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for people asking what Turin is useful for
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
@@ -35,17 +36,18 @@ This is the documentation landing page for Turin.
 ### For new users
 
 1. `README.md`
-2. `docs/concepts/what-can-you-do.md`
-3. `docs/concepts/scenarios.md`
-4. `docs/getting-started/index.md`
-5. `docs/concepts/turin.md`
-6. `docs/getting-started/harness-cookbook.md`
-7. `docs/reference/hooks.md`
-8. `docs/reference/primitives.md`
-9. `docs/concepts/memory-vs-kv.md`
-10. `docs/concepts/worklists.md`
-11. `docs/guides/inference-routing.md`
-12. `docs/guides/multimodal.md`
+2. `docs/concepts/what-is-turin.md`
+3. `docs/concepts/what-can-you-do.md`
+4. `docs/concepts/scenarios.md`
+5. `docs/getting-started/index.md`
+6. `docs/concepts/turin.md`
+7. `docs/getting-started/harness-cookbook.md`
+8. `docs/reference/hooks.md`
+9. `docs/reference/primitives.md`
+10. `docs/concepts/memory-vs-kv.md`
+11. `docs/concepts/worklists.md`
+12. `docs/guides/inference-routing.md`
+13. `docs/guides/multimodal.md`
 
 ### For contributors
 

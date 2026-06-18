@@ -10,9 +10,10 @@ This section is the fastest path from "what is Turin?" to "I can run and adapt i
 ## Suggested Order
 
 1. `README.md`
-2. `docs/concepts/what-can-you-do.md`
-3. `docs/concepts/scenarios.md`
-4. `docs/concepts/turin.md`
-5. `docs/getting-started/harness-cookbook.md`
-6. `docs/reference/hooks.md`
-7. `docs/reference/primitives.md`
+2. `docs/concepts/what-is-turin.md`
+3. `docs/concepts/what-can-you-do.md`
+4. `docs/concepts/scenarios.md`
+5. `docs/concepts/turin.md`
+6. `docs/getting-started/harness-cookbook.md`
+7. `docs/reference/hooks.md`
+8. `docs/reference/primitives.md`
