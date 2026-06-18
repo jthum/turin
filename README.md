@@ -617,7 +617,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
 - `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
-- `docs/operations/ui-clients.md` — TUI/desktop operator clients and shared connection profiles
+- `docs/operations/ui-clients.md` — TUI, desktop, and web operator clients plus shared connection profiles
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 

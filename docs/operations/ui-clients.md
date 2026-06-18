@@ -338,10 +338,10 @@ build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `84917` Rust code lines under `src` and `crates`
-- `4631` code lines in `crates/turin-app`
-- `3272` code lines in `crates/turin-tui`
-- `645` code lines in `crates/turin-web`
+- `85385` Rust code lines under `src` and `crates`
+- `4633` code lines in `crates/turin-app`
+- `3730` code lines in `crates/turin-tui`
+- `646` code lines in `crates/turin-web`
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.

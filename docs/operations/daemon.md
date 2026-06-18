@@ -790,7 +790,8 @@ Task state semantics are intentionally explicit:
 - queued and running work for that runtime is marked `killed`
 - the peer runtime is aborted and recreated on demand later
 
-This makes the daemon usable as the control surface for future channels, desktop, and web clients without forcing those clients to scrape files directly.
+This makes the daemon usable as the control surface for channels and UI clients
+without forcing those clients to scrape files directly.
 
 ## Design Boundaries
 

@@ -6,7 +6,7 @@ It exposes authenticated HTTP access to the existing daemon request/response API
 
 `turin-remote` does not replace the daemon. It sits in front of the local daemon endpoint and forwards requests through the same typed control surface used by the CLI and local clients.
 
-For the operator-facing TUI and desktop shells that use this remote bridge, see `docs/operations/ui-clients.md`.
+For the operator-facing TUI, desktop, and web clients that use this remote bridge, see `docs/operations/ui-clients.md`.
 
 ## What It Provides
 
