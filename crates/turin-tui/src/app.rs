@@ -1343,6 +1343,8 @@ impl TuiApp {
             lines.extend(work_item_selection_lines(
                 selection,
                 self.harness_focus == HarnessFocus::Items,
+                self.ui_item_index,
+                work_items.len(),
             ));
         } else {
             lines.push(Line::from(Span::styled(
@@ -1658,6 +1660,8 @@ fn kv_line(label: impl Into<String>, value: impl Into<String>) -> Line<'static> 
 fn work_item_selection_lines(
     selection: &harness_ui::HarnessWorkItemSelection,
     focused: bool,
+    index: usize,
+    total: usize,
 ) -> Vec<Line<'static>> {
     let marker = if focused { "● " } else { "  " };
     let style = if focused {
@@ -1666,11 +1670,17 @@ fn work_item_selection_lines(
         theme::base()
     };
     let item = &selection.item;
+    let position = if total == 0 {
+        "0 / 0".to_string()
+    } else {
+        format!("{} / {}", index.min(total - 1) + 1, total)
+    };
     let mut lines = vec![
         Line::from(vec![
             Span::styled(marker, style),
             Span::styled(truncate(&item.title, 34), style),
         ]),
+        kv_line("Position", position),
         kv_line("List", selection.list_title.clone()),
         kv_line("Source", selection.list_source.clone()),
         kv_line(
@@ -1955,6 +1965,26 @@ mod tests {
         assert!(pending_action_from_work_item(&app, &selection).is_none());
     }
 
+    #[test]
+    fn work_item_selection_lines_include_position_and_action_hint() {
+        let selection = harness_ui::HarnessWorkItemSelection {
+            list_title: "Approvals".to_string(),
+            list_source: "worklists.release".to_string(),
+            item: test_work_item(Some(ScheduleActionParams {
+                name: "release.approve".to_string(),
+                params: Some(json!({ "item": "REL-1" })),
+            })),
+        };
+
+        let text = line_text(&work_item_selection_lines(&selection, true, 1, 3));
+
+        assert!(text.contains("Position"));
+        assert!(text.contains("2 / 3"));
+        assert!(text.contains("Action"));
+        assert!(text.contains("release.approve"));
+        assert!(text.contains("Enter queues this work-item action for confirmation"));
+    }
+
     fn test_app() -> UiAppRecord {
         UiAppRecord {
             id: "release".to_string(),
@@ -2003,5 +2033,18 @@ mod tests {
             created_at: "2026-06-18T00:00:00Z".to_string(),
             updated_at: "2026-06-18T00:00:00Z".to_string(),
         }
+    }
+
+    fn line_text(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
