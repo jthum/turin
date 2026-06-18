@@ -660,6 +660,9 @@ Useful rules:
 - Dynamic methods such as `app:notice(...)`, `app:open(...)`, `app:show(...)`,
   `app:focus(...)`, `app:badge(...)`, and `app:refresh(...)` are client-facing
   suggestions, not runtime-owned screen state.
+- Top-level dynamic helpers such as `ui.notice(...)` use the first declared
+  `ui.app(...)` as the default app and fail clearly if no app has been declared.
+  Prefer app-scoped calls when a harness declares multiple apps.
 - Panes are useful for contextual surfaces that should not replace the active
   screen. Current clients render shown panes as local overlays; TUI pane
   overlays are intentionally read-only for now.

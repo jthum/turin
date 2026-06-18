@@ -341,6 +341,9 @@ Current behavior:
   closest local chrome for displaying them
 - dynamic `open`, `show`, and `focus` intents are local navigation suggestions;
   they do not make the runtime own active screen state
+- top-level dynamic helpers such as `ui.notice(...)` use the first declared
+  app as the default app and raise a clear runtime error if no app has been
+  declared; prefer app-scoped methods in multi-app harnesses
 - load-time app, screen, pane, and menu intents are exposed on harness list/detail snapshots
 - hook-time app-scoped methods such as `app:notice(...)` and `app:open(...)` emit ephemeral `ui.intent` session events
 - dynamic UI intent events are client-facing signals; they are not persisted into session history

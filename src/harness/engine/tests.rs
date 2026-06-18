@@ -383,6 +383,110 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
 }
 
 #[test]
+fn test_top_level_ui_dynamic_intents_use_default_app() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            local release = ui.app("Release Operator", { id = "release" })
+            local qa = ui.app("QA Console", { id = "qa" })
+
+            function on_turn_prepare(_ctx)
+                ui.notice("Release blocked", {
+                    body = "QA failed",
+                    level = "warning",
+                })
+                ui.open("approvals")
+                ui.show("release-notes", {
+                    area = "pane",
+                    presentation = "sheet",
+                })
+                ui.badge("approvals", { count = 3, level = "warning" })
+                ui.focus("open-work")
+                ui.refresh("worklists.release")
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    assert_eq!(engine.ui_intents().unwrap().len(), 2);
+
+    let verdict = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(verdict, Verdict::Allow);
+
+    let intents = engine.ui_intents().unwrap();
+    assert_eq!(intents.len(), 8);
+
+    let turin_daemon_protocol::UiIntent::Notify(notice) = &intents[2].intent else {
+        panic!("expected notice intent");
+    };
+    assert_eq!(notice.app_id, "release");
+    assert_eq!(notice.title, "Release blocked");
+
+    let turin_daemon_protocol::UiIntent::Open(open) = &intents[3].intent else {
+        panic!("expected open intent");
+    };
+    assert_eq!(open.app_id, "release");
+    assert_eq!(open.target, "approvals");
+
+    let turin_daemon_protocol::UiIntent::Show(show) = &intents[4].intent else {
+        panic!("expected show intent");
+    };
+    assert_eq!(show.app_id, "release");
+    assert_eq!(show.target, "release-notes");
+    assert_eq!(show.area.as_deref(), Some("pane"));
+
+    let turin_daemon_protocol::UiIntent::Badge(badge) = &intents[5].intent else {
+        panic!("expected badge intent");
+    };
+    assert_eq!(badge.app_id, "release");
+    assert_eq!(badge.target, "approvals");
+
+    let turin_daemon_protocol::UiIntent::Focus(focus) = &intents[6].intent else {
+        panic!("expected focus intent");
+    };
+    assert_eq!(focus.app_id, "release");
+    assert_eq!(focus.target, "open-work");
+
+    let turin_daemon_protocol::UiIntent::Refresh(refresh) = &intents[7].intent else {
+        panic!("expected refresh intent");
+    };
+    assert_eq!(refresh.app_id, "release");
+    assert_eq!(refresh.binding, "worklists.release");
+}
+
+#[test]
+fn test_top_level_ui_dynamic_intents_require_declared_app() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            function on_turn_prepare(_ctx)
+                ui.notice("No app yet")
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let err = engine
+        .evaluate("on_turn_prepare", serde_json::json!({}))
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("ui intent requires ui.app(...) to be declared first")
+    );
+}
+
+#[test]
 fn test_ui_dynamic_intents_are_emitted_as_ephemeral_session_events() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
