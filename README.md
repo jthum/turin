@@ -7,6 +7,38 @@ The model proposes actions. The harness (Luau scripts) decides what is allowed. 
 
 Turin is intentionally unopinionated about workflow and personality. It provides execution physics, persistence, tools, events, and a programmable harness surface so you can build radically different agents with the same runtime.
 
+## What Can You Build With It?
+
+Turin is useful when a generic chat assistant is not enough and the workflow
+needs durable state, explicit rules, tools, approvals, or a purpose-built
+operator surface.
+
+Good Turin-shaped systems include:
+
+- private assistants with memory, schedules, local context, and controlled tool
+  access
+- coding workspaces that follow repository rules, run tests, inspect diffs, and
+  delegate review
+- release consoles with approval lists, QA gates, action buttons, reports, and
+  human-in-the-loop decisions
+- bug triage desks that classify issues, create durable work items, and keep an
+  audit trail
+- documentation or research assistants that split long-running work into
+  inspectable tasks
+- channel-connected agents for Telegram, Discord, Rocket.Chat, or WhatsApp
+- governed team tooling where different agents have different capability
+  ceilings
+
+The common thread is that the model can propose work, but your harness code
+decides what is allowed and Turin keeps the workflow durable and inspectable.
+
+If you are evaluating Turin rather than implementing a harness yet, start with:
+
+- [What is Turin?](docs/concepts/what-is-turin.md)
+- [What can you do with Turin?](docs/concepts/what-can-you-do.md)
+- [Scenario blueprints](docs/concepts/scenarios.md)
+- [Choose a first workflow](docs/getting-started/choose-first-workflow.md)
+
 ## What Turin Is (Current Baseline)
 
 Turin now ships a coherent, canonical runtime with:
@@ -25,6 +57,9 @@ Turin now ships a coherent, canonical runtime with:
 - **Provider-agnostic inference and embeddings path** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
 - **Named harness programs** so different configured agents can bind to different harness directories in one runtime
+- **Semantic UI intent and lean clients** so harnesses can expose app-like
+  screens, menus, lists, forms, actions, panes, reports, charts, notices, and
+  badges through `turin-app`, `turin-tui`, and `turin-web`
 - **Durable event persistence** and optional immutable audit behavior
 
 ## Philosophy
