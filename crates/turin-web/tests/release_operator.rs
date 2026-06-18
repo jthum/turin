@@ -246,6 +246,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("surface-state"));
     assert!(js.contains("renderActionResult"));
     assert!(js.contains("latestActionResult"));
+    assert!(js.contains("latestActionResultForApp"));
+    assert!(js.contains("appId: app?.id || null"));
     assert!(js.contains("pendingAction"));
     assert!(js.contains("renderActionConfirmation"));
     assert!(js.contains("requestActionConfirmation"));
@@ -292,9 +294,14 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderPane"));
     assert!(js.contains("selectedPane"));
     assert_eq!(
-        js.matches("state.latestActionResult) stack.append(renderActionResult")
+        js.matches("const latestActionResult = latestActionResultForApp(app)")
             .count(),
         2
+    );
+    assert_eq!(
+        js.matches("const latestActionResult = latestActionResultForApp(null)")
+            .count(),
+        1
     );
     assert!(js.contains("state.pendingAction = null;\n    loadVisibleLists().then(render);"));
     assert_eq!(js.matches("appendNodeBadge(row, node, app)").count(), 1);

@@ -326,8 +326,8 @@ The current browser shell is intentionally small:
 - browser-local confirmation overlay for explicit-confirm actions and work-item
   actions
 - action start/completion/failure feedback, latest action result panels on
-  screens and open panes, returned action UI intent application, and
-  duplicate-run suppression
+  screens and open panes scoped to the originating app, returned action UI
+  intent application, and duplicate-run suppression
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces
 - lightweight worklist-backed report summaries with next pending item

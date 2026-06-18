@@ -486,7 +486,8 @@ function renderScreen() {
 
   const stack = document.createElement("div");
   stack.className = "node-stack";
-  if (state.latestActionResult) stack.append(renderActionResult(state.latestActionResult));
+  const latestActionResult = latestActionResultForApp(app);
+  if (latestActionResult) stack.append(renderActionResult(latestActionResult));
   for (const node of screen.nodes ?? []) {
     stack.append(renderNode(node, app));
   }
@@ -560,8 +561,9 @@ function renderDefaultConsole() {
   );
   wrapper.append(guidance);
 
-  if (state.latestActionResult) {
-    wrapper.append(renderActionResult(state.latestActionResult));
+  const latestActionResult = latestActionResultForApp(null);
+  if (latestActionResult) {
+    wrapper.append(renderActionResult(latestActionResult));
   }
 
   return wrapper;
@@ -621,7 +623,8 @@ function renderPane() {
 
   const stack = document.createElement("div");
   stack.className = "node-stack";
-  if (state.latestActionResult) stack.append(renderActionResult(state.latestActionResult));
+  const latestActionResult = latestActionResultForApp(app);
+  if (latestActionResult) stack.append(renderActionResult(latestActionResult));
   for (const node of pane.nodes ?? []) {
     stack.append(renderNode(node, app));
   }
@@ -1232,6 +1235,13 @@ function renderActionResult(result) {
   return panel;
 }
 
+function latestActionResultForApp(app) {
+  const result = state.latestActionResult;
+  if (!result) return null;
+  const appId = app?.id || null;
+  return (result.appId || null) === appId ? result : null;
+}
+
 async function runAction(node, app, options = {}) {
   if (node.confirm && !options.confirmed) {
     requestActionConfirmation(node, app);
@@ -1241,6 +1251,7 @@ async function runAction(node, app, options = {}) {
   if (state.runningActions.has(actionKey)) return;
   state.runningActions.add(actionKey);
   state.latestActionResult = {
+    appId: app?.id || null,
     level: "info",
     title: "Action running",
     body: `Running ${node.label || node.action}.`,
@@ -1255,6 +1266,7 @@ async function runAction(node, app, options = {}) {
       params: node.params ?? null,
     });
     state.latestActionResult = {
+      appId: app?.id || null,
       level: "success",
       title: "Action completed",
       body: `${result.result.action} finished.`,
@@ -1266,6 +1278,7 @@ async function runAction(node, app, options = {}) {
     await refresh({ reason: "action" });
   } catch (error) {
     state.latestActionResult = {
+      appId: app?.id || null,
       level: "error",
       title: "Action failed",
       body: error.message,
