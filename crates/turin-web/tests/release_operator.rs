@@ -246,6 +246,13 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("isWorklistSource"));
     assert!(js.contains("appendNodeBadge"));
     assert!(js.contains("nodeBadge"));
+    assert!(js.contains("renderPlaceholder(node, app)"));
+    assert_eq!(js.matches("appendNodeBadge(row, node, app)").count(), 1);
+    assert_eq!(
+        js.matches("return node.action === target || node.title === target")
+            .count(),
+        1
+    );
     assert!(css.contains(".list-selection"));
     assert!(css.contains(".list-row"));
     assert!(css.contains(".node-badge"));

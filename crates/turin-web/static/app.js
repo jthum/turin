@@ -637,7 +637,7 @@ function renderWorkItemDetail(item, app) {
 
 function renderReport(node, app) {
   const request = dataRequestForNode(node);
-  if (!request) return renderPlaceholder(node);
+  if (!request) return renderPlaceholder(node, app);
   const panel = document.createElement("section");
   panel.className = "panel";
   appendPanelHeading(panel, node.title, node, app);
@@ -662,7 +662,7 @@ function renderReport(node, app) {
 
 function renderChart(node, app) {
   const request = dataRequestForNode(node);
-  if (!request) return renderPlaceholder(node);
+  if (!request) return renderPlaceholder(node, app);
   const panel = document.createElement("section");
   panel.className = "panel";
   const label = node.render_as ? `${node.intent || "breakdown"} · ${node.render_as}` : node.intent || "breakdown";
@@ -785,9 +785,13 @@ function renderField(field, formKey) {
   return wrapper;
 }
 
-function renderPlaceholder(node) {
+function renderPlaceholder(node, app) {
   const detail = node.source ? `Source: ${node.source}` : "No source";
-  return renderPanel(`${node.title || node.kind}: ${detail}`, "muted");
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  appendPanelHeading(panel, node.title || node.kind || "Unsupported", node, app);
+  panel.append(renderText(`No browser adapter exists for this ${node.kind}: ${detail}`, "muted"));
+  return panel;
 }
 
 function renderPanel(text, className) {
