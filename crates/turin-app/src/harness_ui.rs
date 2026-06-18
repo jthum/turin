@@ -273,9 +273,9 @@ fn render_nodes(
             UiNode::Action(action) => render_action(ui, action, event),
             UiNode::List(list) => render_list(ui, list, lists, requested_lists),
             UiNode::Activity(activity) => render_activity(ui, activity, lists, requested_lists),
-            UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists),
+            UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists, event),
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
-            UiNode::Report(report) => render_report(ui, report, lists, requested_lists),
+            UiNode::Report(report) => render_report(ui, report, lists, requested_lists, event),
             UiNode::Chart(chart) => render_chart(ui, chart, lists, requested_lists),
         }
         ui.add_space(10.0);
@@ -446,7 +446,12 @@ fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
     }
 }
 
-fn render_worklist_detail(ui: &mut egui::Ui, detail: &UiDetailNode, items: &WorkItemList) {
+fn render_worklist_detail(
+    ui: &mut egui::Ui,
+    detail: &UiDetailNode,
+    items: &WorkItemList,
+    event: &mut Option<HarnessUiEvent>,
+) {
     if items.items.is_empty() {
         ui.label("No worklist items available for detail.");
         return;
@@ -458,7 +463,7 @@ fn render_worklist_detail(ui: &mut egui::Ui, detail: &UiDetailNode, items: &Work
             .iter()
             .find(|item| item.public_id == item_id || item.id.to_string() == item_id)
         {
-            render_work_item_detail(ui, item);
+            render_work_item_detail(ui, item, event);
         } else {
             ui.label(format!(
                 "Work item '{item_id}' was not found in the loaded detail data."
@@ -467,10 +472,14 @@ fn render_worklist_detail(ui: &mut egui::Ui, detail: &UiDetailNode, items: &Work
         return;
     }
 
-    render_worklist_snapshot(ui, items);
+    render_worklist_snapshot(ui, items, event);
 }
 
-fn render_worklist_snapshot(ui: &mut egui::Ui, items: &WorkItemList) {
+fn render_worklist_snapshot(
+    ui: &mut egui::Ui,
+    items: &WorkItemList,
+    event: &mut Option<HarnessUiEvent>,
+) {
     let counts = status_counts(items);
 
     ui.horizontal_wrapped(|ui| {
@@ -495,11 +504,15 @@ fn render_worklist_snapshot(ui: &mut egui::Ui, items: &WorkItemList) {
     {
         ui.add_space(8.0);
         ui.label(RichText::new("Highest priority pending item").strong());
-        render_work_item_detail(ui, next);
+        render_work_item_detail(ui, next, event);
     }
 }
 
-fn render_work_item_detail(ui: &mut egui::Ui, item: &WorkItemDetail) {
+fn render_work_item_detail(
+    ui: &mut egui::Ui,
+    item: &WorkItemDetail,
+    event: &mut Option<HarnessUiEvent>,
+) {
     ui.horizontal_wrapped(|ui| {
         ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
         ui.add(
@@ -518,7 +531,25 @@ fn render_work_item_detail(ui: &mut egui::Ui, item: &WorkItemDetail) {
     }
     if let Some(action) = item.action.as_ref() {
         ui.add_space(6.0);
-        ui.label(RichText::new(format!("Action: {}", action.name)).monospace());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("Action: {}", action.name)).monospace());
+            if ui
+                .add(
+                    cast::Button::new("Run Item Action")
+                        .size(cast::Size::Small)
+                        .intent(cast::Intent::Warning)
+                        .variant(cast::Variant::Outline),
+                )
+                .clicked()
+            {
+                *event = Some(HarnessUiEvent::RunAction {
+                    label: format!("Work item: {}", item.title),
+                    action: action.name.clone(),
+                    params: action.params.clone().unwrap_or(Value::Null),
+                    confirm: true,
+                });
+            }
+        });
     }
     if let Some(reason) = item.failure_reason.as_ref() {
         ui.add_space(6.0);
@@ -579,6 +610,7 @@ fn render_detail(
     detail: &UiDetailNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -601,7 +633,7 @@ fn render_detail(
 
         let key = request.cache_key();
         match lists.get(&key) {
-            Some(items) => render_worklist_detail(ui, detail, items),
+            Some(items) => render_worklist_detail(ui, detail, items, event),
             None if requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
@@ -829,6 +861,7 @@ fn render_report(
     report: &UiReportNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    event: &mut Option<HarnessUiEvent>,
 ) {
     cast::ReportSection::new(report.title.clone())
         .description(format!("Report data from {}", report.source))
@@ -853,7 +886,7 @@ fn render_report(
 
             let key = request.cache_key();
             match lists.get(&key) {
-                Some(items) => render_worklist_report(ui, items),
+                Some(items) => render_worklist_report(ui, items, event),
                 None if requested_lists.contains(&key) => {
                     ui.horizontal_wrapped(|ui| {
                         ui.add(cast::Loader::new().size(cast::Size::Small));
@@ -913,7 +946,11 @@ fn render_chart(
         });
 }
 
-fn render_worklist_report(ui: &mut egui::Ui, items: &WorkItemList) {
+fn render_worklist_report(
+    ui: &mut egui::Ui,
+    items: &WorkItemList,
+    event: &mut Option<HarnessUiEvent>,
+) {
     let counts = status_counts(items);
     ui.horizontal_wrapped(|ui| {
         ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
@@ -937,7 +974,7 @@ fn render_worklist_report(ui: &mut egui::Ui, items: &WorkItemList) {
     {
         ui.add_space(10.0);
         ui.label(RichText::new("Next highest-priority pending item").strong());
-        render_work_item_detail(ui, next);
+        render_work_item_detail(ui, next, event);
     }
 }
 

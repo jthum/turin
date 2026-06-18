@@ -38,7 +38,7 @@ Core rule:
 | `worklist` sugar | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | DX sugar only; not a separate protocol primitive. |
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | TUI rich text areas degrade to line-oriented text. |
 | `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Uses cached `worklists.*` data for now, not a live event query. |
-| `detail` | Worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Compact worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Without `item_id`, clients show a bounded worklist snapshot. |
+| `detail` | Worklist-backed snapshot or explicit item detail, including confirmed item-action buttons when available; unsupported adapters show metadata. | Compact worklist-backed snapshot or explicit item detail, including confirmed item-action dispatch when available; unsupported adapters show metadata. | Without `item_id`, clients show a bounded worklist snapshot. |
 | `report` | Cast report section with lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Needs shared data/query semantics before rich rendering. |
 | `chart` | Cast report/chart section with lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | `intent` and `as` remain advisory. |
 
@@ -58,7 +58,7 @@ Core rule:
 | Feedback | `turin-app` | `turin-tui` | Notes |
 | --- | --- | --- | --- |
 | action started | Info notice before command dispatch. | Info notice before command dispatch. | Client-local feedback. |
-| action confirmation | Modal confirmation. | Modal confirmation. | Used for explicit-confirm actions. |
+| action confirmation | Modal confirmation. | Modal confirmation. | Used for explicit-confirm actions and work-item actions. |
 | action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Backed by `UiUpdate::HarnessActionCompleted`. |
 | action failed | Dashboard error notice from command task. | Dashboard error notice from command task. | Error stays operator feedback; durable failure state belongs in runtime primitives. |
 

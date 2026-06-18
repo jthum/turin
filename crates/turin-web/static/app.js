@@ -380,7 +380,7 @@ function renderNode(node, app) {
     case "activity":
       return renderActivity(node);
     case "detail":
-      return renderDetail(node);
+      return renderDetail(node, app);
     case "report":
       return renderReport(node);
     case "chart":
@@ -513,7 +513,7 @@ function renderActivity(node) {
   return panel;
 }
 
-function renderDetail(node) {
+function renderDetail(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
     return renderPanel(
@@ -547,13 +547,13 @@ function renderDetail(node) {
     panel.append(renderText(`Work item '${node.item_id}' was not found.`, "muted"));
     return panel;
   }
-  panel.append(renderWorkItemDetail(item));
+  panel.append(renderWorkItemDetail(item, app));
   return panel;
 }
 
-function renderWorkItemDetail(item) {
+function renderWorkItemDetail(item, app) {
   const wrapper = document.createElement("div");
-  wrapper.className = "detail-grid";
+  wrapper.className = "detail-grid work-item-detail";
   const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
   const fields = [
     ["Title", item.title],
@@ -576,6 +576,27 @@ function renderWorkItemDetail(item) {
       `,
     )
     .join("");
+  if (item.action?.name) {
+    const actions = document.createElement("div");
+    actions.className = "action-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "danger-button";
+    button.textContent = `Run ${item.action.name}`;
+    button.addEventListener("click", () => {
+      runAction(
+        {
+          action: item.action.name,
+          label: `Work item: ${item.title}`,
+          params: item.action.params ?? null,
+          confirm: true,
+        },
+        app,
+      );
+    });
+    actions.append(button);
+    wrapper.append(actions);
+  }
   return wrapper;
 }
 

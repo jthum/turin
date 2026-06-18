@@ -308,6 +308,11 @@ h1 {
   gap: var(--space-2);
 }
 
+.work-item-detail .action-row {
+  grid-column: 1 / -1;
+  padding-top: var(--space-2);
+}
+
 .action-result {
   border-color: rgba(129, 199, 255, 0.34);
 }

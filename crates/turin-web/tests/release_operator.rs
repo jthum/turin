@@ -235,6 +235,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("latestActionResult"));
     assert!(js.contains("applyUiIntentPayload"));
     assert!(js.contains("focusScreenIdForTarget"));
+    assert!(js.contains("renderWorkItemDetail"));
+    assert!(js.contains("item.action.name"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))

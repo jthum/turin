@@ -121,7 +121,8 @@ The current browser shell is intentionally small:
 - same-origin calls to the `turin-web` API
 - local selected app/screen/list/form draft/action-running state
 - table rendering for worklist-backed lists
-- worklist-backed activity and detail rendering
+- worklist-backed activity and detail rendering, including confirmed work-item
+  action buttons when item action payloads exist
 - typed form defaults, local drafts, required fields, options, and scalar
   coercion
 - action start/completion/failure feedback, latest action result panels, and
