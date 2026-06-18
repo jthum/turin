@@ -1236,11 +1236,11 @@ fn unsupported_source_message(surface: &str, source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turin_daemon_protocol::{UiAppIntent, UiIntentSource};
+    use serde_json::json;
+    use turin_daemon_protocol::{UiAppIntent, UiFormField, UiIntentSource};
 
-    #[test]
-    fn menu_item_label_includes_badges_and_child_count() {
-        let app = UiAppRecord {
+    fn test_app() -> UiAppRecord {
+        UiAppRecord {
             id: "release".to_string(),
             source: UiIntentSource::default(),
             definition: Some(UiAppIntent {
@@ -1253,18 +1253,24 @@ mod tests {
             panes: BTreeMap::new(),
             menus: Vec::new(),
             opens_with: None,
-            badges: BTreeMap::from([(
-                "approvals".to_string(),
-                UiBadgeIntent {
-                    app_id: "release".to_string(),
-                    target: "approvals".to_string(),
-                    count: Some(3),
-                    label: Some("ready".to_string()),
-                    level: Some(UiNoticeLevel::Info),
-                    data: Map::new(),
-                },
-            )]),
-        };
+            badges: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn menu_item_label_includes_badges_and_child_count() {
+        let mut app = test_app();
+        app.badges = BTreeMap::from([(
+            "approvals".to_string(),
+            UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "approvals".to_string(),
+                count: Some(3),
+                label: Some("ready".to_string()),
+                level: Some(UiNoticeLevel::Info),
+                data: Map::new(),
+            },
+        )]);
         let item = UiMenuItem {
             label: "Work".to_string(),
             opens: "approvals".to_string(),
@@ -1291,5 +1297,52 @@ mod tests {
         assert!(message.contains("This list is declared and visible"));
         assert!(message.contains("source 'tables.release'"));
         assert!(message.contains("Only worklists.* sources load today"));
+    }
+
+    #[test]
+    fn default_form_value_uses_static_params_when_field_default_is_absent() {
+        let form = UiFormNode {
+            id: Some("seed".to_string()),
+            title: "Seed".to_string(),
+            action: "release.seed".to_string(),
+            fields: Vec::new(),
+            params: json!({ "count": 3 }),
+        };
+        let field = UiFormField {
+            name: "count".to_string(),
+            label: "Count".to_string(),
+            kind: Some("integer".to_string()),
+            default: None,
+            required: None,
+            options: Vec::new(),
+        };
+
+        assert_eq!(default_form_value(&form, &field), "3");
+    }
+
+    #[test]
+    fn form_params_preserve_static_params_for_optional_blank_fields() {
+        let app = test_app();
+        let form = UiFormNode {
+            id: Some("seed".to_string()),
+            title: "Seed".to_string(),
+            action: "release.seed".to_string(),
+            fields: vec![UiFormField {
+                name: "count".to_string(),
+                label: "Count".to_string(),
+                kind: Some("integer".to_string()),
+                default: None,
+                required: None,
+                options: Vec::new(),
+            }],
+            params: json!({ "count": 3, "source": "app" }),
+        };
+        let key = form_field_key(&app, &form, &form.fields[0]);
+        let values = BTreeMap::from([(key, String::new())]);
+
+        let params = form_params(&app, &form, &values).expect("form params");
+
+        assert_eq!(params["count"], json!(3));
+        assert_eq!(params["source"], json!("app"));
     }
 }
