@@ -193,6 +193,26 @@ fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
     }
 }
 
+fn visible_ui_list_requests(
+    app: &UiAppRecord,
+    screen_index: usize,
+    active_pane_id: Option<&str>,
+) -> Vec<UiListRequest> {
+    let mut requests = Vec::new();
+    if !app.screens.is_empty() {
+        let screen_index = screen_index.min(app.screens.len() - 1);
+        if let Some(screen) = app.screens.values().nth(screen_index) {
+            collect_ui_list_requests(&screen.nodes, &mut requests);
+        }
+    }
+    if let Some(pane_id) = active_pane_id
+        && let Some(pane) = app.panes.get(pane_id)
+    {
+        collect_ui_list_requests(&pane.nodes, &mut requests);
+    }
+    requests
+}
+
 fn configure_cast_theme(ctx: &egui::Context) {
     cast::install_cast_fonts(ctx);
     let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Dark)
@@ -451,14 +471,12 @@ impl TurinDesktopApp {
         let Some(app) = self.selected_ui_app() else {
             return Vec::new();
         };
-        let mut requests = Vec::new();
-        for screen in app.screens.values() {
-            collect_ui_list_requests(&screen.nodes, &mut requests);
-        }
-        for pane in app.panes.values() {
-            collect_ui_list_requests(&pane.nodes, &mut requests);
-        }
-        requests
+        let screen_index = self
+            .ui_screen_indices
+            .get(&app.id)
+            .copied()
+            .unwrap_or_else(|| harness_ui::default_screen_index(&app));
+        visible_ui_list_requests(&app, screen_index, self.ui_active_pane.as_deref())
     }
 
     fn request_selected_ui_lists(&mut self, force: bool) {
@@ -3369,4 +3387,106 @@ fn harness_action_result_matches_app(result: &HarnessActionRunResult, app: &UiAp
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turin_daemon_protocol::{UiIntentSource, UiListNode, UiNode, UiPaneIntent, UiScreenIntent};
+
+    #[test]
+    fn visible_ui_list_requests_include_active_screen_and_pane_only() {
+        let app = test_app();
+
+        let requests = visible_ui_list_requests(&app, 0, Some("notes"));
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].source, "worklists.home");
+        assert_eq!(requests[0].limit, Some(3));
+        assert_eq!(requests[1].source, "worklists.notes");
+        assert_eq!(requests[1].limit, Some(5));
+    }
+
+    #[test]
+    fn visible_ui_list_requests_ignore_inactive_surfaces() {
+        let app = test_app();
+
+        let requests = visible_ui_list_requests(&app, 0, Some("missing-pane"));
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].source, "worklists.home");
+    }
+
+    #[test]
+    fn visible_ui_list_requests_clamp_screen_index() {
+        let app = test_app();
+
+        let requests = visible_ui_list_requests(&app, usize::MAX, None);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].source, "worklists.other");
+        assert_eq!(requests[0].limit, Some(7));
+    }
+
+    fn test_app() -> UiAppRecord {
+        UiAppRecord {
+            id: "release".to_string(),
+            source: UiIntentSource {
+                harness_id: Some("release-harness".to_string()),
+                app_id: Some("release".to_string()),
+                agent_id: Some("release-agent".to_string()),
+                package_id: None,
+            },
+            definition: None,
+            screens: BTreeMap::from([
+                (
+                    "home".to_string(),
+                    UiScreenIntent {
+                        app_id: "release".to_string(),
+                        id: "home".to_string(),
+                        title: "Home".to_string(),
+                        presentation: None,
+                        nodes: vec![UiNode::List(list_node("home-list", "worklists.home", 3))],
+                    },
+                ),
+                (
+                    "other".to_string(),
+                    UiScreenIntent {
+                        app_id: "release".to_string(),
+                        id: "other".to_string(),
+                        title: "Other".to_string(),
+                        presentation: None,
+                        nodes: vec![UiNode::List(list_node("other-list", "worklists.other", 7))],
+                    },
+                ),
+            ]),
+            panes: BTreeMap::from([(
+                "notes".to_string(),
+                UiPaneIntent {
+                    app_id: "release".to_string(),
+                    id: "notes".to_string(),
+                    title: "Notes".to_string(),
+                    presentation: Some("sheet".to_string()),
+                    nodes: vec![UiNode::List(list_node("notes-list", "worklists.notes", 5))],
+                },
+            )]),
+            menus: Vec::new(),
+            opens_with: None,
+            badges: BTreeMap::new(),
+        }
+    }
+
+    fn list_node(id: &str, source: &str, limit: u32) -> UiListNode {
+        UiListNode {
+            id: Some(id.to_string()),
+            title: id.to_string(),
+            source: source.to_string(),
+            filter: Default::default(),
+            fields: Vec::new(),
+            sort: Vec::new(),
+            limit: Some(limit),
+            intent: Some("items".to_string()),
+            render_as: Some("table".to_string()),
+        }
+    }
 }
