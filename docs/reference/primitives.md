@@ -165,7 +165,7 @@ Notes:
 - `remember(...)` / `recall(...)` use the same default agent-scoped memory as `memory.*`
 - `code.find(...)` is a thin wrapper over `runtime.code.search.hybrid(...)`
 - `code.find(...)` defaults to the Turin workspace root and accepts `opts.root` / `opts.index_path` overrides
-- `ui.*` is the experimental UI Intent v0 surface; it records semantic UI intent for Turin clients rather than renderer-specific instructions
+- `ui.*` records semantic UI intent for Turin clients rather than renderer-specific instructions
 - `action.define(...)` and `on(...)` are load-time only registration helpers
 - `action.run(...)` invokes a built-in or harness-defined action immediately in the current execution context
 - `emit(...)` performs synchronous in-process listener dispatch and returns the number of listeners invoked
@@ -192,12 +192,13 @@ local rows = code.find("capability decision")
 local project = scope("project", "my-app", { namespace = "notes" })
 ```
 
-### UI Intent v0
+### UI Intent
 
 The `ui` namespace lets harnesses describe semantic UI intent for Turin clients.
 Clients decide how to react based on their own capabilities. The API is
-experimental and expected to evolve while `turin-app`, `turin-tui`, and
-`turin-web` are built in parallel.
+still being shaped while `turin-app`, `turin-tui`, and `turin-web` are built in
+parallel, but the authoring direction is semantic intent rather than
+renderer-specific widgets.
 
 Load-time example:
 
@@ -319,7 +320,7 @@ Form options:
 - clients may validate and coerce common field kinds such as `text`, `number`,
   `integer`, and `boolean`; unsupported kinds should degrade to text input.
 
-Current v0 behavior:
+Current behavior:
 
 - `ui.app(...)` returns an app object and records app intent
 - `app:home(...)` is sugar for a `home` screen plus default screen intent
