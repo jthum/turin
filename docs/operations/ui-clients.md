@@ -153,13 +153,13 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 only want binary sizes.
 
 Recent no-build debug checkpoint from
-`.workspace/perf-reports/ui-client-baseline-1781793121.md`:
+`.workspace/perf-reports/ui-client-baseline-1781806752.md`:
 
 | client | path | bytes | help max RSS KB |
 | --- | --- | ---: | ---: |
-| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,016 |
-| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,836 |
-| `turin-web` | `target/debug/turin-web` | 23,312,144 | 7,652 |
+| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,108 |
+| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,588 |
+| `turin-web` | `target/debug/turin-web` | 23,318,912 | 7,400 |
 
 This is a local debug-artifact checkpoint only. Use release binaries for
 meaningful size comparisons, but the debug sample is useful when disk space
