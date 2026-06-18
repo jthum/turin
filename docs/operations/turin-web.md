@@ -122,6 +122,8 @@ The current browser shell is intentionally small:
 - local selected app/screen/list row/form draft/action-running state
 - table rendering for worklist-backed lists
 - inline selected-row detail for worklist-backed lists
+- explicit client-side fallback copy for unsupported list sources without
+  turning them into failed fetches
 - worklist-backed activity and detail rendering, including confirmed work-item
   action buttons when item action payloads exist
 - typed form defaults, local drafts, required fields, options, and scalar

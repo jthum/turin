@@ -425,11 +425,21 @@ function renderList(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
   panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
-  const request = dataRequestForNode(node);
-  if (!request) {
+  if (!node.source) {
     panel.append(renderText("List source is missing.", "muted"));
     return panel;
   }
+  if (!isWorklistSource(node.source)) {
+    panel.append(
+      renderText(
+        `No browser list adapter exists for ${node.source}. This list is declared and visible, but only worklist-backed lists can load data today.`,
+        "muted",
+      ),
+    );
+    return panel;
+  }
+  const request = dataRequestForNode(node);
+  if (!request) return panel;
   const key = listKey(request);
   const cached = state.listCache.get(key);
   if (state.loadingLists.has(key)) {
@@ -904,6 +914,7 @@ function flattenNodes(nodes) {
 function dataRequestForNode(node) {
   if (!node?.source) return null;
   if (node.kind === "list") {
+    if (!isWorklistSource(node.source)) return null;
     return {
       source: node.source,
       where: node.where || {},
@@ -939,6 +950,10 @@ function dataRequestForNode(node) {
     };
   }
   return null;
+}
+
+function isWorklistSource(source) {
+  return typeof source === "string" && source.startsWith("worklists.");
 }
 
 function listKey(request) {
