@@ -111,12 +111,12 @@ tools/footprint-report \
 ```
 
 Recent source-only local sample from
-`.workspace/perf-reports/footprint-1781787846.md`:
+`.workspace/perf-reports/footprint-1781789169.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,633 |
-| `crates/turin-tui` | 3,730 |
+| `crates/turin-app` | 4,665 |
+| `crates/turin-tui` | 3,843 |
 | `crates/turin-ui-core` | 3,048 |
 | `crates/turin-web` | 646 |
 
