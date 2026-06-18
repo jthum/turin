@@ -164,6 +164,8 @@ function applyUiIntentPayload(payload, options = {}) {
     case "notify":
       pushNotice(normalizeNoticeLevel(payload.level), payload.title || "UI notice", payload.body || "");
       return true;
+    case "badge":
+      return applyUiBadge(payload.app_id, payload.target, payload);
     case "refresh":
       return applyUiRefresh(payload.binding, options);
     default:
@@ -184,6 +186,28 @@ function applyUiRefresh(binding, { reloadRefresh = true } = {}) {
   invalidateListBinding(binding);
   if (reloadRefresh) loadVisibleLists().then(render);
   return true;
+}
+
+function applyUiBadge(appId, target, payload) {
+  const app = selectAppById(appId);
+  if (!app || !target) return false;
+  app.badges = app.badges || {};
+  app.badges[target] = {
+    app_id: appId,
+    target,
+    count: payload.count ?? null,
+    label: payload.label ?? null,
+    level: normalizeBadgeLevel(payload.level),
+    data: payload.data ?? {},
+  };
+  return true;
+}
+
+function normalizeBadgeLevel(level) {
+  if (level === "success" || level === "warning" || level === "error" || level === "info") {
+    return level;
+  }
+  return null;
 }
 
 function applyUiOpen(appId, target, label) {
