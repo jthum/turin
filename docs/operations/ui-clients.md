@@ -113,13 +113,13 @@ tools/footprint-report \
 ```
 
 Recent source-only local sample from
-`.workspace/perf-reports/footprint-1781789169.md`:
+`.workspace/perf-reports/footprint-1781790074.md`:
 
 | area | code lines |
 | --- | ---: |
 | `crates/turin-app` | 4,665 |
 | `crates/turin-tui` | 3,843 |
-| `crates/turin-ui-core` | 3,048 |
+| `crates/turin-ui-core` | 3,049 |
 | `crates/turin-web` | 646 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
