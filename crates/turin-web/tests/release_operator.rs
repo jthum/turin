@@ -271,6 +271,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("counts.done"));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("unsupportedSourceMessage"));
+    assert!(js.contains("errorMessageFromEnvelope"));
+    assert!(js.contains("details?.guidance"));
     assert!(js.contains("Only worklists.* sources load today"));
     assert!(js.contains("isWorklistSource"));
     assert!(js.contains("appendNodeBadge"));

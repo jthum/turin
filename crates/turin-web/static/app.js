@@ -1605,9 +1605,18 @@ async function postJson(path, payload) {
 async function decodeJsonResponse(response) {
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(body?.error?.message || `${response.status} ${response.statusText}`);
+    throw new Error(errorMessageFromEnvelope(body, response));
   }
   return body;
+}
+
+function errorMessageFromEnvelope(body, response) {
+  const message = body?.error?.message || `${response.status} ${response.statusText}`;
+  const guidance = body?.error?.details?.guidance;
+  if (typeof guidance === "string" && guidance.trim()) {
+    return `${message} ${guidance}`;
+  }
+  return message;
 }
 
 function clear(node) {
