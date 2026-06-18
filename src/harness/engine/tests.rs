@@ -329,6 +329,10 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
                     level = "warning",
                 })
                 app:open("approvals")
+                app:show("release-notes", {
+                    area = "pane",
+                    presentation = "sheet",
+                })
                 app:badge("approvals", { count = 3, level = "warning" })
                 app:focus("open-work")
                 app:refresh("worklists.release")
@@ -348,7 +352,7 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
     assert_eq!(verdict, Verdict::Allow);
 
     let intents = engine.ui_intents().unwrap();
-    assert_eq!(intents.len(), 6);
+    assert_eq!(intents.len(), 7);
     assert!(matches!(
         intents[1].intent,
         turin_daemon_protocol::UiIntent::Notify(_)
@@ -357,16 +361,23 @@ fn test_ui_dynamic_intents_are_collected_from_hooks() {
         intents[2].intent,
         turin_daemon_protocol::UiIntent::Open(_)
     ));
+    let turin_daemon_protocol::UiIntent::Show(show) = &intents[3].intent else {
+        panic!("expected show intent");
+    };
+    assert_eq!(show.app_id, "release");
+    assert_eq!(show.target, "release-notes");
+    assert_eq!(show.area.as_deref(), Some("pane"));
+    assert_eq!(show.presentation.as_deref(), Some("sheet"));
     assert!(matches!(
-        intents[3].intent,
+        intents[4].intent,
         turin_daemon_protocol::UiIntent::Badge(_)
     ));
     assert!(matches!(
-        intents[4].intent,
+        intents[5].intent,
         turin_daemon_protocol::UiIntent::Focus(_)
     ));
     assert!(matches!(
-        intents[5].intent,
+        intents[6].intent,
         turin_daemon_protocol::UiIntent::Refresh(_)
     ));
 }
