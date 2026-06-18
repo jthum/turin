@@ -2419,7 +2419,7 @@ impl TurinDesktopApp {
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(
-                            cast::Button::new("Run Action")
+                            cast::Button::new("Confirm and Run")
                                 .size(cast::Size::Small)
                                 .intent(cast::Intent::Warning)
                                 .variant(cast::Variant::Solid),
