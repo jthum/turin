@@ -149,6 +149,19 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 `.workspace/perf-reports/` and never builds Turin. Use `--skip-help` when you
 only want binary sizes.
 
+Recent no-build debug checkpoint from
+`.workspace/perf-reports/ui-client-baseline-1781793121.md`:
+
+| client | path | bytes | help max RSS KB |
+| --- | --- | ---: | ---: |
+| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,016 |
+| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,836 |
+| `turin-web` | `target/debug/turin-web` | 23,312,144 | 7,652 |
+
+This is a local debug-artifact checkpoint only. Use release binaries for
+meaningful size comparisons, but the debug sample is useful when disk space
+rules out a release rebuild during UI iteration.
+
 Build release clients:
 
 ```bash
