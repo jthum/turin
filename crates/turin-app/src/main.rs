@@ -2158,7 +2158,10 @@ impl TurinDesktopApp {
                 });
                 ui.add_space(8.0);
                 if apps.is_empty() {
-                    ui.label("No harness UI apps are declared by the current runtime.");
+                    ui.label("Turin is ready without custom harness UI.");
+                    ui.label(
+                        "Use Overview, Tasks, and Events as the default operator console. Declare ui.app(...) in a harness to add workflow-specific screens here.",
+                    );
                 } else {
                     let labels = apps
                         .iter()

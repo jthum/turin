@@ -24,6 +24,11 @@ All clients can talk to:
 - a local Turin daemon over the existing local IPC transport
 - a remote Turin daemon through `turin-remote`
 
+If no harness declares `ui.app(...)`, the clients still behave as default Turin
+operator consoles. Runtime overview, tasks, events, status, and control actions
+remain available; harness-specific screens appear when semantic UI intent is
+declared.
+
 ## Current Client Scope
 
 `turin-tui` is currently the keyboard-first low-capability client. It focuses on:
@@ -102,8 +107,8 @@ Recent local sample:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,631 |
-| `crates/turin-tui` | 3,379 |
+| `crates/turin-app` | 4,634 |
+| `crates/turin-tui` | 3,391 |
 | `crates/turin-ui-core` | 3,041 |
 | `crates/turin-web` | 645 |
 

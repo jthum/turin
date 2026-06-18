@@ -422,7 +422,13 @@ pub fn render_harness_screen(
     selected_work_item_id: Option<&str>,
 ) {
     let Some(app) = app else {
-        frame.render_widget(empty_panel("Harness", "No harness UI apps declared"), area);
+        frame.render_widget(
+            empty_panel(
+                "Harness",
+                "Turin is ready. No custom harness UI apps are declared yet; use ui.app(...) in a harness to add workflow-specific screens.",
+            ),
+            area,
+        );
         return;
     };
     let screen_index = screen_indices
@@ -430,7 +436,13 @@ pub fn render_harness_screen(
         .copied()
         .unwrap_or_else(|| default_screen_index(app));
     let Some(screen) = screen_at(app, screen_index) else {
-        frame.render_widget(empty_panel("Harness", "Selected app has no screens"), area);
+        frame.render_widget(
+            empty_panel(
+                "Harness",
+                "Selected harness app has no screens. Declare app:home(...) or app:screen(...) to render terminal surfaces.",
+            ),
+            area,
+        );
         return;
     };
 

@@ -30,7 +30,6 @@ const els = {
   screenNav: document.querySelector("#screen-nav"),
   screen: document.querySelector("#screen"),
   notices: document.querySelector("#notice-stack"),
-  emptyTemplate: document.querySelector("#empty-state-template"),
 };
 
 els.refreshButton.addEventListener("click", () => refresh({ reason: "manual" }));
@@ -262,8 +261,12 @@ function renderChrome() {
 function renderApps() {
   clear(els.appList);
   if (!state.apps.length) {
-    const node = els.emptyTemplate.content.cloneNode(true);
-    els.appList.append(node);
+    els.appList.append(
+      emptyState(
+        "No custom UI yet",
+        "Turin is ready. Declare ui.app(...) in a harness to add workflow-specific screens."
+      )
+    );
     return;
   }
   for (const app of state.apps) {
@@ -359,9 +362,22 @@ function renderScreen() {
   clear(els.screen);
   const app = selectedApp();
   const screen = selectedScreen();
-  if (!app || !screen) {
-    const node = els.emptyTemplate.content.cloneNode(true);
-    els.screen.append(node);
+  if (!app) {
+    els.screen.append(
+      emptyState(
+        "Turin is ready",
+        "Use the default runtime API and event stream now; harness UI appears here when a harness declares ui.app(...)."
+      )
+    );
+    return;
+  }
+  if (!screen) {
+    els.screen.append(
+      emptyState(
+        "No screens declared",
+        "This harness UI app exists, but it has no app:home(...) or app:screen(...) surfaces yet."
+      )
+    );
     return;
   }
 
@@ -1277,6 +1293,17 @@ async function decodeJsonResponse(response) {
 
 function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function emptyState(title, body) {
+  const node = document.createElement("div");
+  node.className = "empty-state";
+  const heading = document.createElement("span");
+  heading.textContent = title;
+  const message = document.createElement("p");
+  message.textContent = body;
+  node.append(heading, message);
+  return node;
 }
 
 function escapeHtml(value) {

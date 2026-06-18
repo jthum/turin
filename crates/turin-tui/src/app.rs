@@ -1390,7 +1390,7 @@ impl TuiApp {
         ))));
         if apps.is_empty() {
             items.push(ListItem::new(Line::from(Span::styled(
-                "  No harness UI apps",
+                "  No custom harness UI yet",
                 theme::muted(),
             ))));
         } else {
