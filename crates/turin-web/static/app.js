@@ -819,7 +819,7 @@ function renderList(node, app) {
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
-  table.innerHTML = `<thead><tr>${fields.map(field => `<th>${escapeHtml(field)}</th>`).join("")}</tr></thead>`;
+  table.innerHTML = `<thead><tr>${fields.map(field => `<th>${escapeHtml(fieldLabel(field))}</th>`).join("")}</tr></thead>`;
   const body = document.createElement("tbody");
   for (const item of items) {
     const row = document.createElement("tr");
@@ -1527,6 +1527,14 @@ function fieldValue(item, field) {
     return scalarLabel(item.metadata[field]);
   }
   return "";
+}
+
+function fieldLabel(field) {
+  return String(field || "")
+    .split(/[_.]/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function reportMetrics(items) {

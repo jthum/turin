@@ -299,6 +299,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("event.key === \"Home\""));
     assert!(js.contains("event.key === \"End\""));
     assert!(js.contains("aria-selected"));
+    assert!(js.contains("fieldLabel(field)"));
+    assert!(js.contains("function fieldLabel(field)"));
+    assert!(js.contains(".split(/[_.]/)"));
     assert!(js.contains("counts.done"));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("unsupportedSourceMessage"));
