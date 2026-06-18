@@ -509,12 +509,7 @@ function renderList(node, app) {
     return panel;
   }
   if (!isWorklistSource(node.source)) {
-    panel.append(
-      renderText(
-        `No browser list adapter exists for ${node.source}. This list is declared and visible, but only worklist-backed lists can load data today.`,
-        "muted",
-      ),
-    );
+    panel.append(renderText(unsupportedSourceMessage("list", node.source), "muted"));
     return panel;
   }
   const request = dataRequestForNode(node);
@@ -584,10 +579,7 @@ function renderList(node, app) {
 function renderActivity(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
-    return renderPanel(
-      `${node.title}: no browser activity adapter exists for ${node.source}.`,
-      "muted",
-    );
+    return renderPanel(unsupportedSourceMessage("activity", node.source), "muted");
   }
   const panel = document.createElement("section");
   panel.className = "panel";
@@ -629,10 +621,7 @@ function renderActivity(node, app) {
 function renderDetail(node, app) {
   const request = dataRequestForNode(node);
   if (!request) {
-    return renderPanel(
-      `${node.title}: no browser detail adapter exists for ${node.source}.`,
-      "muted",
-    );
+    return renderPanel(unsupportedSourceMessage("detail", node.source), "muted");
   }
   const panel = document.createElement("section");
   panel.className = "panel";
@@ -864,12 +853,16 @@ function renderField(field, formKey) {
 }
 
 function renderPlaceholder(node, app) {
-  const detail = node.source ? `Source: ${node.source}` : "No source";
   const panel = document.createElement("section");
   panel.className = "panel";
   appendPanelHeading(panel, node.title || node.kind || "Unsupported", node, app);
-  panel.append(renderText(`No browser adapter exists for this ${node.kind}: ${detail}`, "muted"));
+  panel.append(renderText(unsupportedSourceMessage(node.kind || "surface", node.source), "muted"));
   return panel;
+}
+
+function unsupportedSourceMessage(kind, source) {
+  if (!source) return `This ${kind} is declared and visible, but no source was provided.`;
+  return `This ${kind} is declared and visible, but source '${source}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter.`;
 }
 
 function renderPanel(text, className) {

@@ -242,7 +242,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("aria-selected"));
     assert!(js.contains("counts.done"));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
-    assert!(js.contains("No browser list adapter exists"));
+    assert!(js.contains("unsupportedSourceMessage"));
+    assert!(js.contains("Only worklists.* sources load today"));
     assert!(js.contains("isWorklistSource"));
     assert!(js.contains("appendNodeBadge"));
     assert!(js.contains("nodeBadge"));

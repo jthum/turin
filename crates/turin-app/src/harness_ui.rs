@@ -462,10 +462,7 @@ fn render_list(
         ui.add_space(8.0);
 
         if !list.source.starts_with("worklists.") {
-            ui.label(format!(
-                "List source '{}' is declared but this client only knows worklist-backed lists yet.",
-                list.source
-            ));
+            render_unsupported_source(ui, "list", &list.source);
             return;
         }
 
@@ -734,10 +731,7 @@ fn render_activity(
         ui.add_space(8.0);
 
         let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
-            ui.label(format!(
-                "Activity source '{}' is declared but this client only knows worklist-backed activity yet.",
-                activity.source
-            ));
+            render_unsupported_source(ui, "activity", &activity.source);
             return;
         };
 
@@ -778,10 +772,7 @@ fn render_detail(
         ui.add_space(8.0);
 
         let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
-            ui.label(format!(
-                "Detail source '{}' is declared but this client only knows worklist-backed detail yet.",
-                detail.source
-            ));
+            render_unsupported_source(ui, "detail", &detail.source);
             return;
         };
 
@@ -807,6 +798,12 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
         filter: Map::new(),
         limit: Some(limit),
     })
+}
+
+fn render_unsupported_source(ui: &mut egui::Ui, surface: &str, source: &str) {
+    ui.label(format!(
+        "This {surface} is declared and visible, but source '{source}' cannot load in this client yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
+    ));
 }
 
 fn render_form(
@@ -1019,41 +1016,42 @@ fn render_report(
     requested_lists: &BTreeSet<String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    cast::ReportSection::new(node_title_with_badge(app, report.id.as_deref(), &report.title))
-        .description(format!("Report data from {}", report.source))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.add(cast::Badge::new("report").variant(cast::Variant::Outline));
-                ui.add(cast::Badge::new(report.source.clone()).variant(cast::Variant::Outline));
-            });
-            if let Some(prompt) = &report.prompt {
-                ui.add_space(8.0);
-                ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
-            }
-            ui.add_space(8.0);
-
-            let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
-                ui.label(format!(
-                    "Report source '{}' is declared but this client only knows worklist-backed reports yet.",
-                    report.source
-                ));
-                return;
-            };
-
-            let key = request.cache_key();
-            match lists.get(&key) {
-                Some(items) => render_worklist_report(ui, items, event),
-                None if requested_lists.contains(&key) => {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add(cast::Loader::new().size(cast::Size::Small));
-                        ui.label("Loading report data...");
-                    });
-                }
-                None => {
-                    ui.label("Report data has not loaded yet.");
-                }
-            }
+    cast::ReportSection::new(node_title_with_badge(
+        app,
+        report.id.as_deref(),
+        &report.title,
+    ))
+    .description(format!("Report data from {}", report.source))
+    .show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(cast::Badge::new("report").variant(cast::Variant::Outline));
+            ui.add(cast::Badge::new(report.source.clone()).variant(cast::Variant::Outline));
         });
+        if let Some(prompt) = &report.prompt {
+            ui.add_space(8.0);
+            ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
+        }
+        ui.add_space(8.0);
+
+        let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
+            render_unsupported_source(ui, "report", &report.source);
+            return;
+        };
+
+        let key = request.cache_key();
+        match lists.get(&key) {
+            Some(items) => render_worklist_report(ui, items, event),
+            None if requested_lists.contains(&key) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Loader::new().size(cast::Size::Small));
+                    ui.label("Loading report data...");
+                });
+            }
+            None => {
+                ui.label("Report data has not loaded yet.");
+            }
+        }
+    });
 }
 
 fn render_chart(
@@ -1069,38 +1067,39 @@ fn render_chart(
         .map(|render_as| format!("{} as {}", chart.source, render_as))
         .unwrap_or_else(|| chart.source.clone());
     let intent = chart.intent.as_deref().unwrap_or("status_breakdown");
-    cast::ReportSection::new(node_title_with_badge(app, chart.id.as_deref(), &chart.title))
-        .description(format!("Chart data from {source}; intent {intent}"))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.add(cast::Badge::new("chart").variant(cast::Variant::Outline));
-                ui.add(cast::Badge::new(intent.to_string()).intent(cast::Intent::Info));
-                ui.add(cast::Badge::new(source.clone()).variant(cast::Variant::Outline));
-            });
-            ui.add_space(8.0);
-
-            let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
-                ui.label(format!(
-                    "Chart source '{}' is declared but this client only knows worklist-backed charts yet.",
-                    chart.source
-                ));
-                return;
-            };
-
-            let key = request.cache_key();
-            match lists.get(&key) {
-                Some(items) => render_worklist_chart(ui, chart, items),
-                None if requested_lists.contains(&key) => {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add(cast::Loader::new().size(cast::Size::Small));
-                        ui.label("Loading chart data...");
-                    });
-                }
-                None => {
-                    ui.label("Chart data has not loaded yet.");
-                }
-            }
+    cast::ReportSection::new(node_title_with_badge(
+        app,
+        chart.id.as_deref(),
+        &chart.title,
+    ))
+    .description(format!("Chart data from {source}; intent {intent}"))
+    .show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(cast::Badge::new("chart").variant(cast::Variant::Outline));
+            ui.add(cast::Badge::new(intent.to_string()).intent(cast::Intent::Info));
+            ui.add(cast::Badge::new(source.clone()).variant(cast::Variant::Outline));
         });
+        ui.add_space(8.0);
+
+        let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
+            render_unsupported_source(ui, "chart", &chart.source);
+            return;
+        };
+
+        let key = request.cache_key();
+        match lists.get(&key) {
+            Some(items) => render_worklist_chart(ui, chart, items),
+            None if requested_lists.contains(&key) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Loader::new().size(cast::Size::Small));
+                    ui.label("Loading chart data...");
+                });
+            }
+            None => {
+                ui.label("Chart data has not loaded yet.");
+            }
+        }
+    });
 }
 
 fn render_worklist_report(

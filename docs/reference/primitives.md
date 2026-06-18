@@ -329,7 +329,8 @@ Current behavior:
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
 - current clients load `worklists.*` sources for lists, activity, detail,
   reports, and charts; other sources should remain visible with explicit
-  unsupported-adapter messages
+  unsupported-adapter messages that name the source and point authors toward
+  `worklists.*` or a deliberate client adapter
 - report and chart nodes currently have lightweight worklist-backed client
   adapters, not shared analytics/query semantics
 - desktop, terminal, and web clients can render editable forms; terminal

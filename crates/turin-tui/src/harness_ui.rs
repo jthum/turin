@@ -661,7 +661,7 @@ fn render_list(
     if !list.source.starts_with("worklists.") {
         lines.push(indent_line(
             depth + 1,
-            "No terminal data adapter exists for this list source yet".to_string(),
+            unsupported_source_line("list", &list.source),
             theme::muted(),
         ));
         lines.push(Line::from(""));
@@ -774,7 +774,7 @@ fn render_activity(
     let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
         lines.push(indent_line(
             depth + 1,
-            "No terminal activity adapter exists for this source yet".to_string(),
+            unsupported_source_line("activity", &activity.source),
             theme::muted(),
         ));
         lines.push(Line::from(""));
@@ -824,7 +824,7 @@ fn render_detail(
     let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
         lines.push(indent_line(
             depth + 1,
-            "No terminal detail adapter exists for this source yet".to_string(),
+            unsupported_source_line("detail", &detail.source),
             theme::muted(),
         ));
         lines.push(Line::from(""));
@@ -1025,7 +1025,7 @@ fn render_report(
     let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
         lines.push(indent_line(
             depth + 1,
-            "No terminal report adapter exists for this source yet".to_string(),
+            unsupported_source_line("report", &report.source),
             theme::muted(),
         ));
         lines.push(Line::from(""));
@@ -1076,7 +1076,7 @@ fn render_chart(
     let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
         lines.push(indent_line(
             depth + 1,
-            "No terminal chart adapter exists for this source yet".to_string(),
+            unsupported_source_line("chart", &chart.source),
             theme::muted(),
         ));
         lines.push(Line::from(""));
@@ -1227,6 +1227,12 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
         filter: Map::new(),
         limit: Some(limit),
     })
+}
+
+fn unsupported_source_line(surface: &str, source: &str) -> String {
+    format!(
+        "This {surface} is declared and visible, but source '{source}' cannot load in the terminal yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
+    )
 }
 
 pub fn form_params(form: &UiFormNode, values: &BTreeMap<String, String>) -> Result<Value, String> {
