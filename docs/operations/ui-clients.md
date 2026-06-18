@@ -322,6 +322,7 @@ Global keys:
 
 - `Tab` / left / right: switch top-level tabs
 - `j` / `k`: move the active selection
+- `g` / `G`: jump to the first or last selectable row
 - `r`: refresh the current view
 - `?`: toggle help
 - `q` / Ctrl-C: quit

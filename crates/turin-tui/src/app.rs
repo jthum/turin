@@ -374,12 +374,10 @@ impl TuiApp {
                 self.move_selection_page(-SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
-            KeyCode::Home => {
-                self.move_selection_to_edge(SelectionEdge::Start);
-                Ok(TuiSignal::Continue)
-            }
-            KeyCode::End => {
-                self.move_selection_to_edge(SelectionEdge::End);
+            KeyCode::Home | KeyCode::End | KeyCode::Char('g') | KeyCode::Char('G') => {
+                if let Some(edge) = selection_edge_for_key(key.code) {
+                    self.move_selection_to_edge(edge);
+                }
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char(']') if self.tab == TabKind::Harness => {
@@ -467,12 +465,10 @@ impl TuiApp {
                 self.move_pane_selection_page(-SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
-            KeyCode::Home => {
-                self.move_pane_selection_to_edge(SelectionEdge::Start);
-                Ok(TuiSignal::Continue)
-            }
-            KeyCode::End => {
-                self.move_pane_selection_to_edge(SelectionEdge::End);
+            KeyCode::Home | KeyCode::End | KeyCode::Char('g') | KeyCode::Char('G') => {
+                if let Some(edge) = selection_edge_for_key(key.code) {
+                    self.move_pane_selection_to_edge(edge);
+                }
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Enter => {
@@ -1930,13 +1926,13 @@ impl TuiApp {
             "Form: Tab/↑/↓ fields  type edit  Ctrl+J newline  Space bool  h/l or ←/→ option  Enter submit  Esc cancel".to_string()
         } else if self.active_pane_id.is_some() {
             format!(
-                "Pane ({}): f focus  j/k move  Enter item action/run  r refresh  Esc/q close  ? help",
+                "Pane ({}): f focus  j/k move  g/G jump  Enter item action/run  r refresh  Esc/q close  ? help",
                 self.ui_pane_focus.label()
             )
         } else if self.tab == TabKind::Harness {
-            "Harness: f focus  j/k move  PgUp/PgDn/Home/End jump  Enter open/item action/run  r refresh  ? help".to_string()
+            "Harness: f focus  j/k move  PgUp/PgDn/Home/End/g/G jump  Enter open/item action/run  r refresh  ? help".to_string()
         } else {
-            "Tab/←/→ tabs  j/k move  PgUp/PgDn/Home/End jump  Enter open/run  r refresh  ? help  q quit".to_string()
+            "Tab/←/→ tabs  j/k move  PgUp/PgDn/Home/End/g/G jump  Enter open/run  r refresh  ? help  q quit".to_string()
         };
         let info = self
             .dashboard
@@ -1968,7 +1964,7 @@ impl TuiApp {
             ),
             kv_line("j / k", "move selection"),
             kv_line("PgUp / PgDn", "move selection by a larger stride"),
-            kv_line("Home / End", "jump to first or last selectable row"),
+            kv_line("Home / End / g / G", "jump to first or last selectable row"),
             kv_line("[ / ]", "switch harness app"),
             kv_line("h / l", "switch harness screen"),
             kv_line(
@@ -2421,6 +2417,14 @@ fn edge_index(len: usize, edge: SelectionEdge) -> usize {
     }
 }
 
+fn selection_edge_for_key(code: KeyCode) -> Option<SelectionEdge> {
+    match code {
+        KeyCode::Home | KeyCode::Char('g') => Some(SelectionEdge::Start),
+        KeyCode::End | KeyCode::Char('G') => Some(SelectionEdge::End),
+        _ => None,
+    }
+}
+
 fn connection_kind_label(kind: turin_control_client::ConnectionKind) -> &'static str {
     match kind {
         turin_control_client::ConnectionKind::Local => "local",
@@ -2494,6 +2498,27 @@ mod tests {
         assert_eq!(edge_index(5, SelectionEdge::Start), 0);
         assert_eq!(edge_index(5, SelectionEdge::End), 4);
         assert_eq!(edge_index(0, SelectionEdge::End), 0);
+    }
+
+    #[test]
+    fn edge_navigation_keys_include_terminal_friendly_aliases() {
+        assert_eq!(
+            selection_edge_for_key(KeyCode::Home),
+            Some(SelectionEdge::Start)
+        );
+        assert_eq!(
+            selection_edge_for_key(KeyCode::Char('g')),
+            Some(SelectionEdge::Start)
+        );
+        assert_eq!(
+            selection_edge_for_key(KeyCode::End),
+            Some(SelectionEdge::End)
+        );
+        assert_eq!(
+            selection_edge_for_key(KeyCode::Char('G')),
+            Some(SelectionEdge::End)
+        );
+        assert_eq!(selection_edge_for_key(KeyCode::Char('j')), None);
     }
 
     #[test]
