@@ -780,20 +780,28 @@ fn render_work_items(
     } else {
         list.fields.clone()
     };
-    let widths = table_widths(&fields, max_width.saturating_sub(depth * 2));
+    let mut columns = Vec::with_capacity(fields.len() + 2);
+    columns.push("#".to_string());
+    columns.extend(fields.iter().cloned());
+    columns.push("action".to_string());
+    let widths = work_item_table_widths(&fields, max_width.saturating_sub(depth * 2));
     lines.push(indent_line(
         depth,
-        table_row(&fields, &widths),
+        table_row(&columns, &widths),
         theme::muted(),
     ));
-    for item in items.items.iter().take(12) {
-        let values = fields
-            .iter()
-            .map(|field| work_item_field_label(item, field))
-            .collect::<Vec<_>>();
+    for (index, item) in items.items.iter().take(12).enumerate() {
         let selected = selected_work_item_id.is_some_and(|selected_id| {
             selected_id == item.public_id || selected_id.parse::<i64>().ok() == Some(item.id)
         });
+        let mut values = Vec::with_capacity(fields.len() + 2);
+        values.push(work_item_row_marker(index, selected));
+        values.extend(
+            fields
+                .iter()
+                .map(|field| work_item_field_label(item, field)),
+        );
+        values.push(work_item_action_marker(item));
         lines.push(indent_line(
             depth,
             table_row(&values, &widths),
@@ -811,6 +819,45 @@ fn render_work_items(
             theme::muted(),
         ));
     }
+}
+
+fn work_item_row_marker(index: usize, selected: bool) -> String {
+    let position = index + 1;
+    if selected {
+        format!("●{position}")
+    } else {
+        position.to_string()
+    }
+}
+
+fn work_item_action_marker(item: &WorkItemDetail) -> String {
+    if item.action.is_some() {
+        "run".to_string()
+    } else {
+        "-".to_string()
+    }
+}
+
+fn work_item_table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
+    let column_count = fields.len() + 2;
+    let separator_width = column_count.saturating_sub(1) * 3;
+    let fixed_width = 3 + 6;
+    let field_width = if fields.is_empty() {
+        6
+    } else {
+        max_width
+            .saturating_sub(separator_width)
+            .saturating_sub(fixed_width)
+            .max(fields.len() * 6)
+            / fields.len()
+    }
+    .clamp(6, 28);
+
+    let mut widths = Vec::with_capacity(column_count);
+    widths.push(3);
+    widths.extend((0..fields.len()).map(|_| field_width));
+    widths.push(6);
+    widths
 }
 
 fn render_activity(
@@ -1206,6 +1253,7 @@ fn render_worklist_chart(
     }
 }
 
+#[cfg(test)]
 fn table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
     if fields.is_empty() {
         return Vec::new();
@@ -1665,6 +1713,60 @@ mod tests {
         assert!(row.len() <= 36);
         assert!(row.contains("..."));
         assert!(row.contains("pending"));
+    }
+
+    #[test]
+    fn work_item_table_widths_keep_utility_columns_compact() {
+        let fields = vec![
+            "title".to_string(),
+            "status".to_string(),
+            "priority".to_string(),
+        ];
+        let widths = work_item_table_widths(&fields, 48);
+
+        assert_eq!(widths.len(), fields.len() + 2);
+        assert_eq!(widths[0], 3);
+        assert_eq!(widths[widths.len() - 1], 6);
+        assert!(
+            widths[1..widths.len() - 1]
+                .iter()
+                .all(|width| (6..=28).contains(width))
+        );
+    }
+
+    #[test]
+    fn work_item_table_rows_include_selection_position_and_action_marker() {
+        let list = UiListNode {
+            id: Some("pending-approvals".to_string()),
+            title: "Pending Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec!["title".to_string(), "status".to_string()],
+            sort: Vec::new(),
+            limit: Some(8),
+            intent: Some("approvals".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let mut approval = test_work_item(1, "REL-1", "Approve release");
+        approval.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: Some(json!({ "worklist": "release" })),
+        });
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![approval, test_work_item(2, "REL-2", "Run QA")],
+        };
+        let mut lines = Vec::new();
+
+        render_work_items(&list, &items, &mut lines, 0, 72, Some("REL-1"));
+        let text = line_text(&lines);
+
+        assert!(text.contains("#"));
+        assert!(text.contains("action"));
+        assert!(text.contains("●1"));
+        assert!(text.contains("run"));
+        assert!(text.contains("Run QA"));
+        assert_eq!(work_item_row_marker(1, false), "2");
     }
 
     #[test]

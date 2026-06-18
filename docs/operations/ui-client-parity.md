@@ -85,9 +85,10 @@ browser shell that consumes those routes.
 - List data loading only supports worklist sources.
 - Dynamic badges currently render on navigation targets and titled node ids;
   field-level or arbitrary inline badge placement remains undefined.
-- TUI item selection is local to visible compact table rows; selected item
-  actions can be queued for confirmation, and page/boundary keys now work
-  within the focused region, but richer table widgets can still improve.
+- TUI item selection is local to visible compact table rows with row-position
+  and action-available cues; selected item actions can be queued for
+  confirmation, and page/boundary keys work within the focused region, but
+  richer table widgets can still improve.
 - TUI pane overlays support pane-local item/action/form selection using
   terminal-local indices separate from screen focus.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries

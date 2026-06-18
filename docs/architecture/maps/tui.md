@@ -65,9 +65,10 @@ and `turin-daemon-protocol`.
 - Rendering functions should not perform daemon requests directly.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
-- Worklist-backed `list` nodes render as compact terminal tables. Other list
-  sources remain visible with metadata and an explicit unsupported-adapter
-  message until the client has a loader for that source.
+- Worklist-backed `list` nodes render as compact terminal tables with
+  terminal-local row-position and action-available cues. Other list sources
+  remain visible with metadata and an explicit unsupported-adapter message
+  until the client has a loader for that source.
 - Worklist item actions are ordinary harness action runs from the client's
   point of view, but the TUI must queue them for confirmation because work item
   payloads do not carry a UI-specific confirm flag.
