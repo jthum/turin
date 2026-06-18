@@ -9,6 +9,9 @@ const state = {
   refreshing: false,
 };
 
+const ACTIVITY_LIMIT = 12;
+const DETAIL_LIMIT = 25;
+
 const els = {
   appList: document.querySelector("#app-list"),
   appTitle: document.querySelector("#app-title"),
@@ -217,7 +220,9 @@ function renderNode(node, app) {
     case "list":
       return renderList(node);
     case "activity":
+      return renderActivity(node);
     case "detail":
+      return renderDetail(node);
     case "report":
     case "chart":
       return renderPlaceholder(node);
@@ -258,7 +263,12 @@ function renderList(node) {
   const panel = document.createElement("section");
   panel.className = "panel";
   panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
-  const key = listKey(node);
+  const request = dataRequestForNode(node);
+  if (!request) {
+    panel.append(renderText("List source is missing.", "muted"));
+    return panel;
+  }
+  const key = listKey(request);
   const cached = state.listCache.get(key);
   if (state.loadingLists.has(key)) {
     panel.append(renderText("Loading list...", "muted"));
@@ -295,6 +305,117 @@ function renderList(node) {
   wrap.append(table);
   panel.append(wrap);
   return panel;
+}
+
+function renderActivity(node) {
+  const request = dataRequestForNode(node);
+  if (!request) {
+    return renderPanel(
+      `${node.title}: no browser activity adapter exists for ${node.source}.`,
+      "muted",
+    );
+  }
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  const cached = state.listCache.get(listKey(request));
+  if (state.loadingLists.has(listKey(request))) {
+    panel.append(renderText("Loading activity data...", "muted"));
+    return panel;
+  }
+  if (!cached) {
+    panel.append(renderText("Activity data not loaded yet.", "muted"));
+    return panel;
+  }
+  if (cached.error) {
+    panel.append(renderText(cached.error, "muted"));
+    return panel;
+  }
+  const items = cached.list?.items ?? [];
+  if (!items.length) {
+    panel.append(renderText("No worklist activity yet.", "muted"));
+    return panel;
+  }
+
+  const list = document.createElement("div");
+  list.className = "activity-list";
+  for (const item of items.slice(0, ACTIVITY_LIMIT)) {
+    const row = document.createElement("article");
+    row.className = "activity-item";
+    row.innerHTML = `
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.status)} · ${escapeHtml(item.kind)} · priority ${escapeHtml(item.priority)}</span>
+    `;
+    list.append(row);
+  }
+  panel.append(list);
+  return panel;
+}
+
+function renderDetail(node) {
+  const request = dataRequestForNode(node);
+  if (!request) {
+    return renderPanel(
+      `${node.title}: no browser detail adapter exists for ${node.source}.`,
+      "muted",
+    );
+  }
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  const cached = state.listCache.get(listKey(request));
+  if (state.loadingLists.has(listKey(request))) {
+    panel.append(renderText("Loading detail data...", "muted"));
+    return panel;
+  }
+  if (!cached) {
+    panel.append(renderText("Detail data not loaded yet.", "muted"));
+    return panel;
+  }
+  if (cached.error) {
+    panel.append(renderText(cached.error, "muted"));
+    return panel;
+  }
+  const items = cached.list?.items ?? [];
+  if (!items.length) {
+    panel.append(renderText("No worklist items available for detail.", "muted"));
+    return panel;
+  }
+  const item = selectDetailItem(node, items);
+  if (!item) {
+    panel.append(renderText(`Work item '${node.item_id}' was not found.`, "muted"));
+    return panel;
+  }
+  panel.append(renderWorkItemDetail(item));
+  return panel;
+}
+
+function renderWorkItemDetail(item) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "detail-grid";
+  const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const fields = [
+    ["Title", item.title],
+    ["Status", item.status],
+    ["Kind", item.kind],
+    ["Priority", item.priority],
+    ["Worklist", item.worklist_id],
+    ["Release", metadata.release],
+    ["Lane", metadata.lane],
+    ["Updated", item.updated_at],
+  ];
+  wrapper.innerHTML = fields
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(
+      ([label, value]) => `
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(scalarLabel(value))}</strong>
+        </div>
+      `,
+    )
+    .join("");
+  return wrapper;
 }
 
 function renderForm(node, app) {
@@ -391,19 +512,19 @@ async function runAction(node, app) {
 async function loadVisibleLists() {
   const screen = selectedScreen();
   const nodes = flattenNodes(screen?.nodes ?? []);
-  const lists = nodes.filter(node => node.kind === "list");
-  await Promise.all(lists.map(loadList));
+  const requests = nodes.map(dataRequestForNode).filter(Boolean);
+  await Promise.all(requests.map(loadDataRequest));
 }
 
-async function loadList(node) {
-  const key = listKey(node);
+async function loadDataRequest(request) {
+  const key = listKey(request);
   if (state.listCache.has(key) || state.loadingLists.has(key)) return;
   state.loadingLists.add(key);
   try {
     const payload = {
-      source: node.source,
-      where: node.where || {},
-      limit: node.limit,
+      source: request.source,
+      where: request.where || {},
+      limit: request.limit,
     };
     const response = await postJson("/api/ui/list", payload);
     state.listCache.set(key, response);
@@ -436,12 +557,48 @@ function flattenNodes(nodes) {
   return out;
 }
 
-function listKey(node) {
+function dataRequestForNode(node) {
+  if (!node?.source) return null;
+  if (node.kind === "list") {
+    return {
+      source: node.source,
+      where: node.where || {},
+      limit: node.limit || null,
+    };
+  }
+  if (node.kind === "activity" && node.source.startsWith("worklists.")) {
+    return {
+      source: node.source,
+      where: {},
+      limit: ACTIVITY_LIMIT,
+    };
+  }
+  if (node.kind === "detail" && node.source.startsWith("worklists.")) {
+    return {
+      source: node.source,
+      where: {},
+      limit: DETAIL_LIMIT,
+    };
+  }
+  return null;
+}
+
+function listKey(request) {
   return JSON.stringify({
-    source: node.source,
-    where: node.where || {},
-    limit: node.limit || null,
+    source: request.source,
+    where: request.where || {},
+    limit: request.limit || null,
   });
+}
+
+function selectDetailItem(node, items) {
+  if (node.item_id) {
+    return (
+      items.find(item => item.public_id === node.item_id || String(item.id) === node.item_id) ||
+      null
+    );
+  }
+  return items.find(item => item.status === "pending") || items[0] || null;
 }
 
 function fieldValue(item, field) {

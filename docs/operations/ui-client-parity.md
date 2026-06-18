@@ -83,7 +83,7 @@ browser shell that consumes those routes.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - The TUI has no item-selection-driven detail pane yet.
-- `turin-web` activity/detail/report/chart rendering is still placeholder-level.
+- `turin-web` report/chart rendering is still placeholder-level.
 - There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.
 
 ## Update Rule

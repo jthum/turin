@@ -121,9 +121,10 @@ The current browser shell is intentionally small:
 - same-origin calls to the `turin-web` API
 - local selected app/screen/list/form/action state
 - table rendering for worklist-backed lists
+- worklist-backed activity and detail rendering
 - basic form and action execution
 - SSE invalidation for runtime/UI/action events
-- placeholders for activity, detail, report, and chart nodes
+- placeholders for unsupported activity/detail sources, reports, and charts
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
 stay easy to replace once the web UX shape is better proven.
@@ -155,6 +156,6 @@ The first useful slice is complete:
 5. It serves a minimal browser shell from the same process.
 6. It has an integration smoke using the Release Operator harness.
 
-Next work should tighten browser rendering parity for activity/detail/form edge
-cases, then decide whether to keep iterating on the static shell or introduce a
-light frontend build step.
+Next work should tighten browser form edge cases and report/chart semantics,
+then decide whether to keep iterating on the static shell or introduce a light
+frontend build step.
