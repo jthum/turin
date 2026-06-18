@@ -724,11 +724,7 @@ fn render_work_items(
     selected_work_item_id: Option<&str>,
 ) {
     if items.items.is_empty() {
-        lines.push(indent_line(
-            depth,
-            "No matching items".to_string(),
-            theme::muted(),
-        ));
+        lines.push(indent_line(depth, empty_list_message(list), theme::muted()));
         return;
     }
 
@@ -1445,6 +1441,17 @@ fn list_metadata_parts(list: &UiListNode) -> Vec<String> {
     meta
 }
 
+fn empty_list_message(list: &UiListNode) -> String {
+    if list.filter.is_empty() {
+        "No matching items".to_string()
+    } else {
+        format!(
+            "No matching items after {} declared filter(s)",
+            list.filter.len()
+        )
+    }
+}
+
 fn unsupported_source_line(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the terminal")
 }
@@ -1740,6 +1747,31 @@ mod tests {
         };
 
         assert_eq!(list_metadata_parts(&list), vec!["where=2", "sort=1"]);
+    }
+
+    #[test]
+    fn empty_list_message_names_declared_filters() {
+        let mut list = UiListNode {
+            id: None,
+            title: "Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Map::new(),
+            fields: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            intent: None,
+            render_as: None,
+        };
+
+        assert_eq!(empty_list_message(&list), "No matching items");
+
+        list.filter.insert("kind".to_string(), json!("approval"));
+        list.filter.insert("status".to_string(), json!("pending"));
+
+        assert_eq!(
+            empty_list_message(&list),
+            "No matching items after 2 declared filter(s)"
+        );
     }
 
     #[test]

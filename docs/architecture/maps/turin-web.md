@@ -77,6 +77,8 @@ session state, invent renderer-specific harness APIs, or bypass
 - Browser selected-row detail should surface existing work-item operational
   fields such as pause, claim, parent, and failure context without persisting
   selection in `turin-web`.
+- Browser empty-list copy should name declared filters when they may explain an
+  empty worklist-backed result.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes

@@ -509,11 +509,7 @@ fn render_work_items(
     event: &mut Option<HarnessUiEvent>,
 ) {
     if items.items.is_empty() {
-        render_empty_state(
-            ui,
-            "No matching items",
-            "This worklist query returned no rows.",
-        );
+        render_empty_state(ui, "No matching items", &empty_list_message(list));
         return;
     }
 
@@ -1295,6 +1291,17 @@ fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
     meta
 }
 
+fn empty_list_message(list: &UiListNode) -> String {
+    if list.filter.is_empty() {
+        "This worklist query returned no rows.".to_string()
+    } else {
+        format!(
+            "This worklist query returned no rows after applying {} declared filter(s).",
+            list.filter.len()
+        )
+    }
+}
+
 fn work_item_context_badges(item: &WorkItemDetail) -> Vec<String> {
     let mut badges = vec![format!("worklist {}", item.worklist_id)];
     if item.paused {
@@ -1411,6 +1418,34 @@ mod tests {
         assert_eq!(
             list_metadata_badges(&list),
             vec!["where 2", "sort 1", "limit 25"]
+        );
+    }
+
+    #[test]
+    fn empty_list_message_names_declared_filters() {
+        let mut list = UiListNode {
+            id: None,
+            title: "Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Map::new(),
+            fields: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            intent: None,
+            render_as: None,
+        };
+
+        assert_eq!(
+            empty_list_message(&list),
+            "This worklist query returned no rows."
+        );
+
+        list.filter.insert("kind".to_string(), json!("approval"));
+        list.filter.insert("status".to_string(), json!("pending"));
+
+        assert_eq!(
+            empty_list_message(&list),
+            "This worklist query returned no rows after applying 2 declared filter(s)."
         );
     }
 

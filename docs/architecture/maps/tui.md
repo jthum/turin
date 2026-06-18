@@ -74,6 +74,8 @@ and `turin-daemon-protocol`.
   and shows the current visible row range plus selected row number. Other list
   sources remain visible with metadata and an explicit unsupported-adapter
   message until the client has a loader for that source.
+- Empty worklist-backed list output should distinguish a plain empty result
+  from an empty result after declared filters were applied.
 - Worklist row selection is remembered by local item identity across refreshes
   and row reordering where possible, then falls back to a bounded local index if
   the selected row disappears. This must remain TUI-local state.

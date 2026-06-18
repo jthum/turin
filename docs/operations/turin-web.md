@@ -347,7 +347,8 @@ The current browser shell is intentionally small:
   screens and open panes scoped to the originating app, returned action UI
   intent application, and duplicate-run suppression
 - compact state panels for unsupported, missing, loading, empty, and failed
-  semantic data surfaces
+  semantic data surfaces, including filtered empty-list copy when declared
+  `where` constraints match no rows
 - lightweight worklist-backed report summaries with next pending item
   highlights, plus chart breakdowns
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`

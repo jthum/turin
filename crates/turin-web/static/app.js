@@ -808,7 +808,7 @@ function renderList(node, app) {
   }
   const items = cached.list?.items ?? [];
   if (!items.length) {
-    appendState(panel, "empty", "No matching items", "This worklist query returned no rows.");
+    appendState(panel, "empty", "No matching items", emptyListMessage(node));
     return panel;
   }
 
@@ -1518,6 +1518,14 @@ function listMetadataParts(node) {
   if (node.sort?.length) parts.push(`Sort ${node.sort.length}`);
   if (node.limit) parts.push(`Limit ${node.limit}`);
   return parts;
+}
+
+function emptyListMessage(node) {
+  const whereCount =
+    node.where && typeof node.where === "object" ? Object.keys(node.where).length : 0;
+  return whereCount
+    ? `This worklist query returned no rows after applying ${whereCount} declared filter(s).`
+    : "This worklist query returned no rows.";
 }
 
 function selectListItem(key, item, options = {}) {

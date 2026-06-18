@@ -300,6 +300,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("Rows 1-${itemCount} of ${itemCount}${selected}"));
     assert!(js.contains("appendListMetadata"));
     assert!(js.contains("listMetadataParts"));
+    assert!(js.contains("emptyListMessage(node)"));
+    assert!(js.contains("function emptyListMessage(node)"));
+    assert!(js.contains("after applying ${whereCount} declared filter(s)"));
     assert!(js.contains("Object.keys(node.where).length"));
     assert!(js.contains("Where ${whereCount}"));
     assert!(js.contains("Sort ${node.sort.length}"));
