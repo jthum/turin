@@ -82,6 +82,11 @@ impl UiRegistry {
         }
     }
 
+    /// Build a registry from daemon-status UI declarations.
+    ///
+    /// Daemon status is a declarative snapshot. One-shot dynamic requests are
+    /// intentionally ignored here so periodic status refreshes do not replay
+    /// navigation, notices, focus, or refresh requests.
     pub fn from_messages(messages: impl IntoIterator<Item = UiIntentMessage>) -> Self {
         let mut registry = Self::new();
         registry.replace_declared_messages(messages);
@@ -443,6 +448,43 @@ mod tests {
         assert_eq!(registry.take_focuses().len(), 1);
         assert!(registry.focuses().is_empty());
         assert_eq!(registry.take_refreshes().len(), 1);
+        assert!(registry.refreshes().is_empty());
+    }
+
+    #[test]
+    fn status_messages_do_not_queue_one_shot_requests() {
+        let registry = UiRegistry::from_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::Open(UiOpenIntent {
+                app_id: "release".to_string(),
+                target: "home".to_string(),
+                presentation: None,
+            })),
+            UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+                app_id: "release".to_string(),
+                title: "Do not replay".to_string(),
+                body: None,
+                level: None,
+            })),
+            UiIntentMessage::new(UiIntent::Focus(UiFocusIntent {
+                app_id: "release".to_string(),
+                target: "seed-demo-form".to_string(),
+            })),
+            UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+                app_id: "release".to_string(),
+                binding: "worklists.release".to_string(),
+            })),
+        ]);
+
+        assert!(registry.app("release").is_some());
+        assert!(registry.opens().is_empty());
+        assert!(registry.notices().is_empty());
+        assert!(registry.focuses().is_empty());
         assert!(registry.refreshes().is_empty());
     }
 
