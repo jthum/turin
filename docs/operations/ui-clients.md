@@ -101,10 +101,10 @@ Recent local sample:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,614 |
-| `crates/turin-tui` | 4,126 |
-| `crates/turin-ui-core` | 3,387 |
-| `crates/turin-web` | 720 |
+| `crates/turin-app` | 4,631 |
+| `crates/turin-tui` | 3,272 |
+| `crates/turin-ui-core` | 3,041 |
+| `crates/turin-web` | 645 |
 
 Debug binaries from the same sample were `25.5 MB` for `turin-tui`, `69.9 MB`
 for `turin-app`, and `23.3 MB` for `turin-web`. Treat those as local debug
@@ -270,15 +270,16 @@ tools/footprint-report --top-files 30
 
 The report is written under `.workspace/perf-reports/`, which is intentionally
 ignored. It scans shipped Rust source roots, excludes obvious tests, examples,
-target artifacts, and scratch data, and records release binary sizes only when
-artifacts already exist. It does not build Turin.
+target artifacts, scratch data, and inline `#[cfg(test)] mod tests` blocks, and
+records release binary sizes only when artifacts already exist. It does not
+build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `88268` Rust code lines under `src` and `crates`
-- `4614` code lines in `crates/turin-app`
-- `4126` code lines in `crates/turin-tui`
-- `720` code lines in `crates/turin-web`
+- `84917` Rust code lines under `src` and `crates`
+- `4631` code lines in `crates/turin-app`
+- `3272` code lines in `crates/turin-tui`
+- `645` code lines in `crates/turin-web`
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.

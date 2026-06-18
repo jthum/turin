@@ -23,9 +23,10 @@ cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
 ```
 
 Both footprint paths scan Rust source roots, exclude obvious test/bench/example
-directories, reports LOC by area, lists the largest shipped source files, and
-records release binary sizes when known artifacts already exist. It does not
-build release binaries by itself.
+directories and inline `#[cfg(test)] mod tests` blocks, report LOC by area,
+list the largest shipped source files, and record release binary sizes when
+known artifacts already exist. They do not build release binaries by
+themselves.
 
 ```bash
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \

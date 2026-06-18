@@ -689,7 +689,7 @@ fn run_footprint(args: FootprintArgs) -> Result<()> {
             "repo_root": repo_root.display().to_string(),
             "roots": roots,
             "top_files": args.top_files,
-            "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, or workspace scratch data. Inline #[cfg(test)] modules are not stripped from non-test source files.",
+            "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, workspace scratch data, and inline #[cfg(test)] mod tests blocks.",
         }),
         totals,
         areas,
@@ -2961,10 +2961,42 @@ fn count_rust_lines(path: &Path) -> Result<LineCounts> {
         files: 1,
         ..LineCounts::default()
     };
+    let mut pending_test_cfg = false;
+    let mut skipping_test_module = false;
+    let mut test_module_depth = 0isize;
 
     for line in raw.lines() {
-        counts.total_lines += 1;
         let trimmed = line.trim();
+        if skipping_test_module {
+            test_module_depth += brace_delta(trimmed);
+            if test_module_depth <= 0 {
+                skipping_test_module = false;
+                test_module_depth = 0;
+            }
+            continue;
+        }
+
+        if pending_test_cfg {
+            if is_attr_line(trimmed) {
+                continue;
+            }
+            if is_test_module_start(trimmed) {
+                test_module_depth = brace_delta(trimmed);
+                if test_module_depth > 0 {
+                    skipping_test_module = true;
+                }
+                pending_test_cfg = false;
+                continue;
+            }
+            pending_test_cfg = false;
+        }
+
+        if is_cfg_test_attr(trimmed) {
+            pending_test_cfg = true;
+            continue;
+        }
+
+        counts.total_lines += 1;
         if trimmed.is_empty() {
             counts.blank_lines += 1;
         } else if is_comment_line(trimmed) {
@@ -2975,6 +3007,31 @@ fn count_rust_lines(path: &Path) -> Result<LineCounts> {
     }
 
     Ok(counts)
+}
+
+fn is_cfg_test_attr(trimmed: &str) -> bool {
+    let compact = trimmed
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    compact.starts_with("#[cfg(test)]")
+}
+
+fn is_attr_line(trimmed: &str) -> bool {
+    trimmed.starts_with("#[")
+}
+
+fn is_test_module_start(trimmed: &str) -> bool {
+    trimmed.starts_with("mod tests")
+        && trimmed.strip_prefix("mod tests").is_some_and(|rest| {
+            rest.trim_start().starts_with('{') || rest.trim_start().starts_with(';')
+        })
+}
+
+fn brace_delta(line: &str) -> isize {
+    let opens = line.chars().filter(|ch| *ch == '{').count() as isize;
+    let closes = line.chars().filter(|ch| *ch == '}').count() as isize;
+    opens - closes
 }
 
 fn is_comment_line(trimmed: &str) -> bool {
