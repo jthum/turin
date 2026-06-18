@@ -291,8 +291,8 @@ The current browser shell is intentionally small:
 - browser-local pane overlay state for `ui.show` pane targets
 - table rendering for worklist-backed lists
 - inline selected-row detail for worklist-backed lists
-- explicit client-side fallback copy for unsupported list sources without
-  turning them into failed fetches
+- explicit client-side fallback copy for unsupported semantic data sources
+  without turning them into failed fetches
 - worklist-backed activity and detail rendering, including confirmed work-item
   action buttons when item action payloads exist
 - typed form defaults, local drafts, required fields, options, and scalar
@@ -310,7 +310,6 @@ The current browser shell is intentionally small:
   invalidation for cached list requests
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
 - dynamic badge rendering for matching navigation targets and titled node ids
-- placeholders for unsupported activity/detail/report/chart sources
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
 stay easy to replace once the web UX shape is better proven.
