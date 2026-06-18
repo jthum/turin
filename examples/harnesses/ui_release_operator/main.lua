@@ -170,7 +170,7 @@ app:home("Release Desk", function(screen)
 
   screen:activity("Release Activity", {
     id = "release-activity",
-    from = "signals.release",
+    from = RELEASE_BINDING,
   })
 end)
 

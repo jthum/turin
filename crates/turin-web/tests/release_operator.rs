@@ -278,6 +278,42 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .json()
         .await?;
     assert!(app["app"]["screens"].get("approvals").is_some());
+    assert_node(
+        &app,
+        "home",
+        "activity",
+        "release-activity",
+        Some("worklists.release"),
+    )?;
+    assert_node(
+        &app,
+        "approvals",
+        "list",
+        "pending-approvals",
+        Some("worklists.release"),
+    )?;
+    assert_node(&app, "intake", "form", "seed-demo-form", None)?;
+    assert_node(
+        &app,
+        "overview",
+        "detail",
+        "release-snapshot",
+        Some("worklists.release"),
+    )?;
+    assert_node(
+        &app,
+        "overview",
+        "report",
+        "release-readiness",
+        Some("worklists.release"),
+    )?;
+    assert_node(
+        &app,
+        "overview",
+        "chart",
+        "approval-flow",
+        Some("worklists.release"),
+    )?;
     assert!(app["app"]["menus"].as_array().is_some_and(|menus| {
         menus.iter().any(|menu| {
             menu["items"].as_array().is_some_and(|items| {
@@ -331,8 +367,58 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(items.len(), 4);
     assert!(items.iter().all(|item| item["status"] == "pending"));
     assert!(items.iter().all(|item| item["kind"] == "approval"));
+    assert!(
+        items
+            .iter()
+            .all(|item| item["action"]["name"] == "release.approve_next")
+    );
 
     Ok(())
+}
+
+fn assert_node(
+    app: &Value,
+    screen_id: &str,
+    kind: &str,
+    id: &str,
+    source: Option<&str>,
+) -> Result<()> {
+    let screen = app["app"]["screens"]
+        .get(screen_id)
+        .with_context(|| format!("missing screen '{screen_id}'"))?;
+    let nodes = screen["nodes"]
+        .as_array()
+        .with_context(|| format!("screen '{screen_id}' should include nodes"))?;
+    let found = flatten_nodes(nodes).into_iter().any(|node| {
+        node["kind"] == kind
+            && node["id"] == id
+            && match source {
+                Some(source) => node["source"] == source,
+                None => true,
+            }
+    });
+    if found {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "screen '{}' did not include {} node '{}' with source {:?}",
+            screen_id,
+            kind,
+            id,
+            source
+        ))
+    }
+}
+
+fn flatten_nodes(nodes: &[Value]) -> Vec<&Value> {
+    let mut out = Vec::new();
+    for node in nodes {
+        out.push(node);
+        if let Some(children) = node["nodes"].as_array() {
+            out.extend(flatten_nodes(children));
+        }
+    }
+    out
 }
 
 async fn read_sse_until(response: reqwest::Response, needle: &str) -> Result<String> {
