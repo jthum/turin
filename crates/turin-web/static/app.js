@@ -1071,7 +1071,7 @@ function renderForm(node, app) {
   const formKey = formDraftKey(node);
   form.className = "form-grid";
   for (const field of node.fields ?? []) {
-    form.append(renderField(field, formKey));
+    form.append(renderField(field, node, formKey));
   }
   const button = document.createElement("button");
   const actionKey = actionRunKey(node.action);
@@ -1090,7 +1090,7 @@ function renderForm(node, app) {
   return panel;
 }
 
-function renderField(field, formKey) {
+function renderField(field, node, formKey) {
   const wrapper = document.createElement("label");
   wrapper.className = "field";
   const kind = normalizeFieldKind(field.kind);
@@ -1117,7 +1117,7 @@ function renderField(field, formKey) {
   input.name = field.name;
   input.dataset.kind = kind;
   if (required) input.required = true;
-  setInputValue(input, draftValueForField(formKey, field), kind);
+  setInputValue(input, draftValueForField(formKey, field, node), kind);
   input.addEventListener("input", () => {
     rememberFormDraft(formKey, field.name, coerceFieldValue(input.value, kind, field));
   });
@@ -1474,7 +1474,9 @@ function collectFormParams(form, node) {
   const data = new FormData(form);
   try {
     for (const field of node.fields ?? []) {
-      params[field.name] = coerceFieldValue(data.get(field.name), normalizeFieldKind(field.kind), field);
+      const rawValue = data.get(field.name);
+      if (!field.required && (rawValue === null || rawValue === "")) continue;
+      params[field.name] = coerceFieldValue(rawValue, normalizeFieldKind(field.kind), field);
     }
     return params;
   } catch (error) {
@@ -1517,10 +1519,13 @@ function fieldDraftKey(formKey, fieldName) {
   return `${formKey}:${fieldName}`;
 }
 
-function draftValueForField(formKey, field) {
+function draftValueForField(formKey, field, node) {
   const key = fieldDraftKey(formKey, field.name);
   if (state.formDrafts.has(key)) return state.formDrafts.get(key);
   if (field.default !== undefined) return field.default;
+  if (node?.params && typeof node.params === "object" && field.name in node.params) {
+    return node.params[field.name];
+  }
   if (normalizeFieldKind(field.kind) === "boolean") return false;
   return "";
 }

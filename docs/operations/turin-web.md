@@ -319,8 +319,9 @@ The current browser shell is intentionally small:
   without turning them into failed fetches
 - worklist-backed activity and detail rendering, including confirmed work-item
   action buttons when item action payloads exist
-- typed form defaults, local drafts, required fields, options, and scalar
-  coercion
+- typed form defaults from field definitions or static form params, local
+  drafts, required fields, options, scalar coercion, and optional blank fields
+  that preserve static params instead of overwriting them with null
 - browser-local confirmation overlay for explicit-confirm actions and work-item
   actions
 - action start/completion/failure feedback, latest action result panels on

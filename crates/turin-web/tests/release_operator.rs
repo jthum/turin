@@ -228,6 +228,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderDetail"));
     assert!(js.contains("collectFormParams"));
     assert!(js.contains("formDrafts"));
+    assert!(js.contains("draftValueForField(formKey, field, node)"));
+    assert!(js.contains("field.name in node.params"));
+    assert!(
+        js.contains("if (!field.required && (rawValue === null || rawValue === \"\")) continue")
+    );
     assert!(js.contains("runningActions"));
     assert!(js.contains("renderReport"));
     assert!(js.contains("renderReportHighlight"));
