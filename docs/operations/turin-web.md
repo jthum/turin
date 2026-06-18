@@ -133,7 +133,7 @@ The current browser shell is intentionally small:
   duplicate-run suppression
 - lightweight worklist-backed report summaries and chart breakdowns
 - SSE invalidation for runtime/UI/action events
-- local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notify`
+- local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
 - dynamic badge rendering for matching navigation targets and titled node ids
 - placeholders for unsupported activity/detail/report/chart sources
 
