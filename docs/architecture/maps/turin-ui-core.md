@@ -25,7 +25,7 @@ runtime-owned UI session store, or a second daemon implementation.
   - `UiRegistry` and `UiAppRecord` indexing for harness-declared app surfaces
     plus dynamic UI intent queues.
 - `crates/turin-ui-core/src/ui_copy.rs`
-  - Stateless shared copy for semantic UI fallback states.
+  - Stateless shared copy for semantic UI fallback and not-yet-loaded states.
 - `crates/turin-ui-core/src/ui_data.rs`
   - Stateless semantic UI data-source helpers, including default worklist-backed
     surface limits and `UiListRequest` discovery from node trees.
@@ -138,8 +138,8 @@ git diff --check
 new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
 bounded notices/events, UI list loading for worklists, stateless visible-node
-request derivation, shared fallback copy, harness action command dispatch with
-returned UI intent application, and small worklist summaries. It intentionally
-does not provide a common active-screen model or shared UI session state; those
-seams should be extracted later only if the clients independently converge on
-the same shape.
+request derivation, shared fallback/not-loaded copy, harness action command
+dispatch with returned UI intent application, and small worklist summaries. It
+intentionally does not provide a common active-screen model or shared UI session
+state; those seams should be extracted later only if the clients independently
+converge on the same shape.

@@ -102,6 +102,8 @@ browser shell that consumes those routes.
 - Unsupported data sources remain visible in app, TUI, and web clients with
   fallback copy that names the source, names the current client when relevant,
   and points authors toward `worklists.*` or a deliberate client adapter.
+- Visible worklist-backed surfaces whose data has not loaded yet remain visible
+  with explicit not-yet-loaded copy instead of rendering blank panels.
 - There is no automated screenshot/terminal golden test layer. Current coverage
   is semantic helper tests plus app/web/TUI smoke and unit tests.
 

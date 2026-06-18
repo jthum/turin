@@ -14,9 +14,10 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, collect_ui_list_requests as collect_shared_list_requests, ui_worklist_request,
-    unsupported_ui_source_message, work_item_field_label, worklist_chart_group_field,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    UiListRequest, collect_ui_list_requests as collect_shared_list_requests,
+    ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
+    work_item_field_label, worklist_chart_group_field, worklist_group_counts,
+    worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::app::PendingHarnessAction;
@@ -706,7 +707,7 @@ fn render_list(
         )),
         None => lines.push(indent_line(
             depth + 1,
-            "List data not requested yet".to_string(),
+            ui_data_not_loaded_message("list"),
             theme::muted(),
         )),
     }
@@ -913,7 +914,7 @@ fn render_activity(
         )),
         None => lines.push(indent_line(
             depth + 1,
-            "Activity data not requested yet".to_string(),
+            ui_data_not_loaded_message("activity"),
             theme::muted(),
         )),
     }
@@ -963,7 +964,7 @@ fn render_detail(
         )),
         None => lines.push(indent_line(
             depth + 1,
-            "Detail data not requested yet".to_string(),
+            ui_data_not_loaded_message("detail"),
             theme::muted(),
         )),
     }
@@ -1159,7 +1160,7 @@ fn render_report(
         )),
         None => lines.push(indent_line(
             depth + 1,
-            "Report data not requested yet".to_string(),
+            ui_data_not_loaded_message("report"),
             theme::muted(),
         )),
     }
@@ -1210,7 +1211,7 @@ fn render_chart(
         )),
         None => lines.push(indent_line(
             depth + 1,
-            "Chart data not requested yet".to_string(),
+            ui_data_not_loaded_message("chart"),
             theme::muted(),
         )),
     }

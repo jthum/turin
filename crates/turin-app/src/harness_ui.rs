@@ -10,8 +10,8 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
-    work_item_key, worklist_chart_group_field, worklist_group_counts,
+    UiListRequest, ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
+    work_item_field_label, work_item_key, worklist_chart_group_field, worklist_group_counts,
     worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
@@ -490,7 +490,7 @@ fn render_list(
                 });
             }
             None => {
-                ui.label("List data has not loaded yet.");
+                ui.label(ui_data_not_loaded_message("list"));
             }
         }
     });
@@ -771,7 +771,7 @@ fn render_activity(
                 });
             }
             None => {
-                ui.label("Activity data has not loaded yet.");
+                ui.label(ui_data_not_loaded_message("activity"));
             }
         }
     });
@@ -812,7 +812,7 @@ fn render_detail(
                 });
             }
             None => {
-                ui.label("Detail data has not loaded yet.");
+                ui.label(ui_data_not_loaded_message("detail"));
             }
         }
     });
@@ -1072,7 +1072,7 @@ fn render_report(
                 });
             }
             None => {
-                ui.label("Report data has not loaded yet.");
+                ui.label(ui_data_not_loaded_message("report"));
             }
         }
     });
@@ -1120,7 +1120,7 @@ fn render_chart(
                 });
             }
             None => {
-                ui.label("Chart data has not loaded yet.");
+                ui.label(ui_data_not_loaded_message("chart"));
             }
         }
     });

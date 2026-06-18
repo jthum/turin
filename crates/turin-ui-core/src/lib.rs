@@ -21,7 +21,7 @@ pub use dashboard::{
     DashboardState, DefaultOperatorConsoleSummary, format_relative_age,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
-pub use ui_copy::unsupported_ui_source_message;
+pub use ui_copy::{ui_data_not_loaded_message, unsupported_ui_source_message};
 pub use ui_data::{
     DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
     DEFAULT_UI_REPORT_LIMIT, collect_ui_list_requests, is_worklist_ui_source, ui_worklist_request,
