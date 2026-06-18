@@ -34,7 +34,7 @@ Core rule:
 | `text` | Markdown/content block. | Text lines. | TUI keeps rendering simple. |
 | `section` | Visual grouping with nested nodes. | Heading plus indented nested nodes. | Recursive rendering in both clients. |
 | `action` | Button; optional confirmation modal. | Inspector action list; optional confirmation modal. | Runs through `OperatorCommand::RunHarnessAction`. |
-| `list` | Worklist-backed data table; unsupported adapters show metadata. | Compact worklist-backed table; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today. |
+| `list` | Worklist-backed data table; unsupported adapters show metadata. | Compact worklist-backed table with local row selection and inspector detail; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today. |
 | `worklist` sugar | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | DX sugar only; not a separate protocol primitive. |
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | TUI rich text areas degrade to line-oriented text. |
 | `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Uses cached `worklists.*` data for now, not a live event query. |
@@ -83,7 +83,7 @@ browser shell that consumes those routes.
   has a lightweight worklist-backed summary/bar adapter only.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
-- The TUI has no item-selection-driven detail pane yet.
+- TUI item selection is local to visible compact table rows; richer table navigation can still improve.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.
 - There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.

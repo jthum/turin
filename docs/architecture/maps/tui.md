@@ -3,8 +3,8 @@
 ## Purpose
 
 `turin-tui` is the terminal client for Turin. It owns terminal layout, keyboard
-interaction, focus, selection, confirmation modals, and terminal-specific
-degradation of harness UI intent.
+interaction, focus, work-item selection, confirmation modals, and
+terminal-specific degradation of harness UI intent.
 Interactive form drafts and field focus are also TUI-local state.
 
 Keep this crate as a lean Ratatui client. Runtime semantics, daemon transport,
@@ -32,19 +32,20 @@ and `turin-daemon-protocol`.
 2. `UiController` emits `UiUpdate` values from snapshots, events, and commands.
 3. `TuiApp` applies updates to `DashboardState` and TUI-local state.
 4. Keyboard input mutates TUI-local state or sends `OperatorCommand`.
-5. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
-6. Harness UI forms open a terminal-local editor; submit merges typed field
+5. Harness UI list rows can be selected locally and rendered in the inspector.
+6. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
+7. Harness UI forms open a terminal-local editor; submit merges typed field
    values over form params and runs the declared harness action.
-7. Completed harness action results are retained as local operator feedback and
+8. Completed harness action results are retained as local operator feedback and
    rendered in the inspector.
-8. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
+9. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
    local TUI navigation state.
-9. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
+10. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
 
 ## Invariants
 
-- TUI state is client-owned: selected tab, screen, action, modal, and cache
-  state must not become runtime state.
+- TUI state is client-owned: selected tab, screen, work item, action, modal,
+  and cache state must not become runtime state.
 - Form drafts, field focus, and validation errors are client-local. Submitted
   values become action params only when the operator submits the form.
 - Latest harness action results are client-local feedback. Durable workflow
@@ -106,8 +107,9 @@ git diff --check
 
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
-navigation, dynamic open/focus handling, editable forms, worklist-backed
-activity/detail surfaces, latest action result feedback, task and event
-inspectors, confirmation flow, UI notices, and list invalidation. Chat, search,
-connection profile editing, and deeper inspectors should be reintroduced only as
-they fit the new terminal UX model.
+navigation, local work-item selection with inspector detail, dynamic open/focus
+handling, editable forms, worklist-backed activity/detail surfaces, latest
+action result feedback, task and event inspectors, confirmation flow, UI
+notices, and list invalidation. Chat, search, connection profile editing, and
+deeper inspectors should be reintroduced only as they fit the new terminal UX
+model.

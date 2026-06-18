@@ -59,6 +59,13 @@ pub struct HarnessNavItem {
     pub target: HarnessNavTarget,
 }
 
+#[derive(Debug, Clone)]
+pub struct HarnessWorkItemSelection {
+    pub list_title: String,
+    pub list_source: String,
+    pub item: WorkItemDetail,
+}
+
 impl HarnessAction {
     pub fn into_pending(self) -> PendingHarnessAction {
         PendingHarnessAction {
@@ -161,6 +168,46 @@ fn collect_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
                     filter: Map::new(),
                     limit: Some(DETAIL_LIMIT),
                 });
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn collect_work_item_selections(
+    nodes: &[UiNode],
+    lists: &BTreeMap<String, WorkItemList>,
+) -> Vec<HarnessWorkItemSelection> {
+    let mut out = Vec::new();
+    collect_work_item_selections_into(nodes, lists, &mut out);
+    out
+}
+
+fn collect_work_item_selections_into(
+    nodes: &[UiNode],
+    lists: &BTreeMap<String, WorkItemList>,
+    out: &mut Vec<HarnessWorkItemSelection>,
+) {
+    for node in nodes {
+        match node {
+            UiNode::Section(section) => {
+                collect_work_item_selections_into(&section.nodes, lists, out)
+            }
+            UiNode::List(list) if list.source.starts_with("worklists.") => {
+                let request = UiListRequest {
+                    source: list.source.clone(),
+                    filter: list.filter.clone(),
+                    limit: list.limit,
+                };
+                if let Some(items) = lists.get(&request.cache_key()) {
+                    out.extend(items.items.iter().take(12).cloned().map(|item| {
+                        HarnessWorkItemSelection {
+                            list_title: list.title.clone(),
+                            list_source: list.source.clone(),
+                            item,
+                        }
+                    }));
+                }
             }
             _ => {}
         }
@@ -309,6 +356,7 @@ pub fn render_harness_screen(
     screen_indices: &BTreeMap<String, usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    selected_work_item_id: Option<&str>,
 ) {
     let Some(app) = app else {
         frame.render_widget(empty_panel("Harness", "No harness UI apps declared"), area);
@@ -338,6 +386,7 @@ pub fn render_harness_screen(
         &mut lines,
         0,
         max_width,
+        selected_work_item_id,
     );
     frame.render_widget(panel("Screen", lines), area);
 }
@@ -349,6 +398,7 @@ fn render_nodes(
     lines: &mut Vec<Line<'static>>,
     depth: usize,
     max_width: usize,
+    selected_work_item_id: Option<&str>,
 ) {
     for node in nodes {
         match node {
@@ -365,6 +415,7 @@ fn render_nodes(
                     lines,
                     depth + 1,
                     max_width,
+                    selected_work_item_id,
                 );
             }
             UiNode::Action(action) => {
@@ -379,9 +430,15 @@ fn render_nodes(
                     },
                 ));
             }
-            UiNode::List(list) => {
-                render_list(list, lists, requested_lists, lines, depth, max_width)
-            }
+            UiNode::List(list) => render_list(
+                list,
+                lists,
+                requested_lists,
+                lines,
+                depth,
+                max_width,
+                selected_work_item_id,
+            ),
             UiNode::Form(form) => render_form(form, lines, depth),
             UiNode::Activity(activity) => {
                 render_activity(activity, lists, requested_lists, lines, depth)
@@ -408,6 +465,7 @@ fn render_list(
     lines: &mut Vec<Line<'static>>,
     depth: usize,
     max_width: usize,
+    selected_work_item_id: Option<&str>,
 ) {
     let mut meta = vec![list.source.clone()];
     if let Some(intent) = &list.intent {
@@ -452,7 +510,14 @@ fn render_list(
     };
     let key = request.cache_key();
     match lists.get(&key) {
-        Some(items) => render_work_items(list, items, lines, depth + 1, max_width),
+        Some(items) => render_work_items(
+            list,
+            items,
+            lines,
+            depth + 1,
+            max_width,
+            selected_work_item_id,
+        ),
         None if requested_lists.contains(&key) => lines.push(indent_line(
             depth + 1,
             "Loading list data...".to_string(),
@@ -473,6 +538,7 @@ fn render_work_items(
     lines: &mut Vec<Line<'static>>,
     depth: usize,
     max_width: usize,
+    selected_work_item_id: Option<&str>,
 ) {
     if items.items.is_empty() {
         lines.push(indent_line(depth, "No items".to_string(), theme::muted()));
@@ -500,10 +566,17 @@ fn render_work_items(
             .iter()
             .map(|field| work_item_field(item, field))
             .collect::<Vec<_>>();
+        let selected = selected_work_item_id.is_some_and(|selected_id| {
+            selected_id == item.public_id || selected_id.parse::<i64>().ok() == Some(item.id)
+        });
         lines.push(indent_line(
             depth,
             table_row(&values, &widths),
-            theme::base(),
+            if selected {
+                theme::selected()
+            } else {
+                theme::base()
+            },
         ));
     }
     if items.items.len() > 12 {
@@ -1228,6 +1301,58 @@ mod tests {
     }
 
     #[test]
+    fn work_item_selections_follow_visible_worklist_list_nodes() {
+        let list = UiListNode {
+            id: Some("recent-release-work".to_string()),
+            title: "Recent Release Work".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: Vec::new(),
+            sort: Vec::new(),
+            limit: Some(8),
+            intent: Some("tasks".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let request = UiListRequest {
+            source: list.source.clone(),
+            filter: list.filter.clone(),
+            limit: list.limit,
+        };
+        let lists = BTreeMap::from([(
+            request.cache_key(),
+            WorkItemList {
+                worklist_id: "release".to_string(),
+                items: vec![
+                    test_work_item(1, "item-1", "Ship release"),
+                    test_work_item(2, "item-2", "Approve release"),
+                ],
+            },
+        )]);
+        let nodes = vec![
+            UiNode::List(list),
+            UiNode::List(UiListNode {
+                id: Some("external".to_string()),
+                title: "External".to_string(),
+                source: "db.incidents".to_string(),
+                filter: Default::default(),
+                fields: Vec::new(),
+                sort: Vec::new(),
+                limit: None,
+                intent: None,
+                render_as: None,
+            }),
+        ];
+
+        let selections = collect_work_item_selections(&nodes, &lists);
+
+        assert_eq!(selections.len(), 2);
+        assert_eq!(selections[0].list_title, "Recent Release Work");
+        assert_eq!(selections[0].list_source, "worklists.release");
+        assert_eq!(selections[0].item.public_id, "item-1");
+        assert_eq!(selections[1].item.title, "Approve release");
+    }
+
+    #[test]
     fn collect_actions_preserves_form_metadata_for_terminal_editing() {
         let registry = UiRegistry::from_messages([
             UiIntentMessage::new(UiIntent::App(UiAppIntent {
@@ -1372,5 +1497,37 @@ mod tests {
                 .expect_err("integer error")
                 .contains("Count")
         );
+    }
+
+    fn test_work_item(id: i64, public_id: &str, title: &str) -> WorkItemDetail {
+        WorkItemDetail {
+            id,
+            public_id: public_id.to_string(),
+            worklist_id: "release".to_string(),
+            parent_id: None,
+            title: title.to_string(),
+            kind: "approval".to_string(),
+            prompt: None,
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            status: "pending".to_string(),
+            paused: false,
+            pause_reason: None,
+            pause_until_unix_ms: None,
+            priority: 10,
+            after: None,
+            metadata: Some(json!({ "release": "2026.06" })),
+            claim_agent_id: None,
+            claim_session_id: None,
+            claim_execution_id: None,
+            claim_heartbeat_unix_ms: None,
+            claimed_at: None,
+            completed_at: None,
+            failure_reason: None,
+            created_at: "2026-06-18T00:00:00Z".to_string(),
+            updated_at: "2026-06-18T00:00:00Z".to_string(),
+        }
     }
 }

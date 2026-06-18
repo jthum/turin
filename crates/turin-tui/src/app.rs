@@ -63,13 +63,15 @@ impl TabKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HarnessFocus {
     Navigation,
+    Items,
     Actions,
 }
 
 impl HarnessFocus {
     fn next(self) -> Self {
         match self {
-            Self::Navigation => Self::Actions,
+            Self::Navigation => Self::Items,
+            Self::Items => Self::Actions,
             Self::Actions => Self::Navigation,
         }
     }
@@ -77,6 +79,7 @@ impl HarnessFocus {
     fn label(self) -> &'static str {
         match self {
             Self::Navigation => "navigation",
+            Self::Items => "items",
             Self::Actions => "actions",
         }
     }
@@ -143,6 +146,7 @@ pub struct TuiApp {
     ui_screen_indices: BTreeMap<String, usize>,
     ui_nav_indices: BTreeMap<String, usize>,
     ui_action_index: usize,
+    ui_item_index: usize,
     harness_focus: HarnessFocus,
     task_index: usize,
     event_index: usize,
@@ -171,6 +175,7 @@ impl TuiApp {
             ui_screen_indices: BTreeMap::new(),
             ui_nav_indices: BTreeMap::new(),
             ui_action_index: 0,
+            ui_item_index: 0,
             harness_focus: HarnessFocus::Navigation,
             task_index: 0,
             event_index: 0,
@@ -287,12 +292,14 @@ impl TuiApp {
             KeyCode::Char(']') if self.tab == TabKind::Harness => {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), 1);
                 self.ui_action_index = 0;
+                self.ui_item_index = 0;
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char('[') if self.tab == TabKind::Harness => {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), -1);
                 self.ui_action_index = 0;
+                self.ui_item_index = 0;
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
@@ -410,6 +417,12 @@ impl TuiApp {
             TabKind::Overview => {}
             TabKind::Harness => match self.harness_focus {
                 HarnessFocus::Navigation => self.move_harness_nav(delta),
+                HarnessFocus::Items => {
+                    let items = self.current_harness_work_items();
+                    if !items.is_empty() {
+                        self.ui_item_index = offset_index(self.ui_item_index, items.len(), delta);
+                    }
+                }
                 HarnessFocus::Actions => {
                     let actions = self.current_harness_actions();
                     if actions.is_empty() {
@@ -444,6 +457,7 @@ impl TuiApp {
             .insert(app.id.clone(), offset_index(current, screen_count, delta));
         self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
+        self.ui_item_index = 0;
     }
 
     fn activate_selection(&mut self) -> Result<()> {
@@ -452,6 +466,15 @@ impl TuiApp {
         }
         if self.harness_focus == HarnessFocus::Navigation {
             self.open_selected_harness_nav()?;
+            return Ok(());
+        }
+        if self.harness_focus == HarnessFocus::Items {
+            if let Some(selection) = self.selected_harness_work_item() {
+                self.dashboard.record_info(format!(
+                    "Selected work item '{}' from {}",
+                    selection.item.title, selection.list_title
+                ));
+            }
             return Ok(());
         }
         let Some(action) = self
@@ -520,6 +543,7 @@ impl TuiApp {
 
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.ui_action_index = 0;
+        self.ui_item_index = 0;
         self.request_current_harness_lists(false)
     }
 
@@ -810,6 +834,22 @@ impl TuiApp {
             .unwrap_or_default()
     }
 
+    fn current_harness_work_items(&self) -> Vec<harness_ui::HarnessWorkItemSelection> {
+        let Some(app) = self.selected_ui_app() else {
+            return Vec::new();
+        };
+        let screen_index = self.selected_screen_index(&app);
+        harness_ui::screen_at(&app, screen_index)
+            .map(|screen| harness_ui::collect_work_item_selections(&screen.nodes, &self.ui_lists))
+            .unwrap_or_default()
+    }
+
+    fn selected_harness_work_item(&self) -> Option<harness_ui::HarnessWorkItemSelection> {
+        self.current_harness_work_items()
+            .get(self.ui_item_index)
+            .cloned()
+    }
+
     fn request_current_harness_lists(&mut self, force: bool) -> Result<()> {
         for request in self.current_harness_list_requests() {
             self.request_ui_list(request, force)?;
@@ -971,6 +1011,7 @@ impl TuiApp {
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.harness_focus = focus;
         self.ui_action_index = action_index;
+        self.ui_item_index = 0;
         self.sync_harness_nav_to_screen();
         if let Err(err) = self.request_current_harness_lists(false) {
             self.dashboard
@@ -989,6 +1030,8 @@ impl TuiApp {
             .min(self.dashboard.recent_events.len().saturating_sub(1));
         let action_count = self.current_harness_actions().len();
         self.ui_action_index = self.ui_action_index.min(action_count.saturating_sub(1));
+        let item_count = self.current_harness_work_items().len();
+        self.ui_item_index = self.ui_item_index.min(item_count.saturating_sub(1));
         if let Some(app) = self.selected_ui_app() {
             let items = harness_ui::collect_nav_items(&app);
             if items.is_empty() {
@@ -1139,6 +1182,10 @@ impl TuiApp {
     }
 
     fn render_harness(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let selected_item = self.selected_harness_work_item();
+        let selected_item_id = selected_item
+            .as_ref()
+            .map(|selection| selection.item.public_id.as_str());
         let columns = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -1155,6 +1202,7 @@ impl TuiApp {
             &self.ui_screen_indices,
             &self.ui_lists,
             &self.requested_ui_lists,
+            selected_item_id,
         );
         self.render_harness_inspector(frame, columns[2]);
     }
@@ -1263,16 +1311,35 @@ impl TuiApp {
             .map(|screen| screen.title.as_str())
             .unwrap_or("No screen");
         let actions = self.current_harness_actions();
+        let work_items = self.current_harness_work_items();
 
         let mut lines = vec![
             kv_line("Screen", screen_title),
             kv_line("Focus", self.harness_focus.label()),
             kv_line("Screens", app.screens.len().to_string()),
             kv_line("Menus", app.menus.len().to_string()),
+            kv_line("Items", work_items.len().to_string()),
             kv_line("Actions", actions.len().to_string()),
             Line::from(""),
-            Line::from(Span::styled("Actions", theme::title())),
+            Line::from(Span::styled("Selected Item", theme::title())),
         ];
+
+        if let Some(selection) = work_items.get(self.ui_item_index) {
+            lines.extend(work_item_selection_lines(
+                selection,
+                self.harness_focus == HarnessFocus::Items,
+            ));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "No loaded worklist rows on this screen",
+                theme::muted(),
+            )));
+        }
+
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled("Actions", theme::title())),
+        ]);
 
         if actions.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -1313,7 +1380,7 @@ impl TuiApp {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "f focus  enter open/run  h/l screen",
+            "f focus  j/k move  enter open/select/run  h/l screen",
             theme::muted(),
         )));
         frame.render_widget(panel("Inspector", lines), area);
@@ -1408,6 +1475,8 @@ impl TuiApp {
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let fallback = if self.active_form.is_some() {
             "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
+        } else if self.tab == TabKind::Harness {
+            "Harness: f focus nav/items/actions  j/k move  Enter open/select/run  r refresh  ? help"
         } else {
             "Tab/←/→ tabs  f focus  j/k move  Enter open/run  r refresh  ? help  q quit"
         };
@@ -1434,11 +1503,14 @@ impl TuiApp {
             Line::from(Span::styled("Keyboard", theme::title())),
             Line::from(""),
             kv_line("Tab / ← →", "switch workspace"),
-            kv_line("f", "cycle harness focus"),
+            kv_line("f", "cycle harness focus: navigation, items, actions"),
             kv_line("j / k", "move selection"),
             kv_line("[ / ]", "switch harness app"),
             kv_line("h / l", "switch harness screen"),
-            kv_line("Enter", "open selected nav item or run selected action"),
+            kv_line(
+                "Enter",
+                "open selected nav item, select item, or run action",
+            ),
             kv_line("r", "refresh current view"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
@@ -1566,6 +1638,48 @@ fn kv_line(label: impl Into<String>, value: impl Into<String>) -> Line<'static> 
         Span::styled(format!("{:<14}", label.into()), theme::muted()),
         Span::styled(value.into(), theme::base()),
     ])
+}
+
+fn work_item_selection_lines(
+    selection: &harness_ui::HarnessWorkItemSelection,
+    focused: bool,
+) -> Vec<Line<'static>> {
+    let marker = if focused { "● " } else { "  " };
+    let style = if focused {
+        theme::selected()
+    } else {
+        theme::base()
+    };
+    let item = &selection.item;
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(marker, style),
+            Span::styled(truncate(&item.title, 34), style),
+        ]),
+        kv_line("List", selection.list_title.clone()),
+        kv_line("Source", selection.list_source.clone()),
+        kv_line(
+            "State",
+            format!(
+                "{} / {} / priority {}",
+                item.status, item.kind, item.priority
+            ),
+        ),
+        kv_line("Item", item.public_id.clone()),
+    ];
+    if let Some(agent_id) = item.claim_agent_id.as_ref() {
+        lines.push(kv_line("Claimed by", agent_id.clone()));
+    }
+    if let Some(reason) = item.failure_reason.as_ref() {
+        lines.push(Line::from(Span::styled(
+            format!("Failure: {}", truncate(reason, 38)),
+            theme::danger(),
+        )));
+    }
+    if let Some(metadata) = item.metadata.as_ref() {
+        lines.push(kv_line("Metadata", json_preview(metadata, 90)));
+    }
+    lines
 }
 
 fn task_detail_lines(task: &TaskStatus) -> Vec<Line<'static>> {
