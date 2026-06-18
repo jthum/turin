@@ -39,8 +39,8 @@ Core rule:
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | Browser-local drafts with required fields, options, and typed scalar coercion. | Rich control fidelity remains client-specific. |
 | `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Worklist-backed recent activity; unsupported adapters show metadata. | Uses cached/loaded `worklists.*` data for now, not a live event query. |
 | `detail` | Worklist-backed snapshot or explicit item detail, including confirmed item-action buttons when available; unsupported adapters show metadata. | Compact worklist-backed snapshot or explicit item detail, including confirmed item-action dispatch when available; unsupported adapters show metadata. | Worklist-backed snapshot/detail, including confirmed item-action buttons when available; unsupported adapters show metadata. | Without `item_id`, clients show a bounded worklist snapshot. |
-| `report` | Cast report section with lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Needs shared data/query semantics before rich rendering. |
-| `chart` | Cast report/chart section with lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | `intent` and `as` remain advisory. |
+| `report` | Cast report section with lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | App/TUI share stateless worklist derivation helpers; richer query semantics remain future work. |
+| `chart` | Cast report/chart section with lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | App/TUI share stateless grouping semantics; `intent` and `as` remain advisory. |
 
 ## Dynamic UI Intent
 
@@ -79,8 +79,9 @@ browser shell that consumes those routes.
 
 ## Current Gaps
 
-- `report` and `chart` need shared semantics across app/TUI/web; app, TUI, and
-  web have lightweight worklist-backed summary/bar adapters only.
+- `report` and `chart` now share lightweight app/TUI derivation helpers and the
+  web shell mirrors the same status/grouping rules, but they still need a
+  fuller shared query/data semantics layer before rich rendering.
 - List data loading only supports worklist sources.
 - Dynamic badges currently render on navigation targets; node-level badge
   placement remains undefined.

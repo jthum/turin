@@ -973,6 +973,8 @@ function itemKey(item) {
 }
 
 function fieldValue(item, field) {
+  if (field === "id" || field === "public_id") return itemKey(item);
+  if (field === "internal_id") return String(item.id);
   if (item[field] !== undefined && item[field] !== null) return scalarLabel(item[field]);
   if (item.metadata?.[field] !== undefined && item.metadata[field] !== null) {
     return scalarLabel(item.metadata[field]);
@@ -985,7 +987,8 @@ function reportMetrics(items) {
   return [
     { label: "Total", value: items.length },
     { label: "Pending", value: counts.pending || 0 },
-    { label: "Completed", value: counts.completed || 0 },
+    { label: "Claimed", value: counts.claimed || 0 },
+    { label: "Done", value: counts.done || 0 },
     { label: "Failed", value: counts.failed || 0 },
   ];
 }

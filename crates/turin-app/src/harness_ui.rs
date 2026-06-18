@@ -7,7 +7,10 @@ use turin_daemon_protocol::{
     UiMenuItem, UiNode, UiNoticeLevel, UiReportNode, UiSectionNode, UiTextNode, WorkItemDetail,
     WorkItemList,
 };
-use turin_ui_core::{UiAppRecord, UiListRequest};
+use turin_ui_core::{
+    UiAppRecord, UiListRequest, work_item_field_label, work_item_key, worklist_chart_group_field,
+    worklist_group_counts, worklist_status_counts,
+};
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
 
@@ -466,7 +469,7 @@ fn render_work_items(
                         );
                     });
                 } else {
-                    row.text(work_item_field(item, field));
+                    row.text(truncate_for_list(&work_item_field_label(item, field), 80));
                 }
             }
         });
@@ -538,7 +541,7 @@ fn render_worklist_snapshot(
     items: &WorkItemList,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    let counts = status_counts(items);
+    let counts = worklist_status_counts(items);
 
     ui.horizontal_wrapped(|ui| {
         ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
@@ -1009,7 +1012,7 @@ fn render_worklist_report(
     items: &WorkItemList,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    let counts = status_counts(items);
+    let counts = worklist_status_counts(items);
     ui.horizontal_wrapped(|ui| {
         ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
         ui.add(cast::Badge::new(format!("{} pending", counts.pending)).intent(cast::Intent::Info));
@@ -1037,8 +1040,8 @@ fn render_worklist_report(
 }
 
 fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkItemList) {
-    let field = chart_group_field(chart.intent.as_deref());
-    let counts = grouped_counts(items, field);
+    let field = worklist_chart_group_field(chart.intent.as_deref());
+    let counts = worklist_group_counts(items, field);
     if counts.is_empty() {
         ui.label("No chart data yet.");
         return;
@@ -1067,14 +1070,6 @@ fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkIte
     });
 }
 
-fn chart_group_field(intent: Option<&str>) -> &'static str {
-    match intent {
-        Some("kind_breakdown") => "kind",
-        Some("priority_breakdown") => "priority",
-        _ => "status",
-    }
-}
-
 fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
     if field == "status" {
         status_intent(label)
@@ -1083,42 +1078,6 @@ fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
     } else {
         cast::Intent::Info
     }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct WorklistStatusCounts {
-    pending: usize,
-    claimed: usize,
-    done: usize,
-    failed: usize,
-}
-
-fn status_counts(items: &WorkItemList) -> WorklistStatusCounts {
-    let mut counts = WorklistStatusCounts::default();
-    for item in &items.items {
-        match item.status.as_str() {
-            "pending" => counts.pending += 1,
-            "claimed" => counts.claimed += 1,
-            "done" => counts.done += 1,
-            "failed" => counts.failed += 1,
-            _ => {}
-        }
-    }
-    counts
-}
-
-fn grouped_counts(items: &WorkItemList, field: &str) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    for item in &items.items {
-        let label = work_item_field(item, field);
-        let label = if label.is_empty() {
-            "unknown".to_string()
-        } else {
-            label
-        };
-        *counts.entry(label).or_insert(0) += 1;
-    }
-    counts
 }
 
 fn field_label(field: &str) -> String {
@@ -1144,48 +1103,4 @@ fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> 
             })
         })
         .unwrap_or(0)
-}
-
-fn work_item_key(item: &WorkItemDetail) -> String {
-    if item.public_id.is_empty() {
-        item.id.to_string()
-    } else {
-        item.public_id.clone()
-    }
-}
-
-fn work_item_field(item: &WorkItemDetail, field: &str) -> String {
-    match field {
-        "id" => item.id.to_string(),
-        "public_id" => item.public_id.clone(),
-        "worklist_id" => item.worklist_id.clone(),
-        "parent_id" => item.parent_id.clone().unwrap_or_default(),
-        "title" => item.title.clone(),
-        "kind" => item.kind.clone(),
-        "status" => item.status.clone(),
-        "paused" => item.paused.to_string(),
-        "priority" => item.priority.to_string(),
-        "claim_agent_id" | "agent" => item.claim_agent_id.clone().unwrap_or_default(),
-        "pause_reason" => item.pause_reason.clone().unwrap_or_default(),
-        "prompt" => item.prompt.clone().unwrap_or_default(),
-        other => item
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get(other))
-            .map(value_preview)
-            .unwrap_or_default(),
-    }
-}
-
-fn value_preview(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::String(value) => truncate_for_list(value, 80),
-        Value::Array(_) | Value::Object(_) => truncate_for_list(
-            &serde_json::to_string(value).unwrap_or_else(|_| String::new()),
-            80,
-        ),
-    }
 }

@@ -40,6 +40,7 @@ All clients can talk to:
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation
   suggestions
 - dynamic navigation badges and worklist-backed report/chart summaries
+  derived through shared stateless worklist helpers
 
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable

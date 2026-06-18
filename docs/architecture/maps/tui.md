@@ -71,7 +71,8 @@ and `turin-daemon-protocol`.
   worklist data. They are not live queries, and they must remain client-local
   views over existing control-plane data.
 - Worklist-backed `report` and `chart` nodes render lightweight terminal
-  summaries from bounded cached worklist data. This is a client adapter, not a
+  summaries from bounded cached worklist data using stateless worklist
+  derivation helpers from `turin-ui-core`. This is still a client adapter, not a
   shared analytics/query semantics layer.
 - Form nodes render as editable terminal modals. Unsupported rich form controls
   should degrade to text/option/boolean editing rather than forcing renderer

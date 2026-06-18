@@ -240,6 +240,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("selectedListItems"));
     assert!(js.contains("selectedListItem"));
     assert!(js.contains("aria-selected"));
+    assert!(js.contains("counts.done"));
+    assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(css.contains(".list-selection"));
     assert!(css.contains(".list-row"));
 
