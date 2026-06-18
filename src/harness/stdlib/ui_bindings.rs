@@ -366,10 +366,8 @@ fn install_node_methods(lua: &Lua, proxy: &Table) -> LuaResult<()> {
         lua.create_function(
             |lua, (container, title, opts): (Table, String, Option<Table>)| {
                 let node = source_node(lua, "list", title, opts.as_ref())?;
-                if option_string(opts.as_ref(), "source")?.is_none()
-                    && let Some(from) = option_string(opts.as_ref(), "from")?
-                {
-                    node.set("source", format!("worklists.{from}"))?;
+                if let Some(source) = node.get::<Option<String>>("source")? {
+                    node.set("source", normalize_worklist_source(&source))?;
                 }
                 if node.get::<Value>("intent")?.is_nil() {
                     node.set("intent", "tasks")?;
@@ -510,6 +508,14 @@ fn source_node(lua: &Lua, kind: &str, title: String, opts: Option<&Table>) -> Lu
         }
     }
     Ok(node)
+}
+
+fn normalize_worklist_source(source: &str) -> String {
+    if source.starts_with("worklists.") {
+        source.to_string()
+    } else {
+        format!("worklists.{source}")
+    }
 }
 
 fn push_opens_with(lua: &Lua, app_id: &str, screen_id: String) -> LuaResult<()> {

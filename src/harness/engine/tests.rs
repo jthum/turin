@@ -316,6 +316,55 @@ fn test_ui_release_operator_example_loads() {
 }
 
 #[test]
+fn test_ui_worklist_sugar_normalizes_bare_and_prefixed_sources() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("ui.lua"),
+        r#"
+            local app = ui.app("Release Operator", { id = "release" })
+
+            app:home("Release Desk", function(screen)
+                screen:worklist("Bare From", { from = "release" })
+                screen:worklist("Prefixed From", { from = "worklists.release" })
+                screen:worklist("Bare Source", { source = "release" })
+                screen:worklist("Prefixed Source", { source = "worklists.release" })
+            end)
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let intents = engine.ui_intents().unwrap();
+    let screen = intents
+        .iter()
+        .find_map(|message| match &message.intent {
+            turin_daemon_protocol::UiIntent::Screen(screen) => Some(screen),
+            _ => None,
+        })
+        .expect("screen intent");
+    let sources = screen
+        .nodes
+        .iter()
+        .map(|node| match node {
+            turin_daemon_protocol::UiNode::List(list) => list.source.as_str(),
+            other => panic!("expected list node, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        sources,
+        vec![
+            "worklists.release",
+            "worklists.release",
+            "worklists.release",
+            "worklists.release"
+        ]
+    );
+}
+
+#[test]
 fn test_ui_dynamic_intents_are_collected_from_hooks() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

@@ -329,6 +329,9 @@ Current behavior:
 - `app:home(...)` is sugar for a `home` screen plus default screen intent
 - `screen:list(...)` is the generic collection primitive
 - `screen:worklist(...)` is DX sugar over `screen:list(...)` with `intent = "tasks"`
+- `screen:worklist(...)` normalizes bare names and explicit semantic sources:
+  `from = "release"` and `from = "worklists.release"` both become
+  `worklists.release`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
 - current clients load `worklists.*` sources for lists, activity, detail,
   reports, and charts; other sources should remain visible with explicit

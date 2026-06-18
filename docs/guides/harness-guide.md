@@ -625,7 +625,7 @@ end)
 app:home("Release Desk", function(screen)
   screen:worklist("Pending Approvals", {
     id = "pending-approvals",
-    from = "worklists.release",
+    from = "release",
     where = { kind = "approval", status = "pending" },
     fields = { "title", "priority", "status" },
     intent = "approval",
@@ -651,6 +651,9 @@ Useful rules:
 
 - `screen:list(...)` is the generic collection primitive; `screen:worklist(...)`
   is DX sugar for worklist-backed lists.
+- `screen:worklist(...)` accepts either a bare worklist name such as
+  `from = "release"` or an explicit semantic source such as
+  `from = "worklists.release"`; both resolve to `worklists.release`.
 - `intent` and `as` are advisory rendering hints. A desktop client may render
   cards or sheets, while the TUI may render the same data as compact tables.
 - UI clients own local view state such as selected screen, selected row, form
