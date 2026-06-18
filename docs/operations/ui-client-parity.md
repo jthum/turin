@@ -25,7 +25,7 @@ Core rule:
 | `app` | Selectable harness app cards/list. | Selectable harness app navigation. | App selector in the browser shell and `/api/apps`. | Multiple apps are allowed; client state remains local. |
 | `screen` | Screen tabs within selected app. | Screen navigation plus flattened menu entries. | Screen navigation in shell and `/api/apps/{app_id}`. | Default screen comes from `opens_with`. |
 | `menu` | Menu groups and nested menu entries. | Flattened terminal navigation with indentation. | Nested menu navigation in the shell. | Menus are navigation intent, not layout. |
-| `pane` | Rendered as an app-local modal/sheet when shown. | Rendered as a terminal-local overlay with pane-local action selection when shown. | Exposed through API and rendered as a browser-local overlay when shown. | Pane state remains client-local. |
+| `pane` | Rendered as an app-local modal/sheet when shown. | Rendered as a terminal-local overlay with pane-local item/action selection when shown. | Exposed through API and rendered as a browser-local overlay when shown. | Pane state remains client-local. |
 
 ## Node Rendering
 
@@ -88,9 +88,8 @@ browser shell that consumes those routes.
 - TUI item selection is local to visible compact table rows; selected item
   actions can be queued for confirmation, and page/boundary keys now work
   within the focused region, but richer table widgets can still improve.
-- TUI pane overlays support pane-local action/form selection; pane-local
-  work-item selection remains future work if the terminal interaction model
-  needs it.
+- TUI pane overlays support pane-local item/action/form selection using
+  terminal-local indices separate from screen focus.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.
 - Unsupported data sources remain visible in app, TUI, and web clients with

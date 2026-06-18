@@ -313,7 +313,7 @@ The TUI renders harness UI contracts semantically:
 - unsupported list/detail/activity sources remain visible with source metadata
 - shown panes render as terminal overlays, load any visible worklist-backed
   nodes through the same cache/invalidation path as screens, and support
-  pane-local action/form selection with confirmation when needed
+  pane-local item/action/form selection with confirmation when needed
 
 ## Lightweight Footprint Check
 
@@ -348,7 +348,7 @@ lean and to notice accidental source or binary growth before it becomes normal.
 - `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
   to single-value text editing for now.
 - `turin-tui` work-item selection is local to visible compact list rows.
-- `turin-tui` pane overlays support pane-local actions, but pane-local work-item
-  selection is still not a separate focus region.
+- `turin-tui` pane overlays use pane-local item/action focus separate from the
+  main screen focus.
 - `turin-app` remains the richer graphical surface while the TUI proves the
   lean terminal abstraction.

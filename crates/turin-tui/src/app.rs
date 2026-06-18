@@ -68,6 +68,12 @@ enum HarnessFocus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneFocus {
+    Items,
+    Actions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectionEdge {
     Start,
     End,
@@ -106,6 +112,38 @@ impl HarnessFocus {
     fn label(self) -> &'static str {
         match self {
             Self::Navigation => "navigation",
+            Self::Items => "items",
+            Self::Actions => "actions",
+        }
+    }
+}
+
+impl PaneFocus {
+    fn next_available(self, has_items: bool, has_actions: bool) -> Self {
+        let candidate = match self {
+            Self::Items => Self::Actions,
+            Self::Actions => Self::Items,
+        };
+        if candidate.is_available(has_items, has_actions) {
+            candidate
+        } else if self.is_available(has_items, has_actions) {
+            self
+        } else if has_items {
+            Self::Items
+        } else {
+            Self::Actions
+        }
+    }
+
+    fn is_available(self, has_items: bool, has_actions: bool) -> bool {
+        match self {
+            Self::Items => has_items,
+            Self::Actions => has_actions,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
             Self::Items => "items",
             Self::Actions => "actions",
         }
@@ -173,6 +211,8 @@ pub struct TuiApp {
     ui_screen_indices: BTreeMap<String, usize>,
     ui_nav_indices: BTreeMap<String, usize>,
     active_pane_id: Option<String>,
+    ui_pane_focus: PaneFocus,
+    ui_pane_item_index: usize,
     ui_pane_action_index: usize,
     ui_action_index: usize,
     ui_item_index: usize,
@@ -204,6 +244,8 @@ impl TuiApp {
             ui_screen_indices: BTreeMap::new(),
             ui_nav_indices: BTreeMap::new(),
             active_pane_id: None,
+            ui_pane_focus: PaneFocus::Items,
+            ui_pane_item_index: 0,
             ui_pane_action_index: 0,
             ui_action_index: 0,
             ui_item_index: 0,
@@ -404,32 +446,37 @@ impl TuiApp {
                 self.request_current_harness_lists(true)?;
                 Ok(TuiSignal::Continue)
             }
+            KeyCode::Char('f') => {
+                self.cycle_pane_focus();
+                self.clamp_selection();
+                Ok(TuiSignal::Continue)
+            }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.move_pane_action(1);
+                self.move_pane_selection(1);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.move_pane_action(-1);
+                self.move_pane_selection(-1);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::PageDown => {
-                self.move_pane_action_page(SELECTION_PAGE_SIZE);
+                self.move_pane_selection_page(SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::PageUp => {
-                self.move_pane_action_page(-SELECTION_PAGE_SIZE);
+                self.move_pane_selection_page(-SELECTION_PAGE_SIZE);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Home => {
-                self.move_pane_action_to_edge(SelectionEdge::Start);
+                self.move_pane_selection_to_edge(SelectionEdge::Start);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::End => {
-                self.move_pane_action_to_edge(SelectionEdge::End);
+                self.move_pane_selection_to_edge(SelectionEdge::End);
                 Ok(TuiSignal::Continue)
             }
             KeyCode::Enter => {
-                self.activate_pane_action()?;
+                self.activate_pane_selection()?;
                 Ok(TuiSignal::Continue)
             }
             _ => Ok(TuiSignal::Continue),
@@ -590,22 +637,56 @@ impl TuiApp {
         }
     }
 
-    fn move_pane_action(&mut self, delta: isize) {
-        let actions = self.current_pane_actions();
-        if !actions.is_empty() {
-            self.ui_pane_action_index =
-                offset_index(self.ui_pane_action_index, actions.len(), delta);
+    fn cycle_pane_focus(&mut self) {
+        let has_items = !self.current_pane_work_items().is_empty();
+        let has_actions = !self.current_pane_actions().is_empty();
+        self.ui_pane_focus = self.ui_pane_focus.next_available(has_items, has_actions);
+    }
+
+    fn move_pane_selection(&mut self, delta: isize) {
+        match self.ui_pane_focus {
+            PaneFocus::Items => {
+                let items = self.current_pane_work_items();
+                if !items.is_empty() {
+                    self.ui_pane_item_index =
+                        offset_index(self.ui_pane_item_index, items.len(), delta);
+                }
+            }
+            PaneFocus::Actions => {
+                let actions = self.current_pane_actions();
+                if !actions.is_empty() {
+                    self.ui_pane_action_index =
+                        offset_index(self.ui_pane_action_index, actions.len(), delta);
+                }
+            }
         }
     }
 
-    fn move_pane_action_page(&mut self, delta: isize) {
-        let actions = self.current_pane_actions();
-        self.ui_pane_action_index = page_index(self.ui_pane_action_index, actions.len(), delta);
+    fn move_pane_selection_page(&mut self, delta: isize) {
+        match self.ui_pane_focus {
+            PaneFocus::Items => {
+                let items = self.current_pane_work_items();
+                self.ui_pane_item_index = page_index(self.ui_pane_item_index, items.len(), delta);
+            }
+            PaneFocus::Actions => {
+                let actions = self.current_pane_actions();
+                self.ui_pane_action_index =
+                    page_index(self.ui_pane_action_index, actions.len(), delta);
+            }
+        }
     }
 
-    fn move_pane_action_to_edge(&mut self, edge: SelectionEdge) {
-        let actions = self.current_pane_actions();
-        self.ui_pane_action_index = edge_index(actions.len(), edge);
+    fn move_pane_selection_to_edge(&mut self, edge: SelectionEdge) {
+        match self.ui_pane_focus {
+            PaneFocus::Items => {
+                let items = self.current_pane_work_items();
+                self.ui_pane_item_index = edge_index(items.len(), edge);
+            }
+            PaneFocus::Actions => {
+                let actions = self.current_pane_actions();
+                self.ui_pane_action_index = edge_index(actions.len(), edge);
+            }
+        }
     }
 
     fn move_harness_screen(&mut self, delta: isize) {
@@ -740,6 +821,36 @@ impl TuiApp {
         self.request_current_harness_lists(false)
     }
 
+    fn activate_pane_selection(&mut self) -> Result<()> {
+        match self.ui_pane_focus {
+            PaneFocus::Items => self.activate_pane_work_item(),
+            PaneFocus::Actions => self.activate_pane_action(),
+        }
+    }
+
+    fn activate_pane_work_item(&mut self) -> Result<()> {
+        if let Some(selection) = self.selected_pane_work_item() {
+            if let Some(app) = self.selected_ui_app()
+                && let Some(action) = pending_action_from_work_item(&app, &selection)
+            {
+                self.dashboard.record_info(format!(
+                    "Work item action '{}' requires confirmation before running",
+                    action.action
+                ));
+                self.pending_action = Some(action);
+            } else {
+                self.dashboard.record_info(format!(
+                    "Selected pane work item '{}' from {}",
+                    selection.item.title, selection.list_title
+                ));
+            }
+        } else {
+            self.dashboard
+                .record_info("No work item is available in this pane");
+        }
+        Ok(())
+    }
+
     fn activate_pane_action(&mut self) -> Result<()> {
         let Some(action) = self
             .current_pane_actions()
@@ -775,6 +886,8 @@ impl TuiApp {
 
     fn close_active_pane(&mut self) {
         self.active_pane_id = None;
+        self.ui_pane_focus = PaneFocus::Items;
+        self.ui_pane_item_index = 0;
         self.ui_pane_action_index = 0;
     }
 
@@ -1062,6 +1175,13 @@ impl TuiApp {
         pane_actions(&app, self.active_pane_id.as_deref())
     }
 
+    fn current_pane_work_items(&self) -> Vec<harness_ui::HarnessWorkItemSelection> {
+        let Some(app) = self.selected_ui_app() else {
+            return Vec::new();
+        };
+        pane_work_items(&app, self.active_pane_id.as_deref(), &self.ui_lists)
+    }
+
     fn current_harness_list_requests(&self) -> Vec<UiListRequest> {
         let Some(app) = self.selected_ui_app() else {
             return Vec::new();
@@ -1083,6 +1203,12 @@ impl TuiApp {
     fn selected_harness_work_item(&self) -> Option<harness_ui::HarnessWorkItemSelection> {
         self.current_harness_work_items()
             .get(self.ui_item_index)
+            .cloned()
+    }
+
+    fn selected_pane_work_item(&self) -> Option<harness_ui::HarnessWorkItemSelection> {
+        self.current_pane_work_items()
+            .get(self.ui_pane_item_index)
             .cloned()
     }
 
@@ -1186,6 +1312,8 @@ impl TuiApp {
         if app.panes.contains_key(target) {
             self.tab = TabKind::Harness;
             self.active_pane_id = Some(target.to_string());
+            self.ui_pane_focus = PaneFocus::Items;
+            self.ui_pane_item_index = 0;
             self.ui_pane_action_index = 0;
             if let Err(err) = self.request_current_harness_lists(false) {
                 self.dashboard
@@ -1296,9 +1424,24 @@ impl TuiApp {
             }
         }
         let pane_action_count = self.current_pane_actions().len();
+        let pane_item_count = self.current_pane_work_items().len();
+        self.ui_pane_item_index = self
+            .ui_pane_item_index
+            .min(pane_item_count.saturating_sub(1));
         self.ui_pane_action_index = self
             .ui_pane_action_index
             .min(pane_action_count.saturating_sub(1));
+        if self.active_pane_id.is_some()
+            && !self
+                .ui_pane_focus
+                .is_available(pane_item_count > 0, pane_action_count > 0)
+        {
+            self.ui_pane_focus = if pane_item_count > 0 {
+                PaneFocus::Items
+            } else {
+                PaneFocus::Actions
+            };
+        }
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
@@ -1469,12 +1612,19 @@ impl TuiApp {
     }
 
     fn render_active_pane(&self, frame: &mut Frame<'_>, area: Rect) {
+        let selected_item = self.selected_pane_work_item();
+        let selected_item_id = selected_item
+            .as_ref()
+            .map(|selection| selection.item.public_id.as_str());
+        let selected_action_index =
+            (self.ui_pane_focus == PaneFocus::Actions).then_some(self.ui_pane_action_index);
         harness_ui::render_harness_pane(
             frame,
             area,
             self.selected_ui_app().as_ref(),
             self.active_pane_id.as_deref(),
-            Some(self.ui_pane_action_index),
+            selected_item_id,
+            selected_action_index,
             &self.ui_lists,
             &self.requested_ui_lists,
         );
@@ -1754,27 +1904,31 @@ impl TuiApp {
 
     fn render_footer(&self, frame: &mut Frame<'_>, area: Rect) {
         let fallback = if self.active_form.is_some() {
-            "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
+            "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel".to_string()
         } else if self.active_pane_id.is_some() {
-            "Pane: j/k actions  Enter run  r refresh visible data  Esc/q close  ? help"
+            format!(
+                "Pane ({}): f focus  j/k move  Enter item action/run  r refresh  Esc/q close  ? help",
+                self.ui_pane_focus.label()
+            )
         } else if self.tab == TabKind::Harness {
-            "Harness: f focus  j/k move  PgUp/PgDn/Home/End jump  Enter open/item action/run  r refresh  ? help"
+            "Harness: f focus  j/k move  PgUp/PgDn/Home/End jump  Enter open/item action/run  r refresh  ? help".to_string()
         } else {
-            "Tab/←/→ tabs  j/k move  PgUp/PgDn/Home/End jump  Enter open/run  r refresh  ? help  q quit"
+            "Tab/←/→ tabs  j/k move  PgUp/PgDn/Home/End jump  Enter open/run  r refresh  ? help  q quit".to_string()
         };
         let info = self
             .dashboard
             .last_info
             .as_deref()
             .or(self.dashboard.last_error.as_deref())
-            .unwrap_or(fallback);
+            .unwrap_or(&fallback);
+        self.render_footer_text(frame, area, info.to_string());
+    }
+
+    fn render_footer_text(&self, frame: &mut Frame<'_>, area: Rect, text: String) {
         frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                info.to_string(),
-                theme::muted(),
-            )]))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::TOP).style(theme::base())),
+            Paragraph::new(Line::from(vec![Span::styled(text, theme::muted())]))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::TOP).style(theme::base())),
             area,
         );
     }
@@ -1799,8 +1953,12 @@ impl TuiApp {
                 "open nav item, queue selected item action, or run action",
             ),
             kv_line("r", "refresh current view"),
-            kv_line("Pane j / k", "select pane action"),
-            kv_line("Pane Enter", "run selected pane action"),
+            kv_line("Pane f", "switch pane focus between items and actions"),
+            kv_line("Pane j / k", "move selected pane item or action"),
+            kv_line(
+                "Pane Enter",
+                "queue pane item action or run selected pane action",
+            ),
             kv_line("Pane Esc / q", "close shown pane"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
@@ -2009,6 +2167,17 @@ fn pane_actions(
     pane_id
         .and_then(|pane_id| app.panes.get(pane_id))
         .map(|pane| harness_ui::collect_actions(app, &pane.nodes))
+        .unwrap_or_default()
+}
+
+fn pane_work_items(
+    app: &turin_ui_core::UiAppRecord,
+    pane_id: Option<&str>,
+    lists: &BTreeMap<String, WorkItemList>,
+) -> Vec<harness_ui::HarnessWorkItemSelection> {
+    pane_id
+        .and_then(|pane_id| app.panes.get(pane_id))
+        .map(|pane| harness_ui::collect_work_item_selections(&pane.nodes, lists))
         .unwrap_or_default()
 }
 
@@ -2438,6 +2607,56 @@ mod tests {
         assert_eq!(actions[0].params, json!({ "force": true }));
         assert!(pane_actions(&app, Some("missing")).is_empty());
         assert!(pane_actions(&app, None).is_empty());
+    }
+
+    #[test]
+    fn pane_work_items_collect_loaded_rows() {
+        let mut app = test_app();
+        let list = UiListNode {
+            id: Some("pane-list".to_string()),
+            title: "Pane List".to_string(),
+            source: "worklists.pane".to_string(),
+            filter: Default::default(),
+            fields: Vec::new(),
+            sort: Vec::new(),
+            limit: Some(5),
+            intent: Some("pane".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        app.panes.insert(
+            "notes".to_string(),
+            UiPaneIntent {
+                app_id: app.id.clone(),
+                id: "notes".to_string(),
+                title: "Notes".to_string(),
+                presentation: Some("sheet".to_string()),
+                nodes: vec![UiNode::List(list.clone())],
+            },
+        );
+        let request = UiListRequest {
+            source: list.source,
+            filter: list.filter,
+            limit: list.limit,
+        };
+        let lists = BTreeMap::from([(
+            request.cache_key(),
+            WorkItemList {
+                worklist_id: "pane".to_string(),
+                items: vec![test_work_item(Some(ScheduleActionParams {
+                    name: "release.approve".to_string(),
+                    params: Some(json!({ "item": "REL-1" })),
+                }))],
+            },
+        )]);
+
+        let items = pane_work_items(&app, Some("notes"), &lists);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].list_title, "Pane List");
+        assert_eq!(items[0].list_source, "worklists.pane");
+        assert_eq!(items[0].item.public_id, "REL-1");
+        assert!(pane_work_items(&app, Some("missing"), &lists).is_empty());
+        assert!(pane_work_items(&app, None, &lists).is_empty());
     }
 
     fn test_app() -> UiAppRecord {

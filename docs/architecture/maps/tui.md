@@ -43,8 +43,8 @@ and `turin-daemon-protocol`.
 10. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
    local TUI navigation or overlay state.
 11. Shown panes render as terminal-local overlays, reuse the visible screen/list
-   request path for any pane nodes, and can run pane-local actions/forms through
-   the same harness action path as screens.
+   request path for any pane nodes, and can select pane-local work items or run
+   pane-local actions/forms through the same harness action path as screens.
 12. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
 
 ## Invariants
@@ -81,9 +81,8 @@ and `turin-daemon-protocol`.
 - Form nodes render as editable terminal modals. Unsupported rich form controls
   should degrade to text/option/boolean editing rather than forcing renderer
   concepts into the protocol.
-- Pane targets render as terminal overlays with their own local action focus.
-  Pane action selection must not overload screen action focus, and pane-local
-  work-item focus should be added deliberately only if the terminal UX needs it.
+- Pane targets render as terminal overlays with their own local item/action
+  focus. Pane item/action selection must not overload screen item/action focus.
 - Keep keyboard behavior discoverable through the help overlay/footer.
 - Page and boundary navigation (`PageUp`, `PageDown`, `Home`, `End`) should stay
   local to the currently focused region and must not become runtime state.
@@ -129,7 +128,7 @@ The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, focus cycling that skips empty regions, local work-item selection
 with inspector detail, page/boundary navigation in focused regions, dynamic
-open/focus handling, shown pane overlays with pane-local action selection,
+open/focus handling, shown pane overlays with pane-local item/action selection,
 editable forms, worklist-backed activity/detail/report/chart surfaces, latest
 action result feedback, task and event inspectors, confirmation flow, UI
 notices, and list invalidation. Chat, search, connection profile editing, and

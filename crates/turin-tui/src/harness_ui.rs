@@ -475,6 +475,7 @@ pub fn render_harness_pane(
     area: Rect,
     app: Option<&UiAppRecord>,
     pane_id: Option<&str>,
+    selected_work_item_id: Option<&str>,
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -493,6 +494,7 @@ pub fn render_harness_pane(
         pane_panel(
             app,
             pane,
+            selected_work_item_id,
             selected_action_index,
             lists,
             requested_lists,
@@ -505,6 +507,7 @@ pub fn render_harness_pane(
 fn pane_panel(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
+    selected_work_item_id: Option<&str>,
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -515,6 +518,7 @@ fn pane_panel(
         pane_lines(
             app,
             pane,
+            selected_work_item_id,
             selected_action_index,
             lists,
             requested_lists,
@@ -526,6 +530,7 @@ fn pane_panel(
 fn pane_lines(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
+    selected_work_item_id: Option<&str>,
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
@@ -561,17 +566,22 @@ fn pane_lines(
             &mut lines,
             0,
             max_width,
-            None,
+            selected_work_item_id,
             selected_action_index,
             &mut action_index,
         );
     }
     lines.push(Line::from(""));
     let action_count = collect_actions(app, &pane.nodes).len();
-    let hint = if action_count == 0 {
-        "Esc/q closes pane"
-    } else {
+    let item_count = collect_work_item_selections(&pane.nodes, lists).len();
+    let hint = if item_count > 0 && action_count > 0 {
+        "f switches items/actions  j/k moves  Enter selects/runs  Esc/q closes pane"
+    } else if item_count > 0 {
+        "j/k selects item  Enter queues item action  Esc/q closes pane"
+    } else if action_count > 0 {
         "j/k selects pane action  Enter runs selected action  Esc/q closes pane"
+    } else {
+        "Esc/q closes pane"
     };
     lines.push(Line::from(Span::styled(hint, theme::muted())));
     lines
@@ -1850,7 +1860,15 @@ mod tests {
             },
         )]);
 
-        let text = line_text(&pane_lines(&app, &pane, None, &lists, &BTreeSet::new(), 88));
+        let text = line_text(&pane_lines(
+            &app,
+            &pane,
+            Some("REL-1"),
+            None,
+            &lists,
+            &BTreeSet::new(),
+            88,
+        ));
 
         assert!(text.contains("Release Notes  release-notes"));
         assert!(text.contains("presentation=sheet"));
@@ -1890,6 +1908,7 @@ mod tests {
         let text = line_text(&pane_lines(
             &app,
             &pane,
+            None,
             Some(1),
             &BTreeMap::new(),
             &BTreeSet::new(),
@@ -1900,6 +1919,56 @@ mod tests {
         assert!(text.contains("● Form: Defer release"));
         assert!(text.contains("j/k selects pane action"));
         assert!(text.contains("Enter runs selected action"));
+    }
+
+    #[test]
+    fn pane_lines_cover_worklist_rows_and_item_hint() {
+        let app = release_app();
+        let list = UiListNode {
+            id: Some("pane-list".to_string()),
+            title: "Pane List".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec!["title".to_string(), "status".to_string()],
+            sort: Vec::new(),
+            limit: Some(5),
+            intent: Some("pane".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: "release-list-pane".to_string(),
+            title: "Release List Pane".to_string(),
+            presentation: Some("sheet".to_string()),
+            nodes: vec![UiNode::List(list.clone())],
+        };
+        let request = UiListRequest {
+            source: list.source,
+            filter: list.filter,
+            limit: list.limit,
+        };
+        let lists = BTreeMap::from([(
+            request.cache_key(),
+            WorkItemList {
+                worklist_id: "release".to_string(),
+                items: vec![test_work_item(1, "REL-1", "Approve release")],
+            },
+        )]);
+
+        let text = line_text(&pane_lines(
+            &app,
+            &pane,
+            Some("REL-1"),
+            None,
+            &lists,
+            &BTreeSet::new(),
+            88,
+        ));
+
+        assert!(text.contains("Pane List"));
+        assert!(text.contains("Approve release"));
+        assert!(text.contains("j/k selects item"));
+        assert!(text.contains("Enter queues item action"));
     }
 
     #[test]
@@ -1916,6 +1985,7 @@ mod tests {
         let text = line_text(&pane_lines(
             &app,
             &pane,
+            None,
             None,
             &BTreeMap::new(),
             &BTreeSet::new(),
