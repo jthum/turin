@@ -28,10 +28,16 @@ list the largest shipped source files, and record release binary sizes when
 known artifacts already exist. They do not build release binaries by
 themselves.
 
-For UI client release-binary, startup, and idle-memory measurements, use the
-repeatable procedure in `docs/operations/ui-clients.md`. Keep those checks
-lightweight and outside the perf-suite binary unless the clients need a real
-automated benchmark later.
+For UI client release-binary and `--help` startup measurements, prefer the
+no-build collector:
+
+```bash
+tools/ui-client-baseline
+```
+
+For idle-memory sampling, use the repeatable procedure in
+`docs/operations/ui-clients.md`. Keep those checks lightweight and outside the
+perf-suite binary unless the clients need a real automated benchmark later.
 
 ```bash
 cargo run --manifest-path tools/perf-suite/Cargo.toml -- \

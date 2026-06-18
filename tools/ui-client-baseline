@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="."
+report_dir=".workspace/perf-reports"
+run_help=1
+binaries=()
+
+usage() {
+  cat <<'USAGE'
+Usage: tools/ui-client-baseline [options]
+
+Record existing UI client binary sizes and --help startup RSS/elapsed time
+without compiling Turin.
+
+Options:
+  --repo-root PATH       Repository root (default: .)
+  --report-dir PATH      Report output directory (default: .workspace/perf-reports)
+  --binary PATH          Binary path to record; repeatable
+  --skip-help            Record sizes only, without running --help
+  -h, --help             Show this help
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo-root)
+      repo_root="${2:?missing value for --repo-root}"
+      shift 2
+      ;;
+    --report-dir)
+      report_dir="${2:?missing value for --report-dir}"
+      shift 2
+      ;;
+    --binary)
+      binaries+=("${2:?missing value for --binary}")
+      shift 2
+      ;;
+    --skip-help)
+      run_help=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+repo_root="$(cd "$repo_root" && pwd -P)"
+report_dir_path="$repo_root/$report_dir"
+mkdir -p "$report_dir_path"
+
+stamp="$(date +%s)"
+json_path="$report_dir_path/ui-client-baseline-$stamp.json"
+md_path="$report_dir_path/ui-client-baseline-$stamp.md"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+clients_tsv="$tmp_dir/clients.tsv"
+seen_tsv="$tmp_dir/seen.tsv"
+: > "$clients_tsv"
+: > "$seen_tsv"
+
+default_binaries=(
+  "target/release/turin-tui"
+  "target/release/turin-app"
+  "target/release/turin-web"
+)
+
+all_binaries=("${default_binaries[@]}" "${binaries[@]}")
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+json_number_or_null() {
+  local value="$1"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+  else
+    printf 'null'
+  fi
+}
+
+json_string_or_null() {
+  local value="$1"
+  if [[ -n "$value" ]]; then
+    printf '"%s"' "$(json_escape "$value")"
+  else
+    printf 'null'
+  fi
+}
+
+absolute_binary_path() {
+  local binary="$1"
+  if [[ "$binary" = /* ]]; then
+    printf '%s\n' "$binary"
+  else
+    printf '%s/%s\n' "$repo_root" "$binary"
+  fi
+}
+
+relative_binary_path() {
+  local path="$1"
+  if [[ "$path" == "$repo_root/"* ]]; then
+    printf '%s\n' "${path#$repo_root/}"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+record_binary() {
+  local binary="$1"
+  local binary_path relative name exists bytes exit_code elapsed max_rss error
+  binary_path="$(absolute_binary_path "$binary")"
+  relative="$(relative_binary_path "$binary_path")"
+  if grep -Fxq "$relative" "$seen_tsv"; then
+    return
+  fi
+  printf '%s\n' "$relative" >> "$seen_tsv"
+
+  name="$(basename "$binary_path")"
+  exists=0
+  bytes=""
+  exit_code=""
+  elapsed=""
+  max_rss=""
+  error=""
+
+  if [[ -f "$binary_path" ]]; then
+    exists=1
+    bytes="$(wc -c < "$binary_path" | tr -d ' ')"
+    if [[ "$run_help" -eq 1 ]]; then
+      if [[ ! -x "$binary_path" ]]; then
+        error="not executable"
+      elif [[ ! -x /usr/bin/time ]]; then
+        error="/usr/bin/time unavailable"
+      else
+        local time_output help_stdout help_stderr
+        time_output="$tmp_dir/$name.time"
+        help_stdout="$tmp_dir/$name.stdout"
+        help_stderr="$tmp_dir/$name.stderr"
+        set +e
+        /usr/bin/time -f 'elapsed_seconds=%e max_rss_kb=%M' -o "$time_output" \
+          "$binary_path" --help > "$help_stdout" 2> "$help_stderr"
+        exit_code="$?"
+        set -e
+        if [[ -s "$time_output" ]]; then
+          local line
+          line="$(tail -n 1 "$time_output")"
+          elapsed="$(awk '
+            {
+              for (i = 1; i <= NF; i++) {
+                if ($i ~ /^elapsed_seconds=/) {
+                  sub(/^elapsed_seconds=/, "", $i)
+                  print $i
+                }
+              }
+            }
+          ' <<< "$line")"
+          max_rss="$(awk '
+            {
+              for (i = 1; i <= NF; i++) {
+                if ($i ~ /^max_rss_kb=/) {
+                  sub(/^max_rss_kb=/, "", $i)
+                  print $i
+                }
+              }
+            }
+          ' <<< "$line")"
+        else
+          error="time output missing"
+        fi
+      fi
+    fi
+  fi
+
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    "$name" "$relative" "$exists" "$bytes" "$exit_code" "$elapsed" "$max_rss" "$run_help" "$error" \
+    >> "$clients_tsv"
+}
+
+for binary in "${all_binaries[@]}"; do
+  record_binary "$binary"
+done
+
+{
+  printf '{\n'
+  printf '  "scenario": "ui-client-baseline",\n'
+  printf '  "config": {\n'
+  printf '    "repo_root": "%s",\n' "$(json_escape "$repo_root")"
+  printf '    "collector": "tools/ui-client-baseline",\n'
+  printf '    "run_help": %s,\n' "$([[ "$run_help" -eq 1 ]] && printf true || printf false)"
+  printf '    "note": "Records existing UI client binary sizes and optional --help startup elapsed/RSS. This script does not build release binaries or launch idle clients."\n'
+  printf '  },\n'
+  printf '  "clients": [\n'
+  first=1
+  while IFS='|' read -r name path exists bytes exit_code elapsed max_rss measured error; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {'
+    printf '"name":"%s",' "$(json_escape "$name")"
+    printf '"path":"%s",' "$(json_escape "$path")"
+    printf '"exists":%s,' "$([[ "$exists" -eq 1 ]] && printf true || printf false)"
+    printf '"bytes":%s,' "$(json_number_or_null "$bytes")"
+    printf '"help_startup":{'
+    printf '"measured":%s,' "$([[ "$measured" -eq 1 && "$exists" -eq 1 && -z "$error" ]] && printf true || printf false)"
+    printf '"exit_code":%s,' "$(json_number_or_null "$exit_code")"
+    printf '"elapsed_seconds":%s,' "$(json_number_or_null "$elapsed")"
+    printf '"max_rss_kb":%s,' "$(json_number_or_null "$max_rss")"
+    printf '"error":%s' "$(json_string_or_null "$error")"
+    printf '}}'
+  done < "$clients_tsv"
+  printf '\n  ]\n'
+  printf '}\n'
+} > "$json_path"
+
+{
+  printf '# UI Client Baseline\n\n'
+  printf -- '- collector: `tools/ui-client-baseline`\n'
+  printf -- '- repo_root: `%s`\n' "$repo_root"
+  printf -- '- run_help: `%s`\n\n' "$run_help"
+  printf 'This report records existing binaries only. It does not build Turin or launch idle clients.\n\n'
+  printf '| client | path | exists | bytes | help_exit | elapsed_seconds | max_rss_kb | error |\n'
+  printf '|---|---|---:|---:|---:|---:|---:|---|\n'
+  while IFS='|' read -r name path exists bytes exit_code elapsed max_rss measured error; do
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+      "$name" "$path" "$exists" "${bytes:-}" "${exit_code:-}" "${elapsed:-}" "${max_rss:-}" "${error:-}"
+  done < "$clients_tsv"
+} > "$md_path"
+
+printf 'json_report=%s\n' "${json_path#$repo_root/}"
+printf 'markdown_report=%s\n' "${md_path#$repo_root/}"

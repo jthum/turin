@@ -136,6 +136,18 @@ Use this lightweight procedure when a UI change might affect footprint,
 startup, or idle memory. Record the commit, OS, display environment, and whether
 the daemon was local or remote beside the numbers.
 
+For existing binaries, prefer the no-build UI client collector:
+
+```bash
+tools/ui-client-baseline
+```
+
+It records release-client binary sizes and `--help` startup elapsed/RSS values
+when `target/release/turin-tui`, `target/release/turin-app`, or
+`target/release/turin-web` already exist. It writes JSON and Markdown reports to
+`.workspace/perf-reports/` and never builds Turin. Use `--skip-help` when you
+only want binary sizes.
+
 Build release clients:
 
 ```bash
@@ -152,12 +164,10 @@ tools/footprint-report \
   --binary target/release/turin-web
 ```
 
-For a quick startup sanity check of the CLI entry path:
+Record release-client binary size and `--help` startup RSS/elapsed:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-tui --help >/tmp/turin-tui-help.txt
-/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-app --help >/tmp/turin-app-help.txt
-/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-web --help >/tmp/turin-web-help.txt
+tools/ui-client-baseline
 ```
 
 For idle memory, start the client against a local daemon, wait a few seconds,
