@@ -364,32 +364,35 @@ See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavio
 
 ## Operator Clients
 
-Turin also ships two operator-facing daemon clients:
+Turin also ships three operator-facing daemon clients:
 
 - `turin-tui` — lean terminal UI for overview, harness apps, tasks, and events
 - `turin-app` — native desktop shell over the same shared control layer
+- `turin-web` — thin HTTP/SSE API plus a lightweight same-origin browser shell
 
-Both clients can connect either:
+All three clients can connect either:
 
 - locally through the daemon endpoint resolved from `.turin/config.toml`
 - remotely through `turin-remote`
 
-Both clients now share:
+All three clients now share:
 
 - local and remote daemon transport
 - `.turin/ui-profiles.toml` connection-profile loading at startup
 - dashboard refreshes and event streaming through `turin-ui-core`
-- semantic harness UI contracts for screens, menus, lists, forms, actions, and
-  notices
+- semantic harness UI contracts for screens, menus, panes, lists, forms,
+  actions, reports, charts, notices, badges, focus, and refresh hints
 
 Examples:
 
 ```bash
 target/release/turin-tui --config .turin/config.toml
 target/release/turin-app --config .turin/config.toml
+target/release/turin-web --config .turin/config.toml --bind 127.0.0.1:8787
 
 target/release/turin-tui --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN
 target/release/turin-app --profile lab
+target/release/turin-web --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN --bind 127.0.0.1:8787
 ```
 
 Shared connection profiles live in `.turin/ui-profiles.toml` by convention. A copyable example is included at `examples/config/ui-profiles.toml.example`.

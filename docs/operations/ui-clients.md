@@ -209,7 +209,7 @@ target/release/turin-web --endpoint .turin/daemon.sock --bind 127.0.0.1:8787
 
 ## Remote Usage
 
-Both clients can connect through `turin-remote`.
+All three clients can connect through `turin-remote`.
 
 Using an explicit token:
 
@@ -249,13 +249,14 @@ target/release/turin-web \
 
 ## Connection Profiles
 
-Both clients can load shared connection profiles at startup.
+All three clients can load shared connection profiles at startup.
 
 By default, `--profile` reads from `.turin/ui-profiles.toml`:
 
 ```bash
 target/release/turin-tui --profile local
 target/release/turin-app --profile lab
+target/release/turin-web --profile lab --bind 127.0.0.1:8787
 ```
 
 You can also point at a different file:
@@ -263,6 +264,7 @@ You can also point at a different file:
 ```bash
 target/release/turin-tui --profiles-file path/to/ui-profiles.toml --profile local
 target/release/turin-app --profiles-file path/to/ui-profiles.toml --profile lab
+target/release/turin-web --profiles-file path/to/ui-profiles.toml --profile lab --bind 127.0.0.1:8787
 ```
 
 Example:

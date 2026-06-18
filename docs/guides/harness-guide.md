@@ -664,8 +664,9 @@ Useful rules:
   `ui.app(...)` as the default app and fail clearly if no app has been declared.
   Prefer app-scoped calls when a harness declares multiple apps.
 - Panes are useful for contextual surfaces that should not replace the active
-  screen. Current clients render shown panes as local overlays; TUI pane
-  overlays are intentionally read-only for now.
+  screen. Current clients render shown panes as local overlays. TUI panes
+  support pane-local item, action, and form selection, but pane state remains
+  terminal-local and separate from screen focus.
 - Start with one screen, one useful list, and one action or form. Add reports,
   charts, activity, detail panes, and badges only when the workflow needs them.
 
