@@ -875,15 +875,7 @@ impl TuiApp {
             return Vec::new();
         };
         let screen_index = self.selected_screen_index(&app);
-        let mut requests = harness_ui::screen_at(&app, screen_index)
-            .map(|screen| harness_ui::collect_list_requests(&screen.nodes))
-            .unwrap_or_default();
-        if let Some(pane_id) = self.active_pane_id.as_deref()
-            && let Some(pane) = app.panes.get(pane_id)
-        {
-            requests.extend(harness_ui::collect_list_requests(&pane.nodes));
-        }
-        requests
+        visible_harness_list_requests(&app, screen_index, self.active_pane_id.as_deref())
     }
 
     fn current_harness_work_items(&self) -> Vec<harness_ui::HarnessWorkItemSelection> {
@@ -1808,6 +1800,22 @@ fn pending_action_from_work_item(
     })
 }
 
+fn visible_harness_list_requests(
+    app: &turin_ui_core::UiAppRecord,
+    screen_index: usize,
+    active_pane_id: Option<&str>,
+) -> Vec<UiListRequest> {
+    let mut requests = harness_ui::screen_at(app, screen_index)
+        .map(|screen| harness_ui::collect_list_requests(&screen.nodes))
+        .unwrap_or_default();
+    if let Some(pane_id) = active_pane_id
+        && let Some(pane) = app.panes.get(pane_id)
+    {
+        requests.extend(harness_ui::collect_list_requests(&pane.nodes));
+    }
+    requests
+}
+
 fn task_detail_lines(task: &TaskStatus) -> Vec<Line<'static>> {
     let mut lines = vec![
         kv_line("Request", task.request_id.clone()),
@@ -2007,7 +2015,10 @@ fn freshness_label(freshness: DashboardFreshness) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
-    use turin_daemon_protocol::{ScheduleActionParams, UiIntentSource, WorkItemDetail};
+    use turin_daemon_protocol::{
+        ScheduleActionParams, UiIntentSource, UiListNode, UiNode, UiPaneIntent, UiScreenIntent,
+        WorkItemDetail,
+    };
     use turin_ui_core::UiAppRecord;
 
     #[test]
@@ -2099,6 +2110,63 @@ mod tests {
         assert!(text.contains("Action"));
         assert!(text.contains("release.approve"));
         assert!(text.contains("Enter queues this work-item action for confirmation"));
+    }
+
+    #[test]
+    fn visible_list_requests_include_active_pane_nodes() {
+        let mut app = test_app();
+        app.screens.insert(
+            "home".to_string(),
+            UiScreenIntent {
+                app_id: app.id.clone(),
+                id: "home".to_string(),
+                title: "Home".to_string(),
+                presentation: None,
+                nodes: vec![UiNode::List(UiListNode {
+                    id: Some("screen-list".to_string()),
+                    title: "Screen List".to_string(),
+                    source: "worklists.screen".to_string(),
+                    filter: Default::default(),
+                    fields: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(3),
+                    intent: Some("screen".to_string()),
+                    render_as: Some("table".to_string()),
+                })],
+            },
+        );
+        app.panes.insert(
+            "notes".to_string(),
+            UiPaneIntent {
+                app_id: app.id.clone(),
+                id: "notes".to_string(),
+                title: "Notes".to_string(),
+                presentation: Some("sheet".to_string()),
+                nodes: vec![UiNode::List(UiListNode {
+                    id: Some("pane-list".to_string()),
+                    title: "Pane List".to_string(),
+                    source: "worklists.pane".to_string(),
+                    filter: Default::default(),
+                    fields: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(5),
+                    intent: Some("pane".to_string()),
+                    render_as: Some("table".to_string()),
+                })],
+            },
+        );
+
+        let screen_only = visible_harness_list_requests(&app, 0, None);
+        let with_pane = visible_harness_list_requests(&app, 0, Some("notes"));
+
+        assert_eq!(screen_only.len(), 1);
+        assert_eq!(screen_only[0].source, "worklists.screen");
+        assert_eq!(screen_only[0].limit, Some(3));
+        assert_eq!(with_pane.len(), 2);
+        assert_eq!(with_pane[0].source, "worklists.screen");
+        assert_eq!(with_pane[0].limit, Some(3));
+        assert_eq!(with_pane[1].source, "worklists.pane");
+        assert_eq!(with_pane[1].limit, Some(5));
     }
 
     fn test_app() -> UiAppRecord {

@@ -486,6 +486,16 @@ fn pane_panel(
     requested_lists: &BTreeSet<String>,
     width: u16,
 ) -> Paragraph<'static> {
+    panel("Pane", pane_lines(app, pane, lists, requested_lists, width))
+}
+
+fn pane_lines(
+    app: &UiAppRecord,
+    pane: &UiPaneIntent,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    width: u16,
+) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
             Span::styled(pane.title.clone(), theme::title()),
@@ -501,19 +511,26 @@ fn pane_panel(
         lines.push(Line::from(""));
     }
     let max_width = width.saturating_sub(4) as usize;
-    render_nodes(
-        app,
-        &pane.nodes,
-        lists,
-        requested_lists,
-        &mut lines,
-        0,
-        max_width,
-        None,
-    );
+    if pane.nodes.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "This pane has no content nodes.",
+            theme::muted(),
+        )));
+    } else {
+        render_nodes(
+            app,
+            &pane.nodes,
+            lists,
+            requested_lists,
+            &mut lines,
+            0,
+            max_width,
+            None,
+        );
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Esc closes pane", theme::muted())));
-    panel("Pane", lines)
+    lines
 }
 
 fn render_nodes(
@@ -1341,8 +1358,8 @@ mod tests {
     use turin_daemon_protocol::{
         ScheduleActionParams, UiActionNode, UiActivityNode, UiAppIntent, UiBadgeIntent,
         UiChartNode, UiDetailNode, UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode,
-        UiMenuIntent, UiMenuItem, UiNode, UiNoticeLevel, UiOpensWithIntent, UiReportNode,
-        UiScreenIntent,
+        UiMenuIntent, UiMenuItem, UiNode, UiNoticeLevel, UiOpensWithIntent, UiPaneIntent,
+        UiReportNode, UiScreenIntent, UiTextNode,
     };
     use turin_ui_core::UiRegistry;
 
@@ -1714,6 +1731,71 @@ mod tests {
         );
         assert!(text.contains("approval"));
         assert!(text.contains("qa"));
+    }
+
+    #[test]
+    fn pane_lines_cover_context_nodes_and_close_hint() {
+        let app = release_app();
+        let pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: "release-notes".to_string(),
+            title: "Release Notes".to_string(),
+            presentation: Some("sheet".to_string()),
+            nodes: vec![
+                UiNode::Text(UiTextNode {
+                    id: None,
+                    text: "A lightweight pane can hold contextual workflow surfaces.".to_string(),
+                }),
+                UiNode::Detail(UiDetailNode {
+                    id: Some("pane-release-snapshot".to_string()),
+                    title: "Current Release Snapshot".to_string(),
+                    source: "worklists.release".to_string(),
+                    item_id: None,
+                }),
+            ],
+        };
+        let request = worklist_request("worklists.release", DETAIL_LIMIT).expect("detail request");
+        let lists = BTreeMap::from([(
+            request.cache_key(),
+            WorkItemList {
+                worklist_id: "release".to_string(),
+                items: vec![test_work_item(1, "REL-1", "Approve release")],
+            },
+        )]);
+
+        let text = line_text(&pane_lines(&app, &pane, &lists, &BTreeSet::new(), 88));
+
+        assert!(text.contains("Release Notes  release-notes"));
+        assert!(text.contains("presentation=sheet"));
+        assert!(text.contains("A lightweight pane can hold contextual workflow surfaces."));
+        assert!(text.contains("Detail: Current Release Snapshot  worklists.release"));
+        assert!(text.contains("1 loaded  1 pending"));
+        assert!(text.contains("Approve release"));
+        assert!(text.contains("Esc closes pane"));
+    }
+
+    #[test]
+    fn pane_lines_show_empty_state() {
+        let app = release_app();
+        let pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: "empty-pane".to_string(),
+            title: "Empty Pane".to_string(),
+            presentation: None,
+            nodes: Vec::new(),
+        };
+
+        let text = line_text(&pane_lines(
+            &app,
+            &pane,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            88,
+        ));
+
+        assert!(text.contains("Empty Pane  empty-pane"));
+        assert!(text.contains("This pane has no content nodes."));
+        assert!(text.contains("Esc closes pane"));
     }
 
     #[test]
