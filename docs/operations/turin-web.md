@@ -45,7 +45,7 @@ Start with a small API that mirrors what the current clients already need.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from static harness UI intent. |
+| `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from harness UI intent. |
 | `GET /api/apps` | Implemented. Harness UI app registry derived from semantic UI intent. |
 | `GET /api/apps/{app_id}` | Implemented. One app's screens, menus, panes, and declared surfaces. |
 | `POST /api/ui/list` | Implemented for semantic worklist sources such as `worklists.release`. |
@@ -127,6 +127,7 @@ The current browser shell is intentionally small:
 - action start/completion/failure feedback with duplicate-run suppression
 - lightweight worklist-backed report summaries and chart breakdowns
 - SSE invalidation for runtime/UI/action events
+- local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notify`
 - placeholders for unsupported activity/detail/report/chart sources
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
@@ -156,7 +157,8 @@ The first useful slice is complete:
 3. It exposes status, apps, one app, semantic list loading, action execution,
    and liveness routes.
 4. It exposes SSE events for invalidation without adding live query semantics.
-5. It serves a minimal browser shell from the same process.
+5. It serves a minimal browser shell from the same process, including
+   client-local dynamic UI navigation handling.
 6. It has an integration smoke using the Release Operator harness.
 
 Next work should tighten item-selection detail behavior and report/chart

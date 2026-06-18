@@ -8,6 +8,7 @@ const state = {
   formDrafts: new Map(),
   runningActions: new Set(),
   notices: [],
+  appliedStatusUiRequests: false,
   refreshing: false,
 };
 
@@ -47,6 +48,7 @@ async function refresh({ reason } = {}) {
     state.status = status;
     state.apps = Object.values(status.ui?.apps ?? {});
     selectDefaults();
+    applyStatusUiRequestsOnce();
     await loadVisibleLists();
     render();
     els.connectionStatus.textContent = "Live";
@@ -68,7 +70,8 @@ function connectEvents() {
     invalidateLists();
     refresh({ reason: "event" });
   });
-  source.addEventListener("ui.intent", () => {
+  source.addEventListener("ui.intent", event => {
+    applyUiIntentEvent(event);
     invalidateLists();
     refresh({ reason: "ui" });
   });
@@ -103,6 +106,124 @@ function selectDefaults() {
   if (!screenIds.includes(state.selectedScreenId)) {
     state.selectedScreenId = app.opens_with || screenIds[0];
   }
+}
+
+function applyStatusUiRequestsOnce() {
+  if (state.appliedStatusUiRequests) return;
+  state.appliedStatusUiRequests = true;
+  const ui = state.status?.ui;
+  for (const open of ui?.opens ?? []) applyUiIntentPayload({ ...open, type: "open" });
+  for (const show of ui?.shows ?? []) applyUiIntentPayload({ ...show, type: "show" });
+  for (const focus of ui?.focuses ?? []) applyUiIntentPayload({ ...focus, type: "focus" });
+  for (const notice of ui?.notices ?? []) {
+    applyUiIntentPayload({ ...notice, type: "notify" });
+  }
+}
+
+function applyUiIntentEvent(event) {
+  let payload;
+  try {
+    payload = JSON.parse(event.data);
+  } catch (error) {
+    pushNotice("error", "UI event parse failed", error.message);
+    return false;
+  }
+  return applyUiIntentPayload(payload);
+}
+
+function applyUiIntentPayload(payload) {
+  switch (payload?.type) {
+    case "open":
+      return applyUiOpen(payload.app_id, payload.target, "open");
+    case "show":
+      return applyUiShow(payload.app_id, payload.target);
+    case "focus":
+      return applyUiFocus(payload.app_id, payload.target);
+    case "notify":
+      pushNotice(normalizeNoticeLevel(payload.level), payload.title || "UI notice", payload.body || "");
+      return true;
+    default:
+      return false;
+  }
+}
+
+function applyUiOpen(appId, target, label) {
+  const app = selectAppById(appId);
+  if (!app) return false;
+  const screenId = screenIdForTarget(app, target);
+  if (!screenId) {
+    pushNotice("error", `UI ${label} failed`, `Target '${target}' is not a screen in '${appId}'.`);
+    return false;
+  }
+  state.selectedScreenId = screenId;
+  return true;
+}
+
+function applyUiShow(appId, target) {
+  const app = selectAppById(appId);
+  if (!app) return false;
+  if (screenIdForTarget(app, target)) return applyUiOpen(appId, target, "show");
+  if (app.panes?.[target]) {
+    pushNotice("info", "Pane requested", `turin-web noted ui.show pane '${target}'.`);
+    return true;
+  }
+  pushNotice("error", "UI show failed", `Target '${target}' is not a screen or pane in '${appId}'.`);
+  return false;
+}
+
+function applyUiFocus(appId, target) {
+  const app = selectAppById(appId);
+  if (!app) return false;
+  const screenId = focusScreenIdForTarget(app, target);
+  if (!screenId) {
+    pushNotice("error", "UI focus failed", `Target '${target}' was not found in '${appId}'.`);
+    return false;
+  }
+  state.selectedScreenId = screenId;
+  return true;
+}
+
+function selectAppById(appId) {
+  const app = state.apps.find(candidate => candidate.id === appId);
+  if (!app) {
+    pushNotice("error", "UI request ignored", `App '${appId}' is not available.`);
+    return null;
+  }
+  state.selectedAppId = app.id;
+  return app;
+}
+
+function screenIdForTarget(app, target) {
+  if (app?.screens?.[target]) return target;
+  return Object.values(app?.screens ?? []).find(screen => screen.title === target)?.id || null;
+}
+
+function focusScreenIdForTarget(app, target) {
+  const screenId = screenIdForTarget(app, target);
+  if (screenId) return screenId;
+  for (const screen of Object.values(app?.screens ?? {})) {
+    if ((screen.nodes ?? []).some(node => nodeContainsTarget(node, target))) return screen.id;
+  }
+  return null;
+}
+
+function nodeContainsTarget(node, target) {
+  if (node?.id === target) return true;
+  switch (node?.kind) {
+    case "section":
+      return (node.nodes ?? []).some(child => nodeContainsTarget(child, target));
+    case "action":
+      return node.action === target || node.label === target;
+    case "form":
+      return node.action === target || node.title === target;
+    default:
+      return false;
+  }
+}
+
+function normalizeNoticeLevel(level) {
+  if (level === "success" || level === "warning" || level === "error") return level;
+  return "info";
 }
 
 function render() {
