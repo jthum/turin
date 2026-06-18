@@ -16,7 +16,7 @@ Core rule:
 | --- | --- |
 | `turin-app` | Rich graphical operator client built on egui/Cast. |
 | `turin-tui` | Lean keyboard-first terminal client built on Ratatui. |
-| `turin-web` | Not implemented yet. Intended to expose a web-facing API/client over the same semantic contract. See `docs/operations/turin-web.md`. |
+| `turin-web` | API-first web adapter over the same semantic contract. Browser shell is not started yet. See `docs/operations/turin-web.md`. |
 
 ## Static UI Intent
 
@@ -62,13 +62,27 @@ Core rule:
 | action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Backed by `UiUpdate::HarnessActionCompleted`. |
 | action failed | Dashboard error notice from command task. | Dashboard error notice from command task. | Error stays operator feedback; durable failure state belongs in runtime primitives. |
 
+## Web API Coverage
+
+`turin-web` currently exposes semantic intent and data over HTTP rather than
+rendering a browser interface.
+
+| Route | Current coverage |
+| --- | --- |
+| `GET /api/status` | Dashboard snapshot plus derived UI registry. |
+| `GET /api/apps` | Declared app surfaces from harness UI intent. |
+| `GET /api/apps/{app_id}` | One app's screens, menus, panes, and badges. |
+| `POST /api/ui/list` | Worklist-backed semantic list loading. |
+| `POST /api/actions/run` | Harness action execution with JSON result. |
+| `GET /api/events` | Planned; returns explicit `not_implemented` for now. |
+
 ## Current Gaps
 
 - `report` and `chart` need real adapters or more explicit semantics.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - The TUI has no item-selection-driven detail pane yet.
-- `turin-web` has not been started.
+- `turin-web` has no browser shell yet; only the API-first adapter exists.
 - There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.
 
 ## Update Rule

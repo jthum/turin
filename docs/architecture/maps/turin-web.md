@@ -1,0 +1,81 @@
+# Turin Web Map
+
+## Purpose
+
+`turin-web` is Turin's web-facing client adapter. It exposes a small JSON API
+over the existing control layer so browser clients can render the same semantic
+UI intent as `turin-app` and `turin-tui`.
+
+Keep this crate thin. It should not host a second runtime, own durable UI
+session state, invent renderer-specific harness APIs, or bypass
+`turin-control-client` for daemon operations that already have typed helpers.
+
+## Files
+
+- `crates/turin-web/src/main.rs`
+  - CLI argument parsing and `ConnectionSpec` selection.
+- `crates/turin-web/src/server.rs`
+  - Hyper HTTP/1 server startup, shutdown, bind policy, and shared state setup.
+- `crates/turin-web/src/routes.rs`
+  - JSON route handling for status, app registry, UI list loading, action runs,
+    liveness, and explicit planned endpoints.
+- `crates/turin-web/tests/release_operator.rs`
+  - End-to-end smoke against a temporary daemon and the Release Operator
+    harness.
+
+## Data Flow
+
+1. CLI or caller builds a `WebServeOptions`.
+2. `turin-web` connects through `turin-control-client`.
+3. HTTP routes call typed control-client helpers.
+4. UI app responses derive a `UiRegistry` from harness UI intent in daemon
+   status.
+5. UI list responses resolve semantic sources such as `worklists.release` into
+   bounded worklist item queries.
+6. The browser remains responsible for selected app, active screen, form drafts,
+   panes, modals, filters, loading, and local error state.
+
+## Invariants
+
+- Runtime state remains in the daemon; web session state remains in the browser.
+- Local and remote control connections should stay behaviorally symmetric.
+- `GET /api/apps` and `GET /api/apps/{app_id}` should expose semantic UI
+  surfaces, not renderer-specific widget state.
+- `POST /api/ui/list` should accept semantic UI list requests first. Add raw
+  daemon-query escape hatches only after the UI model proves it needs them.
+- Unsupported sources and planned endpoints should return explicit JSON errors,
+  not silent empty responses.
+- Non-loopback binds require explicit opt-in.
+
+## Common Changes
+
+Add a new UI data endpoint:
+
+1. Check whether the control client already has a typed helper.
+2. Add the route in `routes.rs` and keep request/response structs serializable.
+3. Prefer semantic UI requests over raw daemon protocol shapes for harness UI
+   client routes.
+4. Extend the Release Operator smoke when the behavior can be exercised there.
+
+Add browser support:
+
+1. Keep the HTTP API stable and small.
+2. Let the browser own ephemeral navigation and selection state.
+3. Use event-driven invalidation later rather than adding live query semantics
+   prematurely.
+
+## Tests
+
+Focused checks:
+
+```sh
+cargo test -p turin-web
+cargo check -p turin-web
+```
+
+Basic checks:
+
+```sh
+cargo fmt --all -- --check
+git diff --check
+```

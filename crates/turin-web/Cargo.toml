@@ -1,0 +1,31 @@
+[package]
+name = "turin-web"
+version = "0.27.0"
+edition = "2024"
+
+[[bin]]
+name = "turin-web"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+bytes = "1.0"
+clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+http = "1.0"
+http-body-util = "0.1"
+hyper = { version = "1.8", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+tracing = "0.1.44"
+turin-control-client = { path = "../turin-control-client" }
+turin-daemon-protocol = { path = "../turin-daemon-protocol" }
+turin-types = { path = "../turin-types" }
+turin-ui-core = { path = "../turin-ui-core" }
+
+[dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "rustls"] }
+tempfile = "3.10"
+turin = { path = "../.." }
+turin-daemon-client = { path = "../turin-daemon-client" }

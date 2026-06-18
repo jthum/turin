@@ -1,9 +1,10 @@
 # Turin Web Client Direction
 
-`turin-web` is the intended web-facing client surface for Turin.
+`turin-web` is the web-facing client surface for Turin.
 
-It is not implemented yet. This page defines the first target shape so the web
-work starts from the same UI/UX model as `turin-app` and `turin-tui`.
+The first implementation is server/API-first. It exists to prove the web
+boundary against the same semantic UI model used by `turin-app` and
+`turin-tui` before a browser shell is designed.
 
 ## Role
 
@@ -43,15 +44,15 @@ Start with a small API that mirrors what the current clients already need.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/status` | Current dashboard snapshot: health, agents, sessions, tasks, harnesses, and static UI intent. |
-| `GET /api/apps` | Harness UI app registry derived from semantic UI intent. |
-| `GET /api/apps/{app_id}` | One app's screens, menus, panes, and declared surfaces. |
-| `POST /api/ui/list` | Load a semantic list binding such as `worklists.release`. |
-| `POST /api/actions/run` | Run a harness action with typed params. |
-| `GET /api/events` | SSE stream of runtime and UI intent events. |
-| `GET /api/healthz` | Web process liveness. |
+| `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from static harness UI intent. |
+| `GET /api/apps` | Implemented. Harness UI app registry derived from semantic UI intent. |
+| `GET /api/apps/{app_id}` | Implemented. One app's screens, menus, panes, and declared surfaces. |
+| `POST /api/ui/list` | Implemented for semantic worklist sources such as `worklists.release`. |
+| `POST /api/actions/run` | Implemented. Runs a harness action with typed daemon params. |
+| `GET /api/events` | Planned. Currently returns an explicit JSON `not_implemented` response. |
+| `GET /api/healthz` | Implemented. Web process liveness. |
 
-The first version can proxy through `turin-control-client` rather than exposing
+The current version proxies through `turin-control-client` rather than exposing
 new daemon operations.
 
 ## Browser Client State
@@ -117,16 +118,16 @@ Preferred direction:
 The web surface should be fast on older machines and should not become the
 dominant memory cost of running Turin.
 
-## First Implementation Slice
+## Current Implementation Slice
 
-The first useful slice should be server/API-first:
+The first useful slice is complete:
 
-1. Add a small `turin-web` crate or binary.
-2. Connect through `turin-control-client`.
-3. Expose `GET /api/status`, `GET /api/apps`, `POST /api/ui/list`, and
-   `POST /api/actions/run`.
-4. Add an integration smoke using the Release Operator harness.
-5. Only then build the browser UI shell.
+1. `crates/turin-web` provides a small Hyper HTTP/1 server and CLI.
+2. It connects through `turin-control-client` using local config, explicit local
+   endpoint, or `turin-remote`.
+3. It exposes status, apps, one app, semantic list loading, action execution,
+   and liveness routes.
+4. It has an integration smoke using the Release Operator harness.
 
-This avoids designing a web UI in isolation and keeps the API honest against the
-same example harness used by the TUI and desktop app.
+Next work should build a minimal browser shell against these endpoints and add
+event-driven invalidation once the polling/refresh behavior becomes clunky.
