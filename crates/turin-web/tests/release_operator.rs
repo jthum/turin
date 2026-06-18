@@ -495,6 +495,34 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             && intent["target"] == "seed-demo-form"
     });
 
+    let unsupported_source = client
+        .post(format!("{base_url}/api/ui/list"))
+        .json(&json!({
+            "source": "tables.release",
+            "limit": 10
+        }))
+        .send()
+        .await?;
+    assert_eq!(unsupported_source.status().as_u16(), 400);
+    let unsupported_source: Value = unsupported_source.json().await?;
+    assert_eq!(
+        unsupported_source["error"]["code"],
+        "unsupported_ui_list_source"
+    );
+    assert_eq!(
+        unsupported_source["error"]["details"]["source"],
+        "tables.release"
+    );
+    assert_eq!(
+        unsupported_source["error"]["details"]["supported_prefixes"][0],
+        "worklists."
+    );
+    assert!(
+        unsupported_source["error"]["details"]["guidance"]
+            .as_str()
+            .is_some_and(|guidance| guidance.contains("deliberate UI list adapter"))
+    );
+
     let list: Value = client
         .post(format!("{base_url}/api/ui/list"))
         .json(&json!({
