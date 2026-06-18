@@ -1,9 +1,9 @@
 # Turin UI Clients
 
-`turin-tui` and `turin-app` are separate operator clients over the same control
-layer. They share daemon/remote transport, connection-profile loading, dashboard
-updates, event streaming, and harness UI intents. They do not share presentation
-state: each client owns its own selected tab, screen, focus, modal, cache, and
+`turin-tui`, `turin-app`, and `turin-web` are separate operator clients over the
+same control layer. They share daemon/remote transport, dashboard updates, event
+streaming, and harness UI intents. They do not share presentation state: each
+client owns its own selected tab, screen, focus, modal, cache, and
 scroll/selection state.
 
 For the current per-client semantic UI support matrix, see
@@ -17,8 +17,9 @@ Current layering:
   dashboard state, and UI intent registry
 - `turin-tui`: lean Ratatui terminal client
 - `turin-app`: native graphical client built on egui/Cast
+- `turin-web`: thin HTTP/SSE API plus minimal browser shell
 
-Both clients can talk to:
+All clients can talk to:
 
 - a local Turin daemon over the existing local IPC transport
 - a remote Turin daemon through `turin-remote`
@@ -38,11 +39,17 @@ Both clients can talk to:
   `harness.action_ran`
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation
   suggestions
+- dynamic navigation badges and worklist-backed report/chart summaries
 
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable
 harness forms, dynamic UI navigation, latest action result panels, and wider
 runtime tabs.
+
+`turin-web` is an API-first web adapter with a small browser shell. It exposes
+status, app registry, semantic list loading, action execution, and SSE
+invalidation routes, and it renders the current semantic harness UI vocabulary
+without a frontend build step. See `docs/operations/turin-web.md`.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those
@@ -69,7 +76,7 @@ See `docs/operations/daemon.md` for the daemon model and
 ## Build
 
 ```bash
-cargo build --release -p turin-tui -p turin-app
+cargo build --release -p turin-tui -p turin-app -p turin-web
 ```
 
 ## Local Usage
@@ -86,12 +93,19 @@ Desktop app against the local daemon:
 target/release/turin-app --config .turin/config.toml
 ```
 
+Web client against the local daemon:
+
+```bash
+target/release/turin-web --config .turin/config.toml --bind 127.0.0.1:8787
+```
+
 If you want to bypass config-based endpoint resolution and point directly at a
 daemon endpoint:
 
 ```bash
 target/release/turin-tui --endpoint .turin/daemon.sock
 target/release/turin-app --endpoint .turin/daemon.sock
+target/release/turin-web --endpoint .turin/daemon.sock --bind 127.0.0.1:8787
 ```
 
 ## Remote Usage
@@ -108,6 +122,11 @@ target/release/turin-tui \
 target/release/turin-app \
   --remote-url http://127.0.0.1:9324 \
   --auth-token "replace-me"
+
+target/release/turin-web \
+  --remote-url http://127.0.0.1:9324 \
+  --auth-token "replace-me" \
+  --bind 127.0.0.1:8787
 ```
 
 Using an env var:
@@ -122,6 +141,11 @@ target/release/turin-tui \
 target/release/turin-app \
   --remote-url http://127.0.0.1:9324 \
   --auth-token-env TURIN_REMOTE_TOKEN
+
+target/release/turin-web \
+  --remote-url http://127.0.0.1:9324 \
+  --auth-token-env TURIN_REMOTE_TOKEN \
+  --bind 127.0.0.1:8787
 ```
 
 ## Connection Profiles
@@ -180,7 +204,7 @@ Global keys:
 Harness tab keys:
 
 - `[` / `]`: switch harness app
-- `f`: cycle focus between navigation and actions
+- `f`: cycle focus between navigation, visible work items, and actions
 - `h` / `l`: switch screens directly
 - `Enter`: open the selected navigation target or run the selected action
 - `y` / `Enter`: confirm a pending action
@@ -193,12 +217,37 @@ The TUI renders harness UI contracts semantically:
 - worklist-backed lists become compact terminal tables
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
+- worklist-backed report and chart nodes become lightweight summaries and bar
+  breakdowns
 - forms open a terminal editor that keeps draft values local to the client,
   validates required/numeric fields, coerces common scalar types, and submits
   merged action params
 - unsupported list/detail/activity sources remain visible with source metadata
 - desktop-only surfaces such as panes degrade to notices until the TUI has a
   native terminal representation for them
+
+## Lightweight Footprint Check
+
+For a no-build footprint baseline during UI work, run:
+
+```bash
+tools/footprint-report --top-files 30
+```
+
+The report is written under `.workspace/perf-reports/`, which is intentionally
+ignored. It scans shipped Rust source roots, excludes obvious tests, examples,
+target artifacts, and scratch data, and records release binary sizes only when
+artifacts already exist. It does not build Turin.
+
+The latest local UI-chapter sample on June 18, 2026 reported:
+
+- `87333` Rust code lines under `src` and `crates`
+- `4431` code lines in `crates/turin-app`
+- `3552` code lines in `crates/turin-tui`
+- `720` code lines in `crates/turin-web`
+
+Use this as a trend signal, not a hard budget. The goal is to keep UI clients
+lean and to notice accidental source or binary growth before it becomes normal.
 
 ## Current Limitations
 
@@ -208,7 +257,7 @@ The TUI renders harness UI contracts semantically:
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
 - `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
   to single-value text editing for now.
-- `turin-tui` does not yet render pane/report/chart nodes beyond semantic
-  placeholders.
+- `turin-tui` work-item selection is local to visible compact list rows.
+- `turin-tui` does not yet render panes beyond semantic notices.
 - `turin-app` remains the richer graphical surface while the TUI proves the
   lean terminal abstraction.
