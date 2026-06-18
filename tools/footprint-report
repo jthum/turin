@@ -77,8 +77,10 @@ files_tsv="$tmp_dir/files.tsv"
 areas_tsv="$tmp_dir/areas.tsv"
 top_tsv="$tmp_dir/top.tsv"
 binaries_tsv="$tmp_dir/binaries.tsv"
+assets_tsv="$tmp_dir/static-assets.tsv"
 : > "$files_tsv"
 : > "$binaries_tsv"
+: > "$assets_tsv"
 
 IFS=',' read -r -a root_list <<< "$roots"
 
@@ -208,10 +210,27 @@ awk -F '\t' '
 
 sort -t $'\t' -k7,7nr -k1,1 "$files_tsv" | head -n "$top_files" > "$top_tsv"
 
+static_assets_dir="$repo_root/crates/turin-web/static"
+if [[ -d "$static_assets_dir" ]]; then
+  while IFS= read -r -d '' asset; do
+    relative="${asset#$repo_root/}"
+    extension="${asset##*.}"
+    bytes="$(wc -c < "$asset" | tr -d ' ')"
+    lines="$(wc -l < "$asset" | tr -d ' ')"
+    printf "%s\t%s\t%s\t%s\n" "$relative" "$extension" "$bytes" "$lines" >> "$assets_tsv"
+  done < <(
+    find "$static_assets_dir" \
+      -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) \
+      -print0 | sort -z
+  )
+fi
+
 default_binaries=(
   "target/release/turin"
   "target/release/turin-manager"
   "target/release/turin-tui"
+  "target/release/turin-app"
+  "target/release/turin-web"
   "target/release/turin-map"
   "target/release/turin-channel-telegram"
   "target/release/turin-channel-rocketchat"
@@ -245,6 +264,13 @@ read -r total_files total_lines blank_lines comment_lines code_lines < <(
   ' "$files_tsv"
 )
 
+read -r asset_files asset_bytes asset_lines < <(
+  awk -F '\t' '
+    { files += 1; bytes += $3; lines += $4 }
+    END { printf "%d %d %d\n", files, bytes, lines }
+  ' "$assets_tsv"
+)
+
 json_escape() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -267,7 +293,7 @@ json_counts() {
   printf '    "roots": "%s",\n' "$(json_escape "$roots")"
   printf '    "top_files": %s,\n' "$top_files"
   printf '    "collector": "tools/footprint-report",\n'
-  printf '    "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, workspace scratch data, and inline #[cfg(test)] mod tests blocks."\n'
+  printf '    "note": "Rust source scan excludes directories/files that are clearly tests, benches, examples, target artifacts, workspace scratch data, and inline #[cfg(test)] mod tests blocks. First-party web static assets are recorded separately by bytes and physical lines."\n'
   printf '  },\n'
   printf '  "totals": %s,\n' "$(json_counts "$total_files" "$total_lines" "$blank_lines" "$comment_lines" "$code_lines")"
   printf '  "areas": [\n'
@@ -286,6 +312,18 @@ json_counts() {
     printf '    {"path":"%s","counts":%s}' "$(json_escape "$path")" "$(json_counts "$files" "$total" "$blank" "$comment" "$code")"
   done < "$top_tsv"
   printf '\n  ],\n'
+  printf '  "static_assets": {\n'
+  printf '    "totals": {"files":%s,"bytes":%s,"lines":%s},\n' "$asset_files" "$asset_bytes" "$asset_lines"
+  printf '    "files": [\n'
+  first=1
+  while IFS=$'\t' read -r path extension bytes lines; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '      {"path":"%s","extension":"%s","bytes":%s,"lines":%s}' \
+      "$(json_escape "$path")" "$(json_escape "$extension")" "$bytes" "$lines"
+  done < "$assets_tsv"
+  printf '\n    ]\n'
+  printf '  },\n'
   printf '  "binaries": [\n'
   first=1
   while IFS=$'\t' read -r path bytes; do
@@ -321,6 +359,18 @@ json_counts() {
   while IFS=$'\t' read -r path area files total blank comment code; do
     printf '| %s | %s | %s | %s | %s | %s |\n' "$path" "$files" "$total" "$blank" "$comment" "$code"
   done < "$top_tsv"
+
+  if [[ -s "$assets_tsv" ]]; then
+    printf '\n## Static Assets\n\n'
+    printf '| path | extension | bytes | lines |\n'
+    printf '|---|---|---:|---:|\n'
+    while IFS=$'\t' read -r path extension bytes lines; do
+      printf '| %s | %s | %s | %s |\n' "$path" "$extension" "$bytes" "$lines"
+    done < "$assets_tsv"
+    printf '\n- static_asset_files: `%s`\n' "$asset_files"
+    printf -- '- static_asset_bytes: `%s`\n' "$asset_bytes"
+    printf -- '- static_asset_lines: `%s`\n' "$asset_lines"
+  fi
 
   if [[ -s "$binaries_tsv" ]]; then
     printf '\n## Binaries\n\n'

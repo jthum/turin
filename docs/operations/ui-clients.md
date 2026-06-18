@@ -95,7 +95,7 @@ cargo build --release -p turin-tui -p turin-app -p turin-web
 ## Footprint Watchpoint
 
 The UI clients should stay lean enough for older machines. Use the no-build
-footprint report for a quick source snapshot:
+footprint report for a quick Rust source and first-party web asset snapshot:
 
 ```bash
 tools/footprint-report --top-files 30
@@ -112,8 +112,7 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent source-only local sample from
-`.workspace/perf-reports/footprint-1781790074.md`:
+Recent local sample from `.workspace/perf-reports/footprint-1781790683.md`:
 
 | area | code lines |
 | --- | ---: |
@@ -121,6 +120,12 @@ Recent source-only local sample from
 | `crates/turin-tui` | 3,843 |
 | `crates/turin-ui-core` | 3,049 |
 | `crates/turin-web` | 646 |
+
+| static asset | bytes | lines |
+| --- | ---: | ---: |
+| `crates/turin-web/static/app.css` | 12,699 | 720 |
+| `crates/turin-web/static/app.js` | 47,204 | 1,502 |
+| `crates/turin-web/static/index.html` | 1,547 | 50 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
 baseline below when a UI change may affect startup or resident memory.
@@ -334,16 +339,17 @@ tools/footprint-report --top-files 30
 
 The report is written under `.workspace/perf-reports/`, which is intentionally
 ignored. It scans shipped Rust source roots, excludes obvious tests, examples,
-target artifacts, scratch data, and inline `#[cfg(test)] mod tests` blocks, and
-records release binary sizes only when artifacts already exist. It does not
-build Turin.
+target artifacts, scratch data, and inline `#[cfg(test)] mod tests` blocks,
+records first-party web static asset bytes/lines separately, and records release
+binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `85385` Rust code lines under `src` and `crates`
-- `4633` code lines in `crates/turin-app`
-- `3730` code lines in `crates/turin-tui`
+- `85552` Rust code lines under `src` and `crates`
+- `4665` code lines in `crates/turin-app`
+- `3843` code lines in `crates/turin-tui`
 - `646` code lines in `crates/turin-web`
+- `61450` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
