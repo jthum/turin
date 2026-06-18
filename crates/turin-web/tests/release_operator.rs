@@ -263,6 +263,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderDefaultConsole"));
     assert!(js.contains("Default Operator Console"));
     assert!(js.contains("Runtime Overview"));
+    assert!(js.contains("renderMetricPanel(\"UI Signals\""));
+    assert!(js.contains("[\"Harness apps\", state.apps.length]"));
+    assert!(js.contains("[\"Requests\", uiRequestCount]"));
+    assert!(js.contains("[\"Local notices\", state.notices.length]"));
     assert!(js.contains("Simple stays simple"));
     assert!(js.contains("applyUiIntentPayload"));
     assert!(js.contains("applyUiIntentMessages"));

@@ -27,9 +27,9 @@ All clients can talk to:
 If no harness declares `ui.app(...)`, the clients still behave as default Turin
 operator consoles. Runtime overview, tasks, events, status, and control actions
 remain available; harness-specific screens appear when semantic UI intent is
-declared. `turin-app` and `turin-web` show default console summaries in the UI
-area, while `turin-tui` shows default-console guidance plus runtime/work/UI
-signal counts in its harness tab.
+declared. `turin-app` and `turin-web` show default console summaries with
+runtime/work/UI signal counts in the UI area, while `turin-tui` shows the same
+default-console guidance and counts in its harness tab.
 
 ## Current Client Scope
 

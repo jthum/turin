@@ -502,6 +502,12 @@ function renderDefaultConsole() {
   const health = snapshot?.health;
   const daemon = snapshot?.status;
   const web = state.status?.web;
+  const ui = state.status?.ui;
+  const uiRequestCount =
+    (ui?.opens?.length ?? 0) +
+    (ui?.shows?.length ?? 0) +
+    (ui?.focuses?.length ?? 0) +
+    (ui?.refreshes?.length ?? 0);
 
   const wrapper = document.createElement("div");
   wrapper.className = "default-console";
@@ -545,6 +551,12 @@ function renderDefaultConsole() {
       ["Stored sessions", snapshot?.sessions?.length ?? 0],
       ["Tracked tasks", snapshot?.tasks?.length ?? 0],
       ["Active tasks", health?.active_task_count ?? 0],
+    ]),
+    renderMetricPanel("UI Signals", [
+      ["Harness apps", state.apps.length],
+      ["Notices", ui?.notices?.length ?? 0],
+      ["Requests", uiRequestCount],
+      ["Local notices", state.notices.length],
     ])
   );
   wrapper.append(grid);
