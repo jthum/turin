@@ -93,7 +93,14 @@ cargo build --release -p turin-tui -p turin-app -p turin-web
 ## Footprint Watchpoint
 
 The UI clients should stay lean enough for older machines. Use the no-build
-footprint report for a quick source and artifact snapshot:
+footprint report for a quick source snapshot:
+
+```bash
+tools/footprint-report --top-files 30
+```
+
+If debug or release binaries already exist and you want them recorded without
+triggering a build, pass them explicitly:
 
 ```bash
 tools/footprint-report \
@@ -103,18 +110,18 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample:
+Recent source-only local sample from
+`.workspace/perf-reports/footprint-1781787846.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,634 |
-| `crates/turin-tui` | 3,391 |
-| `crates/turin-ui-core` | 3,041 |
-| `crates/turin-web` | 645 |
+| `crates/turin-app` | 4,633 |
+| `crates/turin-tui` | 3,730 |
+| `crates/turin-ui-core` | 3,048 |
+| `crates/turin-web` | 646 |
 
-Debug binaries from the same sample were `25.5 MB` for `turin-tui`, `69.9 MB`
-for `turin-app`, and `23.3 MB` for `turin-web`. Treat those as local debug
-artifacts, not release-size targets.
+No binary sizes were recorded in that run. Use the release and idle-memory
+baseline below when a UI change may affect startup or resident memory.
 
 ## Release And Idle-Memory Baseline
 
