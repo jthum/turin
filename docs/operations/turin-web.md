@@ -49,7 +49,7 @@ Start with a small API that mirrors what the current clients already need.
 | `GET /api/apps/{app_id}` | Implemented. One app's screens, menus, panes, and declared surfaces. |
 | `POST /api/ui/list` | Implemented for semantic worklist sources such as `worklists.release`. |
 | `POST /api/actions/run` | Implemented. Runs a harness action with typed daemon params. |
-| `GET /api/events` | Planned. Currently returns an explicit JSON `not_implemented` response. |
+| `GET /api/events` | Implemented. SSE stream of runtime and UI intent events for invalidation. |
 | `GET /api/healthz` | Implemented. Web process liveness. |
 
 The current version proxies through `turin-control-client` rather than exposing
@@ -66,6 +66,7 @@ The browser should own ephemeral UI state:
 - form drafts
 - filters/search text
 - local loading/error state
+- event cursors/reconnect state
 
 This mirrors `turin-app` and `turin-tui`: runtime state is shared, UI session
 state is local unless a harness explicitly persists something through Turin
@@ -127,7 +128,8 @@ The first useful slice is complete:
    endpoint, or `turin-remote`.
 3. It exposes status, apps, one app, semantic list loading, action execution,
    and liveness routes.
-4. It has an integration smoke using the Release Operator harness.
+4. It exposes SSE events for invalidation without adding live query semantics.
+5. It has an integration smoke using the Release Operator harness.
 
-Next work should build a minimal browser shell against these endpoints and add
-event-driven invalidation once the polling/refresh behavior becomes clunky.
+Next work should build a minimal browser shell against these endpoints and use
+the SSE stream to invalidate local list/status caches.

@@ -1,21 +1,26 @@
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
-use http::header::CONTENT_TYPE;
+use futures::stream;
+use http::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
-use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
-use hyper::body::Incoming;
+use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
+use hyper::body::{Frame, Incoming};
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
-use turin_control_client::{ControlClient, DaemonStatus};
+use serde_json::{Value, json};
+use tokio::time::{MissedTickBehavior, interval};
+use turin_control_client::{ControlClient, DaemonStatus, ManagedEventStream};
 use turin_daemon_protocol::{
-    HarnessActionRunParams, HarnessActionRunResult, WorkItemList, WorklistItemsParams,
-    WorklistListParams,
+    EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
+    WorkItemList, WorklistItemsParams, WorklistListParams,
 };
 use turin_ui_core::{DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry};
+use url::form_urlencoded;
 
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
+const EVENT_KEEPALIVE: Duration = Duration::from_secs(15);
 
 pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 
@@ -74,6 +79,12 @@ struct WebListResponse {
 #[derive(Debug, Serialize)]
 struct WebActionResponse {
     result: HarnessActionRunResult,
+}
+
+struct SseState {
+    events: ManagedEventStream,
+    keepalive: tokio::time::Interval,
+    closed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,11 +174,7 @@ async fn route_request(
         (Method::GET, "/api/apps") => handle_apps(&state).await,
         (Method::POST, "/api/ui/list") => handle_ui_list(req, &state).await,
         (Method::POST, "/api/actions/run") => handle_action_run(req, &state).await,
-        (Method::GET, "/api/events") => Err(WebError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "not_implemented",
-            "The turin-web event stream endpoint is planned but not implemented yet",
-        )),
+        (Method::GET, "/api/events") => handle_sse_events(req, &state).await,
         _ => Err(WebError::not_found(format!(
             "No turin-web route matches '{}'",
             path
@@ -250,6 +257,55 @@ async fn handle_action_run(
     Ok(json_response(StatusCode::OK, &WebActionResponse { result }))
 }
 
+async fn handle_sse_events(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let filter = parse_event_filter(req.uri().query())?;
+    let events = state
+        .client
+        .subscribe_managed(filter)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to subscribe to events: {}", err)))?;
+    let mut keepalive = interval(EVENT_KEEPALIVE);
+    keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let sse_state = SseState {
+        events,
+        keepalive,
+        closed: false,
+    };
+    let stream = stream::unfold(sse_state, |mut state| async move {
+        if state.closed {
+            return None;
+        }
+        tokio::select! {
+            _ = state.keepalive.tick() => {
+                Some((
+                    Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from_static(b": keep-alive\n\n"))),
+                    state,
+                ))
+            }
+            result = state.events.next_event() => {
+                match result {
+                    Ok(event) => Some((Ok(Frame::data(Bytes::from(format_sse_event(&event)))), state)),
+                    Err(err) => {
+                        state.closed = true;
+                        Some((Ok(Frame::data(Bytes::from(format_sse_error(&err.to_string())))), state))
+                    }
+                }
+            }
+        }
+    });
+    let body = http_body_util::BodyExt::boxed_unsync(StreamBody::new(stream));
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/event-stream")
+        .header(CACHE_CONTROL, "no-store")
+        .header(CONNECTION, "keep-alive")
+        .body(body)
+        .expect("SSE response builds"))
+}
+
 async fn load_ui_registry(client: &ControlClient) -> std::result::Result<UiRegistry, WebError> {
     let status = client
         .status()
@@ -318,6 +374,52 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
         ));
     }
     Ok(worklist_name)
+}
+
+fn parse_event_filter(
+    query: Option<&str>,
+) -> std::result::Result<RuntimeEventsSubscribeParams, WebError> {
+    let mut filter = RuntimeEventsSubscribeParams::default();
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "agent_id" => {
+                    if !value.is_empty() {
+                        filter.agent_id = Some(value.into_owned());
+                    }
+                }
+                "session_id" => {
+                    if !value.is_empty() {
+                        filter.session_id = Some(value.into_owned());
+                    }
+                }
+                "slot_id" => {
+                    if !value.is_empty() {
+                        filter.slot_id = Some(value.into_owned());
+                    }
+                }
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{}'", other),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(filter)
+}
+
+fn format_sse_event(event: &EventEnvelope) -> String {
+    let payload = serde_json::to_string(&event.data).expect("event payload serializes");
+    format!("event: {}\ndata: {}\n\n", event.event, payload)
+}
+
+fn format_sse_error(message: &str) -> String {
+    format!(
+        "event: web.error\ndata: {}\n\n",
+        serde_json::to_string(&json!({ "message": message })).expect("web error serializes")
+    )
 }
 
 async fn read_json<T: DeserializeOwned>(
@@ -398,5 +500,30 @@ mod tests {
     fn error_response_uses_json_envelope() {
         let response = WebError::not_found("missing").into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn parse_event_filter_rejects_unknown_query_key() {
+        let err = parse_event_filter(Some("bad=value")).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "invalid_query");
+    }
+
+    #[test]
+    fn parse_event_filter_accepts_known_query_keys() {
+        let filter =
+            parse_event_filter(Some("agent_id=default&session_id=session-1&slot_id=slot-1"))
+                .expect("filter parses");
+        assert_eq!(filter.agent_id.as_deref(), Some("default"));
+        assert_eq!(filter.session_id.as_deref(), Some("session-1"));
+        assert_eq!(filter.slot_id.as_deref(), Some("slot-1"));
+    }
+
+    #[test]
+    fn sse_event_uses_runtime_event_name() {
+        let event = EventEnvelope::new("runtime.snapshot", json!({ "ok": true }));
+        let text = format_sse_event(&event);
+        assert!(text.contains("event: runtime.snapshot"));
+        assert!(text.contains("\"ok\":true"));
     }
 }

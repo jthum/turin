@@ -74,7 +74,7 @@ rendering a browser interface.
 | `GET /api/apps/{app_id}` | One app's screens, menus, panes, and badges. |
 | `POST /api/ui/list` | Worklist-backed semantic list loading. |
 | `POST /api/actions/run` | Harness action execution with JSON result. |
-| `GET /api/events` | Planned; returns explicit `not_implemented` for now. |
+| `GET /api/events` | SSE runtime/UI event stream for client-side invalidation. |
 
 ## Current Gaps
 

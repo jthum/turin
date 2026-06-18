@@ -18,7 +18,7 @@ session state, invent renderer-specific harness APIs, or bypass
   - Hyper HTTP/1 server startup, shutdown, bind policy, and shared state setup.
 - `crates/turin-web/src/routes.rs`
   - JSON route handling for status, app registry, UI list loading, action runs,
-    liveness, and explicit planned endpoints.
+    liveness, and SSE event streaming.
 - `crates/turin-web/tests/release_operator.rs`
   - End-to-end smoke against a temporary daemon and the Release Operator
     harness.
@@ -32,7 +32,9 @@ session state, invent renderer-specific harness APIs, or bypass
    status.
 5. UI list responses resolve semantic sources such as `worklists.release` into
    bounded worklist item queries.
-6. The browser remains responsible for selected app, active screen, form drafts,
+6. SSE event streams proxy managed runtime subscriptions for invalidation and
+   refresh hints.
+7. The browser remains responsible for selected app, active screen, form drafts,
    panes, modals, filters, loading, and local error state.
 
 ## Invariants
@@ -45,6 +47,8 @@ session state, invent renderer-specific harness APIs, or bypass
   daemon-query escape hatches only after the UI model proves it needs them.
 - Unsupported sources and planned endpoints should return explicit JSON errors,
   not silent empty responses.
+- `GET /api/events` is an invalidation/event feed. It should not grow into a
+  live-query result cache.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes
@@ -61,8 +65,8 @@ Add browser support:
 
 1. Keep the HTTP API stable and small.
 2. Let the browser own ephemeral navigation and selection state.
-3. Use event-driven invalidation later rather than adding live query semantics
-   prematurely.
+3. Use `GET /api/events` for event-driven invalidation rather than adding live
+   query semantics prematurely.
 
 ## Tests
 

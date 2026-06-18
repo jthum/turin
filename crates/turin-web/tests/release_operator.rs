@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use futures::StreamExt;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
@@ -139,6 +140,14 @@ async fn turin_web_release_operator_smoke() -> Result<()> {
         .await?;
     assert_eq!(health["ok"], true);
 
+    let event_response = client
+        .get(format!("{base_url}/api/events"))
+        .send()
+        .await?
+        .error_for_status()?;
+    let event_text = read_sse_until(event_response, "event: runtime.snapshot").await?;
+    assert!(event_text.contains("event: runtime.snapshot"));
+
     let apps: Value = client
         .get(format!("{base_url}/api/apps"))
         .send()
@@ -218,4 +227,26 @@ async fn turin_web_release_operator_smoke() -> Result<()> {
 
     server.stop().await?;
     daemon.stop().await
+}
+
+async fn read_sse_until(response: reqwest::Response, needle: &str) -> Result<String> {
+    let mut stream = response.bytes_stream();
+    let mut text = String::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    while Instant::now() < deadline {
+        let Some(chunk) = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .context("timed out waiting for SSE chunk")?
+        else {
+            break;
+        };
+        let chunk = chunk.context("SSE stream returned an error")?;
+        text.push_str(&String::from_utf8_lossy(&chunk));
+        if text.contains(needle) {
+            return Ok(text);
+        }
+    }
+
+    Err(anyhow!("SSE stream did not include '{}': {}", needle, text))
 }
