@@ -75,7 +75,7 @@ browser shell that consumes those routes.
 | `POST /api/ui/list` | Worklist-backed semantic list loading. |
 | `POST /api/actions/run` | Harness action execution with JSON result. |
 | `GET /api/events` | SSE runtime/UI event stream for client-side invalidation. |
-| `GET /` | Static browser shell for app/screen/list/form/action rendering. |
+| `GET /` | Static browser shell for app/screen/list/form/action rendering, including typed local form drafts. |
 
 ## Current Gaps
 

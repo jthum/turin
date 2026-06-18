@@ -226,6 +226,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("EventSource"));
     assert!(js.contains("renderActivity"));
     assert!(js.contains("renderDetail"));
+    assert!(js.contains("collectFormParams"));
+    assert!(js.contains("formDrafts"));
+    assert!(js.contains("runningActions"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))

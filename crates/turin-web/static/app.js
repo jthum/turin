@@ -5,6 +5,8 @@ const state = {
   selectedScreenId: null,
   listCache: new Map(),
   loadingLists: new Set(),
+  formDrafts: new Map(),
+  runningActions: new Set(),
   notices: [],
   refreshing: false,
 };
@@ -250,9 +252,11 @@ function renderAction(node, app) {
   const row = document.createElement("div");
   row.className = "action-row";
   const button = document.createElement("button");
+  const actionKey = actionRunKey(node.action);
   button.type = "button";
   button.className = node.confirm ? "danger-button" : "primary-button";
-  button.textContent = node.label;
+  button.disabled = state.runningActions.has(actionKey);
+  button.textContent = state.runningActions.has(actionKey) ? "Running..." : node.label;
   button.addEventListener("click", () => runAction(node, app));
   row.append(button);
   panel.append(row);
@@ -423,52 +427,62 @@ function renderForm(node, app) {
   panel.className = "panel";
   panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
   const form = document.createElement("form");
+  const formKey = formDraftKey(node);
   form.className = "form-grid";
   for (const field of node.fields ?? []) {
-    form.append(renderField(field));
+    form.append(renderField(field, formKey));
   }
   const button = document.createElement("button");
+  const actionKey = actionRunKey(node.action);
   button.type = "submit";
   button.className = "primary-button";
-  button.textContent = "Run";
+  button.disabled = state.runningActions.has(actionKey);
+  button.textContent = state.runningActions.has(actionKey) ? "Running..." : "Run";
   form.append(button);
   form.addEventListener("submit", event => {
     event.preventDefault();
-    const params = { ...(node.params && typeof node.params === "object" ? node.params : {}) };
-    const data = new FormData(form);
-    for (const field of node.fields ?? []) {
-      params[field.name] = coerceFieldValue(data.get(field.name), field.kind);
-    }
+    const params = collectFormParams(form, node);
+    if (!params) return;
     runAction({ action: node.action, label: node.title, params, confirm: false }, app);
   });
   panel.append(form);
   return panel;
 }
 
-function renderField(field) {
+function renderField(field, formKey) {
   const wrapper = document.createElement("label");
   wrapper.className = "field";
-  wrapper.innerHTML = `<span class="field-label">${escapeHtml(field.label)}</span>`;
-  const kind = field.kind || "text";
+  const kind = normalizeFieldKind(field.kind);
+  const required = field.required === true;
+  wrapper.innerHTML = `<span class="field-label">${escapeHtml(field.label)}${required ? " *" : ""}</span>`;
   let input;
   if (kind === "textarea") {
     input = document.createElement("textarea");
   } else if (kind === "boolean") {
     input = document.createElement("select");
-    input.innerHTML = `<option value="false">False</option><option value="true">True</option>`;
+    input.append(new Option("False", "false"));
+    input.append(new Option("True", "true"));
   } else if (field.options?.length) {
     input = document.createElement("select");
     for (const option of field.options) {
       const value = scalarLabel(option);
-      input.append(new Option(value, value));
+      input.append(new Option(value, encodeFieldValue(option)));
     }
   } else {
     input = document.createElement("input");
     input.type = kind === "number" || kind === "integer" ? "number" : "text";
+    if (kind === "integer") input.step = "1";
   }
   input.name = field.name;
-  if (field.required) input.required = true;
-  if (field.default !== undefined && field.default !== null) input.value = scalarLabel(field.default);
+  input.dataset.kind = kind;
+  if (required) input.required = true;
+  setInputValue(input, draftValueForField(formKey, field), kind);
+  input.addEventListener("input", () => {
+    rememberFormDraft(formKey, field.name, coerceFieldValue(input.value, kind, field));
+  });
+  input.addEventListener("change", () => {
+    rememberFormDraft(formKey, field.name, coerceFieldValue(input.value, kind, field));
+  });
   wrapper.append(input);
   return wrapper;
 }
@@ -494,6 +508,11 @@ function renderText(text, className) {
 
 async function runAction(node, app) {
   if (node.confirm && !window.confirm(`Run ${node.label}?`)) return;
+  const actionKey = actionRunKey(node.action);
+  if (state.runningActions.has(actionKey)) return;
+  state.runningActions.add(actionKey);
+  pushNotice("info", "Action started", `Running ${node.label || node.action}.`);
+  render();
   try {
     const result = await postJson("/api/actions/run", {
       action: node.action,
@@ -505,6 +524,9 @@ async function runAction(node, app) {
     await refresh({ reason: "action" });
   } catch (error) {
     pushNotice("error", "Action failed", error.message);
+    render();
+  } finally {
+    state.runningActions.delete(actionKey);
     render();
   }
 }
@@ -609,10 +631,96 @@ function fieldValue(item, field) {
   return "";
 }
 
-function coerceFieldValue(value, kind) {
-  if (kind === "number" || kind === "integer") return Number(value);
+function collectFormParams(form, node) {
+  if (!form.reportValidity()) return null;
+  const params = { ...(node.params && typeof node.params === "object" ? node.params : {}) };
+  const data = new FormData(form);
+  try {
+    for (const field of node.fields ?? []) {
+      params[field.name] = coerceFieldValue(data.get(field.name), normalizeFieldKind(field.kind), field);
+    }
+    return params;
+  } catch (error) {
+    pushNotice("error", "Invalid form value", error.message);
+    render();
+    return null;
+  }
+}
+
+function coerceFieldValue(value, kind, field = {}) {
+  if (field.options?.length) return decodeFieldValue(value);
+  if (value === null || value === "") return null;
+  if (kind === "integer") {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed)) throw new Error(`${field.label || field.name} must be an integer.`);
+    return parsed;
+  }
+  if (kind === "number") {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) throw new Error(`${field.label || field.name} must be a number.`);
+    return parsed;
+  }
   if (kind === "boolean") return value === "true";
   return value ?? "";
+}
+
+function normalizeFieldKind(kind) {
+  const normalized = (kind || "text").toLowerCase();
+  if (normalized === "bool" || normalized === "checkbox" || normalized === "switch") return "boolean";
+  if (normalized === "int") return "integer";
+  if (normalized === "multiline") return "textarea";
+  return normalized;
+}
+
+function formDraftKey(node) {
+  return node.id || node.action || node.title;
+}
+
+function fieldDraftKey(formKey, fieldName) {
+  return `${formKey}:${fieldName}`;
+}
+
+function draftValueForField(formKey, field) {
+  const key = fieldDraftKey(formKey, field.name);
+  if (state.formDrafts.has(key)) return state.formDrafts.get(key);
+  if (field.default !== undefined) return field.default;
+  if (normalizeFieldKind(field.kind) === "boolean") return false;
+  return "";
+}
+
+function rememberFormDraft(formKey, fieldName, value) {
+  state.formDrafts.set(fieldDraftKey(formKey, fieldName), value);
+}
+
+function setInputValue(input, value, kind) {
+  if (kind === "boolean") {
+    input.value = value === true || value === "true" ? "true" : "false";
+    return;
+  }
+  if (input.tagName === "SELECT" && input.options.length) {
+    const encoded = encodeFieldValue(value);
+    input.value = Array.from(input.options).some(option => option.value === encoded)
+      ? encoded
+      : input.options[0].value;
+    return;
+  }
+  input.value = value === undefined || value === null ? "" : scalarLabel(value);
+}
+
+function encodeFieldValue(value) {
+  return JSON.stringify(value);
+}
+
+function decodeFieldValue(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function actionRunKey(action) {
+  return action || "unknown";
 }
 
 function scalarLabel(value) {

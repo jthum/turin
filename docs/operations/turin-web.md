@@ -119,10 +119,12 @@ The current browser shell is intentionally small:
 - no frontend build system
 - no persistent browser-side storage
 - same-origin calls to the `turin-web` API
-- local selected app/screen/list/form/action state
+- local selected app/screen/list/form draft/action-running state
 - table rendering for worklist-backed lists
 - worklist-backed activity and detail rendering
-- basic form and action execution
+- typed form defaults, local drafts, required fields, options, and scalar
+  coercion
+- action start/completion/failure feedback with duplicate-run suppression
 - SSE invalidation for runtime/UI/action events
 - placeholders for unsupported activity/detail sources, reports, and charts
 
