@@ -124,7 +124,8 @@ The current browser shell is intentionally small:
 - worklist-backed activity and detail rendering
 - typed form defaults, local drafts, required fields, options, and scalar
   coercion
-- action start/completion/failure feedback with duplicate-run suppression
+- action start/completion/failure feedback, latest action result panels, and
+  duplicate-run suppression
 - lightweight worklist-backed report summaries and chart breakdowns
 - SSE invalidation for runtime/UI/action events
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notify`

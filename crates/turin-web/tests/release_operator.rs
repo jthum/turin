@@ -231,6 +231,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("runningActions"));
     assert!(js.contains("renderReport"));
     assert!(js.contains("renderChart"));
+    assert!(js.contains("renderActionResult"));
+    assert!(js.contains("latestActionResult"));
     assert!(js.contains("applyUiIntentPayload"));
     assert!(js.contains("focusScreenIdForTarget"));
 

@@ -8,6 +8,7 @@ const state = {
   formDrafts: new Map(),
   runningActions: new Set(),
   notices: [],
+  latestActionResult: null,
   appliedStatusUiRequests: false,
   refreshing: false,
 };
@@ -356,6 +357,7 @@ function renderScreen() {
 
   const stack = document.createElement("div");
   stack.className = "node-stack";
+  if (state.latestActionResult) stack.append(renderActionResult(state.latestActionResult));
   for (const node of screen.nodes ?? []) {
     stack.append(renderNode(node, app));
   }
@@ -745,11 +747,35 @@ function renderText(text, className) {
   return paragraph;
 }
 
+function renderActionResult(result) {
+  const panel = document.createElement("section");
+  panel.className = "panel action-result";
+  panel.dataset.level = result.level;
+  panel.innerHTML = `
+    <p class="eyebrow">${escapeHtml(result.level)}</p>
+    <h3>${escapeHtml(result.title)}</h3>
+    <p class="muted">${escapeHtml(result.body)}</p>
+  `;
+  if (result.detail !== undefined && result.detail !== null) {
+    const pre = document.createElement("pre");
+    pre.className = "json-preview";
+    pre.textContent = jsonPreview(result.detail, 2400);
+    panel.append(pre);
+  }
+  return panel;
+}
+
 async function runAction(node, app) {
   if (node.confirm && !window.confirm(`Run ${node.label}?`)) return;
   const actionKey = actionRunKey(node.action);
   if (state.runningActions.has(actionKey)) return;
   state.runningActions.add(actionKey);
+  state.latestActionResult = {
+    level: "info",
+    title: "Action running",
+    body: `Running ${node.label || node.action}.`,
+    detail: null,
+  };
   pushNotice("info", "Action started", `Running ${node.label || node.action}.`);
   render();
   try {
@@ -758,10 +784,22 @@ async function runAction(node, app) {
       harness_id: app?.source?.harness_id || null,
       params: node.params ?? null,
     });
+    state.latestActionResult = {
+      level: "success",
+      title: "Action completed",
+      body: `${result.result.action} finished.`,
+      detail: result.result.result,
+    };
     pushNotice("success", "Action completed", `${result.result.action} finished.`);
     invalidateLists();
     await refresh({ reason: "action" });
   } catch (error) {
+    state.latestActionResult = {
+      level: "error",
+      title: "Action failed",
+      body: error.message,
+      detail: null,
+    };
     pushNotice("error", "Action failed", error.message);
     render();
   } finally {
@@ -1004,6 +1042,12 @@ function scalarLabel(value) {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function jsonPreview(value, maxLength) {
+  const rendered = JSON.stringify(value, null, 2);
+  if (rendered.length <= maxLength) return rendered;
+  return `${rendered.slice(0, maxLength)}\n... truncated`;
 }
 
 function renderNotices() {
