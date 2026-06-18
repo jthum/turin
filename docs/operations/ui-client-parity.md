@@ -16,7 +16,7 @@ Core rule:
 | --- | --- |
 | `turin-app` | Rich graphical operator client built on egui/Cast. |
 | `turin-tui` | Lean keyboard-first terminal client built on Ratatui. |
-| `turin-web` | Not implemented yet. Intended to expose a web-facing API/client over the same semantic contract. |
+| `turin-web` | Not implemented yet. Intended to expose a web-facing API/client over the same semantic contract. See `docs/operations/turin-web.md`. |
 
 ## Static UI Intent
 
