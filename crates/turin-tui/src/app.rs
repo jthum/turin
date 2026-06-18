@@ -9,7 +9,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
 use turin_control_client::TaskStatus;
-use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemList};
+use turin_daemon_protocol::{
+    EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemDetail, WorkItemList,
+};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, DefaultOperatorConsoleSummary,
     HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiUpdate,
@@ -214,8 +216,10 @@ pub struct TuiApp {
     ui_pane_focus: PaneFocus,
     ui_pane_item_index: usize,
     ui_pane_action_index: usize,
+    selected_ui_pane_item_key: Option<String>,
     ui_action_index: usize,
     ui_item_index: usize,
+    selected_ui_item_key: Option<String>,
     harness_focus: HarnessFocus,
     task_index: usize,
     event_index: usize,
@@ -248,8 +252,10 @@ impl TuiApp {
             ui_pane_focus: PaneFocus::Items,
             ui_pane_item_index: 0,
             ui_pane_action_index: 0,
+            selected_ui_pane_item_key: None,
             ui_action_index: 0,
             ui_item_index: 0,
+            selected_ui_item_key: None,
             harness_focus: HarnessFocus::Navigation,
             task_index: 0,
             event_index: 0,
@@ -574,6 +580,7 @@ impl TuiApp {
                     let items = self.current_harness_work_items();
                     if !items.is_empty() {
                         self.ui_item_index = offset_index(self.ui_item_index, items.len(), delta);
+                        self.remember_current_harness_item();
                     }
                 }
                 HarnessFocus::Actions => {
@@ -605,6 +612,7 @@ impl TuiApp {
                 HarnessFocus::Items => {
                     let items = self.current_harness_work_items();
                     self.ui_item_index = page_index(self.ui_item_index, items.len(), delta);
+                    self.remember_current_harness_item();
                 }
                 HarnessFocus::Actions => {
                     let actions = self.current_harness_actions();
@@ -629,6 +637,7 @@ impl TuiApp {
                 HarnessFocus::Items => {
                     let items = self.current_harness_work_items();
                     self.ui_item_index = edge_index(items.len(), edge);
+                    self.remember_current_harness_item();
                 }
                 HarnessFocus::Actions => {
                     let actions = self.current_harness_actions();
@@ -657,6 +666,7 @@ impl TuiApp {
                 if !items.is_empty() {
                     self.ui_pane_item_index =
                         offset_index(self.ui_pane_item_index, items.len(), delta);
+                    self.remember_current_pane_item();
                 }
             }
             PaneFocus::Actions => {
@@ -674,6 +684,7 @@ impl TuiApp {
             PaneFocus::Items => {
                 let items = self.current_pane_work_items();
                 self.ui_pane_item_index = page_index(self.ui_pane_item_index, items.len(), delta);
+                self.remember_current_pane_item();
             }
             PaneFocus::Actions => {
                 let actions = self.current_pane_actions();
@@ -688,6 +699,7 @@ impl TuiApp {
             PaneFocus::Items => {
                 let items = self.current_pane_work_items();
                 self.ui_pane_item_index = edge_index(items.len(), edge);
+                self.remember_current_pane_item();
             }
             PaneFocus::Actions => {
                 let actions = self.current_pane_actions();
@@ -710,6 +722,7 @@ impl TuiApp {
         self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
         self.ui_item_index = 0;
+        self.selected_ui_item_key = None;
         self.close_active_pane();
     }
 
@@ -824,6 +837,7 @@ impl TuiApp {
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.ui_action_index = 0;
         self.ui_item_index = 0;
+        self.selected_ui_item_key = None;
         self.close_active_pane();
         self.request_current_harness_lists(false)
     }
@@ -896,6 +910,7 @@ impl TuiApp {
         self.ui_pane_focus = PaneFocus::Items;
         self.ui_pane_item_index = 0;
         self.ui_pane_action_index = 0;
+        self.selected_ui_pane_item_key = None;
     }
 
     fn confirm_pending_action(&mut self) -> Result<()> {
@@ -1238,6 +1253,18 @@ impl TuiApp {
             .cloned()
     }
 
+    fn remember_current_harness_item(&mut self) {
+        let items = self.current_harness_work_items();
+        self.selected_ui_item_key = items.get(self.ui_item_index).map(work_item_selection_key);
+    }
+
+    fn remember_current_pane_item(&mut self) {
+        let items = self.current_pane_work_items();
+        self.selected_ui_pane_item_key = items
+            .get(self.ui_pane_item_index)
+            .map(work_item_selection_key);
+    }
+
     fn request_current_harness_lists(&mut self, force: bool) -> Result<()> {
         for request in self.current_harness_list_requests() {
             self.request_ui_list(request, force)?;
@@ -1341,6 +1368,7 @@ impl TuiApp {
             self.ui_pane_focus = PaneFocus::Items;
             self.ui_pane_item_index = 0;
             self.ui_pane_action_index = 0;
+            self.selected_ui_pane_item_key = None;
             if let Err(err) = self.request_current_harness_lists(false) {
                 self.dashboard
                     .record_error(format!("Failed to load harness UI pane lists: {err}"));
@@ -1408,6 +1436,7 @@ impl TuiApp {
         self.harness_focus = focus;
         self.ui_action_index = action_index;
         self.ui_item_index = 0;
+        self.selected_ui_item_key = None;
         self.close_active_pane();
         self.sync_harness_nav_to_screen();
         if let Err(err) = self.request_current_harness_lists(false) {
@@ -1427,8 +1456,13 @@ impl TuiApp {
             .min(self.dashboard.recent_events.len().saturating_sub(1));
         let action_count = self.current_harness_actions().len();
         self.ui_action_index = self.ui_action_index.min(action_count.saturating_sub(1));
-        let item_count = self.current_harness_work_items().len();
-        self.ui_item_index = self.ui_item_index.min(item_count.saturating_sub(1));
+        let work_items = self.current_harness_work_items();
+        let item_count = work_items.len();
+        reconcile_work_item_selection(
+            &mut self.ui_item_index,
+            &mut self.selected_ui_item_key,
+            &work_items,
+        );
         if !self
             .harness_focus
             .is_available(item_count > 0, action_count > 0)
@@ -1450,10 +1484,13 @@ impl TuiApp {
             }
         }
         let pane_action_count = self.current_pane_actions().len();
-        let pane_item_count = self.current_pane_work_items().len();
-        self.ui_pane_item_index = self
-            .ui_pane_item_index
-            .min(pane_item_count.saturating_sub(1));
+        let pane_work_items = self.current_pane_work_items();
+        let pane_item_count = pane_work_items.len();
+        reconcile_work_item_selection(
+            &mut self.ui_pane_item_index,
+            &mut self.selected_ui_pane_item_key,
+            &pane_work_items,
+        );
         self.ui_pane_action_index = self
             .ui_pane_action_index
             .min(pane_action_count.saturating_sub(1));
@@ -2242,6 +2279,46 @@ fn pending_action_from_work_item(
     })
 }
 
+fn reconcile_work_item_selection(
+    index: &mut usize,
+    selected_key: &mut Option<String>,
+    items: &[harness_ui::HarnessWorkItemSelection],
+) {
+    if items.is_empty() {
+        *index = 0;
+        *selected_key = None;
+        return;
+    }
+
+    if let Some(key) = selected_key.as_deref()
+        && let Some(position) = items
+            .iter()
+            .position(|selection| work_item_selection_key(selection) == key)
+    {
+        *index = position;
+    } else {
+        *index = (*index).min(items.len() - 1);
+    }
+
+    *selected_key = items.get(*index).map(work_item_selection_key);
+}
+
+fn work_item_selection_key(selection: &harness_ui::HarnessWorkItemSelection) -> String {
+    format!(
+        "{}:{}",
+        selection.list_source,
+        work_item_identity(&selection.item)
+    )
+}
+
+fn work_item_identity(item: &WorkItemDetail) -> String {
+    if item.public_id.is_empty() {
+        item.id.to_string()
+    } else {
+        item.public_id.clone()
+    }
+}
+
 fn harness_action_result_matches_app(
     result: &HarnessActionRunResult,
     app: &turin_ui_core::UiAppRecord,
@@ -2655,6 +2732,52 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_work_item_selection_preserves_identity_after_reorder() {
+        let mut release_one = test_work_item(None);
+        release_one.public_id = "REL-1".to_string();
+        release_one.title = "First release gate".to_string();
+        let mut release_two = test_work_item(None);
+        release_two.id = 2;
+        release_two.public_id = "REL-2".to_string();
+        release_two.title = "Second release gate".to_string();
+        let selected = work_item_selection("worklists.release", release_two.clone());
+        let reordered = vec![
+            work_item_selection("worklists.release", release_two),
+            work_item_selection("worklists.release", release_one),
+        ];
+        let mut index = 1;
+        let mut selected_key = Some(work_item_selection_key(&selected));
+
+        reconcile_work_item_selection(&mut index, &mut selected_key, &reordered);
+
+        assert_eq!(index, 0);
+        assert_eq!(selected_key.as_deref(), Some("worklists.release:REL-2"));
+    }
+
+    #[test]
+    fn reconcile_work_item_selection_falls_back_when_identity_disappears() {
+        let item = work_item_selection("worklists.release", test_work_item(None));
+        let mut index = 9;
+        let mut selected_key = Some("worklists.release:missing".to_string());
+
+        reconcile_work_item_selection(&mut index, &mut selected_key, &[item]);
+
+        assert_eq!(index, 0);
+        assert_eq!(selected_key.as_deref(), Some("worklists.release:REL-1"));
+    }
+
+    #[test]
+    fn reconcile_work_item_selection_clears_empty_selection() {
+        let mut index = 3;
+        let mut selected_key = Some("worklists.release:REL-1".to_string());
+
+        reconcile_work_item_selection(&mut index, &mut selected_key, &[]);
+
+        assert_eq!(index, 0);
+        assert_eq!(selected_key, None);
+    }
+
+    #[test]
     fn harness_action_result_matching_filters_other_apps() {
         let app = test_app();
         let matching = HarnessActionRunResult {
@@ -2950,6 +3073,17 @@ mod tests {
             failure_reason: None,
             created_at: "2026-06-18T00:00:00Z".to_string(),
             updated_at: "2026-06-18T00:00:00Z".to_string(),
+        }
+    }
+
+    fn work_item_selection(
+        list_source: &str,
+        item: WorkItemDetail,
+    ) -> harness_ui::HarnessWorkItemSelection {
+        harness_ui::HarnessWorkItemSelection {
+            list_title: "Approvals".to_string(),
+            list_source: list_source.to_string(),
+            item,
         }
     }
 

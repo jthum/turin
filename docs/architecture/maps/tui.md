@@ -72,6 +72,9 @@ and `turin-daemon-protocol`.
   item instead of making selection disappear off-screen. Other list sources
   remain visible with metadata and an explicit unsupported-adapter message
   until the client has a loader for that source.
+- Worklist row selection is remembered by local item identity across refreshes
+  and row reordering where possible, then falls back to a bounded local index if
+  the selected row disappears. This must remain TUI-local state.
 - Worklist item actions are ordinary harness action runs from the client's
   point of view, but the TUI must queue them for confirmation because work item
   payloads do not carry a UI-specific confirm flag.

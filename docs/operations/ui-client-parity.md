@@ -88,8 +88,9 @@ browser shell that consumes those routes.
   field-level or arbitrary inline badge placement remains undefined.
 - TUI item selection is local to compact table rows with row-position and
   action-available cues; selected item actions can be queued for confirmation,
-  page/boundary keys work within the focused region, and long tables window
-  around the selected row instead of hiding it off-screen.
+  page/boundary keys work within the focused region, long tables window around
+  the selected row instead of hiding it off-screen, and row identity is
+  preserved across refresh/reorder where possible.
 - TUI pane overlays support pane-local item/action/form selection using
   terminal-local indices separate from screen focus.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
