@@ -34,8 +34,9 @@ Initial layering should stay thin:
 1. Turin daemon remains the source of truth.
 2. `turin-control-client` remains the typed Rust facade.
 3. `turin-web` exposes web-oriented endpoints and event streams.
-4. The browser client renders semantic UI intent with Dashbase and a lightweight
-   frontend runtime.
+4. The current browser shell renders semantic UI intent without a frontend build
+   step. A future shell can adopt Dashbase and a lightweight frontend runtime
+   once the web UX shape is proven.
 
 This keeps web behavior aligned with local and remote clients.
 
@@ -264,7 +265,7 @@ The browser should own ephemeral UI state:
 
 - selected app
 - selected screen
-- selected list row
+- selected list row, retained by item identity where possible
 - open pane/modal
 - form drafts
 - filters/search text
@@ -287,6 +288,8 @@ The web client should consume the same intent vocabulary as the other clients:
 For v1 parity:
 
 - worklist-backed lists should render as tables by default
+- list rows should support click and keyboard selection without persisting
+  selected-row state in the runtime
 - worklist-backed activity/detail can reuse the same bounded adapters as app/TUI
 - forms should support text, number, integer, boolean, options, and textarea
 - worklist-backed reports/charts can render lightweight summary and breakdown
@@ -321,7 +324,10 @@ The current browser shell is intentionally small:
 - local selected app/screen/list row/form draft/action-running state
 - browser-local pane overlay state for `ui.show` pane targets
 - table rendering for worklist-backed lists
-- inline selected-row detail for worklist-backed lists
+- click, Enter/Space, ArrowUp/ArrowDown, Home, and End selection for
+  worklist-backed list rows
+- inline selected-row detail for worklist-backed lists, with browser-local item
+  identity retained across re-render where possible
 - explicit client-side fallback copy for unsupported semantic data sources
   without turning them into failed fetches
 - worklist-backed activity and detail rendering, including confirmed work-item
