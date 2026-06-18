@@ -89,7 +89,8 @@ browser shell that consumes those routes.
   improve.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.
-- There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.
+- There is no automated screenshot/terminal golden test layer. Current coverage
+  is semantic helper tests plus app/web/TUI smoke and unit tests.
 
 ## Update Rule
 

@@ -1288,9 +1288,10 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use turin_daemon_protocol::{
-        UiActionNode, UiActivityNode, UiAppIntent, UiBadgeIntent, UiChartNode, UiDetailNode,
-        UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem,
-        UiNode, UiNoticeLevel, UiOpensWithIntent, UiReportNode, UiScreenIntent,
+        ScheduleActionParams, UiActionNode, UiActivityNode, UiAppIntent, UiBadgeIntent,
+        UiChartNode, UiDetailNode, UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode,
+        UiMenuIntent, UiMenuItem, UiNode, UiNoticeLevel, UiOpensWithIntent, UiReportNode,
+        UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -1554,6 +1555,103 @@ mod tests {
     }
 
     #[test]
+    fn rendered_lines_cover_worklist_surfaces_and_item_actions() {
+        let mut approval = test_work_item(1, "REL-1", "Approve release");
+        approval.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: Some(json!({ "worklist": "release" })),
+        });
+        let mut qa = test_work_item(2, "REL-2", "Run QA signoff");
+        qa.kind = "qa".to_string();
+        qa.status = "done".to_string();
+        qa.priority = 4;
+
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![approval, qa],
+        };
+        let list = UiListNode {
+            id: Some("pending-approvals".to_string()),
+            title: "Pending Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec![
+                "title".to_string(),
+                "status".to_string(),
+                "kind".to_string(),
+                "priority".to_string(),
+            ],
+            sort: Vec::new(),
+            limit: Some(8),
+            intent: Some("approvals".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let nodes = vec![
+            UiNode::List(list.clone()),
+            UiNode::Activity(UiActivityNode {
+                id: Some("release-activity".to_string()),
+                title: "Release Activity".to_string(),
+                source: "worklists.release".to_string(),
+            }),
+            UiNode::Detail(UiDetailNode {
+                id: Some("release-snapshot".to_string()),
+                title: "Release Snapshot".to_string(),
+                source: "worklists.release".to_string(),
+                item_id: None,
+            }),
+            UiNode::Report(UiReportNode {
+                id: Some("release-readiness".to_string()),
+                title: "Release Readiness".to_string(),
+                source: "worklists.release".to_string(),
+                prompt: Some("Summarize release readiness.".to_string()),
+            }),
+            UiNode::Chart(UiChartNode {
+                id: Some("approval-flow".to_string()),
+                title: "Approval Flow".to_string(),
+                source: "worklists.release".to_string(),
+                intent: Some("kind_breakdown".to_string()),
+                render_as: Some("bar".to_string()),
+            }),
+        ];
+
+        let list_request = UiListRequest {
+            source: list.source.clone(),
+            filter: list.filter.clone(),
+            limit: list.limit,
+        };
+        let mut lists = BTreeMap::from([(list_request.cache_key(), items.clone())]);
+        for limit in [ACTIVITY_LIMIT, DETAIL_LIMIT, REPORT_LIMIT, CHART_LIMIT] {
+            let request = worklist_request("worklists.release", limit).expect("worklist request");
+            lists.insert(request.cache_key(), items.clone());
+        }
+
+        let mut lines = Vec::new();
+        render_nodes(
+            &nodes,
+            &lists,
+            &BTreeSet::new(),
+            &mut lines,
+            0,
+            88,
+            Some("REL-1"),
+        );
+        let text = line_text(&lines);
+
+        assert!(text.contains("Pending Approvals"));
+        assert!(text.contains("Approve release"));
+        assert!(text.contains("Activity: Release Activity  worklists.release"));
+        assert!(text.contains("Detail: Release Snapshot  worklists.release"));
+        assert!(text.contains("action: release.approve_next"));
+        assert!(text.contains("Report: Release Readiness  worklists.release"));
+        assert!(text.contains("2 loaded  1 pending"));
+        assert!(
+            text.contains("Chart: Approval Flow  worklists.release as bar  intent=kind_breakdown")
+        );
+        assert!(text.contains("approval"));
+        assert!(text.contains("qa"));
+    }
+
+    #[test]
     fn work_item_selections_follow_visible_worklist_list_nodes() {
         let list = UiListNode {
             id: Some("recent-release-work".to_string()),
@@ -1782,5 +1880,18 @@ mod tests {
             created_at: "2026-06-18T00:00:00Z".to_string(),
             updated_at: "2026-06-18T00:00:00Z".to_string(),
         }
+    }
+
+    fn line_text(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
