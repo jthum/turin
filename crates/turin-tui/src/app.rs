@@ -173,6 +173,7 @@ pub struct TuiApp {
     ui_screen_indices: BTreeMap<String, usize>,
     ui_nav_indices: BTreeMap<String, usize>,
     active_pane_id: Option<String>,
+    ui_pane_action_index: usize,
     ui_action_index: usize,
     ui_item_index: usize,
     harness_focus: HarnessFocus,
@@ -203,6 +204,7 @@ impl TuiApp {
             ui_screen_indices: BTreeMap::new(),
             ui_nav_indices: BTreeMap::new(),
             active_pane_id: None,
+            ui_pane_action_index: 0,
             ui_action_index: 0,
             ui_item_index: 0,
             harness_focus: HarnessFocus::Navigation,
@@ -278,9 +280,8 @@ impl TuiApp {
             return self.handle_pending_action_key(key);
         }
 
-        if self.active_pane_id.is_some() && key.code == KeyCode::Esc {
-            self.active_pane_id = None;
-            return Ok(TuiSignal::Continue);
+        if self.active_pane_id.is_some() {
+            return self.handle_pane_key(key);
         }
 
         match key.code {
@@ -343,7 +344,7 @@ impl TuiApp {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), 1);
                 self.ui_action_index = 0;
                 self.ui_item_index = 0;
-                self.active_pane_id = None;
+                self.close_active_pane();
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
@@ -351,7 +352,7 @@ impl TuiApp {
                 self.ui_app_index = offset_index(self.ui_app_index, self.ui_app_count(), -1);
                 self.ui_action_index = 0;
                 self.ui_item_index = 0;
-                self.active_pane_id = None;
+                self.close_active_pane();
                 self.sync_harness_nav_to_screen();
                 Ok(TuiSignal::Continue)
             }
@@ -383,6 +384,52 @@ impl TuiApp {
             }
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
                 self.cancel_pending_action();
+                Ok(TuiSignal::Continue)
+            }
+            _ => Ok(TuiSignal::Continue),
+        }
+    }
+
+    fn handle_pane_key(&mut self, key: KeyEvent) -> Result<TuiSignal> {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.close_active_pane();
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('?') => {
+                self.show_help = !self.show_help;
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('r') => {
+                self.request_current_harness_lists(true)?;
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.move_pane_action(1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.move_pane_action(-1);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::PageDown => {
+                self.move_pane_action_page(SELECTION_PAGE_SIZE);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::PageUp => {
+                self.move_pane_action_page(-SELECTION_PAGE_SIZE);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Home => {
+                self.move_pane_action_to_edge(SelectionEdge::Start);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::End => {
+                self.move_pane_action_to_edge(SelectionEdge::End);
+                Ok(TuiSignal::Continue)
+            }
+            KeyCode::Enter => {
+                self.activate_pane_action()?;
                 Ok(TuiSignal::Continue)
             }
             _ => Ok(TuiSignal::Continue),
@@ -543,6 +590,24 @@ impl TuiApp {
         }
     }
 
+    fn move_pane_action(&mut self, delta: isize) {
+        let actions = self.current_pane_actions();
+        if !actions.is_empty() {
+            self.ui_pane_action_index =
+                offset_index(self.ui_pane_action_index, actions.len(), delta);
+        }
+    }
+
+    fn move_pane_action_page(&mut self, delta: isize) {
+        let actions = self.current_pane_actions();
+        self.ui_pane_action_index = page_index(self.ui_pane_action_index, actions.len(), delta);
+    }
+
+    fn move_pane_action_to_edge(&mut self, edge: SelectionEdge) {
+        let actions = self.current_pane_actions();
+        self.ui_pane_action_index = edge_index(actions.len(), edge);
+    }
+
     fn move_harness_screen(&mut self, delta: isize) {
         if self.tab != TabKind::Harness {
             return;
@@ -557,7 +622,7 @@ impl TuiApp {
         self.sync_harness_nav_to_screen();
         self.ui_action_index = 0;
         self.ui_item_index = 0;
-        self.active_pane_id = None;
+        self.close_active_pane();
     }
 
     fn move_harness_nav_page(&mut self, delta: isize) {
@@ -628,23 +693,7 @@ impl TuiApp {
             return Ok(());
         };
 
-        if action.form.is_some() {
-            if let Some(form_session) = TuiFormSession::from_action(action) {
-                self.dashboard.record_info(format!(
-                    "Editing harness UI form '{}' ({})",
-                    form_session.form.title, form_session.form.action
-                ));
-                self.active_form = Some(form_session);
-            }
-            return Ok(());
-        }
-
-        if action.confirm {
-            self.pending_action = Some(action.into_pending());
-        } else {
-            self.run_harness_action(action.into_pending())?;
-        }
-        Ok(())
+        self.start_harness_action(action)
     }
 
     fn move_harness_nav(&mut self, delta: isize) {
@@ -687,8 +736,46 @@ impl TuiApp {
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.ui_action_index = 0;
         self.ui_item_index = 0;
-        self.active_pane_id = None;
+        self.close_active_pane();
         self.request_current_harness_lists(false)
+    }
+
+    fn activate_pane_action(&mut self) -> Result<()> {
+        let Some(action) = self
+            .current_pane_actions()
+            .get(self.ui_pane_action_index)
+            .cloned()
+        else {
+            self.dashboard
+                .record_info("No action is available in this pane");
+            return Ok(());
+        };
+        self.start_harness_action(action)
+    }
+
+    fn start_harness_action(&mut self, action: harness_ui::HarnessAction) -> Result<()> {
+        if action.form.is_some() {
+            if let Some(form_session) = TuiFormSession::from_action(action) {
+                self.dashboard.record_info(format!(
+                    "Editing harness UI form '{}' ({})",
+                    form_session.form.title, form_session.form.action
+                ));
+                self.active_form = Some(form_session);
+            }
+            return Ok(());
+        }
+
+        if action.confirm {
+            self.pending_action = Some(action.into_pending());
+        } else {
+            self.run_harness_action(action.into_pending())?;
+        }
+        Ok(())
+    }
+
+    fn close_active_pane(&mut self) {
+        self.active_pane_id = None;
+        self.ui_pane_action_index = 0;
     }
 
     fn confirm_pending_action(&mut self) -> Result<()> {
@@ -968,6 +1055,13 @@ impl TuiApp {
             .unwrap_or_default()
     }
 
+    fn current_pane_actions(&self) -> Vec<harness_ui::HarnessAction> {
+        let Some(app) = self.selected_ui_app() else {
+            return Vec::new();
+        };
+        pane_actions(&app, self.active_pane_id.as_deref())
+    }
+
     fn current_harness_list_requests(&self) -> Vec<UiListRequest> {
         let Some(app) = self.selected_ui_app() else {
             return Vec::new();
@@ -1092,6 +1186,7 @@ impl TuiApp {
         if app.panes.contains_key(target) {
             self.tab = TabKind::Harness;
             self.active_pane_id = Some(target.to_string());
+            self.ui_pane_action_index = 0;
             if let Err(err) = self.request_current_harness_lists(false) {
                 self.dashboard
                     .record_error(format!("Failed to load harness UI pane lists: {err}"));
@@ -1159,7 +1254,7 @@ impl TuiApp {
         self.harness_focus = focus;
         self.ui_action_index = action_index;
         self.ui_item_index = 0;
-        self.active_pane_id = None;
+        self.close_active_pane();
         self.sync_harness_nav_to_screen();
         if let Err(err) = self.request_current_harness_lists(false) {
             self.dashboard
@@ -1190,7 +1285,7 @@ impl TuiApp {
             if let Some(pane_id) = self.active_pane_id.as_deref()
                 && !app.panes.contains_key(pane_id)
             {
-                self.active_pane_id = None;
+                self.close_active_pane();
             }
             let items = harness_ui::collect_nav_items(&app);
             if items.is_empty() {
@@ -1200,6 +1295,10 @@ impl TuiApp {
                 self.ui_nav_indices.insert(app.id.clone(), index);
             }
         }
+        let pane_action_count = self.current_pane_actions().len();
+        self.ui_pane_action_index = self
+            .ui_pane_action_index
+            .min(pane_action_count.saturating_sub(1));
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>) {
@@ -1375,6 +1474,7 @@ impl TuiApp {
             area,
             self.selected_ui_app().as_ref(),
             self.active_pane_id.as_deref(),
+            Some(self.ui_pane_action_index),
             &self.ui_lists,
             &self.requested_ui_lists,
         );
@@ -1656,7 +1756,7 @@ impl TuiApp {
         let fallback = if self.active_form.is_some() {
             "Form: Tab/↑/↓ fields  type edit  Space bool  h/l or ←/→ option  Enter submit  Esc cancel"
         } else if self.active_pane_id.is_some() {
-            "Pane: Esc close  r refresh visible data  ? help"
+            "Pane: j/k actions  Enter run  r refresh visible data  Esc/q close  ? help"
         } else if self.tab == TabKind::Harness {
             "Harness: f focus  j/k move  PgUp/PgDn/Home/End jump  Enter open/item action/run  r refresh  ? help"
         } else {
@@ -1699,7 +1799,9 @@ impl TuiApp {
                 "open nav item, queue selected item action, or run action",
             ),
             kv_line("r", "refresh current view"),
-            kv_line("Pane Esc", "close shown pane"),
+            kv_line("Pane j / k", "select pane action"),
+            kv_line("Pane Enter", "run selected pane action"),
+            kv_line("Pane Esc / q", "close shown pane"),
             kv_line("Esc / n", "cancel confirmation"),
             kv_line("y / Enter", "confirm action"),
             kv_line("Form Tab / ↑ ↓", "move between form fields"),
@@ -1898,6 +2000,16 @@ fn pending_action_from_work_item(
         harness_id: app.source.harness_id.clone(),
         params: action.params.clone().unwrap_or(Value::Null),
     })
+}
+
+fn pane_actions(
+    app: &turin_ui_core::UiAppRecord,
+    pane_id: Option<&str>,
+) -> Vec<harness_ui::HarnessAction> {
+    pane_id
+        .and_then(|pane_id| app.panes.get(pane_id))
+        .map(|pane| harness_ui::collect_actions(app, &pane.nodes))
+        .unwrap_or_default()
 }
 
 fn visible_harness_list_requests(
@@ -2131,8 +2243,8 @@ mod tests {
     use super::*;
     use serde_json::json;
     use turin_daemon_protocol::{
-        ScheduleActionParams, UiIntentSource, UiListNode, UiNode, UiPaneIntent, UiScreenIntent,
-        WorkItemDetail,
+        ScheduleActionParams, UiActionNode, UiIntentSource, UiListNode, UiNode, UiPaneIntent,
+        UiScreenIntent, WorkItemDetail,
     };
     use turin_ui_core::UiAppRecord;
 
@@ -2295,6 +2407,37 @@ mod tests {
         assert_eq!(with_pane[0].limit, Some(3));
         assert_eq!(with_pane[1].source, "worklists.pane");
         assert_eq!(with_pane[1].limit, Some(5));
+    }
+
+    #[test]
+    fn pane_actions_collect_runnable_nodes() {
+        let mut app = test_app();
+        app.panes.insert(
+            "actions".to_string(),
+            UiPaneIntent {
+                app_id: app.id.clone(),
+                id: "actions".to_string(),
+                title: "Actions".to_string(),
+                presentation: Some("sheet".to_string()),
+                nodes: vec![UiNode::Action(UiActionNode {
+                    id: Some("approve-now".to_string()),
+                    label: "Approve now".to_string(),
+                    action: "release.approve".to_string(),
+                    params: json!({ "force": true }),
+                    confirm: true,
+                })],
+            },
+        );
+
+        let actions = pane_actions(&app, Some("actions"));
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label, "Approve now");
+        assert_eq!(actions[0].action, "release.approve");
+        assert!(actions[0].confirm);
+        assert_eq!(actions[0].params, json!({ "force": true }));
+        assert!(pane_actions(&app, Some("missing")).is_empty());
+        assert!(pane_actions(&app, None).is_empty());
     }
 
     fn test_app() -> UiAppRecord {

@@ -454,6 +454,7 @@ pub fn render_harness_screen(
         Line::from(""),
     ];
     let max_width = area.width.saturating_sub(4) as usize;
+    let mut action_index = 0;
     render_nodes(
         app,
         &screen.nodes,
@@ -463,6 +464,8 @@ pub fn render_harness_screen(
         0,
         max_width,
         selected_work_item_id,
+        None,
+        &mut action_index,
     );
     frame.render_widget(panel("Screen", lines), area);
 }
@@ -472,6 +475,7 @@ pub fn render_harness_pane(
     area: Rect,
     app: Option<&UiAppRecord>,
     pane_id: Option<&str>,
+    selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
 ) {
@@ -486,7 +490,14 @@ pub fn render_harness_pane(
     };
     frame.render_widget(Clear, area);
     frame.render_widget(
-        pane_panel(app, pane, lists, requested_lists, area.width),
+        pane_panel(
+            app,
+            pane,
+            selected_action_index,
+            lists,
+            requested_lists,
+            area.width,
+        ),
         area,
     );
 }
@@ -494,16 +505,28 @@ pub fn render_harness_pane(
 fn pane_panel(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
+    selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     width: u16,
 ) -> Paragraph<'static> {
-    panel("Pane", pane_lines(app, pane, lists, requested_lists, width))
+    panel(
+        "Pane",
+        pane_lines(
+            app,
+            pane,
+            selected_action_index,
+            lists,
+            requested_lists,
+            width,
+        ),
+    )
 }
 
 fn pane_lines(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
+    selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
     width: u16,
@@ -529,6 +552,7 @@ fn pane_lines(
             theme::muted(),
         )));
     } else {
+        let mut action_index = 0;
         render_nodes(
             app,
             &pane.nodes,
@@ -538,10 +562,18 @@ fn pane_lines(
             0,
             max_width,
             None,
+            selected_action_index,
+            &mut action_index,
         );
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Esc closes pane", theme::muted())));
+    let action_count = collect_actions(app, &pane.nodes).len();
+    let hint = if action_count == 0 {
+        "Esc/q closes pane"
+    } else {
+        "j/k selects pane action  Enter runs selected action  Esc/q closes pane"
+    };
+    lines.push(Line::from(Span::styled(hint, theme::muted())));
     lines
 }
 
@@ -554,6 +586,8 @@ fn render_nodes(
     depth: usize,
     max_width: usize,
     selected_work_item_id: Option<&str>,
+    selected_action_index: Option<usize>,
+    action_index: &mut usize,
 ) {
     for node in nodes {
         match node {
@@ -576,17 +610,29 @@ fn render_nodes(
                     depth + 1,
                     max_width,
                     selected_work_item_id,
+                    selected_action_index,
+                    action_index,
                 );
             }
             UiNode::Action(action) => {
-                let marker = if action.confirm { "!" } else { "→" };
+                let selected = selected_action_index == Some(*action_index);
+                *action_index += 1;
+                let marker = if selected {
+                    "●"
+                } else if action.confirm {
+                    "!"
+                } else {
+                    "→"
+                };
                 lines.push(indent_line(
                     depth,
                     format!(
                         "{marker} {}",
                         title_with_node_badge(app, action.id.as_deref(), &action.label)
                     ),
-                    if action.confirm {
+                    if selected {
+                        theme::selected()
+                    } else if action.confirm {
                         theme::warning()
                     } else {
                         theme::base()
@@ -603,7 +649,11 @@ fn render_nodes(
                 max_width,
                 selected_work_item_id,
             ),
-            UiNode::Form(form) => render_form(app, form, lines, depth),
+            UiNode::Form(form) => {
+                let selected = selected_action_index == Some(*action_index);
+                *action_index += 1;
+                render_form(app, form, lines, depth, selected)
+            }
             UiNode::Activity(activity) => {
                 render_activity(app, activity, lists, requested_lists, lines, depth)
             }
@@ -1173,14 +1223,26 @@ fn pad_cell(value: &str, width: usize) -> String {
     format!("{value}{}", " ".repeat(width - len))
 }
 
-fn render_form(app: &UiAppRecord, form: &UiFormNode, lines: &mut Vec<Line<'static>>, depth: usize) {
+fn render_form(
+    app: &UiAppRecord,
+    form: &UiFormNode,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+    selected: bool,
+) {
+    let style = if selected {
+        theme::selected()
+    } else {
+        theme::accent()
+    };
+    let marker = if selected { "● " } else { "" };
     lines.push(indent_line(
         depth,
         format!(
-            "Form: {}",
+            "{marker}Form: {}",
             title_with_node_badge(app, form.id.as_deref(), &form.title)
         ),
-        theme::accent(),
+        style,
     ));
     lines.push(indent_line(
         depth + 1,
@@ -1725,6 +1787,7 @@ mod tests {
         );
 
         let mut lines = Vec::new();
+        let mut action_index = 0;
         render_nodes(
             &app,
             &nodes,
@@ -1734,6 +1797,8 @@ mod tests {
             0,
             88,
             Some("REL-1"),
+            None,
+            &mut action_index,
         );
         let text = line_text(&lines);
 
@@ -1781,7 +1846,7 @@ mod tests {
             },
         )]);
 
-        let text = line_text(&pane_lines(&app, &pane, &lists, &BTreeSet::new(), 88));
+        let text = line_text(&pane_lines(&app, &pane, None, &lists, &BTreeSet::new(), 88));
 
         assert!(text.contains("Release Notes  release-notes"));
         assert!(text.contains("presentation=sheet"));
@@ -1789,7 +1854,48 @@ mod tests {
         assert!(text.contains("Detail: Current Release Snapshot  worklists.release"));
         assert!(text.contains("1 loaded  1 pending"));
         assert!(text.contains("Approve release"));
-        assert!(text.contains("Esc closes pane"));
+        assert!(text.contains("Esc/q closes pane"));
+    }
+
+    #[test]
+    fn pane_lines_mark_selected_action() {
+        let app = release_app();
+        let pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: "release-actions".to_string(),
+            title: "Release Actions".to_string(),
+            presentation: Some("sheet".to_string()),
+            nodes: vec![
+                UiNode::Action(UiActionNode {
+                    id: Some("approve-now".to_string()),
+                    label: "Approve now".to_string(),
+                    action: "release.approve".to_string(),
+                    params: json!({ "force": true }),
+                    confirm: true,
+                }),
+                UiNode::Form(UiFormNode {
+                    id: Some("defer-release".to_string()),
+                    title: "Defer release".to_string(),
+                    action: "release.defer".to_string(),
+                    params: json!({}),
+                    fields: Vec::new(),
+                }),
+            ],
+        };
+
+        let text = line_text(&pane_lines(
+            &app,
+            &pane,
+            Some(1),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            88,
+        ));
+
+        assert!(text.contains("! Approve now"));
+        assert!(text.contains("● Form: Defer release"));
+        assert!(text.contains("j/k selects pane action"));
+        assert!(text.contains("Enter runs selected action"));
     }
 
     #[test]
@@ -1806,6 +1912,7 @@ mod tests {
         let text = line_text(&pane_lines(
             &app,
             &pane,
+            None,
             &BTreeMap::new(),
             &BTreeSet::new(),
             88,
@@ -1813,7 +1920,7 @@ mod tests {
 
         assert!(text.contains("Empty Pane  empty-pane"));
         assert!(text.contains("This pane has no content nodes."));
-        assert!(text.contains("Esc closes pane"));
+        assert!(text.contains("Esc/q closes pane"));
     }
 
     #[test]
