@@ -66,7 +66,9 @@ and `turin-daemon-protocol`.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
 - Worklist-backed `list` nodes render as compact terminal tables with
-  terminal-local row-position and action-available cues. Other list sources
+  terminal-local row-position and action-available cues. When selection moves
+  beyond the first visible page, the renderer windows rows around the selected
+  item instead of making selection disappear off-screen. Other list sources
   remain visible with metadata and an explicit unsupported-adapter message
   until the client has a loader for that source.
 - Worklist item actions are ordinary harness action runs from the client's
@@ -129,10 +131,10 @@ git diff --check
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, focus cycling that skips empty regions, local work-item selection
-with inspector detail, page/boundary navigation in focused regions, dynamic
-open/focus handling, shown pane overlays with pane-local item/action selection,
-editable forms, worklist-backed activity/detail/report/chart surfaces, latest
-action result feedback, task and event inspectors, confirmation flow, UI
-notices, and list invalidation. Chat, search, connection profile editing, and
-deeper inspectors should be reintroduced only as they fit the new terminal UX
-model.
+with inspector detail, selected-row table windowing, page/boundary navigation in
+focused regions, dynamic open/focus handling, shown pane overlays with
+pane-local item/action selection, editable forms, worklist-backed
+activity/detail/report/chart surfaces, latest action result feedback, task and
+event inspectors, confirmation flow, UI notices, and list invalidation. Chat,
+search, connection profile editing, and deeper inspectors should be reintroduced
+only as they fit the new terminal UX model.

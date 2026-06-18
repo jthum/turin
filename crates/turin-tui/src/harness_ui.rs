@@ -23,6 +23,9 @@ const ACTIVITY_LIMIT: u32 = 12;
 const DETAIL_LIMIT: u32 = 25;
 const REPORT_LIMIT: u32 = 100;
 const CHART_LIMIT: u32 = 100;
+const WORK_ITEM_TABLE_VISIBLE_ROWS: usize = 12;
+const WORK_ITEM_ROW_MARKER_WIDTH: usize = 5;
+const WORK_ITEM_ACTION_MARKER_WIDTH: usize = 6;
 
 #[derive(Debug, Clone)]
 pub struct HarnessAction {
@@ -790,10 +793,23 @@ fn render_work_items(
         table_row(&columns, &widths),
         theme::muted(),
     ));
-    for (index, item) in items.items.iter().take(12).enumerate() {
-        let selected = selected_work_item_id.is_some_and(|selected_id| {
-            selected_id == item.public_id || selected_id.parse::<i64>().ok() == Some(item.id)
-        });
+    let selected_index = selected_work_item_index(items, selected_work_item_id);
+    let (start, end) = work_item_visible_window(items.items.len(), selected_index);
+    if start > 0 {
+        lines.push(indent_line(
+            depth,
+            format!("... {start} earlier"),
+            theme::muted(),
+        ));
+    }
+    for (index, item) in items
+        .items
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
+    {
+        let selected = selected_index == Some(index);
         let mut values = Vec::with_capacity(fields.len() + 2);
         values.push(work_item_row_marker(index, selected));
         values.extend(
@@ -812,13 +828,36 @@ fn render_work_items(
             },
         ));
     }
-    if items.items.len() > 12 {
+    if end < items.items.len() {
         lines.push(indent_line(
             depth,
-            format!("... {} more", items.items.len() - 12),
+            format!("... {} more", items.items.len() - end),
             theme::muted(),
         ));
     }
+}
+
+fn selected_work_item_index(
+    items: &WorkItemList,
+    selected_work_item_id: Option<&str>,
+) -> Option<usize> {
+    let selected_work_item_id = selected_work_item_id?;
+    let selected_numeric_id = selected_work_item_id.parse::<i64>().ok();
+    items.items.iter().position(|item| {
+        item.public_id == selected_work_item_id || selected_numeric_id == Some(item.id)
+    })
+}
+
+fn work_item_visible_window(item_count: usize, selected_index: Option<usize>) -> (usize, usize) {
+    if item_count <= WORK_ITEM_TABLE_VISIBLE_ROWS {
+        return (0, item_count);
+    }
+
+    let selected_index = selected_index.unwrap_or_default().min(item_count - 1);
+    let half_window = WORK_ITEM_TABLE_VISIBLE_ROWS / 2;
+    let max_start = item_count - WORK_ITEM_TABLE_VISIBLE_ROWS;
+    let start = selected_index.saturating_sub(half_window).min(max_start);
+    (start, start + WORK_ITEM_TABLE_VISIBLE_ROWS)
 }
 
 fn work_item_row_marker(index: usize, selected: bool) -> String {
@@ -841,7 +880,7 @@ fn work_item_action_marker(item: &WorkItemDetail) -> String {
 fn work_item_table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
     let column_count = fields.len() + 2;
     let separator_width = column_count.saturating_sub(1) * 3;
-    let fixed_width = 3 + 6;
+    let fixed_width = WORK_ITEM_ROW_MARKER_WIDTH + WORK_ITEM_ACTION_MARKER_WIDTH;
     let field_width = if fields.is_empty() {
         6
     } else {
@@ -854,9 +893,9 @@ fn work_item_table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
     .clamp(6, 28);
 
     let mut widths = Vec::with_capacity(column_count);
-    widths.push(3);
+    widths.push(WORK_ITEM_ROW_MARKER_WIDTH);
     widths.extend((0..fields.len()).map(|_| field_width));
-    widths.push(6);
+    widths.push(WORK_ITEM_ACTION_MARKER_WIDTH);
     widths
 }
 
@@ -1732,8 +1771,8 @@ mod tests {
         let widths = work_item_table_widths(&fields, 48);
 
         assert_eq!(widths.len(), fields.len() + 2);
-        assert_eq!(widths[0], 3);
-        assert_eq!(widths[widths.len() - 1], 6);
+        assert_eq!(widths[0], WORK_ITEM_ROW_MARKER_WIDTH);
+        assert_eq!(widths[widths.len() - 1], WORK_ITEM_ACTION_MARKER_WIDTH);
         assert!(
             widths[1..widths.len() - 1]
                 .iter()
@@ -1774,6 +1813,44 @@ mod tests {
         assert!(text.contains("run"));
         assert!(text.contains("Run QA"));
         assert_eq!(work_item_row_marker(1, false), "2");
+    }
+
+    #[test]
+    fn work_item_table_window_keeps_selected_row_visible() {
+        let list = UiListNode {
+            id: Some("pending-approvals".to_string()),
+            title: "Pending Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec!["title".to_string(), "status".to_string()],
+            sort: Vec::new(),
+            limit: Some(18),
+            intent: Some("approvals".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: (1..=18)
+                .map(|id| test_work_item(id, &format!("REL-{id}"), &format!("Release item {id}")))
+                .collect(),
+        };
+        let mut lines = Vec::new();
+
+        render_work_items(&list, &items, &mut lines, 0, 72, Some("REL-15"));
+        let text = line_text(&lines);
+
+        assert!(text.contains("... 6 earlier"));
+        assert!(text.contains("Release item 15"));
+        assert!(text.contains("●15"));
+        assert!(!text.contains("Release item 6"));
+        assert!(!text.contains("... 0 more"));
+    }
+
+    #[test]
+    fn work_item_visible_window_starts_at_first_page_without_selection() {
+        assert_eq!(work_item_visible_window(18, None), (0, 12));
+        assert_eq!(work_item_visible_window(18, Some(17)), (6, 18));
+        assert_eq!(work_item_visible_window(3, Some(2)), (0, 3));
     }
 
     #[test]
