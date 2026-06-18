@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use eframe::egui::{self, RichText};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
-    UiActionNode, UiActivityNode, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
-    UiNode, UiReportNode, UiSectionNode, UiTextNode, WorkItemDetail, WorkItemList,
+    UiActionNode, UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode,
+    UiMenuItem, UiNode, UiNoticeLevel, UiReportNode, UiSectionNode, UiTextNode, WorkItemDetail,
+    WorkItemList,
 };
 use turin_ui_core::{UiAppRecord, UiListRequest};
 
@@ -163,7 +164,7 @@ fn render_screen_nav(
     if !screens.is_empty() {
         let labels = screens
             .iter()
-            .map(|screen| screen.title.clone())
+            .map(|screen| screen_nav_label(app, screen))
             .collect::<Vec<_>>();
         ui.add(cast::Tabs::new(screen_index, labels).size(cast::Size::Small));
     }
@@ -177,23 +178,22 @@ fn render_screen_nav(
         cast::Panel::new().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(menu.title.clone()).strong());
-                render_menu_items(ui, &menu.items, event);
+                render_menu_items(ui, app, &menu.items, event);
             });
         });
     }
 }
 
-fn render_menu_items(ui: &mut egui::Ui, items: &[UiMenuItem], event: &mut Option<HarnessUiEvent>) {
+fn render_menu_items(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    items: &[UiMenuItem],
+    event: &mut Option<HarnessUiEvent>,
+) {
     for item in items {
-        let mut label = item.label.clone();
-        if let Some(badge) = &item.badge {
-            label.push_str(" (");
-            label.push_str(badge);
-            label.push(')');
-        }
         if ui
             .add(
-                cast::Button::new(label)
+                cast::Button::new(item.label.clone())
                     .size(cast::Size::Small)
                     .variant(cast::Variant::Ghost),
             )
@@ -201,10 +201,52 @@ fn render_menu_items(ui: &mut egui::Ui, items: &[UiMenuItem], event: &mut Option
         {
             *event = Some(HarnessUiEvent::OpenScreen(item.opens.clone()));
         }
+        render_nav_badge(ui, app, &item.opens, item.badge.as_deref());
         if !item.items.is_empty() {
             ui.add(cast::Badge::new("subnav").variant(cast::Variant::Outline));
-            render_menu_items(ui, &item.items, event);
+            render_menu_items(ui, app, &item.items, event);
         }
+    }
+}
+
+fn screen_nav_label(app: &UiAppRecord, screen: &turin_daemon_protocol::UiScreenIntent) -> String {
+    badge_text(app.badges.get(&screen.id), screen.presentation.as_deref())
+        .map(|badge| format!("{} · {badge}", screen.title))
+        .unwrap_or_else(|| screen.title.clone())
+}
+
+fn render_nav_badge(ui: &mut egui::Ui, app: &UiAppRecord, target: &str, fallback: Option<&str>) {
+    let badge = app.badges.get(target);
+    if let Some(text) = badge_text(badge, fallback) {
+        ui.add(
+            cast::Badge::new(text)
+                .intent(badge_intent(badge))
+                .variant(cast::Variant::Subtle),
+        );
+    }
+}
+
+fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<String> {
+    let label = badge
+        .and_then(|badge| badge.label.as_deref())
+        .or(fallback)
+        .filter(|label| !label.is_empty());
+    let count = badge.and_then(|badge| badge.count);
+    match (label, count) {
+        (Some(label), Some(count)) => Some(format!("{label} {count}")),
+        (Some(label), None) => Some(label.to_string()),
+        (None, Some(count)) => Some(count.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn badge_intent(badge: Option<&UiBadgeIntent>) -> cast::Intent {
+    match badge.and_then(|badge| badge.level) {
+        Some(UiNoticeLevel::Success) => cast::Intent::Success,
+        Some(UiNoticeLevel::Warning) => cast::Intent::Warning,
+        Some(UiNoticeLevel::Error) => cast::Intent::Danger,
+        Some(UiNoticeLevel::Info) => cast::Intent::Info,
+        None => cast::Intent::Neutral,
     }
 }
 

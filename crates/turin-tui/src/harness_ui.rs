@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
-    UiActivityNode, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem, UiNode,
-    UiReportNode, UiScreenIntent, WorkItemDetail, WorkItemList,
+    UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
+    UiNode, UiNoticeLevel, UiReportNode, UiScreenIntent, WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{UiAppRecord, UiListRequest};
 
@@ -57,6 +57,7 @@ pub struct HarnessNavItem {
     pub label: String,
     pub group: String,
     pub badge: Option<String>,
+    pub badge_level: Option<UiNoticeLevel>,
     pub depth: usize,
     pub target: HarnessNavTarget,
 }
@@ -102,41 +103,72 @@ pub fn collect_nav_items(app: &UiAppRecord) -> Vec<HarnessNavItem> {
     let mut out = Vec::new();
 
     for (index, screen) in app.screens.values().enumerate() {
+        let (badge, badge_level) = nav_badge(app, &screen.id, screen.presentation.as_deref());
         out.push(HarnessNavItem {
             label: screen.title.clone(),
             group: "Screens".to_string(),
-            badge: screen.presentation.clone(),
+            badge,
+            badge_level,
             depth: 0,
             target: HarnessNavTarget::Screen { index },
         });
     }
 
     for menu in &app.menus {
-        collect_menu_nav_items(&menu.title, &menu.items, 0, &mut out);
+        collect_menu_nav_items(app, &menu.title, &menu.items, 0, &mut out);
     }
 
     out
 }
 
 fn collect_menu_nav_items(
+    app: &UiAppRecord,
     group: &str,
     items: &[UiMenuItem],
     depth: usize,
     out: &mut Vec<HarnessNavItem>,
 ) {
     for item in items {
+        let (badge, badge_level) = nav_badge(app, &item.opens, item.badge.as_deref());
         out.push(HarnessNavItem {
             label: item.label.clone(),
             group: group.to_string(),
-            badge: item.badge.clone(),
+            badge,
+            badge_level,
             depth,
             target: HarnessNavTarget::Menu {
                 opens: item.opens.clone(),
             },
         });
         if !item.items.is_empty() {
-            collect_menu_nav_items(group, &item.items, depth + 1, out);
+            collect_menu_nav_items(app, group, &item.items, depth + 1, out);
         }
+    }
+}
+
+fn nav_badge(
+    app: &UiAppRecord,
+    target: &str,
+    fallback: Option<&str>,
+) -> (Option<String>, Option<UiNoticeLevel>) {
+    let dynamic = app.badges.get(target);
+    (
+        badge_text(dynamic, fallback),
+        dynamic.and_then(|badge| badge.level),
+    )
+}
+
+fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<String> {
+    let label = badge
+        .and_then(|badge| badge.label.as_deref())
+        .or(fallback)
+        .filter(|label| !label.is_empty());
+    let count = badge.and_then(|badge| badge.count);
+    match (label, count) {
+        (Some(label), Some(count)) => Some(format!("{label} {count}")),
+        (Some(label), None) => Some(label.to_string()),
+        (None, Some(count)) => Some(count.to_string()),
+        (None, None) => None,
     }
 }
 
@@ -1256,9 +1288,9 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use turin_daemon_protocol::{
-        UiActionNode, UiActivityNode, UiAppIntent, UiChartNode, UiDetailNode, UiFormField,
-        UiFormNode, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem, UiNode,
-        UiOpensWithIntent, UiReportNode, UiScreenIntent,
+        UiActionNode, UiActivityNode, UiAppIntent, UiBadgeIntent, UiChartNode, UiDetailNode,
+        UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem,
+        UiNode, UiNoticeLevel, UiOpensWithIntent, UiReportNode, UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -1317,6 +1349,14 @@ mod tests {
             UiIntentMessage::new(UiIntent::OpensWith(UiOpensWithIntent {
                 app_id: "release".to_string(),
                 screen_id: "approvals".to_string(),
+            })),
+            UiIntentMessage::new(UiIntent::Badge(UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "approvals".to_string(),
+                count: Some(3),
+                label: None,
+                level: Some(UiNoticeLevel::Info),
+                data: Default::default(),
             })),
             UiIntentMessage::new(UiIntent::Menu(UiMenuIntent {
                 app_id: "release".to_string(),
@@ -1397,10 +1437,18 @@ mod tests {
             .find(|item| item.label == "Work")
             .expect("work menu item");
         assert_eq!(work.group, "Main");
-        assert_eq!(work.badge.as_deref(), Some("approvals"));
+        assert_eq!(work.badge.as_deref(), Some("approvals 3"));
+        assert_eq!(work.badge_level, Some(UiNoticeLevel::Info));
         assert!(
             matches!(work.target, HarnessNavTarget::Menu { ref opens } if opens == "approvals")
         );
+
+        let approvals = items
+            .iter()
+            .find(|item| item.label == "Approvals" && item.group == "Screens")
+            .expect("approvals screen item");
+        assert_eq!(approvals.badge.as_deref(), Some("3"));
+        assert_eq!(approvals.badge_level, Some(UiNoticeLevel::Info));
 
         let intake = items
             .iter()

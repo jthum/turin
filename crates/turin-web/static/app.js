@@ -160,31 +160,62 @@ function renderScreens() {
     title.className = "eyebrow";
     title.textContent = menu.title;
     els.screenNav.append(title);
-    for (const item of menu.items ?? []) renderMenuItem(item, 0);
+    for (const item of menu.items ?? []) renderMenuItem(app, item, 0);
   }
 
   if (!(app.menus ?? []).length) {
-    for (const screen of screens) renderScreenButton(screen.id, screen.title, 0);
+    for (const screen of screens) {
+      renderScreenButton(app, screen.id, screen.title, 0, screen.presentation);
+    }
   }
 }
 
-function renderMenuItem(item, depth) {
-  renderScreenButton(item.opens, item.label, depth, item.badge);
-  for (const child of item.items ?? []) renderMenuItem(child, depth + 1);
+function renderMenuItem(app, item, depth) {
+  renderScreenButton(app, item.opens, item.label, depth, item.badge);
+  for (const child of item.items ?? []) renderMenuItem(app, child, depth + 1);
 }
 
-function renderScreenButton(screenId, label, depth, badge) {
+function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "nav-button";
   button.style.marginLeft = `${depth * 0.75}rem`;
   button.setAttribute("aria-current", screenId === state.selectedScreenId ? "true" : "false");
-  button.textContent = badge ? `${label} · ${badge}` : label;
+  const labelNode = document.createElement("span");
+  labelNode.textContent = label;
+  button.append(labelNode);
+  const badge = badgeForTarget(app, screenId, fallbackBadge);
+  if (badge) {
+    const badgeNode = document.createElement("span");
+    badgeNode.className = "nav-badge";
+    badgeNode.dataset.level = badge.level;
+    badgeNode.textContent = badge.text;
+    button.append(badgeNode);
+  }
   button.addEventListener("click", () => {
     state.selectedScreenId = screenId;
     loadVisibleLists().then(render);
   });
   els.screenNav.append(button);
+}
+
+function badgeForTarget(app, target, fallback) {
+  const dynamic = app?.badges?.[target];
+  const text = badgeText(dynamic, fallback);
+  if (!text) return null;
+  return {
+    text,
+    level: dynamic?.level || "neutral",
+  };
+}
+
+function badgeText(badge, fallback) {
+  const label = badge?.label || fallback || null;
+  const hasCount = badge?.count !== undefined && badge?.count !== null;
+  if (label && hasCount) return `${label} ${badge.count}`;
+  if (label) return label;
+  if (hasCount) return String(badge.count);
+  return null;
 }
 
 function renderScreen() {

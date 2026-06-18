@@ -142,6 +142,49 @@ h3 {
     transform 160ms ease;
 }
 
+.nav-button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.nav-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.nav-badge[data-level="success"] {
+  color: var(--success);
+  border-color: rgba(125, 231, 164, 0.42);
+}
+
+.nav-badge[data-level="warning"] {
+  color: var(--warning);
+  border-color: rgba(255, 211, 106, 0.42);
+}
+
+.nav-badge[data-level="error"] {
+  color: var(--danger);
+  border-color: rgba(255, 124, 111, 0.42);
+}
+
+.nav-badge[data-level="info"] {
+  color: var(--info);
+  border-color: rgba(129, 199, 255, 0.42);
+}
+
+.nav-button[aria-current="true"] .nav-badge {
+  color: var(--accent-ink);
+  border-color: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .nav-button:hover,
 .ghost-button:hover,
 .primary-button:hover,

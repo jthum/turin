@@ -49,7 +49,7 @@ Core rule:
 | `notice` | Recent UI notices and global info panels. | Overview notices panel. | Bounded in `UiRegistry`. |
 | `open` | Selects app/screen locally. | Selects app/screen locally. | Runtime does not own active screen state. |
 | `show` | Opens screen when target is a screen; panes are recognized. | Opens screen when target is a screen; panes degrade to a notice. | Pane behavior is intentionally client-specific. |
-| `badge` | Recorded in registry; limited visual use today. | Recorded in registry; menu badges display when declared statically. | Dynamic badge rendering needs more client work. |
+| `badge` | Dynamic count/label badges render on matching screen/menu navigation targets. | Dynamic count/label badges render on matching screen/menu navigation targets. | Node-level badge placement remains client-specific future work. |
 | `focus` | Selects screen/action target locally. | Selects screen/action target locally. | Focus remains client-local. |
 | `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |
 
@@ -82,7 +82,8 @@ browser shell that consumes those routes.
 - `report` and `chart` need shared semantics across app/TUI/web; app, TUI, and
   web have lightweight worklist-backed summary/bar adapters only.
 - List data loading only supports worklist sources.
-- Dynamic badge rendering is not yet strong enough in either client.
+- Dynamic badges currently render on navigation targets; node-level badge
+  placement remains undefined.
 - TUI item selection is local to visible compact table rows; richer table navigation can still improve.
 - `turin-web` report/chart rendering is useful for worklist-backed summaries
   but still not a shared final semantics layer.

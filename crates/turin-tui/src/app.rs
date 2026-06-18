@@ -1289,11 +1289,16 @@ impl TuiApp {
                     .as_ref()
                     .map(|badge| format!("  [{badge}]"))
                     .unwrap_or_default();
+                let badge_style = if item.badge_level.is_some() {
+                    ui_notice_level_style(item.badge_level)
+                } else {
+                    theme::muted()
+                };
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled(prefix, style),
                     Span::raw(indent),
                     Span::styled(item.label.clone(), style),
-                    Span::styled(badge, theme::muted()),
+                    Span::styled(badge, badge_style),
                 ])));
             }
         }
@@ -1758,12 +1763,7 @@ fn event_line(event: &EventEnvelope, selected: bool) -> ListItem<'static> {
 }
 
 fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'static> {
-    let style = match notice.level {
-        Some(turin_daemon_protocol::UiNoticeLevel::Success) => theme::success(),
-        Some(turin_daemon_protocol::UiNoticeLevel::Warning) => theme::warning(),
-        Some(turin_daemon_protocol::UiNoticeLevel::Error) => theme::danger(),
-        Some(turin_daemon_protocol::UiNoticeLevel::Info) | None => theme::base(),
-    };
+    let style = ui_notice_level_style(notice.level);
     let body = notice
         .body
         .as_ref()
@@ -1773,6 +1773,15 @@ fn ui_notice_line(notice: &turin_daemon_protocol::UiNoticeIntent) -> Line<'stati
         Span::styled(format!("{}: ", notice.app_id), theme::muted()),
         Span::styled(format!("{}{}", notice.title, body), style),
     ])
+}
+
+fn ui_notice_level_style(level: Option<turin_daemon_protocol::UiNoticeLevel>) -> Style {
+    match level {
+        Some(turin_daemon_protocol::UiNoticeLevel::Success) => theme::success(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Warning) => theme::warning(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Error) => theme::danger(),
+        Some(turin_daemon_protocol::UiNoticeLevel::Info) | None => theme::base(),
+    }
 }
 
 fn form_field_meta(field: &turin_daemon_protocol::UiFormField) -> String {
