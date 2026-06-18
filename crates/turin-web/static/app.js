@@ -802,7 +802,7 @@ function renderList(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendState(panel, "error", "List failed to load", cached.error);
+    appendCachedDataError(panel, "List failed to load", cached);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -871,7 +871,7 @@ function renderActivity(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendState(panel, "error", "Activity failed to load", cached.error);
+    appendCachedDataError(panel, "Activity failed to load", cached);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -913,7 +913,7 @@ function renderDetail(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendState(panel, "error", "Detail failed to load", cached.error);
+    appendCachedDataError(panel, "Detail failed to load", cached);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -999,7 +999,7 @@ function renderReport(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendState(panel, "error", "Report failed to load", cached.error);
+    appendCachedDataError(panel, "Report failed to load", cached);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1027,7 +1027,7 @@ function renderChart(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendState(panel, "error", "Chart failed to load", cached.error);
+    appendCachedDataError(panel, "Chart failed to load", cached);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1179,6 +1179,15 @@ function appendState(panel, level, title, body) {
   panel.append(renderState(title, body, level));
 }
 
+function appendCachedDataError(panel, title, cached) {
+  const details = cached.envelope?.details || {};
+  const context = [cached.envelope?.code, details.source]
+    .filter(value => typeof value === "string" && value.trim())
+    .join(" · ");
+  const body = context ? `${cached.error} (${context})` : cached.error;
+  appendState(panel, "error", title, body);
+}
+
 function renderState(title, body, level = "info") {
   const node = document.createElement("div");
   node.className = "surface-state";
@@ -1328,7 +1337,11 @@ async function loadDataRequest(request) {
     const response = await postJson("/api/ui/list", payload);
     state.listCache.set(key, response);
   } catch (error) {
-    state.listCache.set(key, { error: error.message });
+    state.listCache.set(key, {
+      error: error.message,
+      envelope: error.envelope || null,
+      status: error.status || null,
+    });
   } finally {
     state.loadingLists.delete(key);
   }

@@ -295,6 +295,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("unsupportedSourceMessage"));
     assert!(js.contains("errorMessageFromEnvelope"));
     assert!(js.contains("details?.guidance"));
+    assert!(js.contains("appendCachedDataError"));
+    assert!(js.contains("envelope: error.envelope || null"));
+    assert!(js.contains("status: error.status || null"));
+    assert!(js.contains("details.source"));
     assert!(js.contains("Only worklists.* sources load today"));
     assert!(js.contains("deliberate adapter for this client"));
     assert!(js.contains("isWorklistSource"));
