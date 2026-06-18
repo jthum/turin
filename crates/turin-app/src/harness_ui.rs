@@ -4,8 +4,8 @@ use eframe::egui::{self, RichText};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
     UiActionNode, UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode,
-    UiMenuItem, UiNode, UiNoticeLevel, UiReportNode, UiSectionNode, UiTextNode, WorkItemDetail,
-    WorkItemList,
+    UiMenuItem, UiNode, UiNoticeLevel, UiPaneIntent, UiReportNode, UiSectionNode, UiTextNode,
+    WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{
     UiAppRecord, UiListRequest, work_item_field_label, work_item_key, worklist_chart_group_field,
@@ -156,6 +156,45 @@ pub(super) fn render_harness_app(
         }
     });
 
+    event
+}
+
+pub(super) fn render_harness_pane(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    pane: &UiPaneIntent,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    form_values: &mut BTreeMap<String, String>,
+    selected_list_items: &mut BTreeMap<String, String>,
+) -> Option<HarnessUiEvent> {
+    let mut event = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.heading(pane.title.clone());
+        ui.add(cast::Badge::new(pane.id.clone()).variant(cast::Variant::Outline));
+        if let Some(presentation) = &pane.presentation {
+            ui.add(
+                cast::Badge::new(presentation.clone())
+                    .intent(cast::Intent::Info)
+                    .variant(cast::Variant::Outline),
+            );
+        }
+    });
+    ui.add_space(8.0);
+    if pane.nodes.is_empty() {
+        ui.label("This pane has no content nodes.");
+    } else {
+        render_nodes(
+            ui,
+            app,
+            &pane.nodes,
+            lists,
+            requested_lists,
+            form_values,
+            selected_list_items,
+            &mut event,
+        );
+    }
     event
 }
 

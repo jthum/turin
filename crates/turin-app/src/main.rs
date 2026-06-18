@@ -240,6 +240,7 @@ struct TurinDesktopApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
+    ui_active_pane: Option<String>,
     ui_form_values: BTreeMap<String, String>,
     ui_selected_list_items: BTreeMap<String, String>,
     ui_list_requests: BTreeMap<String, UiListRequest>,
@@ -349,6 +350,7 @@ impl TurinDesktopApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
+            ui_active_pane: None,
             ui_form_values: BTreeMap::new(),
             ui_selected_list_items: BTreeMap::new(),
             ui_list_requests: BTreeMap::new(),
@@ -556,9 +558,11 @@ impl TurinDesktopApp {
             return;
         }
         if app.panes.contains_key(target) {
-            self.dashboard.record_info(format!(
-                "turin-app noted ui.show pane '{target}' in '{app_id}', but panes are not rendered yet"
-            ));
+            self.tab = TabKind::UiApps;
+            self.ui_active_pane = Some(target.to_string());
+            self.request_selected_ui_lists(false);
+            self.dashboard
+                .record_info(format!("Opened pane '{target}' from ui.show"));
         } else {
             self.dashboard.record_error(format!(
                 "UI show target '{target}' is not a screen or pane in '{app_id}'"
@@ -604,6 +608,7 @@ impl TurinDesktopApp {
     fn open_harness_screen(&mut self, app: &UiAppRecord, screen_index: usize) {
         self.tab = TabKind::UiApps;
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
+        self.ui_active_pane = None;
         self.request_selected_ui_lists(false);
         self.clamp_selection_indices();
     }
@@ -2222,6 +2227,7 @@ impl TurinDesktopApp {
 
                 self.render_pending_harness_ui_action(ui, &app.id);
                 self.render_latest_harness_action_result(ui, &app);
+                self.render_active_harness_pane(ui, &app);
 
                 if !self.dashboard.ui.notices().is_empty() {
                     ui.add_space(10.0);
@@ -2240,6 +2246,58 @@ impl TurinDesktopApp {
                 }
             });
         });
+    }
+
+    fn render_active_harness_pane(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let Some(pane_id) = self.ui_active_pane.clone() else {
+            return;
+        };
+        let Some(pane) = app.panes.get(&pane_id).cloned() else {
+            self.ui_active_pane = None;
+            return;
+        };
+
+        let mut close = false;
+        let mut pane_event = None;
+        let response = egui::Modal::new(egui::Id::new(format!(
+            "harness_ui_pane:{}:{}",
+            app.id, pane.id
+        )))
+        .show(ui.ctx(), |ui| {
+            ui.set_min_width(560.0);
+            pane_event = harness_ui::render_harness_pane(
+                ui,
+                app,
+                &pane,
+                &self.ui_lists,
+                &self.requested_ui_lists,
+                &mut self.ui_form_values,
+                &mut self.ui_selected_list_items,
+            );
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            if ui
+                .add(
+                    cast::Button::new("Close Pane")
+                        .size(cast::Size::Small)
+                        .variant(cast::Variant::Ghost),
+                )
+                .clicked()
+            {
+                close = true;
+            }
+        });
+
+        if response.should_close() {
+            close = true;
+        }
+        if let Some(event) = pane_event {
+            self.handle_harness_ui_event(app, event);
+        }
+        if close {
+            self.ui_active_pane = None;
+        }
     }
 
     fn render_latest_harness_action_result(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
@@ -2376,6 +2434,7 @@ impl TurinDesktopApp {
             HarnessUiEvent::OpenScreen(target) => {
                 if let Some(target_index) = harness_ui::screen_index_for_target(app, &target) {
                     self.ui_screen_indices.insert(app.id.clone(), target_index);
+                    self.ui_active_pane = None;
                 } else {
                     self.dashboard.record_error(format!(
                         "Harness UI app '{}' requested unknown screen '{}'",
