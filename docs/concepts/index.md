@@ -6,6 +6,7 @@ This section covers Turin’s core framing and longer-lived conceptual material.
 
 - `docs/concepts/turin.md` — product framing and why Turin exists
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for evaluating Turin
+- `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/architecture.md` — current runtime architecture and module layout
 - `docs/concepts/capability-charter.md` — runtime capability promises and refactor guardrails
 - `docs/concepts/governance.md` — governance profiles, capabilities, and grants

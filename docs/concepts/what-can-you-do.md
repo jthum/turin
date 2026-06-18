@@ -148,6 +148,7 @@ would clearly help.
 
 Then continue with:
 
+- `docs/concepts/scenarios.md`
 - `docs/getting-started/index.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/guides/harness-library.md`
