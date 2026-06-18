@@ -59,7 +59,7 @@ Core rule:
 | --- | --- | --- | --- | --- |
 | action started | Info notice before command dispatch. | Info notice before command dispatch. | Button/running state and shell notice before API call. | Client-local feedback. |
 | action confirmation | Modal confirmation. | Modal confirmation. | Browser-local confirmation overlay. | Used for explicit-confirm actions and work-item actions. |
-| action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Latest action result panel in shell. | Backed by `UiUpdate::HarnessActionCompleted` for Rust clients and action API results for web. |
+| action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Latest action result panel in shell screens and open panes. | Backed by `UiUpdate::HarnessActionCompleted` for Rust clients and action API results for web. |
 | action failed | Dashboard error notice from command task. | Dashboard error notice from command task. | Shell error notice from failed action API call. | Error stays operator feedback; durable failure state belongs in runtime primitives. |
 
 ## Web API Coverage

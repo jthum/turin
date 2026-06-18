@@ -186,6 +186,7 @@ function applyUiShow(appId, target) {
   if (screenIdForTarget(app, target)) return applyUiOpen(appId, target, "show");
   if (app.panes?.[target]) {
     state.activePaneId = target;
+    state.pendingAction = null;
     loadVisibleLists().then(render);
     return true;
   }
@@ -443,6 +444,7 @@ function renderPane() {
 
   const stack = document.createElement("div");
   stack.className = "node-stack";
+  if (state.latestActionResult) stack.append(renderActionResult(state.latestActionResult));
   for (const node of pane.nodes ?? []) {
     stack.append(renderNode(node, app));
   }

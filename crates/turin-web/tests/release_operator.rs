@@ -255,6 +255,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("activePaneId"));
     assert!(js.contains("renderPane"));
     assert!(js.contains("selectedPane"));
+    assert_eq!(
+        js.matches("state.latestActionResult) stack.append(renderActionResult")
+            .count(),
+        2
+    );
+    assert!(js.contains("state.pendingAction = null;\n    loadVisibleLists().then(render);"));
     assert_eq!(js.matches("appendNodeBadge(row, node, app)").count(), 1);
     assert_eq!(
         js.matches("return node.action === target || node.title === target")
