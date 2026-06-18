@@ -34,7 +34,7 @@ Core rule:
 | `text` | Markdown/content block. | Text lines. | Text/content block. | TUI keeps rendering simple. |
 | `section` | Visual grouping with nested nodes. | Heading plus indented nested nodes. | Recursive section grouping. | Recursive rendering in all clients. |
 | `action` | Button; optional confirmation modal. | Inspector action list; optional confirmation modal. | Button with optional browser-local confirmation overlay. | Runs through `OperatorCommand::RunHarnessAction` or web action API. |
-| `list` | Worklist-backed data table with app-local row selection, inline detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Compact worklist-backed table with local row selection, inspector detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Worklist-backed table through `/api/ui/list`, with browser-local row selection and inline detail; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today. |
+| `list` | Worklist-backed data table with app-local row selection, inline detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Compact worklist-backed table with local row selection, inspector detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Worklist-backed table through `/api/ui/list`, with browser-local row selection and inline detail; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today; app/TUI share stateless visible-node request discovery. |
 | `worklist` sugar | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | DX sugar only; not a separate protocol primitive. |
 | `form` | Editable Cast form controls. | Terminal modal with local drafts, typed scalar coercion, and `Ctrl+J` multiline entry for textarea/markdown fields. | Browser-local drafts with required fields, options, and typed scalar coercion. | Rich control fidelity remains client-specific. |
 | `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Worklist-backed recent activity; unsupported adapters show metadata. | Uses cached/loaded `worklists.*` data for now, not a live event query. |
@@ -79,9 +79,10 @@ browser shell that consumes those routes.
 
 ## Current Gaps
 
-- `report` and `chart` now share lightweight app/TUI derivation helpers and the
-  web shell mirrors the same status/grouping rules, but they still need a
-  fuller shared query/data semantics layer before rich rendering.
+- App/TUI now share visible-node request discovery plus lightweight report/chart
+  derivation helpers, and the web shell mirrors the same status/grouping rules,
+  but richer report/chart rendering still needs a fuller shared query/data
+  semantics layer.
 - List data loading only supports worklist sources.
 - Dynamic badges currently render on navigation targets and titled node ids;
   field-level or arbitrary inline badge placement remains undefined.

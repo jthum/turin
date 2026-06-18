@@ -14,7 +14,7 @@ Current layering:
 - daemon / remote protocol: shared wire surface
 - `turin-control-client`: typed local/remote control client
 - `turin-ui-core`: shared connection options, profile loading, controller loop,
-  dashboard state, and UI intent registry
+  dashboard state, UI intent registry, and stateless semantic UI data helpers
 - `turin-tui`: lean Ratatui terminal client
 - `turin-app`: native graphical client built on egui/Cast
 - `turin-web`: thin HTTP/SSE API plus minimal browser shell
@@ -52,7 +52,7 @@ default-console guidance and counts in its harness tab.
 - terminal-local shown pane overlays that reuse the same semantic node/list
   adapters as screens
 - dynamic navigation/node badges and worklist-backed report/chart summaries
-  derived through shared stateless worklist helpers
+  derived through shared stateless UI/worklist helpers
 
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, a
