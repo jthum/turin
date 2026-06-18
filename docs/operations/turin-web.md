@@ -313,6 +313,8 @@ The current browser shell is intentionally small:
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
 - dynamic badge rendering for matching navigation targets and titled node ids,
   including action-returned badges that survive browser status refreshes
+- a default runtime console backed by `/api/status` when no harness UI apps are
+  declared
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
 stay easy to replace once the web UX shape is better proven.

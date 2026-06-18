@@ -60,9 +60,10 @@ and wider runtime tabs.
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE
 invalidation routes, and it renders the current semantic harness UI vocabulary
-without a frontend build step. Browser-local `ui.show` pane targets render as
-overlays and reuse the same node/list adapters as screens. See
-`docs/operations/turin-web.md`.
+without a frontend build step. When no harness declares `ui.app(...)`, the shell
+renders a default runtime console from `/api/status` instead of a blank custom-UI
+placeholder. Browser-local `ui.show` pane targets render as overlays and reuse
+the same node/list adapters as screens. See `docs/operations/turin-web.md`.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those
@@ -112,19 +113,19 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample from `.workspace/perf-reports/footprint-1781791131.md`:
+Recent local sample from `.workspace/perf-reports/footprint-1781792349.md`:
 
 | area | code lines |
 | --- | ---: |
 | `crates/turin-app` | 4,665 |
 | `crates/turin-tui` | 3,843 |
-| `crates/turin-ui-core` | 3,049 |
+| `crates/turin-ui-core` | 3,108 |
 | `crates/turin-web` | 646 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
-| `crates/turin-web/static/app.css` | 12,699 | 720 |
-| `crates/turin-web/static/app.js` | 47,707 | 1,523 |
+| `crates/turin-web/static/app.css` | 13,332 | 760 |
+| `crates/turin-web/static/app.js` | 51,820 | 1,635 |
 | `crates/turin-web/static/index.html` | 1,547 | 50 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
@@ -358,11 +359,11 @@ binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `85552` Rust code lines under `src` and `crates`
+- `85611` Rust code lines under `src` and `crates`
 - `4665` code lines in `crates/turin-app`
 - `3843` code lines in `crates/turin-tui`
 - `646` code lines in `crates/turin-web`
-- `61953` bytes across first-party `turin-web` static assets
+- `66699` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.

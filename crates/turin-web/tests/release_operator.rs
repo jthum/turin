@@ -243,6 +243,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderActionConfirmation"));
     assert!(js.contains("requestActionConfirmation"));
     assert!(!js.contains("window.confirm"));
+    assert!(js.contains("renderDefaultConsole"));
+    assert!(js.contains("Default Operator Console"));
+    assert!(js.contains("Runtime Overview"));
+    assert!(js.contains("Simple stays simple"));
     assert!(js.contains("applyUiIntentPayload"));
     assert!(js.contains("applyUiIntentMessages"));
     assert!(js.contains("result.result.ui_intents"));
@@ -292,6 +296,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(css.contains(".surface-state[data-level=\"error\"]"));
     assert!(css.contains(".confirm-overlay"));
     assert!(css.contains(".confirm-dialog"));
+    assert!(css.contains(".default-console"));
+    assert!(css.contains(".default-grid"));
+    assert!(css.contains(".stat-card"));
     assert!(css.contains(".list-row"));
     assert!(css.contains(".node-badge"));
     assert!(css.contains(".pane-overlay"));

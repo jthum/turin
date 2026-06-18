@@ -338,10 +338,22 @@ function renderChrome() {
 function renderApps() {
   clear(els.appList);
   if (!state.apps.length) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "nav-button";
+    button.setAttribute("aria-current", "true");
+    const label = document.createElement("span");
+    label.textContent = "Default Console";
+    const badge = document.createElement("span");
+    badge.className = "nav-badge";
+    badge.dataset.level = "info";
+    badge.textContent = "runtime";
+    button.append(label, badge);
+    els.appList.append(button);
     els.appList.append(
       emptyState(
-        "No custom UI yet",
-        "Turin is ready. Declare ui.app(...) in a harness to add workflow-specific screens."
+        "No custom harness UI",
+        "The default operator console is active. Declare ui.app(...) only when a harness needs workflow-specific screens."
       )
     );
     return;
@@ -366,6 +378,18 @@ function renderApps() {
 function renderScreens() {
   clear(els.screenNav);
   const app = selectedApp();
+  if (!app) {
+    const title = document.createElement("p");
+    title.className = "eyebrow";
+    title.textContent = "Default";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "nav-button";
+    button.setAttribute("aria-current", "true");
+    button.textContent = "Runtime Overview";
+    els.screenNav.append(title, button);
+    return;
+  }
   const screens = Object.values(app?.screens ?? {});
   if (!screens.length) {
     els.screenNav.innerHTML = `<p class="muted">No screens declared.</p>`;
@@ -442,12 +466,7 @@ function renderScreen() {
   const app = selectedApp();
   const screen = selectedScreen();
   if (!app) {
-    els.screen.append(
-      emptyState(
-        "Turin is ready",
-        "Use the default runtime API and event stream now; harness UI appears here when a harness declares ui.app(...)."
-      )
-    );
+    els.screen.append(renderDefaultConsole());
     return;
   }
   if (!screen) {
@@ -475,6 +494,99 @@ function renderScreen() {
     stack.innerHTML = `<div class="empty-state"><span>Empty screen</span><p>This screen has no declared nodes.</p></div>`;
   }
   els.screen.append(stack);
+}
+
+function renderDefaultConsole() {
+  const snapshot = state.status?.snapshot;
+  const health = snapshot?.health;
+  const daemon = snapshot?.status;
+  const web = state.status?.web;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "default-console";
+
+  const heading = document.createElement("div");
+  heading.className = "screen-heading";
+  const title = document.createElement("div");
+  title.innerHTML = `
+    <p class="eyebrow">Default Operator Console</p>
+    <h2>Turin is ready</h2>
+  `;
+  const target = document.createElement("span");
+  target.className = "muted code";
+  target.textContent = web ? `${web.connection_kind} target` : "runtime";
+  heading.append(title, target);
+  wrapper.append(heading);
+
+  const lead = document.createElement("p");
+  lead.className = "lede";
+  lead.textContent =
+    "You can inspect runtime health, sessions, tasks, events, and APIs without any harness-defined UI. Custom harness screens appear here only when a harness declares ui.app(...).";
+  wrapper.append(lead);
+
+  const grid = document.createElement("div");
+  grid.className = "default-grid";
+  grid.append(
+    renderMetricPanel("Connection", [
+      ["Status", health?.ready ? "ready" : "not ready"],
+      ["Version", health?.version || web?.version || "unknown"],
+      ["Transport", health?.transport || web?.connection_kind || "unknown"],
+      ["Target", web?.connection_target || "unknown"],
+    ]),
+    renderMetricPanel("Registry", [
+      ["Agents", daemon?.registry?.agents?.length ?? health?.agent_count ?? 0],
+      ["Harnesses", daemon?.harnesses?.length ?? health?.harness_count ?? 0],
+      ["Channels", daemon?.registry?.channels?.length ?? health?.channel_count ?? 0],
+      ["Issues", daemon?.registry?.issues?.length ?? health?.issue_count ?? 0],
+    ]),
+    renderMetricPanel("Work", [
+      ["Live sessions", snapshot?.live_sessions?.length ?? 0],
+      ["Stored sessions", snapshot?.sessions?.length ?? 0],
+      ["Tracked tasks", snapshot?.tasks?.length ?? 0],
+      ["Active tasks", health?.active_task_count ?? 0],
+    ])
+  );
+  wrapper.append(grid);
+
+  const guidance = document.createElement("section");
+  guidance.className = "panel";
+  guidance.innerHTML = "<h3>When to add harness UI</h3>";
+  guidance.append(
+    renderState(
+      "Simple stays simple",
+      "Keep using the default console until a workflow needs its own screens, lists, forms, reports, panes, badges, or action buttons.",
+      "info"
+    )
+  );
+  wrapper.append(guidance);
+
+  if (state.latestActionResult) {
+    wrapper.append(renderActionResult(state.latestActionResult));
+  }
+
+  return wrapper;
+}
+
+function renderMetricPanel(title, rows) {
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  panel.append(heading);
+  const grid = document.createElement("div");
+  grid.className = "stat-grid";
+  for (const [label, value] of rows) {
+    const card = document.createElement("div");
+    card.className = "stat-card";
+    const labelNode = document.createElement("span");
+    labelNode.textContent = label;
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = String(value ?? "unknown");
+    card.append(labelNode, valueNode);
+    grid.append(card);
+  }
+  panel.append(grid);
+  return panel;
 }
 
 function renderPane() {

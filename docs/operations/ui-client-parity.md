@@ -16,7 +16,7 @@ Core rule:
 | --- | --- |
 | `turin-app` | Rich graphical operator client built on egui/Cast. |
 | `turin-tui` | Lean keyboard-first terminal client built on Ratatui. |
-| `turin-web` | API-first web adapter with a minimal same-origin browser shell. See `docs/operations/turin-web.md`. |
+| `turin-web` | API-first web adapter with a minimal same-origin browser shell and a default runtime console when no harness UI app is declared. See `docs/operations/turin-web.md`. |
 
 ## Static UI Intent
 
@@ -75,7 +75,7 @@ browser shell that consumes those routes.
 | `POST /api/ui/list` | Worklist-backed semantic list loading. |
 | `POST /api/actions/run` | Harness action execution with JSON result. |
 | `GET /api/events` | SSE runtime/UI event stream for client-side invalidation. |
-| `GET /` | Static browser shell for app/screen/list/form/action rendering, including typed local form drafts. |
+| `GET /` | Static browser shell for default runtime status plus app/screen/list/form/action rendering, including typed local form drafts. |
 
 ## Current Gaps
 

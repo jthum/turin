@@ -287,6 +287,45 @@ h1 {
   gap: var(--space-3);
 }
 
+.default-console {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.default-grid,
+.stat-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.default-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stat-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.stat-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.stat-card strong {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+}
+
 .panel {
   padding: var(--space-4);
   background: var(--panel-strong);
@@ -700,7 +739,8 @@ tr:last-child td {
 
 @media (max-width: 920px) {
   .shell,
-  .workspace {
+  .workspace,
+  .default-grid {
     grid-template-columns: 1fr;
   }
 
