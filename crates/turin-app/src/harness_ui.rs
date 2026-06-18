@@ -218,12 +218,12 @@ fn render_screen_nav(
     }
 
     ui.add_space(8.0);
+    let current_screen_id = screens.get(*screen_index).map(|screen| screen.id.as_str());
     for menu in &app.menus {
         cast::Panel::new().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(menu.title.clone()).strong());
-                render_menu_items(ui, app, &menu.items, event);
-            });
+            ui.label(RichText::new(menu.title.clone()).strong());
+            ui.add_space(6.0);
+            render_menu_items(ui, app, &menu.items, current_screen_id, 0, event);
         });
     }
 }
@@ -232,42 +232,53 @@ fn render_menu_items(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     items: &[UiMenuItem],
+    current_screen_id: Option<&str>,
+    depth: usize,
     event: &mut Option<HarnessUiEvent>,
 ) {
     for item in items {
-        if ui
-            .add(
-                cast::Button::new(item.label.clone())
-                    .size(cast::Size::Small)
-                    .variant(cast::Variant::Ghost),
-            )
-            .clicked()
-        {
-            *event = Some(HarnessUiEvent::OpenScreen(item.opens.clone()));
-        }
-        render_nav_badge(ui, app, &item.opens, item.badge.as_deref());
+        let selected = current_screen_id == Some(item.opens.as_str());
+        ui.horizontal(|ui| {
+            ui.add_space(depth as f32 * 18.0);
+            if ui
+                .add(
+                    cast::MenuItem::new(menu_item_label(app, item))
+                        .size(cast::Size::Small)
+                        .selected(selected)
+                        .intent(if selected {
+                            cast::Intent::Info
+                        } else {
+                            cast::Intent::Neutral
+                        }),
+                )
+                .clicked()
+            {
+                *event = Some(HarnessUiEvent::OpenScreen(item.opens.clone()));
+            }
+        });
         if !item.items.is_empty() {
-            ui.add(cast::Badge::new("subnav").variant(cast::Variant::Outline));
-            render_menu_items(ui, app, &item.items, event);
+            render_menu_items(ui, app, &item.items, current_screen_id, depth + 1, event);
         }
     }
+}
+
+fn menu_item_label(app: &UiAppRecord, item: &UiMenuItem) -> String {
+    let mut parts = vec![item.label.clone()];
+    if let Some(badge) = badge_text(app.badges.get(&item.opens), item.badge.as_deref()) {
+        parts.push(badge);
+    }
+    if !item.items.is_empty() {
+        let count = item.items.len();
+        let label = if count == 1 { "subitem" } else { "subitems" };
+        parts.push(format!("{count} {label}"));
+    }
+    parts.join(" · ")
 }
 
 fn screen_nav_label(app: &UiAppRecord, screen: &turin_daemon_protocol::UiScreenIntent) -> String {
     badge_text(app.badges.get(&screen.id), screen.presentation.as_deref())
         .map(|badge| format!("{} · {badge}", screen.title))
         .unwrap_or_else(|| screen.title.clone())
-}
-
-fn render_nav_badge(ui: &mut egui::Ui, app: &UiAppRecord, target: &str, fallback: Option<&str>) {
-    let badge = app.badges.get(target);
-    if let Some(text) = badge_text(badge, fallback) {
-        ui.add(
-            cast::Badge::new(text)
-                .intent(badge_intent(badge))
-                .variant(cast::Variant::Subtle),
-        );
-    }
 }
 
 fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<String> {
@@ -1188,4 +1199,56 @@ fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> 
             })
         })
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turin_daemon_protocol::{UiAppIntent, UiIntentSource};
+
+    #[test]
+    fn menu_item_label_includes_badges_and_child_count() {
+        let app = UiAppRecord {
+            id: "release".to_string(),
+            source: UiIntentSource::default(),
+            definition: Some(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release".to_string(),
+                about: None,
+                icon: None,
+            }),
+            screens: BTreeMap::new(),
+            panes: BTreeMap::new(),
+            menus: Vec::new(),
+            opens_with: None,
+            badges: BTreeMap::from([(
+                "approvals".to_string(),
+                UiBadgeIntent {
+                    app_id: "release".to_string(),
+                    target: "approvals".to_string(),
+                    count: Some(3),
+                    label: Some("ready".to_string()),
+                    level: Some(UiNoticeLevel::Info),
+                    data: Map::new(),
+                },
+            )]),
+        };
+        let item = UiMenuItem {
+            label: "Work".to_string(),
+            opens: "approvals".to_string(),
+            id: None,
+            icon: None,
+            badge: None,
+            items: vec![UiMenuItem {
+                label: "Review".to_string(),
+                opens: "review".to_string(),
+                id: None,
+                icon: None,
+                badge: None,
+                items: Vec::new(),
+            }],
+        };
+
+        assert_eq!(menu_item_label(&app, &item), "Work · ready 3 · 1 subitem");
+    }
 }
