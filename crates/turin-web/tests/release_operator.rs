@@ -251,7 +251,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("case \"badge\""));
     assert!(js.contains("applyUiRefresh"));
     assert!(js.contains("applyUiBadge"));
+    assert!(js.contains("localBadges"));
+    assert!(js.contains("applyLocalBadgesToApps"));
+    assert!(js.contains("state.localBadges.set(localBadgeKey(appId, target), badge)"));
     assert!(js.contains("app.badges[target]"));
+    assert!(js.contains("appById(appId)"));
     assert!(js.contains("invalidateListBinding"));
     assert!(js.contains("parseListKey"));
     assert!(js.contains("focusScreenIdForTarget"));

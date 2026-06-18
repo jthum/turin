@@ -5,6 +5,7 @@ const state = {
   selectedScreenId: null,
   listCache: new Map(),
   selectedListItems: new Map(),
+  localBadges: new Map(),
   loadingLists: new Set(),
   formDrafts: new Map(),
   runningActions: new Set(),
@@ -59,6 +60,7 @@ async function refresh({ reason } = {}) {
     const status = await getJson("/api/status");
     state.status = status;
     state.apps = Object.values(status.ui?.apps ?? {});
+    applyLocalBadgesToApps();
     selectDefaults();
     applyStatusUiRequestsOnce();
     await loadVisibleLists();
@@ -189,10 +191,9 @@ function applyUiRefresh(binding, { reloadRefresh = true } = {}) {
 }
 
 function applyUiBadge(appId, target, payload) {
-  const app = selectAppById(appId);
+  const app = appById(appId);
   if (!app || !target) return false;
-  app.badges = app.badges || {};
-  app.badges[target] = {
+  const badge = {
     app_id: appId,
     target,
     count: payload.count ?? null,
@@ -200,7 +201,23 @@ function applyUiBadge(appId, target, payload) {
     level: normalizeBadgeLevel(payload.level),
     data: payload.data ?? {},
   };
+  state.localBadges.set(localBadgeKey(appId, target), badge);
+  app.badges = app.badges || {};
+  app.badges[target] = badge;
   return true;
+}
+
+function applyLocalBadgesToApps() {
+  for (const badge of state.localBadges.values()) {
+    const app = appById(badge.app_id);
+    if (!app) continue;
+    app.badges = app.badges || {};
+    app.badges[badge.target] = badge;
+  }
+}
+
+function localBadgeKey(appId, target) {
+  return `${appId}\n${target}`;
 }
 
 function normalizeBadgeLevel(level) {
@@ -251,13 +268,17 @@ function applyUiFocus(appId, target) {
 }
 
 function selectAppById(appId) {
-  const app = state.apps.find(candidate => candidate.id === appId);
+  const app = appById(appId);
   if (!app) {
     pushNotice("error", "UI request ignored", `App '${appId}' is not available.`);
     return null;
   }
   state.selectedAppId = app.id;
   return app;
+}
+
+function appById(appId) {
+  return state.apps.find(candidate => candidate.id === appId) || null;
 }
 
 function screenIdForTarget(app, target) {

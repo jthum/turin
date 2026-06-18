@@ -191,10 +191,12 @@ Returns:
 
 `ui_intents` contains dynamic UI requests emitted during the action, such as
 notice, badge, show, focus, and refresh. The browser applies them as local
-presentation hints before refreshing visible data. The browser still owns
-confirmation and duplicate-run suppression locally. Durable workflow outcomes
-should still be written through harness/runtime primitives such as worklists,
-events, memory, KV, or runtime DB tables.
+presentation hints before refreshing visible data. Browser-local badge overlays
+are re-applied after status refreshes so action-returned badges do not disappear
+when fresh app records are loaded. The browser still owns confirmation and
+duplicate-run suppression locally. Durable workflow outcomes should still be
+written through harness/runtime primitives such as worklists, events, memory,
+KV, or runtime DB tables.
 
 ### `GET /api/events`
 
@@ -309,7 +311,8 @@ The current browser shell is intentionally small:
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`
   invalidation for cached list requests
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
-- dynamic badge rendering for matching navigation targets and titled node ids
+- dynamic badge rendering for matching navigation targets and titled node ids,
+  including action-returned badges that survive browser status refreshes
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
 stay easy to replace once the web UX shape is better proven.

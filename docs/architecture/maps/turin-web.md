@@ -45,6 +45,9 @@ session state, invent renderer-specific harness APIs, or bypass
    semantic source matches the refresh binding, then reloads visible data.
 10. Browser action responses can include returned dynamic UI intents; the shell
     applies them locally before refreshing visible data.
+11. Browser-local dynamic badges are re-applied to freshly fetched app records
+    after status refreshes, because action-returned badges are presentation
+    hints rather than durable daemon state.
 
 ## Invariants
 
@@ -53,6 +56,8 @@ session state, invent renderer-specific harness APIs, or bypass
   memory-local and should not be persisted by `turin-web`.
 - Dynamic UI intents returned by action responses are local presentation hints,
   not durable browser session state.
+- Browser-local dynamic badge overlays may survive status refreshes, but they
+  still remain client memory state and must not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.
 - `GET /api/apps` and `GET /api/apps/{app_id}` should expose semantic UI
   surfaces, not renderer-specific widget state.
