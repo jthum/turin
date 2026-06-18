@@ -42,6 +42,8 @@ default-console guidance and counts in its harness tab.
 - latest harness action result/failure visibility
 - interactive terminal forms with local drafts, basic validation, and typed
   action params
+- local worklist row selection that preserves selected item identity across
+  refresh/reorder where possible
 - task and event tables with detail inspectors
 - page and boundary navigation inside the currently focused terminal region
 - event-driven harness list refresh through `ui.refresh(...)` and
@@ -346,7 +348,8 @@ The TUI renders harness UI contracts semantically:
 - nested menu items are flattened with indentation
 - worklist-backed lists become compact terminal tables with a `review` action
   cue when a row has an item action that will be queued for confirmation
-- selected worklist rows appear in the inspector; rows with item actions can be
+- selected worklist rows appear in the inspector; row identity is preserved
+  across refresh/reorder where possible, and rows with item actions can be
   queued for confirmation from the item focus
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
@@ -395,7 +398,9 @@ lean and to notice accidental source or binary growth before it becomes normal.
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
 - `turin-tui` form editing is compact; textarea/markdown fields support
   `Ctrl+J` newlines but still render as a preview rather than a rich editor.
-- `turin-tui` work-item selection is local to visible compact list rows.
+- `turin-tui` work-item selection is local to compact list rows; it is
+  remembered by item identity where possible and falls back safely when a row
+  disappears.
 - `turin-tui` pane overlays use pane-local item/action focus separate from the
   main screen focus.
 - `turin-app` remains the richer graphical surface while the TUI proves the

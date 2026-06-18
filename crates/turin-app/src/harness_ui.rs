@@ -1294,6 +1294,20 @@ mod tests {
     }
 
     #[test]
+    fn selected_work_item_index_preserves_selected_item_after_reorder() {
+        let selected = "REL-2".to_string();
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![
+                test_work_item(2, "REL-2", "Second release gate"),
+                test_work_item(1, "REL-1", "First release gate"),
+            ],
+        };
+
+        assert_eq!(selected_work_item_index(&items, Some(&selected)), 0);
+    }
+
+    #[test]
     fn default_form_value_uses_static_params_when_field_default_is_absent() {
         let form = UiFormNode {
             id: Some("seed".to_string()),
@@ -1338,5 +1352,37 @@ mod tests {
 
         assert_eq!(params["count"], json!(3));
         assert_eq!(params["source"], json!("app"));
+    }
+
+    fn test_work_item(id: i64, public_id: &str, title: &str) -> WorkItemDetail {
+        WorkItemDetail {
+            id,
+            public_id: public_id.to_string(),
+            worklist_id: "release".to_string(),
+            parent_id: None,
+            title: title.to_string(),
+            kind: "approval".to_string(),
+            prompt: Some("Check release gates".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            status: "pending".to_string(),
+            paused: false,
+            pause_reason: None,
+            pause_until_unix_ms: None,
+            priority: 10,
+            after: None,
+            metadata: None,
+            claim_agent_id: None,
+            claim_session_id: None,
+            claim_execution_id: None,
+            claim_heartbeat_unix_ms: None,
+            claimed_at: None,
+            completed_at: None,
+            failure_reason: None,
+            created_at: "2026-06-18T00:00:00Z".to_string(),
+            updated_at: "2026-06-18T00:00:00Z".to_string(),
+        }
     }
 }
