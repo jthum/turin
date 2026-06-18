@@ -11,6 +11,7 @@ const state = {
   notices: [],
   latestActionResult: null,
   activePaneId: null,
+  pendingAction: null,
   appliedStatusUiRequests: false,
   refreshing: false,
 };
@@ -34,6 +35,10 @@ const els = {
 
 els.refreshButton.addEventListener("click", () => refresh({ reason: "manual" }));
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && state.pendingAction) {
+    clearPendingAction();
+    return;
+  }
   if (event.key === "Escape" && state.activePaneId) {
     closePane();
   }
@@ -99,10 +104,12 @@ function selectDefaults() {
   if (!state.apps.length) {
     state.selectedAppId = null;
     state.selectedScreenId = null;
+    state.pendingAction = null;
     return;
   }
   if (!state.apps.some(app => app.id === state.selectedAppId)) {
     state.selectedAppId = state.apps[0].id;
+    state.pendingAction = null;
   }
   const app = selectedApp();
   const screenIds = Object.keys(app?.screens ?? {});
@@ -111,10 +118,12 @@ function selectDefaults() {
   }
   if (!screenIds.length) {
     state.selectedScreenId = null;
+    state.pendingAction = null;
     return;
   }
   if (!screenIds.includes(state.selectedScreenId)) {
     state.selectedScreenId = app.opens_with || screenIds[0];
+    state.pendingAction = null;
   }
 }
 
@@ -167,6 +176,7 @@ function applyUiOpen(appId, target, label) {
   }
   state.selectedScreenId = screenId;
   state.activePaneId = null;
+  state.pendingAction = null;
   return true;
 }
 
@@ -245,6 +255,7 @@ function render() {
   renderScreens();
   renderScreen();
   renderPane();
+  renderActionConfirmation();
 }
 
 function renderChrome() {
@@ -279,6 +290,7 @@ function renderApps() {
       state.selectedAppId = app.id;
       state.selectedScreenId = app.opens_with || Object.keys(app.screens ?? {})[0] || null;
       state.activePaneId = null;
+      state.pendingAction = null;
       loadVisibleLists().then(render);
     });
     els.appList.append(button);
@@ -334,6 +346,7 @@ function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
   button.addEventListener("click", () => {
     state.selectedScreenId = screenId;
     state.activePaneId = null;
+    state.pendingAction = null;
     loadVisibleLists().then(render);
   });
   els.screenNav.append(button);
@@ -443,6 +456,76 @@ function renderPane() {
 
 function closePane() {
   state.activePaneId = null;
+  render();
+}
+
+function renderActionConfirmation() {
+  document.querySelectorAll(".confirm-overlay").forEach(node => node.remove());
+  const pending = state.pendingAction;
+  if (!pending) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "confirm-overlay";
+  overlay.addEventListener("click", event => {
+    if (event.target === overlay) clearPendingAction();
+  });
+
+  const dialog = document.createElement("section");
+  dialog.className = "confirm-dialog";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-label", `Confirm ${pending.label}`);
+  dialog.innerHTML = `
+    <p class="eyebrow">Confirm action</p>
+    <h2>${escapeHtml(pending.label)}</h2>
+    <p class="muted">Run <span class="code">${escapeHtml(pending.action)}</span>?</p>
+  `;
+
+  if (pending.params !== undefined && pending.params !== null) {
+    const pre = document.createElement("pre");
+    pre.className = "json-preview";
+    pre.textContent = jsonPreview(pending.params, 900);
+    dialog.append(pre);
+  }
+
+  const row = document.createElement("div");
+  row.className = "action-row confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "ghost-button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", clearPendingAction);
+  const run = document.createElement("button");
+  run.type = "button";
+  run.className = "danger-button";
+  run.textContent = "Run action";
+  run.disabled = state.runningActions.has(actionRunKey(pending.action));
+  run.addEventListener("click", () => {
+    const action = state.pendingAction;
+    if (!action) return;
+    state.pendingAction = null;
+    render();
+    runAction(action.node, action.app, { confirmed: true });
+  });
+  row.append(cancel, run);
+  dialog.append(row);
+  overlay.append(dialog);
+  document.body.append(overlay);
+}
+
+function requestActionConfirmation(node, app) {
+  state.pendingAction = {
+    node,
+    app,
+    label: node.label || node.title || node.action,
+    action: node.action,
+    params: node.params ?? null,
+  };
+  render();
+}
+
+function clearPendingAction() {
+  state.pendingAction = null;
   render();
 }
 
@@ -928,8 +1011,11 @@ function renderActionResult(result) {
   return panel;
 }
 
-async function runAction(node, app) {
-  if (node.confirm && !window.confirm(`Run ${node.label}?`)) return;
+async function runAction(node, app, options = {}) {
+  if (node.confirm && !options.confirmed) {
+    requestActionConfirmation(node, app);
+    return;
+  }
   const actionKey = actionRunKey(node.action);
   if (state.runningActions.has(actionKey)) return;
   state.runningActions.add(actionKey);

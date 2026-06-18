@@ -33,7 +33,7 @@ Core rule:
 | --- | --- | --- | --- | --- |
 | `text` | Markdown/content block. | Text lines. | Text/content block. | TUI keeps rendering simple. |
 | `section` | Visual grouping with nested nodes. | Heading plus indented nested nodes. | Recursive section grouping. | Recursive rendering in all clients. |
-| `action` | Button; optional confirmation modal. | Inspector action list; optional confirmation modal. | Button with optional browser confirmation. | Runs through `OperatorCommand::RunHarnessAction` or web action API. |
+| `action` | Button; optional confirmation modal. | Inspector action list; optional confirmation modal. | Button with optional browser-local confirmation overlay. | Runs through `OperatorCommand::RunHarnessAction` or web action API. |
 | `list` | Worklist-backed data table with app-local row selection, inline detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Compact worklist-backed table with local row selection, inspector detail, and confirmed item-action dispatch when available; unsupported adapters show metadata. | Worklist-backed table through `/api/ui/list`, with browser-local row selection and inline detail; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today. |
 | `worklist` sugar | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | DX sugar only; not a separate protocol primitive. |
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | Browser-local drafts with required fields, options, and typed scalar coercion. | Rich control fidelity remains client-specific. |
@@ -58,7 +58,7 @@ Core rule:
 | Feedback | `turin-app` | `turin-tui` | `turin-web` | Notes |
 | --- | --- | --- | --- | --- |
 | action started | Info notice before command dispatch. | Info notice before command dispatch. | Button/running state and shell notice before API call. | Client-local feedback. |
-| action confirmation | Modal confirmation. | Modal confirmation. | Browser confirmation. | Used for explicit-confirm actions and work-item actions. |
+| action confirmation | Modal confirmation. | Modal confirmation. | Browser-local confirmation overlay. | Used for explicit-confirm actions and work-item actions. |
 | action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Latest action result panel in shell. | Backed by `UiUpdate::HarnessActionCompleted` for Rust clients and action API results for web. |
 | action failed | Dashboard error notice from command task. | Dashboard error notice from command task. | Shell error notice from failed action API call. | Error stays operator feedback; durable failure state belongs in runtime primitives. |
 

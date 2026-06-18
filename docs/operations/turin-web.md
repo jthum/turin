@@ -145,6 +145,8 @@ The current browser shell is intentionally small:
   action buttons when item action payloads exist
 - typed form defaults, local drafts, required fields, options, and scalar
   coercion
+- browser-local confirmation overlay for explicit-confirm actions and work-item
+  actions
 - action start/completion/failure feedback, latest action result panels, and
   duplicate-run suppression
 - lightweight worklist-backed report summaries and chart breakdowns

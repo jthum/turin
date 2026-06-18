@@ -233,6 +233,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderChart"));
     assert!(js.contains("renderActionResult"));
     assert!(js.contains("latestActionResult"));
+    assert!(js.contains("pendingAction"));
+    assert!(js.contains("renderActionConfirmation"));
+    assert!(js.contains("requestActionConfirmation"));
+    assert!(!js.contains("window.confirm"));
     assert!(js.contains("applyUiIntentPayload"));
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("renderWorkItemDetail"));
@@ -258,6 +262,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         1
     );
     assert!(css.contains(".list-selection"));
+    assert!(css.contains(".confirm-overlay"));
+    assert!(css.contains(".confirm-dialog"));
     assert!(css.contains(".list-row"));
     assert!(css.contains(".node-badge"));
     assert!(css.contains(".pane-overlay"));

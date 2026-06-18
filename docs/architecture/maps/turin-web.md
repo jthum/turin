@@ -45,8 +45,8 @@ session state, invent renderer-specific harness APIs, or bypass
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
-- Browser form drafts and action-running state are memory-local and should not
-  be persisted by `turin-web`.
+- Browser form drafts, confirmation modals, and action-running state are
+  memory-local and should not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.
 - `GET /api/apps` and `GET /api/apps/{app_id}` should expose semantic UI
   surfaces, not renderer-specific widget state.

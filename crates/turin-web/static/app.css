@@ -588,6 +588,38 @@ tr:last-child td {
   font-size: clamp(1.8rem, 4vw, 3.3rem);
 }
 
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(4, 6, 4, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.confirm-dialog {
+  width: min(34rem, 100%);
+  padding: var(--space-4);
+  border: 1px solid rgba(255, 124, 111, 0.42);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 22% 10%, rgba(255, 124, 111, 0.16), transparent 18rem),
+    var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 var(--space-2);
+  font-size: clamp(1.7rem, 4vw, 3rem);
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
 .notice-stack {
   display: grid;
   gap: var(--space-2);
