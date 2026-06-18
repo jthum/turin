@@ -33,6 +33,10 @@ This is the documentation landing page for Turin.
 
 ## Recommended Reading Order
 
+If you are trying to explain Turin to someone evaluating the project rather than
+implementing a harness, start with the first three concept pages before diving
+into technical reference material.
+
 ### For new users
 
 1. `README.md`
