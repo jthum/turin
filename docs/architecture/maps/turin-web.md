@@ -43,12 +43,16 @@ session state, invent renderer-specific harness APIs, or bypass
    panes, modals, filters, loading, and local error state.
 9. Browser `ui.refresh` handling invalidates cached list requests whose
    semantic source matches the refresh binding, then reloads visible data.
+10. Browser action responses can include returned dynamic UI intents; the shell
+    applies them locally before refreshing visible data.
 
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
 - Browser form drafts, confirmation modals, and action-running state are
   memory-local and should not be persisted by `turin-web`.
+- Dynamic UI intents returned by action responses are local presentation hints,
+  not durable browser session state.
 - Local and remote control connections should stay behaviorally symmetric.
 - `GET /api/apps` and `GET /api/apps/{app_id}` should expose semantic UI
   surfaces, not renderer-specific widget state.

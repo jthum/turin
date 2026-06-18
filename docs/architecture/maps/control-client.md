@@ -29,7 +29,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `crates/turin-control-client/src/channels.rs`
   - Agent/channel detail, channel runtime status, settings update, and access-room convenience methods.
 - `crates/turin-control-client/tests/connectivity.rs`
-  - Local/remote connectivity and workflow coverage.
+  - Local/remote connectivity and workflow coverage, including the Release
+    Operator harness UI fixture and dynamic UI side effects from actions.
 
 ## Data Flow
 

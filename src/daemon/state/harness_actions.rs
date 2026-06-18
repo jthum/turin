@@ -18,17 +18,20 @@ impl DaemonState {
 
         let runtime = self.kernel.runtime_for_agent(&agent_id);
         let instance = runtime.create_instance(self.kernel.harness_init_context())?;
+        let ui_start = instance.ui_intent_count()?;
         let result =
             instance.invoke_declared_action_for_agent(&agent_id, &action, params.params)?;
         let Some(result) = result else {
             bail!("Harness action '{}' is not declared", action);
         };
+        let ui_intents = instance.ui_intents_from(ui_start)?;
 
         Ok(HarnessActionRunResult {
             action,
             agent_id,
             harness_id: params.harness_id,
             result,
+            ui_intents,
         })
     }
 

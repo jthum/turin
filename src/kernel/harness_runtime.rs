@@ -62,6 +62,14 @@ impl HarnessInstance {
         self.engine.ui_intents().unwrap_or_default()
     }
 
+    pub(crate) fn ui_intent_count(&self) -> Result<usize> {
+        self.engine.ui_intent_count()
+    }
+
+    pub(crate) fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>> {
+        self.engine.ui_intents_from(start_index)
+    }
+
     pub(crate) fn load_script_str(&mut self, script: &str) -> Result<()> {
         self.engine.load_script_str(script)
     }

@@ -171,6 +171,14 @@ function applyUiIntentPayload(payload, options = {}) {
   }
 }
 
+function applyUiIntentMessages(messages, options = {}) {
+  let applied = false;
+  for (const message of messages ?? []) {
+    applied = applyUiIntentPayload(message, options) || applied;
+  }
+  return applied;
+}
+
 function applyUiRefresh(binding, { reloadRefresh = true } = {}) {
   if (!binding) return false;
   invalidateListBinding(binding);
@@ -1093,6 +1101,7 @@ async function runAction(node, app, options = {}) {
       detail: result.result.result,
     };
     pushNotice("success", "Action completed", `${result.result.action} finished.`);
+    applyUiIntentMessages(result.result.ui_intents, { reloadRefresh: false });
     invalidateLists();
     await refresh({ reason: "action" });
   } catch (error) {

@@ -134,6 +134,43 @@ fn harness_action_run_request_round_trips_typed_shape() {
 }
 
 #[test]
+fn harness_action_run_result_round_trips_ui_intents() {
+    let result = HarnessActionRunResult {
+        action: "release.seed_demo_work".to_string(),
+        agent_id: "default".to_string(),
+        harness_id: Some("default".to_string()),
+        result: json!({ "status": "seeded" }),
+        ui_intents: vec![UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+            app_id: "release-operator".to_string(),
+            binding: "worklists.release".to_string(),
+        }))],
+    };
+
+    let value = serde_json::to_value(&result).expect("serialize action result");
+    assert_eq!(value["action"], "release.seed_demo_work");
+    assert_eq!(value["ui_intents"][0]["type"], "refresh");
+    assert_eq!(value["ui_intents"][0]["binding"], "worklists.release");
+
+    let decoded: HarnessActionRunResult =
+        serde_json::from_value(value).expect("deserialize action result");
+    assert_eq!(decoded.ui_intents.len(), 1);
+    assert!(matches!(decoded.ui_intents[0].intent, UiIntent::Refresh(_)));
+}
+
+#[test]
+fn harness_action_run_result_defaults_missing_ui_intents() {
+    let decoded: HarnessActionRunResult = serde_json::from_value(json!({
+        "action": "release.approve",
+        "agent_id": "default",
+        "harness_id": "default",
+        "result": { "status": "approved" }
+    }))
+    .expect("deserialize old action result");
+
+    assert!(decoded.ui_intents.is_empty());
+}
+
+#[test]
 fn raw_daemon_wire_shape_deserializes_into_typed_request() {
     let decoded: RequestEnvelope = serde_json::from_value(json!({
         "id": "req_2",

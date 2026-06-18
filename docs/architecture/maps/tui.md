@@ -38,8 +38,8 @@ and `turin-daemon-protocol`.
 7. Harness UI actions run through `OperatorCommand::RunHarnessAction`.
 8. Harness UI forms open a terminal-local editor; submit merges typed field
    values over form params and runs the declared harness action.
-9. Completed harness action results are retained as local operator feedback and
-   rendered in the inspector.
+9. Completed harness action results are retained as local operator feedback,
+   applied for returned dynamic UI intents, and rendered in the inspector.
 10. One-shot `ui.open`, `ui.show`, and `ui.focus` requests are drained into
    local TUI navigation or overlay state.
 11. Shown panes render as terminal-local overlays, reuse the visible screen/list
@@ -53,9 +53,10 @@ and `turin-daemon-protocol`.
   and cache state must not become runtime state.
 - Form drafts, field focus, and validation errors are client-local. Submitted
   values become action params only when the operator submits the form.
-- Latest harness action results are client-local feedback. Durable workflow
-  state should still be stored through runtime primitives such as worklists,
-  events, memory, or KV.
+- Latest harness action results are client-local feedback. Returned UI intents
+  from those action results are local presentation hints. Durable workflow state
+  should still be stored through runtime primitives such as worklists, events,
+  memory, or KV.
 - Harness menu items are semantic navigation targets. The TUI may flatten nested
   menus into terminal navigation, but it must not mutate the harness contract to
   fit terminal layout.

@@ -176,12 +176,25 @@ Runs a harness action through the control layer:
 Returns:
 
 ```json
-{ "result": {} }
+{
+  "result": {
+    "action": "release.seed_demo_work",
+    "agent_id": "default",
+    "harness_id": "default",
+    "result": {
+      "status": "seeded"
+    },
+    "ui_intents": []
+  }
+}
 ```
 
-The browser owns confirmation and duplicate-run suppression locally. Durable
-workflow outcomes should still be written through harness/runtime primitives
-such as worklists, events, memory, KV, or runtime DB tables.
+`ui_intents` contains dynamic UI requests emitted during the action, such as
+notice, badge, show, focus, and refresh. The browser applies them as local
+presentation hints before refreshing visible data. The browser still owns
+confirmation and duplicate-run suppression locally. Durable workflow outcomes
+should still be written through harness/runtime primitives such as worklists,
+events, memory, KV, or runtime DB tables.
 
 ### `GET /api/events`
 
@@ -287,7 +300,8 @@ The current browser shell is intentionally small:
 - browser-local confirmation overlay for explicit-confirm actions and work-item
   actions
 - action start/completion/failure feedback, latest action result panels on
-  screens and open panes, and duplicate-run suppression
+  screens and open panes, returned action UI intent application, and
+  duplicate-run suppression
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces
 - lightweight worklist-backed report summaries with next pending item

@@ -43,7 +43,9 @@ runtime-owned UI session store, or a second daemon implementation.
    state into app-specific navigation, focus, forms, panes, modals, and caches.
 6. Harness UI declarations from daemon status are indexed into `UiRegistry`.
 7. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents are queued
-   as one-shot suggestions for each client to drain or ignore locally.
+   as one-shot suggestions for each client to drain or ignore locally. Runtime
+   events and completed harness action results can both carry these dynamic
+   intents.
 8. `OperatorCommand::LoadUiList` resolves semantic `UiListRequest` values. Today
    only `worklists.<name>` sources load, through typed control-client worklist
    helpers.
@@ -58,6 +60,8 @@ runtime-owned UI session store, or a second daemon implementation.
   independently.
 - Dynamic UI intents are hints. A client may honor, defer, degrade, or ignore
   them based on its renderer and local state.
+- Dynamic UI intents returned by harness action results must be applied to the
+  local `UiRegistry` before clients drain open/show/focus/refresh queues.
 - Event streams are invalidation and feedback channels, not live-query result
   caches.
 - `DashboardState` is a bounded client snapshot/cache. Durable runtime state
@@ -120,7 +124,7 @@ git diff --check
 `turin-ui-core` currently shares the pieces that have proven common across the
 new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, bounded notices/events, UI list loading for
-worklists, harness action command dispatch, and small worklist summaries. It
-intentionally does not provide a common active-screen model or shared UI session
-state; those seams should be extracted later only if the clients independently
-converge on the same shape.
+worklists, harness action command dispatch with returned UI intent application,
+and small worklist summaries. It intentionally does not provide a common
+active-screen model or shared UI session state; those seams should be extracted
+later only if the clients independently converge on the same shape.

@@ -9,8 +9,8 @@ use tokio::time::{Instant, sleep};
 use turin::remote::{RemoteServeOptions, start as start_remote};
 use turin_control_client::{ConnectionKind, ConnectionSpec, ControlClient};
 use turin_daemon_protocol::{
-    DaemonRequest, HarnessActionRunParams, NoParams, RuntimeEventsSubscribeParams,
-    WorklistItemsParams, WorklistListParams,
+    DaemonRequest, HarnessActionRunParams, NoParams, RuntimeEventsSubscribeParams, UiIntent,
+    UiNoticeLevel, WorklistItemsParams, WorklistListParams,
 };
 
 const DEFAULT_BOOTSTRAP_CONFIG_PATH: &str = ".turin/config.toml";
@@ -245,6 +245,7 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(seeded.action, "release.seed_demo_work");
     assert_eq!(seeded.result["status"], "seeded");
     assert_eq!(seeded.result["count"], 4);
+    assert_release_operator_seeded_ui_intents(&seeded);
 
     let release_worklist = client
         .list_worklists(WorklistListParams {
@@ -290,6 +291,18 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(approved.action, "release.approve_next");
     assert_eq!(approved.result["status"], "approved");
 
+    let shown = client
+        .run_harness_action(HarnessActionRunParams {
+            action: "release.show_notes".to_string(),
+            agent_id: None,
+            harness_id: Some("default".to_string()),
+            params: serde_json::json!({}),
+        })
+        .await?;
+    assert_eq!(shown.action, "release.show_notes");
+    assert_eq!(shown.result["status"], "shown");
+    assert_release_operator_show_intent(&shown);
+
     let remaining = client
         .list_worklist_items(WorklistItemsParams {
             id: release_worklist.public_id,
@@ -306,6 +319,52 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(remaining.items.len(), 3);
 
     Ok(())
+}
+
+fn assert_release_operator_seeded_ui_intents(
+    result: &turin_daemon_protocol::HarnessActionRunResult,
+) {
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Notify(notice)
+                if notice.app_id == "release-operator"
+                    && notice.title == "Seeded release work"
+                    && notice.body.as_deref()
+                        == Some("Created 4 approval items for 2026.06.")
+                    && notice.level == Some(UiNoticeLevel::Success)
+        )
+    }));
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Badge(badge)
+                if badge.app_id == "release-operator"
+                    && badge.target == "approvals"
+                    && badge.count == Some(4)
+                    && badge.level == Some(UiNoticeLevel::Info)
+        )
+    }));
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Refresh(refresh)
+                if refresh.app_id == "release-operator"
+                    && refresh.binding == "worklists.release"
+        )
+    }));
+}
+
+fn assert_release_operator_show_intent(result: &turin_daemon_protocol::HarnessActionRunResult) {
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Show(show)
+                if show.app_id == "release-operator"
+                    && show.target == "release-notes"
+                    && show.presentation.as_deref() == Some("sheet")
+        )
+    }));
 }
 
 #[tokio::test(flavor = "multi_thread")]

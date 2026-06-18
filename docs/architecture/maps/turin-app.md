@@ -36,8 +36,9 @@ display derivation belong outside this crate.
    shared controller path.
 6. Harness actions and forms emit local `HarnessUiEvent` values, then run
    through `OperatorCommand::RunHarnessAction`.
-7. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents are
-   drained as local navigation, pane, focus, and cache-invalidation requests.
+7. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
+   runtime events and completed harness action results are drained as local
+   navigation, pane, focus, and cache-invalidation requests.
 8. `harness.action_ran` and explicit `ui.refresh(...)` invalidate matching
    visible list caches; they are not live queries.
 
@@ -56,7 +57,8 @@ display derivation belong outside this crate.
   view and should stay behind confirmation when launched from item detail.
 - Form drafts are local until submit. Submitted values become action params
   only through the action command path.
-- Latest action results are local operator feedback. Durable workflow state
+- Latest action results are local operator feedback. Returned UI intents from
+  those action results are local presentation hints. Durable workflow state
   belongs in runtime primitives such as worklists, events, memory, or KV.
 - Keep `turin-ui-core` extraction conservative: only move stateless,
   renderer-neutral helpers there after app/TUI/web behavior independently

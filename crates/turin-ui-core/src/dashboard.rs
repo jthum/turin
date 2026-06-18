@@ -189,6 +189,7 @@ impl DashboardState {
             UiUpdate::SearchResults { .. } => {}
             UiUpdate::UiListLoaded { .. } => {}
             UiUpdate::HarnessActionCompleted(result) => {
+                self.ui.apply_messages(result.ui_intents.clone());
                 self.record_info(harness_action_completed_message(&result))
             }
             UiUpdate::Event(event) => self.record_event(event),
@@ -419,7 +420,10 @@ mod tests {
     };
     use serde_json::json;
     use turin_control_client::ConnectionKind;
-    use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UI_INTENT_EVENT};
+    use turin_daemon_protocol::{
+        EventEnvelope, HarnessActionRunResult, UI_INTENT_EVENT, UiIntent, UiIntentMessage,
+        UiRefreshIntent,
+    };
     use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
     use crate::UiUpdate;
@@ -543,6 +547,7 @@ mod tests {
                     "status": "seeded",
                     "count": 4,
                 }),
+                ui_intents: Vec::new(),
             },
         )));
 
@@ -554,5 +559,27 @@ mod tests {
             dashboard.recent_notices.last().map(|notice| notice.level),
             Some(DashboardNoticeLevel::Info)
         );
+    }
+
+    #[test]
+    fn harness_action_completion_applies_returned_ui_intents() {
+        let mut dashboard = empty_dashboard();
+
+        dashboard.apply_update(UiUpdate::HarnessActionCompleted(Box::new(
+            HarnessActionRunResult {
+                action: "release.seed_demo_work".to_string(),
+                agent_id: "default".to_string(),
+                harness_id: Some("default".to_string()),
+                result: json!({ "status": "seeded" }),
+                ui_intents: vec![UiIntentMessage::new(UiIntent::Refresh(UiRefreshIntent {
+                    app_id: "release-operator".to_string(),
+                    binding: "worklists.release".to_string(),
+                }))],
+            },
+        )));
+
+        assert_eq!(dashboard.ui.refreshes().len(), 1);
+        assert_eq!(dashboard.ui.refreshes()[0].binding, "worklists.release");
+        assert!(dashboard.ui.app("release-operator").is_some());
     }
 }

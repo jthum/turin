@@ -45,6 +45,7 @@ declared.
   `harness.action_ran`
 - dynamic `ui.open`, `ui.show`, and `ui.focus` requests as local navigation
   suggestions
+- returned harness action UI intents as local navigation/notice/refresh hints
 - terminal-local shown pane overlays that reuse the same semantic node/list
   adapters as screens
 - dynamic navigation/node badges and worklist-backed report/chart summaries
@@ -53,7 +54,8 @@ declared.
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, editable
 harness forms, app-local worklist row detail, dynamic UI navigation, latest
-action result panels, app-local shown panes, and wider runtime tabs.
+action result panels, returned action UI intent handling, app-local shown panes,
+and wider runtime tabs.
 
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE

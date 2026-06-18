@@ -517,6 +517,17 @@ impl HarnessEngine {
         ui_bindings::ui_intents(&self.lua).map_err(anyhow::Error::from)
     }
 
+    pub fn ui_intent_count(&self) -> Result<usize> {
+        ui_bindings::ui_intent_count(&self.lua).map_err(anyhow::Error::from)
+    }
+
+    pub fn ui_intents_from(
+        &self,
+        start_index: usize,
+    ) -> Result<Vec<turin_daemon_protocol::UiIntentMessage>> {
+        ui_bindings::ui_intents_from(&self.lua, start_index).map_err(anyhow::Error::from)
+    }
+
     pub fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
         tool_bindings::declared_virtual_tools(&self.lua)
     }

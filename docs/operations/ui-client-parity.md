@@ -51,7 +51,7 @@ Core rule:
 | `show` | Opens screen targets or displays pane targets as local modals. | Opens screen targets or displays pane targets as local terminal overlays. | Opens screen targets or displays pane targets as local overlays. | Pane behavior is intentionally client-specific. |
 | `badge` | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching navigation targets and titled node ids. | Placement remains client-local chrome, not a renderer contract. |
 | `focus` | Selects screen/action target locally. | Selects screen/action target locally. | Selects matching screen/action target locally. | Focus remains client-local. |
-| `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |
+| `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `ui.refresh` can arrive through runtime events or returned harness action UI intents; `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |
 
 ## Action Feedback
 
@@ -59,7 +59,7 @@ Core rule:
 | --- | --- | --- | --- | --- |
 | action started | Info notice before command dispatch. | Info notice before command dispatch. | Button/running state and shell notice before API call. | Client-local feedback. |
 | action confirmation | Modal confirmation. | Modal confirmation. | Browser-local confirmation overlay. | Used for explicit-confirm actions and work-item actions. |
-| action completed | Latest action result panel near selected harness app. | Latest action result in harness inspector. | Latest action result panel in shell screens and open panes. | Backed by `UiUpdate::HarnessActionCompleted` for Rust clients and action API results for web. |
+| action completed | Latest action result panel near selected harness app; returned UI intents are applied locally. | Latest action result in harness inspector; returned UI intents are applied locally. | Latest action result panel in shell screens and open panes; returned UI intents are applied locally. | Backed by `UiUpdate::HarnessActionCompleted` for Rust clients and action API results for web. |
 | action failed | Dashboard error notice from command task. | Dashboard error notice from command task. | Shell error notice from failed action API call. | Error stays operator feedback; durable failure state belongs in runtime primitives. |
 
 ## Web API Coverage

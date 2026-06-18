@@ -244,6 +244,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("requestActionConfirmation"));
     assert!(!js.contains("window.confirm"));
     assert!(js.contains("applyUiIntentPayload"));
+    assert!(js.contains("applyUiIntentMessages"));
+    assert!(js.contains("result.result.ui_intents"));
     assert!(js.contains("ui?.refreshes"));
     assert!(js.contains("case \"refresh\""));
     assert!(js.contains("applyUiRefresh"));

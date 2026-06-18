@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::UiIntentMessage;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HarnessActionRunParams {
     pub action: String,
@@ -20,4 +22,6 @@ pub struct HarnessActionRunResult {
     pub harness_id: Option<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub result: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui_intents: Vec<UiIntentMessage>,
 }
