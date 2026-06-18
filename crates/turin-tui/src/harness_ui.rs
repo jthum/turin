@@ -1660,6 +1660,17 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_source_line_names_source_and_adapter_limit() {
+        let line = unsupported_source_line("list", "tables.release");
+
+        assert!(line.contains("This list is declared and visible"));
+        assert!(line.contains("source 'tables.release'"));
+        assert!(line.contains("cannot load in the terminal yet"));
+        assert!(line.contains("Only worklists.* sources load today"));
+        assert!(line.contains("deliberate adapter"));
+    }
+
+    #[test]
     fn render_smoke_shows_declared_screen_nodes() {
         let app = release_app();
         let home_index = screen_index_for_target(&app, "home").expect("home screen");
