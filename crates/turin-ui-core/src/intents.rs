@@ -31,6 +31,8 @@ pub struct UiRegistry {
     focuses: Vec<UiFocusIntent>,
     #[serde(default)]
     refreshes: Vec<UiRefreshIntent>,
+    #[serde(default, skip)]
+    local_badges: BTreeMap<String, BTreeMap<String, UiBadgeIntent>>,
 }
 
 /// Declared surfaces for one harness-defined app.
@@ -69,6 +71,7 @@ impl UiRegistry {
             shows: Vec::new(),
             focuses: Vec::new(),
             refreshes: Vec::new(),
+            local_badges: BTreeMap::new(),
         }
     }
 
@@ -81,7 +84,7 @@ impl UiRegistry {
 
     pub fn from_messages(messages: impl IntoIterator<Item = UiIntentMessage>) -> Self {
         let mut registry = Self::new();
-        registry.apply_messages(messages);
+        registry.replace_declared_messages(messages);
         registry
     }
 
@@ -143,6 +146,25 @@ impl UiRegistry {
         }
     }
 
+    pub fn replace_declared_messages(
+        &mut self,
+        messages: impl IntoIterator<Item = UiIntentMessage>,
+    ) {
+        let mut declared = Self::new();
+        declared.max_notices = self.max_notices;
+        for message in messages {
+            declared.apply_declared_message(message);
+        }
+        for (app_id, badges) in &self.local_badges {
+            if let Some(app) = declared.apps.get_mut(app_id) {
+                for (target, badge) in badges {
+                    app.badges.insert(target.clone(), badge.clone());
+                }
+            }
+        }
+        self.apps = declared.apps;
+    }
+
     pub fn apply_message(&mut self, message: UiIntentMessage) {
         let source = message.source;
         match message.intent {
@@ -172,6 +194,10 @@ impl UiRegistry {
             }
             UiIntent::Notify(intent) => self.push_notice(intent, &source),
             UiIntent::Badge(intent) => {
+                self.local_badges
+                    .entry(intent.app_id.clone())
+                    .or_default()
+                    .insert(intent.target.clone(), intent.clone());
                 self.ensure_app_with_source(intent.app_id.clone(), &source)
                     .badges
                     .insert(intent.target.clone(), intent);
@@ -185,6 +211,41 @@ impl UiRegistry {
                 self.ensure_app_with_source(intent.app_id.clone(), &source);
                 self.refreshes.push(intent);
             }
+        }
+    }
+
+    fn apply_declared_message(&mut self, message: UiIntentMessage) {
+        let source = message.source;
+        match message.intent {
+            UiIntent::App(intent) => {
+                let app = self.ensure_app_with_source(intent.id.clone(), &source);
+                app.definition = Some(intent);
+            }
+            UiIntent::Screen(intent) => {
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
+                    .screens
+                    .insert(intent.id.clone(), intent);
+            }
+            UiIntent::Menu(intent) => {
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
+                    .upsert_menu(intent);
+            }
+            UiIntent::OpensWith(intent) => self.apply_opens_with(intent, &source),
+            UiIntent::Pane(intent) => {
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
+                    .panes
+                    .insert(intent.id.clone(), intent);
+            }
+            UiIntent::Badge(intent) => {
+                self.ensure_app_with_source(intent.app_id.clone(), &source)
+                    .badges
+                    .insert(intent.target.clone(), intent);
+            }
+            UiIntent::Open(_)
+            | UiIntent::Show(_)
+            | UiIntent::Notify(_)
+            | UiIntent::Focus(_)
+            | UiIntent::Refresh(_) => {}
         }
     }
 
@@ -383,6 +444,107 @@ mod tests {
         assert!(registry.focuses().is_empty());
         assert_eq!(registry.take_refreshes().len(), 1);
         assert!(registry.refreshes().is_empty());
+    }
+
+    #[test]
+    fn declared_refresh_drops_stale_surfaces_and_preserves_local_badges() {
+        let mut registry = UiRegistry::from_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "old".to_string(),
+                title: "Old Screen".to_string(),
+                presentation: None,
+                nodes: Vec::new(),
+            })),
+            UiIntentMessage::new(UiIntent::Pane(UiPaneIntent {
+                app_id: "release".to_string(),
+                id: "old-pane".to_string(),
+                title: "Old Pane".to_string(),
+                presentation: None,
+                nodes: Vec::new(),
+            })),
+            UiIntentMessage::new(UiIntent::Badge(UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "old".to_string(),
+                count: Some(1),
+                label: None,
+                level: Some(UiNoticeLevel::Info),
+                data: Default::default(),
+            })),
+        ]);
+
+        registry.apply_message(UiIntentMessage::new(UiIntent::Badge(UiBadgeIntent {
+            app_id: "release".to_string(),
+            target: "current".to_string(),
+            count: Some(7),
+            label: None,
+            level: Some(UiNoticeLevel::Warning),
+            data: Default::default(),
+        })));
+        registry.apply_message(UiIntentMessage::new(UiIntent::Open(UiOpenIntent {
+            app_id: "release".to_string(),
+            target: "current".to_string(),
+            presentation: None,
+        })));
+
+        registry.replace_declared_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::Screen(UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "current".to_string(),
+                title: "Current Screen".to_string(),
+                presentation: None,
+                nodes: Vec::new(),
+            })),
+        ]);
+
+        let app = registry.app("release").expect("release app");
+        assert!(!app.screens.contains_key("old"));
+        assert!(app.screens.contains_key("current"));
+        assert!(app.panes.is_empty());
+        assert!(!app.badges.contains_key("old"));
+        assert_eq!(app.badges["current"].count, Some(7));
+        assert_eq!(app.badges["current"].level, Some(UiNoticeLevel::Warning));
+        assert_eq!(registry.opens().len(), 1);
+    }
+
+    #[test]
+    fn declared_refresh_removes_apps_absent_from_status() {
+        let mut registry = UiRegistry::from_messages([
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "release".to_string(),
+                title: "Release Operator".to_string(),
+                about: None,
+                icon: None,
+            })),
+            UiIntentMessage::new(UiIntent::App(UiAppIntent {
+                id: "qa".to_string(),
+                title: "QA Console".to_string(),
+                about: None,
+                icon: None,
+            })),
+        ]);
+
+        registry.replace_declared_messages([UiIntentMessage::new(UiIntent::App(UiAppIntent {
+            id: "qa".to_string(),
+            title: "QA Console".to_string(),
+            about: None,
+            icon: None,
+        }))]);
+
+        assert!(registry.app("release").is_none());
+        assert!(registry.app("qa").is_some());
     }
 
     #[test]

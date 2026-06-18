@@ -174,7 +174,7 @@ impl DashboardState {
         self.live_sessions = snapshot.live_sessions;
         self.sessions = snapshot.sessions;
         self.tasks = snapshot.tasks;
-        self.ui.apply_messages(static_ui_intents);
+        self.ui.replace_declared_messages(static_ui_intents);
         self.session_details = retained_details;
         self.last_snapshot_unix_ms = now;
         self.last_error = None;
