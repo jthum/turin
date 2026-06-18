@@ -34,4 +34,5 @@ Important maps:
 - Runtime DB and graph: `docs/architecture/maps/runtime-db-graph.md`
 - Session context and hot history: `docs/architecture/maps/session-context-memory.md`
 - Session lifecycle: `docs/architecture/maps/session-lifecycle.md`
+- Turin UI Core: `docs/architecture/maps/turin-ui-core.md`
 - Web tools: `docs/architecture/maps/web-tools.md`
