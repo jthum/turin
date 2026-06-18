@@ -2375,6 +2375,33 @@ mod tests {
     }
 
     #[test]
+    fn form_params_preserve_static_params_for_optional_blank_fields() {
+        let form = UiFormNode {
+            id: Some("intake".to_string()),
+            title: "Intake".to_string(),
+            action: "release.create_item".to_string(),
+            fields: vec![UiFormField {
+                name: "priority".to_string(),
+                label: "Priority".to_string(),
+                kind: Some("integer".to_string()),
+                default: None,
+                required: None,
+                options: Vec::new(),
+            }],
+            params: json!({
+                "priority": 3,
+                "source": "tui",
+            }),
+        };
+        let values = BTreeMap::from([("priority".to_string(), String::new())]);
+
+        let params = form_params(&form, &values).expect("form params");
+
+        assert_eq!(params["priority"], json!(3));
+        assert_eq!(params["source"], json!("tui"));
+    }
+
+    #[test]
     fn form_params_validate_required_and_numeric_fields() {
         let form = UiFormNode {
             id: None,
