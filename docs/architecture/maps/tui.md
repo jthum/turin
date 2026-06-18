@@ -69,9 +69,10 @@ and `turin-daemon-protocol`.
 - Worklist-backed `list` nodes render as compact terminal tables with
   terminal-local row-position and action-available cues. When selection moves
   beyond the first visible page, the renderer windows rows around the selected
-  item instead of making selection disappear off-screen. Other list sources
-  remain visible with metadata and an explicit unsupported-adapter message
-  until the client has a loader for that source.
+  item instead of making selection disappear off-screen, and shows the current
+  visible row range plus selected row number. Other list sources remain visible
+  with metadata and an explicit unsupported-adapter message until the client has
+  a loader for that source.
 - Worklist row selection is remembered by local item identity across refreshes
   and row reordering where possible, then falls back to a bounded local index if
   the selected row disappears. This must remain TUI-local state.

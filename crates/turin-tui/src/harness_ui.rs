@@ -745,13 +745,18 @@ fn render_work_items(
     columns.extend(fields.iter().cloned());
     columns.push("action".to_string());
     let widths = work_item_table_widths(&fields, max_width.saturating_sub(depth * 2));
+    let selected_index = selected_work_item_index(items, selected_work_item_id);
+    let (start, end) = work_item_visible_window(items.items.len(), selected_index);
+    lines.push(indent_line(
+        depth,
+        work_item_window_summary(items.items.len(), start, end, selected_index),
+        theme::muted(),
+    ));
     lines.push(indent_line(
         depth,
         table_row(&columns, &widths),
         theme::muted(),
     ));
-    let selected_index = selected_work_item_index(items, selected_work_item_id);
-    let (start, end) = work_item_visible_window(items.items.len(), selected_index);
     if start > 0 {
         lines.push(indent_line(
             depth,
@@ -815,6 +820,20 @@ fn work_item_visible_window(item_count: usize, selected_index: Option<usize>) ->
     let max_start = item_count - WORK_ITEM_TABLE_VISIBLE_ROWS;
     let start = selected_index.saturating_sub(half_window).min(max_start);
     (start, start + WORK_ITEM_TABLE_VISIBLE_ROWS)
+}
+
+fn work_item_window_summary(
+    item_count: usize,
+    start: usize,
+    end: usize,
+    selected_index: Option<usize>,
+) -> String {
+    let visible_start = start.saturating_add(1).min(item_count);
+    let visible_end = end.min(item_count);
+    let selected = selected_index
+        .map(|index| format!(" · selected {}", index.saturating_add(1)))
+        .unwrap_or_default();
+    format!("Rows {visible_start}-{visible_end} of {item_count}{selected}")
 }
 
 fn work_item_row_marker(index: usize, selected: bool) -> String {
@@ -1797,6 +1816,7 @@ mod tests {
 
         assert!(text.contains("#"));
         assert!(text.contains("action"));
+        assert!(text.contains("Rows 1-2 of 2 · selected 1"));
         assert!(text.contains("●1"));
         assert!(text.contains("review"));
         assert!(text.contains("Run QA"));
@@ -1852,6 +1872,7 @@ mod tests {
         render_work_items(&list, &items, &mut lines, 0, 72, Some("REL-15"));
         let text = line_text(&lines);
 
+        assert!(text.contains("Rows 7-18 of 18 · selected 15"));
         assert!(text.contains("... 6 earlier"));
         assert!(text.contains("Release item 15"));
         assert!(text.contains("●15"));
@@ -1864,6 +1885,7 @@ mod tests {
         assert_eq!(work_item_visible_window(18, None), (0, 12));
         assert_eq!(work_item_visible_window(18, Some(17)), (6, 18));
         assert_eq!(work_item_visible_window(3, Some(2)), (0, 3));
+        assert_eq!(work_item_window_summary(18, 0, 12, None), "Rows 1-12 of 18");
     }
 
     #[test]
