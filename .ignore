@@ -1,0 +1,4 @@
+/target/
+/tools/perf-suite/target/
+/.workspace/
+/.turin/

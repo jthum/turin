@@ -378,17 +378,20 @@ target artifacts, scratch data, and inline `#[cfg(test)] mod tests` blocks,
 records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
-The latest local UI-chapter sample on June 18, 2026 reported:
+The latest local UI-chapter sample on June 19, 2026 reported:
 
-- `85947` Rust code lines under `src` and `crates`
-- `4774` code lines in `crates/turin-app`
-- `3942` code lines in `crates/turin-tui`
-- `3211` code lines in `crates/turin-ui-core`
-- `671` code lines in `crates/turin-web`
-- `68202` bytes across first-party `turin-web` static assets
+- `86017` Rust code lines under `src` and `crates`
+- `4720` code lines in `crates/turin-app`
+- `3966` code lines in `crates/turin-tui`
+- `3306` code lines in `crates/turin-ui-core`
+- `676` code lines in `crates/turin-web`
+- `70546` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
+The repo `.ignore` also excludes local build artifacts such as `target/`,
+`tools/perf-suite/target/`, and `.workspace/` from ripgrep scans so footprint
+audits and agent context gathering do not accidentally walk generated output.
 
 ## Current Limitations
 
