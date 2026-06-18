@@ -507,7 +507,11 @@ fn render_work_items(
     event: &mut Option<HarnessUiEvent>,
 ) {
     if items.items.is_empty() {
-        ui.label("No items.");
+        render_empty_state(
+            ui,
+            "No matching items",
+            "This worklist query returned no rows.",
+        );
         return;
     }
 
@@ -583,7 +587,11 @@ fn render_work_items(
 
 fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
     if items.items.is_empty() {
-        ui.label("No worklist activity yet.");
+        render_empty_state(
+            ui,
+            "No worklist activity yet",
+            "Activity will appear after work items are created or updated.",
+        );
         return;
     }
 
@@ -611,7 +619,11 @@ fn render_worklist_detail(
     event: &mut Option<HarnessUiEvent>,
 ) {
     if items.items.is_empty() {
-        ui.label("No worklist items available for detail.");
+        render_empty_state(
+            ui,
+            "No worklist items available",
+            "Detail surfaces need at least one loaded work item.",
+        );
         return;
     }
 
@@ -807,9 +819,11 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
 }
 
 fn render_unsupported_source(ui: &mut egui::Ui, surface: &str, source: &str) {
-    ui.label(format!(
-        "This {surface} is declared and visible, but source '{source}' cannot load in this client yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
-    ));
+    ui.add(
+        cast::Alert::new(format!("Unsupported {surface} source"))
+            .body(unsupported_source_message(surface, source))
+            .intent(cast::Intent::Warning),
+    );
 }
 
 fn render_form(
@@ -1139,7 +1153,11 @@ fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkIte
     let field = worklist_chart_group_field(chart.intent.as_deref());
     let counts = worklist_group_counts(items, field);
     if counts.is_empty() {
-        ui.label("No chart data yet.");
+        render_empty_state(
+            ui,
+            "No chart data yet",
+            "This chart will populate when the backing worklist has rows.",
+        );
         return;
     }
 
@@ -1201,6 +1219,19 @@ fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> 
         .unwrap_or(0)
 }
 
+fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
+    cast::EmptyState::new(title)
+        .body(body)
+        .intent(cast::Intent::Neutral)
+        .show(ui, |_| {});
+}
+
+fn unsupported_source_message(surface: &str, source: &str) -> String {
+    format!(
+        "This {surface} is declared and visible, but source '{source}' cannot load in this client yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1250,5 +1281,14 @@ mod tests {
         };
 
         assert_eq!(menu_item_label(&app, &item), "Work · ready 3 · 1 subitem");
+    }
+
+    #[test]
+    fn unsupported_source_message_names_surface_and_source() {
+        let message = unsupported_source_message("list", "tables.release");
+
+        assert!(message.contains("This list is declared and visible"));
+        assert!(message.contains("source 'tables.release'"));
+        assert!(message.contains("Only worklists.* sources load today"));
     }
 }

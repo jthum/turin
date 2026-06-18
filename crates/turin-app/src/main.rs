@@ -2158,10 +2158,13 @@ impl TurinDesktopApp {
                 });
                 ui.add_space(8.0);
                 if apps.is_empty() {
-                    ui.label("Turin is ready without custom harness UI.");
-                    ui.label(
-                        "Use Overview, Tasks, and Events as the default operator console. Declare ui.app(...) in a harness to add workflow-specific screens here.",
-                    );
+                    cast::EmptyState::new("Turin is ready without custom harness UI")
+                        .body(
+                            "Use Overview, Tasks, and Events as the default operator console. Declare ui.app(...) in a harness to add workflow-specific screens here.",
+                        )
+                        .icon("UI")
+                        .intent(cast::Intent::Info)
+                        .show(ui, |_| {});
                 } else {
                     let labels = apps
                         .iter()
