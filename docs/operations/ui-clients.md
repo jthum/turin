@@ -116,6 +116,54 @@ Debug binaries from the same sample were `25.5 MB` for `turin-tui`, `69.9 MB`
 for `turin-app`, and `23.3 MB` for `turin-web`. Treat those as local debug
 artifacts, not release-size targets.
 
+## Release And Idle-Memory Baseline
+
+Use this lightweight procedure when a UI change might affect footprint,
+startup, or idle memory. Record the commit, OS, display environment, and whether
+the daemon was local or remote beside the numbers.
+
+Build release clients:
+
+```bash
+cargo build --release -p turin-tui -p turin-app -p turin-web
+```
+
+Record source and release-binary footprint:
+
+```bash
+tools/footprint-report \
+  --top-files 30 \
+  --binary target/release/turin-tui \
+  --binary target/release/turin-app \
+  --binary target/release/turin-web
+```
+
+For a quick startup sanity check of the CLI entry path:
+
+```bash
+/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-tui --help >/tmp/turin-tui-help.txt
+/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-app --help >/tmp/turin-app-help.txt
+/usr/bin/time -f 'elapsed=%E max_rss_kb=%M' target/release/turin-web --help >/tmp/turin-web-help.txt
+```
+
+For idle memory, start the client against a local daemon, wait a few seconds,
+then sample the process. On Linux, prefer `smaps_rollup` when available:
+
+```bash
+pid="$(pgrep -n turin-web)"
+awk '
+  /^Rss:/ { rss_kb = $2 }
+  /^Pss:/ { pss_kb = $2 }
+  END { printf "rss_kb=%s pss_kb=%s\n", rss_kb, pss_kb }
+' "/proc/$pid/smaps_rollup"
+```
+
+For `turin-tui` and `turin-app`, run the client in a normal terminal or desktop
+session and sample the newest matching process with `pgrep -n turin-tui` or
+`pgrep -n turin-app`. Close the client normally after sampling. Do not compare
+numbers across machines as hard budgets; compare them against previous samples
+from the same machine and release profile.
+
 ## Local Usage
 
 TUI against the local daemon:
