@@ -13,6 +13,8 @@ const state = {
 
 const ACTIVITY_LIMIT = 12;
 const DETAIL_LIMIT = 25;
+const REPORT_LIMIT = 100;
+const CHART_LIMIT = 100;
 
 const els = {
   appList: document.querySelector("#app-list"),
@@ -226,8 +228,9 @@ function renderNode(node, app) {
     case "detail":
       return renderDetail(node);
     case "report":
+      return renderReport(node);
     case "chart":
-      return renderPlaceholder(node);
+      return renderChart(node);
     case "form":
       return renderForm(node, app);
     default:
@@ -422,6 +425,90 @@ function renderWorkItemDetail(item) {
   return wrapper;
 }
 
+function renderReport(node) {
+  const request = dataRequestForNode(node);
+  if (!request) return renderPlaceholder(node);
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3>`;
+  if (node.prompt) panel.append(renderText(node.prompt, "muted"));
+  const cached = state.listCache.get(listKey(request));
+  if (state.loadingLists.has(listKey(request))) {
+    panel.append(renderText("Loading report data...", "muted"));
+    return panel;
+  }
+  if (!cached) {
+    panel.append(renderText("Report data not loaded yet.", "muted"));
+    return panel;
+  }
+  if (cached.error) {
+    panel.append(renderText(cached.error, "muted"));
+    return panel;
+  }
+  const items = cached.list?.items ?? [];
+  panel.append(renderMetricGrid(reportMetrics(items)));
+  return panel;
+}
+
+function renderChart(node) {
+  const request = dataRequestForNode(node);
+  if (!request) return renderPlaceholder(node);
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  const label = node.render_as ? `${node.intent || "breakdown"} · ${node.render_as}` : node.intent || "breakdown";
+  panel.innerHTML = `<h3>${escapeHtml(node.title)}</h3><p class="muted">${escapeHtml(label)}</p>`;
+  const cached = state.listCache.get(listKey(request));
+  if (state.loadingLists.has(listKey(request))) {
+    panel.append(renderText("Loading chart data...", "muted"));
+    return panel;
+  }
+  if (!cached) {
+    panel.append(renderText("Chart data not loaded yet.", "muted"));
+    return panel;
+  }
+  if (cached.error) {
+    panel.append(renderText(cached.error, "muted"));
+    return panel;
+  }
+  const items = cached.list?.items ?? [];
+  panel.append(renderBars(groupCounts(items, chartGroupField(node))));
+  return panel;
+}
+
+function renderMetricGrid(metrics) {
+  const grid = document.createElement("div");
+  grid.className = "metric-grid";
+  for (const metric of metrics) {
+    const tile = document.createElement("article");
+    tile.className = "metric-tile";
+    tile.innerHTML = `<span>${escapeHtml(metric.label)}</span><strong>${escapeHtml(metric.value)}</strong>`;
+    grid.append(tile);
+  }
+  return grid;
+}
+
+function renderBars(counts) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const wrapper = document.createElement("div");
+  wrapper.className = "chart-bars";
+  if (!entries.length) {
+    wrapper.append(renderText("No chart data yet.", "muted"));
+    return wrapper;
+  }
+  const max = Math.max(...entries.map(([, count]) => count), 1);
+  for (const [label, count] of entries) {
+    const row = document.createElement("div");
+    row.className = "chart-row";
+    row.innerHTML = `
+      <span>${escapeHtml(label)}</span>
+      <div><i style="width: ${(count / max) * 100}%"></i></div>
+      <strong>${escapeHtml(count)}</strong>
+    `;
+    wrapper.append(row);
+  }
+  return wrapper;
+}
+
 function renderForm(node, app) {
   const panel = document.createElement("section");
   panel.className = "panel";
@@ -602,6 +689,20 @@ function dataRequestForNode(node) {
       limit: DETAIL_LIMIT,
     };
   }
+  if (node.kind === "report" && node.source.startsWith("worklists.")) {
+    return {
+      source: node.source,
+      where: {},
+      limit: REPORT_LIMIT,
+    };
+  }
+  if (node.kind === "chart" && node.source.startsWith("worklists.")) {
+    return {
+      source: node.source,
+      where: {},
+      limit: CHART_LIMIT,
+    };
+  }
   return null;
 }
 
@@ -629,6 +730,30 @@ function fieldValue(item, field) {
     return scalarLabel(item.metadata[field]);
   }
   return "";
+}
+
+function reportMetrics(items) {
+  const counts = groupCounts(items, "status");
+  return [
+    { label: "Total", value: items.length },
+    { label: "Pending", value: counts.pending || 0 },
+    { label: "Completed", value: counts.completed || 0 },
+    { label: "Failed", value: counts.failed || 0 },
+  ];
+}
+
+function chartGroupField(node) {
+  if (node.intent === "kind_breakdown") return "kind";
+  if (node.intent === "priority_breakdown") return "priority";
+  return "status";
+}
+
+function groupCounts(items, field) {
+  return items.reduce((counts, item) => {
+    const label = fieldValue(item, field) || "unknown";
+    counts[label] = (counts[label] || 0) + 1;
+    return counts;
+  }, {});
 }
 
 function collectFormParams(form, node) {

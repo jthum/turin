@@ -335,6 +335,57 @@ tr:last-child td {
   grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: var(--space-2);
+}
+
+.metric-tile {
+  display: grid;
+  gap: 0.2rem;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.metric-tile span,
+.chart-row span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.metric-tile strong {
+  font-size: 1.8rem;
+}
+
+.chart-bars {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: minmax(5rem, 9rem) 1fr 3rem;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.chart-row div {
+  height: 0.7rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chart-row i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--info));
+}
+
 .field {
   display: grid;
   gap: var(--space-1);

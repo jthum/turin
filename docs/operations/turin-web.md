@@ -125,8 +125,9 @@ The current browser shell is intentionally small:
 - typed form defaults, local drafts, required fields, options, and scalar
   coercion
 - action start/completion/failure feedback with duplicate-run suppression
+- lightweight worklist-backed report summaries and chart breakdowns
 - SSE invalidation for runtime/UI/action events
-- placeholders for unsupported activity/detail sources, reports, and charts
+- placeholders for unsupported activity/detail/report/chart sources
 
 This is a validation shell, not the final Dashbase/Svelte decision. It should
 stay easy to replace once the web UX shape is better proven.
@@ -158,6 +159,6 @@ The first useful slice is complete:
 5. It serves a minimal browser shell from the same process.
 6. It has an integration smoke using the Release Operator harness.
 
-Next work should tighten browser form edge cases and report/chart semantics,
-then decide whether to keep iterating on the static shell or introduce a light
-frontend build step.
+Next work should tighten item-selection detail behavior and report/chart
+semantics across app/TUI/web, then decide whether to keep iterating on the
+static shell or introduce a light frontend build step.

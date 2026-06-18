@@ -79,11 +79,13 @@ browser shell that consumes those routes.
 
 ## Current Gaps
 
-- `report` and `chart` need real adapters or more explicit semantics.
+- `report` and `chart` need shared semantics across app/TUI/web; the web shell
+  has a lightweight worklist-backed summary/bar adapter only.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - The TUI has no item-selection-driven detail pane yet.
-- `turin-web` report/chart rendering is still placeholder-level.
+- `turin-web` report/chart rendering is useful for worklist-backed summaries
+  but still not a shared final semantics layer.
 - There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.
 
 ## Update Rule
