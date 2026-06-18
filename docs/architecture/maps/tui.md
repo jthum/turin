@@ -89,8 +89,9 @@ and `turin-daemon-protocol`.
 - Pane targets render as terminal overlays with their own local item/action
   focus. Pane item/action selection must not overload screen item/action focus.
 - Keep keyboard behavior discoverable through the help overlay/footer.
-- Page and boundary navigation (`PageUp`, `PageDown`, `Home`, `End`) should stay
-  local to the currently focused region and must not become runtime state.
+- Page and boundary navigation (`PageUp`, `PageDown`, `Home`, `End`, `g`, `G`)
+  should stay local to the currently focused region and must not become runtime
+  state.
 - Harness focus cycling should skip empty item/action regions and fall back to
   navigation rather than trapping the operator on blank panes.
 - Prefer small modules over rebuilding a monolithic terminal app.
