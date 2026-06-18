@@ -1282,7 +1282,7 @@ async function runAction(node, app, options = {}) {
       level: "error",
       title: "Action failed",
       body: error.message,
-      detail: null,
+      detail: error.envelope || null,
     };
     pushNotice("error", "Action failed", error.message);
     render();
@@ -1636,7 +1636,10 @@ async function postJson(path, payload) {
 async function decodeJsonResponse(response) {
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(errorMessageFromEnvelope(body, response));
+    const error = new Error(errorMessageFromEnvelope(body, response));
+    error.envelope = body?.error || null;
+    error.status = response.status;
+    throw error;
   }
   return body;
 }

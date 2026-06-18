@@ -207,7 +207,8 @@ KV, or runtime DB tables.
 Declared action failures return the standard `control_unavailable` JSON error
 envelope from the web boundary. The browser keeps that failure local: it shows an
 error notice and an action-result panel scoped to the app that initiated the
-action, without persisting any UI session state in Turin.
+action, preserving the structured error envelope as panel detail without
+persisting any UI session state in Turin.
 
 An empty or whitespace-only `action` is rejected before control dispatch with
 `invalid_action_request` and structured details:

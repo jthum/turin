@@ -250,6 +250,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("appId: app?.id || null"));
     assert!(js.contains("title: \"Action failed\""));
     assert!(js.contains("body: error.message"));
+    assert!(js.contains("detail: error.envelope || null"));
+    assert!(js.contains("error.envelope = body?.error || null"));
+    assert!(js.contains("error.status = response.status"));
     assert!(js.contains("pushNotice(\"error\", \"Action failed\", error.message)"));
     assert!(js.contains("pendingAction"));
     assert!(js.contains("renderActionConfirmation"));
