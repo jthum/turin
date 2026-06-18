@@ -11,7 +11,7 @@ use turin_control_client::{
     AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
     SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiNode, WorkItemList};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, WorkItemList};
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
@@ -19,8 +19,8 @@ use turin_ui_core::{
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftValidation,
     ConnectionProfileKind, ConnectionProfileSummary, DashboardState, DefaultOperatorConsoleSummary,
     HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate,
-    connect_dashboard, ensure_local_daemon_for_draft, preflight_connection_blocking,
-    preflight_draft_blocking, spawn_controller,
+    collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
+    preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
 };
 
 mod harness_ui;
@@ -145,55 +145,6 @@ fn connection_options(args: &Args) -> ConnectionOptions {
     }
 }
 
-const UI_ACTIVITY_LIMIT: u32 = 12;
-const UI_DETAIL_LIMIT: u32 = 25;
-const UI_REPORT_LIMIT: u32 = 100;
-const UI_CHART_LIMIT: u32 = 100;
-
-fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
-    for node in nodes {
-        match node {
-            UiNode::Section(section) => collect_ui_list_requests(&section.nodes, out),
-            UiNode::List(list) if list.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: list.source.clone(),
-                    filter: list.filter.clone(),
-                    limit: list.limit,
-                });
-            }
-            UiNode::Activity(activity) if activity.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: activity.source.clone(),
-                    filter: Default::default(),
-                    limit: Some(UI_ACTIVITY_LIMIT),
-                });
-            }
-            UiNode::Detail(detail) if detail.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: detail.source.clone(),
-                    filter: Default::default(),
-                    limit: Some(UI_DETAIL_LIMIT),
-                });
-            }
-            UiNode::Report(report) if report.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: report.source.clone(),
-                    filter: Default::default(),
-                    limit: Some(UI_REPORT_LIMIT),
-                });
-            }
-            UiNode::Chart(chart) if chart.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: chart.source.clone(),
-                    filter: Default::default(),
-                    limit: Some(UI_CHART_LIMIT),
-                });
-            }
-            _ => {}
-        }
-    }
-}
-
 fn visible_ui_list_requests(
     app: &UiAppRecord,
     screen_index: usize,
@@ -203,13 +154,13 @@ fn visible_ui_list_requests(
     if !app.screens.is_empty() {
         let screen_index = screen_index.min(app.screens.len() - 1);
         if let Some(screen) = app.screens.values().nth(screen_index) {
-            collect_ui_list_requests(&screen.nodes, &mut requests);
+            requests.extend(collect_ui_list_requests(&screen.nodes));
         }
     }
     if let Some(pane_id) = active_pane_id
         && let Some(pane) = app.panes.get(pane_id)
     {
-        collect_ui_list_requests(&pane.nodes, &mut requests);
+        requests.extend(collect_ui_list_requests(&pane.nodes));
     }
     requests
 }

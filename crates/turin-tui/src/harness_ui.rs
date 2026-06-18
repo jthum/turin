@@ -12,18 +12,16 @@ use turin_daemon_protocol::{
     WorkItemList,
 };
 use turin_ui_core::{
-    UiAppRecord, UiListRequest, unsupported_ui_source_message, work_item_field_label,
-    worklist_chart_group_field, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
+    DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
+    UiListRequest, collect_ui_list_requests as collect_shared_list_requests, ui_worklist_request,
+    unsupported_ui_source_message, work_item_field_label, worklist_chart_group_field,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::app::PendingHarnessAction;
 use crate::theme;
 
-const ACTIVITY_LIMIT: u32 = 12;
-const DETAIL_LIMIT: u32 = 25;
-const REPORT_LIMIT: u32 = 100;
-const CHART_LIMIT: u32 = 100;
 const WORK_ITEM_TABLE_VISIBLE_ROWS: usize = 12;
 const WORK_ITEM_ROW_MARKER_WIDTH: usize = 5;
 const WORK_ITEM_ACTION_MARKER_WIDTH: usize = 6;
@@ -192,53 +190,7 @@ fn title_with_node_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) 
 }
 
 pub fn collect_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
-    let mut out = Vec::new();
-    collect_list_requests_into(nodes, &mut out);
-    out
-}
-
-fn collect_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
-    for node in nodes {
-        match node {
-            UiNode::Section(section) => collect_list_requests_into(&section.nodes, out),
-            UiNode::List(list) if list.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: list.source.clone(),
-                    filter: list.filter.clone(),
-                    limit: list.limit,
-                });
-            }
-            UiNode::Activity(activity) if activity.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: activity.source.clone(),
-                    filter: Map::new(),
-                    limit: Some(ACTIVITY_LIMIT),
-                });
-            }
-            UiNode::Detail(detail) if detail.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: detail.source.clone(),
-                    filter: Map::new(),
-                    limit: Some(DETAIL_LIMIT),
-                });
-            }
-            UiNode::Report(report) if report.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: report.source.clone(),
-                    filter: Map::new(),
-                    limit: Some(REPORT_LIMIT),
-                });
-            }
-            UiNode::Chart(chart) if chart.source.starts_with("worklists.") => {
-                out.push(UiListRequest {
-                    source: chart.source.clone(),
-                    filter: Map::new(),
-                    limit: Some(CHART_LIMIT),
-                });
-            }
-            _ => {}
-        }
-    }
+    collect_shared_list_requests(nodes)
 }
 
 pub fn collect_work_item_selections(
@@ -1385,11 +1337,7 @@ fn json_value(value: &Value) -> String {
 }
 
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
-    source.starts_with("worklists.").then(|| UiListRequest {
-        source: source.to_string(),
-        filter: Map::new(),
-        limit: Some(limit),
-    })
+    ui_worklist_request(source, limit)
 }
 
 fn unsupported_source_line(surface: &str, source: &str) -> String {

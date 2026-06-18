@@ -8,17 +8,14 @@ use turin_daemon_protocol::{
     WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{
-    UiAppRecord, UiListRequest, unsupported_ui_source_message, work_item_field_label,
+    DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
+    DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
+    UiListRequest, ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
     work_item_key, worklist_chart_group_field, worklist_group_counts,
     worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
-
-const ACTIVITY_LIMIT: u32 = 12;
-const DETAIL_LIMIT: u32 = 25;
-const REPORT_LIMIT: u32 = 100;
-const CHART_LIMIT: u32 = 100;
 
 #[derive(Debug, Clone)]
 pub(super) enum HarnessUiEvent {
@@ -813,11 +810,7 @@ fn render_detail(
 }
 
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
-    source.starts_with("worklists.").then(|| UiListRequest {
-        source: source.to_string(),
-        filter: Map::new(),
-        limit: Some(limit),
-    })
+    ui_worklist_request(source, limit)
 }
 
 fn render_unsupported_source(ui: &mut egui::Ui, surface: &str, source: &str) {

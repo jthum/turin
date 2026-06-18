@@ -24,6 +24,11 @@ runtime-owned UI session store, or a second daemon implementation.
 - `crates/turin-ui-core/src/intents.rs`
   - `UiRegistry` and `UiAppRecord` indexing for harness-declared app surfaces
     plus dynamic UI intent queues.
+- `crates/turin-ui-core/src/ui_copy.rs`
+  - Stateless shared copy for semantic UI fallback states.
+- `crates/turin-ui-core/src/ui_data.rs`
+  - Stateless semantic UI data-source helpers, including default worklist-backed
+    surface limits and `UiListRequest` discovery from node trees.
 - `crates/turin-ui-core/src/worklist_view.rs`
   - Stateless worklist display derivation helpers for counts, grouping, and
     field labels.
@@ -49,6 +54,9 @@ runtime-owned UI session store, or a second daemon implementation.
 8. `OperatorCommand::LoadUiList` resolves semantic `UiListRequest` values. Today
    only `worklists.<name>` sources load, through typed control-client worklist
    helpers.
+9. Clients can reuse stateless helpers to discover visible worklist-backed data
+   requests from their own active screen/pane nodes without sharing active view
+   state.
 
 ## Invariants
 
@@ -75,7 +83,8 @@ runtime-owned UI session store, or a second daemon implementation.
   `turin-control-client`.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
-- Worklist display helpers must stay stateless and renderer-neutral.
+- Worklist source, request-discovery, and display helpers must stay stateless
+  and renderer-neutral.
 - Do not add renderer-specific concepts such as egui widgets, Ratatui layout,
   browser route state, or CSS classes to this crate.
 - Connection/profile helpers may be shared here because they affect all Rust
@@ -128,8 +137,9 @@ git diff --check
 `turin-ui-core` currently shares the pieces that have proven common across the
 new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
-bounded notices/events, UI list loading for worklists, harness action command
-dispatch with returned UI intent application, and small worklist summaries. It
-intentionally does not provide a common active-screen model or shared UI session
-state; those seams should be extracted later only if the clients independently
-converge on the same shape.
+bounded notices/events, UI list loading for worklists, stateless visible-node
+request derivation, shared fallback copy, harness action command dispatch with
+returned UI intent application, and small worklist summaries. It intentionally
+does not provide a common active-screen model or shared UI session state; those
+seams should be extracted later only if the clients independently converge on
+the same shape.
