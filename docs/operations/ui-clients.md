@@ -50,7 +50,9 @@ action result panels, and wider runtime tabs.
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE
 invalidation routes, and it renders the current semantic harness UI vocabulary
-without a frontend build step. See `docs/operations/turin-web.md`.
+without a frontend build step. Browser-local `ui.show` pane targets render as
+overlays and reuse the same node/list adapters as screens. See
+`docs/operations/turin-web.md`.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those

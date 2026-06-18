@@ -25,7 +25,7 @@ Core rule:
 | `app` | Selectable harness app cards/list. | Selectable harness app navigation. | App selector in the browser shell and `/api/apps`. | Multiple apps are allowed; client state remains local. |
 | `screen` | Screen tabs within selected app. | Screen navigation plus flattened menu entries. | Screen navigation in shell and `/api/apps/{app_id}`. | Default screen comes from `opens_with`. |
 | `menu` | Menu groups and nested menu entries. | Flattened terminal navigation with indentation. | Nested menu navigation in the shell. | Menus are navigation intent, not layout. |
-| `pane` | Declared but not rendered as a first-class pane yet. | Noted/degraded when shown dynamically. | Exposed through API; shell degrades until a pane model exists. | Needs a client-specific pane model later. |
+| `pane` | Declared but not rendered as a first-class pane yet. | Noted/degraded when shown dynamically. | Exposed through API and rendered as a browser-local overlay when shown. | Pane state remains client-local. |
 
 ## Node Rendering
 
@@ -48,7 +48,7 @@ Core rule:
 | --- | --- | --- | --- | --- |
 | `notice` | Recent UI notices and global info panels. | Overview notices panel. | Shell notices/status panel. | Bounded in `UiRegistry`. |
 | `open` | Selects app/screen locally. | Selects app/screen locally. | Selects app/screen locally. | Runtime does not own active screen state. |
-| `show` | Opens screen when target is a screen; panes are recognized. | Opens screen when target is a screen; panes degrade to a notice. | Opens screen targets; panes degrade until a pane model exists. | Pane behavior is intentionally client-specific. |
+| `show` | Opens screen when target is a screen; panes are recognized. | Opens screen when target is a screen; panes degrade to a notice. | Opens screen targets or displays pane targets as local overlays. | Pane behavior is intentionally client-specific. |
 | `badge` | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching navigation targets and titled node ids. | Placement remains client-local chrome, not a renderer contract. |
 | `focus` | Selects screen/action target locally. | Selects screen/action target locally. | Selects matching screen/action target locally. | Focus remains client-local. |
 | `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |

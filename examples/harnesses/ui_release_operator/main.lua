@@ -132,6 +132,16 @@ action.define("release.reject_next", function(_ctx, params)
   }
 end)
 
+action.define("release.show_notes", function(_ctx, _params)
+  app:show("release-notes", {
+    presentation = "sheet",
+  })
+  return {
+    status = "shown",
+    target = "release-notes",
+  }
+end)
+
 app:home("Release Desk", function(screen)
   screen:text("Coordinate a release from a client-rendered harness UI. Seed demo work first, then approve or reject pending approvals.")
 
@@ -156,6 +166,9 @@ app:home("Release Desk", function(screen)
       params = {
         release = "2026.06",
       },
+    })
+    section:action("Show Release Notes", "release.show_notes", {
+      id = "show-release-notes",
     })
   end)
 
@@ -226,6 +239,16 @@ end)
 app:badge("release-readiness", {
   label = "live",
   level = "info",
+})
+
+app:pane("release-notes", "Release Notes", function(pane)
+  pane:text("A lightweight pane can hold contextual workflow surfaces without changing the active screen.")
+  pane:detail("Current Release Snapshot", {
+    id = "pane-release-snapshot",
+    from = RELEASE_BINDING,
+  })
+end, {
+  presentation = "sheet",
 })
 
 app:menu("Main", function(menu)

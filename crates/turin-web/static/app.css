@@ -553,6 +553,41 @@ tr:last-child td {
   resize: vertical;
 }
 
+.pane-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(4, 6, 4, 0.54);
+  backdrop-filter: blur(8px);
+}
+
+.pane-sheet {
+  width: min(42rem, 100%);
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-4);
+  border-left: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 20% 12%, rgba(217, 240, 108, 0.12), transparent 20rem),
+    var(--bg-soft);
+  box-shadow: -28px 0 90px rgba(0, 0, 0, 0.42);
+}
+
+.pane-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin-bottom: var(--space-4);
+}
+
+.pane-header h2 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 3.3rem);
+}
+
 .notice-stack {
   display: grid;
   gap: var(--space-2);

@@ -10,6 +10,7 @@ const state = {
   runningActions: new Set(),
   notices: [],
   latestActionResult: null,
+  activePaneId: null,
   appliedStatusUiRequests: false,
   refreshing: false,
 };
@@ -33,6 +34,11 @@ const els = {
 };
 
 els.refreshButton.addEventListener("click", () => refresh({ reason: "manual" }));
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && state.activePaneId) {
+    closePane();
+  }
+});
 
 bootstrap();
 
@@ -101,6 +107,9 @@ function selectDefaults() {
   }
   const app = selectedApp();
   const screenIds = Object.keys(app?.screens ?? {});
+  if (state.activePaneId && !app?.panes?.[state.activePaneId]) {
+    state.activePaneId = null;
+  }
   if (!screenIds.length) {
     state.selectedScreenId = null;
     return;
@@ -158,6 +167,7 @@ function applyUiOpen(appId, target, label) {
     return false;
   }
   state.selectedScreenId = screenId;
+  state.activePaneId = null;
   return true;
 }
 
@@ -166,7 +176,8 @@ function applyUiShow(appId, target) {
   if (!app) return false;
   if (screenIdForTarget(app, target)) return applyUiOpen(appId, target, "show");
   if (app.panes?.[target]) {
-    pushNotice("info", "Pane requested", `turin-web noted ui.show pane '${target}'.`);
+    state.activePaneId = target;
+    loadVisibleLists().then(render);
     return true;
   }
   pushNotice("error", "UI show failed", `Target '${target}' is not a screen or pane in '${appId}'.`);
@@ -234,6 +245,7 @@ function render() {
   renderApps();
   renderScreens();
   renderScreen();
+  renderPane();
 }
 
 function renderChrome() {
@@ -263,6 +275,7 @@ function renderApps() {
     button.addEventListener("click", () => {
       state.selectedAppId = app.id;
       state.selectedScreenId = app.opens_with || Object.keys(app.screens ?? {})[0] || null;
+      state.activePaneId = null;
       loadVisibleLists().then(render);
     });
     els.appList.append(button);
@@ -317,6 +330,7 @@ function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
   }
   button.addEventListener("click", () => {
     state.selectedScreenId = screenId;
+    state.activePaneId = null;
     loadVisibleLists().then(render);
   });
   els.screenNav.append(button);
@@ -366,6 +380,54 @@ function renderScreen() {
     stack.innerHTML = `<div class="empty-state"><span>Empty screen</span><p>This screen has no declared nodes.</p></div>`;
   }
   els.screen.append(stack);
+}
+
+function renderPane() {
+  document.querySelectorAll(".pane-overlay").forEach(node => node.remove());
+  const app = selectedApp();
+  const pane = selectedPane();
+  if (!app || !pane) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "pane-overlay";
+  overlay.addEventListener("click", event => {
+    if (event.target === overlay) closePane();
+  });
+
+  const sheet = document.createElement("aside");
+  sheet.className = "pane-sheet";
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-modal", "true");
+  sheet.setAttribute("aria-label", pane.title || pane.id);
+
+  const header = document.createElement("div");
+  header.className = "pane-header";
+  const title = document.createElement("div");
+  title.innerHTML = `<p class="eyebrow">Pane</p><h2>${escapeHtml(pane.title || pane.id)}</h2>`;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "ghost-button";
+  close.textContent = "Close";
+  close.addEventListener("click", closePane);
+  header.append(title, close);
+  sheet.append(header);
+
+  const stack = document.createElement("div");
+  stack.className = "node-stack";
+  for (const node of pane.nodes ?? []) {
+    stack.append(renderNode(node, app));
+  }
+  if (!pane.nodes?.length) {
+    stack.innerHTML = `<div class="empty-state"><span>Empty pane</span><p>This pane has no declared nodes.</p></div>`;
+  }
+  sheet.append(stack);
+  overlay.append(sheet);
+  document.body.append(overlay);
+}
+
+function closePane() {
+  state.activePaneId = null;
+  render();
 }
 
 function renderNode(node, app) {
@@ -902,7 +964,11 @@ async function runAction(node, app) {
 
 async function loadVisibleLists() {
   const screen = selectedScreen();
-  const nodes = flattenNodes(screen?.nodes ?? []);
+  const pane = selectedPane();
+  const nodes = [
+    ...flattenNodes(screen?.nodes ?? []),
+    ...flattenNodes(pane?.nodes ?? []),
+  ];
   const requests = nodes.map(dataRequestForNode).filter(Boolean);
   await Promise.all(requests.map(loadDataRequest));
 }
@@ -937,6 +1003,11 @@ function selectedApp() {
 function selectedScreen() {
   const app = selectedApp();
   return app?.screens?.[state.selectedScreenId] || null;
+}
+
+function selectedPane() {
+  const app = selectedApp();
+  return app?.panes?.[state.activePaneId] || null;
 }
 
 function flattenNodes(nodes) {

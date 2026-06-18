@@ -247,6 +247,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("appendNodeBadge"));
     assert!(js.contains("nodeBadge"));
     assert!(js.contains("renderPlaceholder(node, app)"));
+    assert!(js.contains("activePaneId"));
+    assert!(js.contains("renderPane"));
+    assert!(js.contains("selectedPane"));
     assert_eq!(js.matches("appendNodeBadge(row, node, app)").count(), 1);
     assert_eq!(
         js.matches("return node.action === target || node.title === target")
@@ -256,6 +259,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(css.contains(".list-selection"));
     assert!(css.contains(".list-row"));
     assert!(css.contains(".node-badge"));
+    assert!(css.contains(".pane-overlay"));
+    assert!(css.contains(".pane-sheet"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -333,6 +338,17 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         "approval-flow",
         Some("worklists.release"),
     )?;
+    assert_pane_node(
+        &app,
+        "release-notes",
+        "detail",
+        "pane-release-snapshot",
+        Some("worklists.release"),
+    )?;
+    assert_eq!(
+        app["app"]["panes"]["release-notes"]["presentation"],
+        "sheet"
+    );
     assert_eq!(app["app"]["badges"]["release-readiness"]["label"], "live");
     assert_eq!(app["app"]["badges"]["release-readiness"]["level"], "info");
     assert!(app["app"]["menus"].as_array().is_some_and(|menus| {
@@ -366,6 +382,22 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(seeded["result"]["action"], "release.seed_demo_work");
     assert_eq!(seeded["result"]["result"]["status"], "seeded");
     assert_eq!(seeded["result"]["result"]["count"], 4);
+
+    let shown: Value = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": "release.show_notes",
+            "harness_id": "default",
+            "params": {}
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(shown["result"]["action"], "release.show_notes");
+    assert_eq!(shown["result"]["result"]["status"], "shown");
+    assert_eq!(shown["result"]["result"]["target"], "release-notes");
 
     let list: Value = client
         .post(format!("{base_url}/api/ui/list"))
@@ -424,6 +456,40 @@ fn assert_node(
         Err(anyhow!(
             "screen '{}' did not include {} node '{}' with source {:?}",
             screen_id,
+            kind,
+            id,
+            source
+        ))
+    }
+}
+
+fn assert_pane_node(
+    app: &Value,
+    pane_id: &str,
+    kind: &str,
+    id: &str,
+    source: Option<&str>,
+) -> Result<()> {
+    let pane = app["app"]["panes"]
+        .get(pane_id)
+        .with_context(|| format!("missing pane '{pane_id}'"))?;
+    let nodes = pane["nodes"]
+        .as_array()
+        .with_context(|| format!("pane '{pane_id}' should include nodes"))?;
+    let found = flatten_nodes(nodes).into_iter().any(|node| {
+        node["kind"] == kind
+            && node["id"] == id
+            && match source {
+                Some(source) => node["source"] == source,
+                None => true,
+            }
+    });
+    if found {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "pane '{}' did not include {} node '{}' with source {:?}",
+            pane_id,
             kind,
             id,
             source

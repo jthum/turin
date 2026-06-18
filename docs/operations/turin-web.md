@@ -120,6 +120,7 @@ The current browser shell is intentionally small:
 - no persistent browser-side storage
 - same-origin calls to the `turin-web` API
 - local selected app/screen/list row/form draft/action-running state
+- browser-local pane overlay state for `ui.show` pane targets
 - table rendering for worklist-backed lists
 - inline selected-row detail for worklist-backed lists
 - explicit client-side fallback copy for unsupported list sources without
