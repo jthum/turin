@@ -1702,10 +1702,7 @@ impl TuiApp {
             theme::muted(),
         ))));
         if apps.is_empty() {
-            items.push(ListItem::new(Line::from(Span::styled(
-                "  Default console active",
-                theme::muted(),
-            ))));
+            items.extend(no_custom_harness_nav_lines().into_iter().map(ListItem::new));
         } else {
             for (index, app) in apps.iter().enumerate() {
                 let title = app
@@ -2276,6 +2273,24 @@ fn latest_harness_action_result_lines(result: &HarnessActionRunResult) -> Vec<Li
     lines
 }
 
+fn no_custom_harness_nav_lines() -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![
+            Span::styled("● ", theme::selected()),
+            Span::styled("Default Console", theme::selected()),
+            Span::styled("  [runtime]", theme::muted()),
+        ]),
+        Line::from(Span::styled(
+            "  No custom harness UI is declared.",
+            theme::muted(),
+        )),
+        Line::from(Span::styled(
+            "  Overview, Tasks, and Events remain available.",
+            theme::muted(),
+        )),
+    ]
+}
+
 fn pending_action_from_work_item(
     app: &turin_ui_core::UiAppRecord,
     selection: &harness_ui::HarnessWorkItemSelection,
@@ -2707,6 +2722,16 @@ mod tests {
             Some(SelectionEdge::End)
         );
         assert_eq!(selection_edge_for_key(KeyCode::Char('j')), None);
+    }
+
+    #[test]
+    fn no_custom_harness_nav_lines_explain_default_console() {
+        let text = line_text(&no_custom_harness_nav_lines());
+
+        assert!(text.contains("Default Console"));
+        assert!(text.contains("[runtime]"));
+        assert!(text.contains("No custom harness UI is declared."));
+        assert!(text.contains("Overview, Tasks, and Events remain available."));
     }
 
     #[test]
