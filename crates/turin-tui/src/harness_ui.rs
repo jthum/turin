@@ -7,12 +7,16 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::{Map, Number, Value};
 use turin_daemon_protocol::{
-    UiFormNode, UiListNode, UiMenuItem, UiNode, UiScreenIntent, WorkItemDetail, WorkItemList,
+    UiActivityNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem, UiNode, UiScreenIntent,
+    WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{UiAppRecord, UiListRequest};
 
 use crate::app::PendingHarnessAction;
 use crate::theme;
+
+const ACTIVITY_LIMIT: u32 = 12;
+const DETAIL_LIMIT: u32 = 25;
 
 #[derive(Debug, Clone)]
 pub struct HarnessAction {
@@ -142,6 +146,20 @@ fn collect_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
                     source: list.source.clone(),
                     filter: list.filter.clone(),
                     limit: list.limit,
+                });
+            }
+            UiNode::Activity(activity) if activity.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: activity.source.clone(),
+                    filter: Map::new(),
+                    limit: Some(ACTIVITY_LIMIT),
+                });
+            }
+            UiNode::Detail(detail) if detail.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: detail.source.clone(),
+                    filter: Map::new(),
+                    limit: Some(DETAIL_LIMIT),
                 });
             }
             _ => {}
@@ -365,16 +383,10 @@ fn render_nodes(
                 render_list(list, lists, requested_lists, lines, depth, max_width)
             }
             UiNode::Form(form) => render_form(form, lines, depth),
-            UiNode::Activity(activity) => lines.push(indent_line(
-                depth,
-                format!("Activity: {} ({})", activity.title, activity.source),
-                theme::muted(),
-            )),
-            UiNode::Detail(detail) => lines.push(indent_line(
-                depth,
-                format!("Detail: {} ({})", detail.title, detail.source),
-                theme::muted(),
-            )),
+            UiNode::Activity(activity) => {
+                render_activity(activity, lists, requested_lists, lines, depth)
+            }
+            UiNode::Detail(detail) => render_detail(detail, lists, requested_lists, lines, depth),
             UiNode::Report(report) => lines.push(indent_line(
                 depth,
                 format!("Report: {} ({})", report.title, report.source),
@@ -503,6 +515,240 @@ fn render_work_items(
     }
 }
 
+fn render_activity(
+    activity: &UiActivityNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    lines.push(indent_line(
+        depth,
+        format!("Activity: {}  {}", activity.title, activity.source),
+        theme::accent(),
+    ));
+
+    let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
+        lines.push(indent_line(
+            depth + 1,
+            "No terminal activity adapter exists for this source yet".to_string(),
+            theme::muted(),
+        ));
+        lines.push(Line::from(""));
+        return;
+    };
+
+    let key = request.cache_key();
+    match lists.get(&key) {
+        Some(items) => render_worklist_activity(items, lines, depth + 1),
+        None if requested_lists.contains(&key) => lines.push(indent_line(
+            depth + 1,
+            "Loading activity data...".to_string(),
+            theme::muted(),
+        )),
+        None => lines.push(indent_line(
+            depth + 1,
+            "Activity data not requested yet".to_string(),
+            theme::muted(),
+        )),
+    }
+    lines.push(Line::from(""));
+}
+
+fn render_detail(
+    detail: &UiDetailNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    let source = detail
+        .item_id
+        .as_ref()
+        .map(|item_id| format!("{} / {}", detail.source, item_id))
+        .unwrap_or_else(|| detail.source.clone());
+    lines.push(indent_line(
+        depth,
+        format!("Detail: {}  {}", detail.title, source),
+        theme::accent(),
+    ));
+
+    let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
+        lines.push(indent_line(
+            depth + 1,
+            "No terminal detail adapter exists for this source yet".to_string(),
+            theme::muted(),
+        ));
+        lines.push(Line::from(""));
+        return;
+    };
+
+    let key = request.cache_key();
+    match lists.get(&key) {
+        Some(items) => render_worklist_detail(detail, items, lines, depth + 1),
+        None if requested_lists.contains(&key) => lines.push(indent_line(
+            depth + 1,
+            "Loading detail data...".to_string(),
+            theme::muted(),
+        )),
+        None => lines.push(indent_line(
+            depth + 1,
+            "Detail data not requested yet".to_string(),
+            theme::muted(),
+        )),
+    }
+    lines.push(Line::from(""));
+}
+
+fn render_worklist_activity(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
+    if items.items.is_empty() {
+        lines.push(indent_line(
+            depth,
+            "No worklist activity yet".to_string(),
+            theme::muted(),
+        ));
+        return;
+    }
+
+    let mut recent = items.items.iter().collect::<Vec<_>>();
+    recent.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+
+    for item in recent.into_iter().take(8) {
+        lines.push(indent_line(
+            depth,
+            format!(
+                "{}  {}  {}  updated {}",
+                item.status,
+                truncate(&item.title, 46),
+                item.kind,
+                item.updated_at
+            ),
+            theme::base(),
+        ));
+    }
+}
+
+fn render_worklist_detail(
+    detail: &UiDetailNode,
+    items: &WorkItemList,
+    lines: &mut Vec<Line<'static>>,
+    depth: usize,
+) {
+    if items.items.is_empty() {
+        lines.push(indent_line(
+            depth,
+            "No worklist items available for detail".to_string(),
+            theme::muted(),
+        ));
+        return;
+    }
+
+    if let Some(item_id) = detail.item_id.as_deref() {
+        if let Some(item) = items
+            .items
+            .iter()
+            .find(|item| item.public_id == item_id || item.id.to_string() == item_id)
+        {
+            render_work_item_detail(item, lines, depth);
+        } else {
+            lines.push(indent_line(
+                depth,
+                format!("Work item '{item_id}' was not found in the loaded detail data"),
+                theme::muted(),
+            ));
+        }
+        return;
+    }
+
+    render_worklist_snapshot(items, lines, depth);
+}
+
+fn render_worklist_snapshot(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
+    let pending = items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .count();
+    let claimed = items
+        .items
+        .iter()
+        .filter(|item| item.status == "claimed")
+        .count();
+    let done = items
+        .items
+        .iter()
+        .filter(|item| item.status == "done")
+        .count();
+    let failed = items
+        .items
+        .iter()
+        .filter(|item| item.status == "failed")
+        .count();
+
+    lines.push(indent_line(
+        depth,
+        format!(
+            "{} loaded  {pending} pending  {claimed} claimed  {done} done  {failed} failed",
+            items.items.len()
+        ),
+        theme::base(),
+    ));
+
+    if let Some(next) = items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .max_by_key(|item| item.priority)
+    {
+        lines.push(indent_line(
+            depth,
+            "Highest priority pending item".to_string(),
+            theme::muted(),
+        ));
+        render_work_item_detail(next, lines, depth + 1);
+    }
+}
+
+fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>, depth: usize) {
+    lines.push(indent_line(
+        depth,
+        format!(
+            "{}  {}  {}  priority {}",
+            item.public_id, item.status, item.kind, item.priority
+        ),
+        theme::base(),
+    ));
+    lines.push(indent_line(depth, truncate(&item.title, 88), theme::base()));
+    if let Some(prompt) = item.prompt.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("prompt: {}", truncate(prompt, 88)),
+            theme::muted(),
+        ));
+    }
+    if let Some(action) = item.action.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("action: {}", action.name),
+            theme::muted(),
+        ));
+    }
+    if let Some(reason) = item.failure_reason.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("failure: {}", truncate(reason, 88)),
+            theme::danger(),
+        ));
+    }
+    if let Some(metadata) = item.metadata.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("metadata: {}", truncate(&json_value(metadata), 88)),
+            theme::muted(),
+        ));
+    }
+}
+
 fn table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
     if fields.is_empty() {
         return Vec::new();
@@ -600,6 +846,14 @@ fn json_value(value: &Value) -> String {
         Value::Number(value) => value.to_string(),
         Value::Array(_) | Value::Object(_) => truncate(&value.to_string(), 48),
     }
+}
+
+fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
+    source.starts_with("worklists.").then(|| UiListRequest {
+        source: source.to_string(),
+        filter: Map::new(),
+        limit: Some(limit),
+    })
 }
 
 pub fn form_params(form: &UiFormNode, values: &BTreeMap<String, String>) -> Result<Value, String> {
@@ -741,8 +995,9 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use turin_daemon_protocol::{
-        UiActionNode, UiAppIntent, UiFormField, UiFormNode, UiIntent, UiIntentMessage, UiListNode,
-        UiMenuIntent, UiMenuItem, UiNode, UiOpensWithIntent, UiScreenIntent,
+        UiActionNode, UiActivityNode, UiAppIntent, UiDetailNode, UiFormField, UiFormNode, UiIntent,
+        UiIntentMessage, UiListNode, UiMenuIntent, UiMenuItem, UiNode, UiOpensWithIntent,
+        UiScreenIntent,
     };
     use turin_ui_core::UiRegistry;
 
@@ -939,6 +1194,37 @@ mod tests {
         assert!(row.len() <= 36);
         assert!(row.contains("..."));
         assert!(row.contains("pending"));
+    }
+
+    #[test]
+    fn list_requests_include_worklist_backed_activity_and_detail_nodes() {
+        let nodes = vec![
+            UiNode::Activity(UiActivityNode {
+                id: Some("release-activity".to_string()),
+                title: "Release Activity".to_string(),
+                source: "worklists.release".to_string(),
+            }),
+            UiNode::Detail(UiDetailNode {
+                id: Some("release-snapshot".to_string()),
+                title: "Release Snapshot".to_string(),
+                source: "worklists.release".to_string(),
+                item_id: None,
+            }),
+            UiNode::Detail(UiDetailNode {
+                id: Some("external-detail".to_string()),
+                title: "External Detail".to_string(),
+                source: "db.incidents".to_string(),
+                item_id: None,
+            }),
+        ];
+
+        let requests = collect_list_requests(&nodes);
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].source, "worklists.release");
+        assert_eq!(requests[0].limit, Some(ACTIVITY_LIMIT));
+        assert_eq!(requests[1].source, "worklists.release");
+        assert_eq!(requests[1].limit, Some(DETAIL_LIMIT));
     }
 
     #[test]

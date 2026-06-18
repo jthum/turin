@@ -10,6 +10,9 @@ use turin_ui_core::{UiAppRecord, UiListRequest};
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
 
+const ACTIVITY_LIMIT: u32 = 12;
+const DETAIL_LIMIT: u32 = 25;
+
 #[derive(Debug, Clone)]
 pub(super) enum HarnessUiEvent {
     OpenScreen(String),
@@ -225,8 +228,8 @@ fn render_nodes(
             UiNode::Text(text) => render_text(ui, text),
             UiNode::Action(action) => render_action(ui, action, event),
             UiNode::List(list) => render_list(ui, list, lists, requested_lists),
-            UiNode::Activity(activity) => render_activity(ui, activity),
-            UiNode::Detail(detail) => render_detail(ui, detail),
+            UiNode::Activity(activity) => render_activity(ui, activity, lists, requested_lists),
+            UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists),
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
             UiNode::Report(report) => render_report(ui, report),
             UiNode::Chart(chart) => render_chart(ui, chart),
@@ -376,29 +379,219 @@ fn render_work_items(ui: &mut egui::Ui, list: &UiListNode, items: &WorkItemList)
         });
 }
 
-fn render_activity(ui: &mut egui::Ui, activity: &UiActivityNode) {
-    render_placeholder(
-        ui,
-        &activity.title,
-        "activity",
-        &activity.source,
-        "Activity streams are declared but not rendered by turin-app yet.",
-    );
+fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
+    if items.items.is_empty() {
+        ui.label("No worklist activity yet.");
+        return;
+    }
+
+    let mut recent = items.items.iter().collect::<Vec<_>>();
+    recent.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+
+    for item in recent.into_iter().take(8) {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                cast::Badge::new(item.status.clone())
+                    .intent(status_intent(&item.status))
+                    .status_dot(),
+            );
+            ui.label(RichText::new(item.title.clone()).strong());
+            ui.add(cast::Badge::new(item.kind.clone()).variant(cast::Variant::Outline));
+            ui.label(RichText::new(format!("updated {}", item.updated_at)).weak());
+        });
+    }
 }
 
-fn render_detail(ui: &mut egui::Ui, detail: &UiDetailNode) {
-    let source = detail
-        .item_id
-        .as_ref()
-        .map(|item_id| format!("{} / {}", detail.source, item_id))
-        .unwrap_or_else(|| detail.source.clone());
-    render_placeholder(
-        ui,
-        &detail.title,
-        "detail",
-        &source,
-        "Detail views are declared but not rendered by turin-app yet.",
-    );
+fn render_worklist_detail(ui: &mut egui::Ui, detail: &UiDetailNode, items: &WorkItemList) {
+    if items.items.is_empty() {
+        ui.label("No worklist items available for detail.");
+        return;
+    }
+
+    if let Some(item_id) = detail.item_id.as_deref() {
+        if let Some(item) = items
+            .items
+            .iter()
+            .find(|item| item.public_id == item_id || item.id.to_string() == item_id)
+        {
+            render_work_item_detail(ui, item);
+        } else {
+            ui.label(format!(
+                "Work item '{item_id}' was not found in the loaded detail data."
+            ));
+        }
+        return;
+    }
+
+    render_worklist_snapshot(ui, items);
+}
+
+fn render_worklist_snapshot(ui: &mut egui::Ui, items: &WorkItemList) {
+    let pending = items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .count();
+    let claimed = items
+        .items
+        .iter()
+        .filter(|item| item.status == "claimed")
+        .count();
+    let done = items
+        .items
+        .iter()
+        .filter(|item| item.status == "done")
+        .count();
+    let failed = items
+        .items
+        .iter()
+        .filter(|item| item.status == "failed")
+        .count();
+
+    ui.horizontal_wrapped(|ui| {
+        ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
+        ui.add(cast::Badge::new(format!("{pending} pending")).intent(cast::Intent::Info));
+        ui.add(cast::Badge::new(format!("{claimed} claimed")).intent(cast::Intent::Warning));
+        ui.add(cast::Badge::new(format!("{done} done")).intent(cast::Intent::Success));
+        if failed > 0 {
+            ui.add(cast::Badge::new(format!("{failed} failed")).intent(cast::Intent::Danger));
+        }
+    });
+
+    if let Some(next) = items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .max_by_key(|item| item.priority)
+    {
+        ui.add_space(8.0);
+        ui.label(RichText::new("Highest priority pending item").strong());
+        render_work_item_detail(ui, next);
+    }
+}
+
+fn render_work_item_detail(ui: &mut egui::Ui, item: &WorkItemDetail) {
+    ui.horizontal_wrapped(|ui| {
+        ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
+        ui.add(
+            cast::Badge::new(item.status.clone())
+                .intent(status_intent(&item.status))
+                .status_dot(),
+        );
+        ui.add(cast::Badge::new(item.kind.clone()));
+        ui.add(cast::Badge::new(format!("priority {}", item.priority)));
+    });
+    ui.add_space(6.0);
+    ui.label(RichText::new(item.title.clone()).strong());
+    if let Some(prompt) = item.prompt.as_ref() {
+        ui.add_space(6.0);
+        ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
+    }
+    if let Some(action) = item.action.as_ref() {
+        ui.add_space(6.0);
+        ui.label(RichText::new(format!("Action: {}", action.name)).monospace());
+    }
+    if let Some(reason) = item.failure_reason.as_ref() {
+        ui.add_space(6.0);
+        ui.label(RichText::new(reason.clone()).color(egui::Color32::from_rgb(255, 171, 145)));
+    }
+    if let Some(metadata) = item.metadata.as_ref() {
+        ui.add_space(6.0);
+        ui.add(
+            cast::CodeOutputPanel::new(
+                "Metadata",
+                serde_json::to_string_pretty(metadata).unwrap_or_else(|_| metadata.to_string()),
+            )
+            .height(120.0),
+        );
+    }
+}
+
+fn render_activity(
+    ui: &mut egui::Ui,
+    activity: &UiActivityNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+) {
+    cast::Panel::new().show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(activity.title.clone()).strong());
+            ui.add(cast::Badge::new("activity").variant(cast::Variant::Outline));
+            ui.add(cast::Badge::new(activity.source.clone()).variant(cast::Variant::Outline));
+        });
+        ui.add_space(8.0);
+
+        let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
+            ui.label(format!(
+                "Activity source '{}' is declared but this client only knows worklist-backed activity yet.",
+                activity.source
+            ));
+            return;
+        };
+
+        let key = request.cache_key();
+        match lists.get(&key) {
+            Some(items) => render_worklist_activity(ui, items),
+            None if requested_lists.contains(&key) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Loader::new().size(cast::Size::Small));
+                    ui.label("Loading activity data...");
+                });
+            }
+            None => {
+                ui.label("Activity data has not loaded yet.");
+            }
+        }
+    });
+}
+
+fn render_detail(
+    ui: &mut egui::Ui,
+    detail: &UiDetailNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+) {
+    cast::Panel::new().show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(detail.title.clone()).strong());
+            ui.add(cast::Badge::new("detail").variant(cast::Variant::Outline));
+            ui.add(cast::Badge::new(detail.source.clone()).variant(cast::Variant::Outline));
+            if let Some(item_id) = detail.item_id.as_ref() {
+                ui.add(cast::Badge::new(format!("item {item_id}")));
+            }
+        });
+        ui.add_space(8.0);
+
+        let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
+            ui.label(format!(
+                "Detail source '{}' is declared but this client only knows worklist-backed detail yet.",
+                detail.source
+            ));
+            return;
+        };
+
+        let key = request.cache_key();
+        match lists.get(&key) {
+            Some(items) => render_worklist_detail(ui, detail, items),
+            None if requested_lists.contains(&key) => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(cast::Loader::new().size(cast::Size::Small));
+                    ui.label("Loading detail data...");
+                });
+            }
+            None => {
+                ui.label("Detail data has not loaded yet.");
+            }
+        }
+    });
+}
+
+fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
+    source.starts_with("worklists.").then(|| UiListRequest {
+        source: source.to_string(),
+        filter: Map::new(),
+        limit: Some(limit),
+    })
 }
 
 fn render_form(

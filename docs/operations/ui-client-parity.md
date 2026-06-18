@@ -37,8 +37,8 @@ Core rule:
 | `list` | Worklist-backed data table; unsupported adapters show metadata. | Compact worklist-backed table; unsupported adapters show metadata. | Only `worklists.*` sources have loaders today. |
 | `worklist` sugar | Same as `list` with worklist source/intent. | Same as `list` with worklist source/intent. | DX sugar only; not a separate protocol primitive. |
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | TUI rich text areas degrade to line-oriented text. |
-| `activity` | Placeholder. | Placeholder. | Candidate next adapter: worklist/runtime events. |
-| `detail` | Placeholder. | Placeholder. | Candidate next adapter: selected or explicit worklist item detail. |
+| `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Uses cached `worklists.*` data for now, not a live event query. |
+| `detail` | Worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Compact worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Without `item_id`, clients show a bounded worklist snapshot. |
 | `report` | Placeholder with prompt text. | Placeholder. | Needs data/query semantics before rich rendering. |
 | `chart` | Placeholder with source/rendering metadata. | Placeholder. | `intent` and `as` remain advisory. |
 
@@ -64,7 +64,7 @@ Core rule:
 
 ## Current Gaps
 
-- `activity`, `detail`, `report`, and `chart` need real adapters or more explicit semantics.
+- `report` and `chart` need real adapters or more explicit semantics.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - The TUI has no item-selection-driven detail pane yet.

@@ -2,8 +2,8 @@
 
 This harness is a UI contract fixture for Turin clients. It declares a small
 release-operations app with menus, multiple screens, worklist-backed lists,
-normal actions, confirmed actions, a form node, and placeholder report/chart
-surfaces.
+worklist-backed activity/detail surfaces, normal actions, confirmed actions, a
+form node, and placeholder report/chart surfaces.
 
 The harness does not mutate durable state during load. Use the rendered app's
 `Seed Demo Work` action or the Intake form to create release work items, then use

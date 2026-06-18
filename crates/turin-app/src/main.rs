@@ -155,6 +155,20 @@ fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
                     limit: list.limit,
                 });
             }
+            UiNode::Activity(activity) if activity.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: activity.source.clone(),
+                    filter: Default::default(),
+                    limit: Some(12),
+                });
+            }
+            UiNode::Detail(detail) if detail.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: detail.source.clone(),
+                    filter: Default::default(),
+                    limit: Some(25),
+                });
+            }
             _ => {}
         }
     }

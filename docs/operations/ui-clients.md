@@ -191,10 +191,12 @@ The TUI renders harness UI contracts semantically:
 - screens and menus become terminal navigation
 - nested menu items are flattened with indentation
 - worklist-backed lists become compact terminal tables
+- worklist-backed activity and detail nodes become compact recent-activity or
+  snapshot/detail views
 - forms open a terminal editor that keeps draft values local to the client,
   validates required/numeric fields, coerces common scalar types, and submits
   merged action params
-- unsupported list sources remain visible with source/intent/rendering metadata
+- unsupported list/detail/activity sources remain visible with source metadata
 - desktop-only surfaces such as panes degrade to notices until the TUI has a
   native terminal representation for them
 
@@ -206,7 +208,7 @@ The TUI renders harness UI contracts semantically:
 - `turin-tui` does not read a separate `turin-tui.toml` settings file.
 - `turin-tui` form editing is line-oriented; textarea/markdown fields degrade
   to single-value text editing for now.
-- `turin-tui` does not yet render pane/detail/report/chart nodes beyond
-  semantic placeholders.
+- `turin-tui` does not yet render pane/report/chart nodes beyond semantic
+  placeholders.
 - `turin-app` remains the richer graphical surface while the TUI proves the
   lean terminal abstraction.
