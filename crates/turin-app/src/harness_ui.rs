@@ -468,6 +468,9 @@ fn render_list(
             if let Some(render_as) = &list.render_as {
                 ui.add(cast::Badge::new(format!("as {render_as}")));
             }
+            for meta in list_metadata_badges(list) {
+                ui.add(cast::Badge::new(meta).variant(cast::Variant::Outline));
+            }
         });
         ui.add_space(8.0);
 
@@ -1243,6 +1246,20 @@ fn unsupported_source_message(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the desktop app")
 }
 
+fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
+    let mut meta = Vec::new();
+    if !list.filter.is_empty() {
+        meta.push(format!("where {}", list.filter.len()));
+    }
+    if !list.sort.is_empty() {
+        meta.push(format!("sort {}", list.sort.len()));
+    }
+    if let Some(limit) = list.limit {
+        meta.push(format!("limit {limit}"));
+    }
+    meta
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1323,6 +1340,29 @@ mod tests {
         };
 
         assert_eq!(selected_work_item_index(&items, Some(&selected)), 0);
+    }
+
+    #[test]
+    fn list_metadata_badges_name_filters_sort_and_limit() {
+        let list = UiListNode {
+            id: None,
+            title: "Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Map::from_iter([
+                ("kind".to_string(), json!("approval")),
+                ("status".to_string(), json!("pending")),
+            ]),
+            fields: Vec::new(),
+            sort: vec!["priority".to_string()],
+            limit: Some(25),
+            intent: None,
+            render_as: None,
+        };
+
+        assert_eq!(
+            list_metadata_badges(&list),
+            vec!["where 2", "sort 1", "limit 25"]
+        );
     }
 
     #[test]

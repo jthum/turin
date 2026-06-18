@@ -70,6 +70,9 @@ session state, invent renderer-specific harness APIs, or bypass
   into a live-query result cache.
 - Static assets are a bootstrap shell, not the final web framework decision.
   Keep them small unless the project deliberately adopts a frontend build step.
+- The browser shell should keep semantic list constraints such as
+  filter/sort/limit visible when rendering list nodes, but those constraints are
+  request metadata, not browser session state.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes

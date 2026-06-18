@@ -101,9 +101,9 @@ git diff --check
 
 The current app is the richest local client. It includes connection profile
 editing, runtime overview tabs, semantic harness app rendering, nested menu
-navigation, app-local row detail with row-count and selected-row feedback,
-editable forms, confirmation modals, latest action result feedback, shown panes,
-dynamic UI navigation/focus/refresh
+navigation, app-local row detail with filter/sort/limit metadata, row-count and
+selected-row feedback, editable forms, confirmation modals, latest action
+result feedback, shown panes, dynamic UI navigation/focus/refresh
 handling, dynamic badges, and lightweight worklist-backed activity, detail,
 report, and chart surfaces. It should remain replaceable at the presentation
 layer while preserving the semantic client contract.

@@ -789,6 +789,7 @@ function renderList(node, app) {
     appendState(panel, "warning", "Unsupported list source", unsupportedSourceMessage("list", node.source));
     return panel;
   }
+  appendListMetadata(panel, node);
   const request = dataRequestForNode(node);
   if (!request) return panel;
   const key = listKey(request);
@@ -1492,6 +1493,25 @@ function appendListSummary(panel, itemCount, selectedIndex) {
     selectedIndex >= 0 && selectedIndex < itemCount ? ` · selected ${selectedIndex + 1}` : "";
   summary.textContent = `Rows 1-${itemCount} of ${itemCount}${selected}`;
   panel.append(summary);
+}
+
+function appendListMetadata(panel, node) {
+  const parts = listMetadataParts(node);
+  if (!parts.length) return;
+  const meta = document.createElement("p");
+  meta.className = "list-summary";
+  meta.textContent = parts.join(" · ");
+  panel.append(meta);
+}
+
+function listMetadataParts(node) {
+  const parts = [];
+  const whereCount =
+    node.where && typeof node.where === "object" ? Object.keys(node.where).length : 0;
+  if (whereCount) parts.push(`Where ${whereCount}`);
+  if (node.sort?.length) parts.push(`Sort ${node.sort.length}`);
+  if (node.limit) parts.push(`Limit ${node.limit}`);
+  return parts;
 }
 
 function selectListItem(key, item, options = {}) {

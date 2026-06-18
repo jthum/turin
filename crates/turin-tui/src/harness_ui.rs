@@ -652,6 +652,7 @@ fn render_list(
     if let Some(render_as) = &list.render_as {
         meta.push(format!("as={render_as}"));
     }
+    meta.extend(list_metadata_parts(list));
     if let Some(limit) = list.limit {
         meta.push(format!("limit={limit}"));
     }
@@ -1364,6 +1365,17 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
     ui_worklist_request(source, limit)
 }
 
+fn list_metadata_parts(list: &UiListNode) -> Vec<String> {
+    let mut meta = Vec::new();
+    if !list.filter.is_empty() {
+        meta.push(format!("where={}", list.filter.len()));
+    }
+    if !list.sort.is_empty() {
+        meta.push(format!("sort={}", list.sort.len()));
+    }
+    meta
+}
+
 fn unsupported_source_line(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the terminal")
 }
@@ -1639,6 +1651,26 @@ mod tests {
         assert!(line.contains("cannot load in the terminal yet"));
         assert!(line.contains("Only worklists.* sources load today"));
         assert!(line.contains("deliberate adapter for this client"));
+    }
+
+    #[test]
+    fn list_metadata_parts_name_filters_and_sort() {
+        let mut filter = Map::new();
+        filter.insert("kind".to_string(), json!("approval"));
+        filter.insert("status".to_string(), json!("pending"));
+        let list = UiListNode {
+            id: None,
+            title: "Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter,
+            fields: Vec::new(),
+            sort: vec!["priority".to_string()],
+            limit: Some(25),
+            intent: None,
+            render_as: None,
+        };
+
+        assert_eq!(list_metadata_parts(&list), vec!["where=2", "sort=1"]);
     }
 
     #[test]

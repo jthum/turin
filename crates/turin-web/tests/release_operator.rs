@@ -292,6 +292,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("selectedListItemIndex"));
     assert!(js.contains("appendListSummary"));
     assert!(js.contains("Rows 1-${itemCount} of ${itemCount}${selected}"));
+    assert!(js.contains("appendListMetadata"));
+    assert!(js.contains("listMetadataParts"));
+    assert!(js.contains("Object.keys(node.where).length"));
+    assert!(js.contains("Where ${whereCount}"));
+    assert!(js.contains("Sort ${node.sort.length}"));
+    assert!(js.contains("Limit ${node.limit}"));
     assert!(js.contains("selectListItemAt"));
     assert!(js.contains("focusSelectedListRow"));
     assert!(js.contains("event.key === \"ArrowDown\""));
