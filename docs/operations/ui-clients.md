@@ -101,8 +101,8 @@ Recent local sample:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,520 |
-| `crates/turin-tui` | 3,884 |
+| `crates/turin-app` | 4,614 |
+| `crates/turin-tui` | 4,126 |
 | `crates/turin-ui-core` | 3,387 |
 | `crates/turin-web` | 720 |
 
@@ -275,9 +275,9 @@ artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample on June 18, 2026 reported:
 
-- `87665` Rust code lines under `src` and `crates`
-- `4543` code lines in `crates/turin-app`
-- `3772` code lines in `crates/turin-tui`
+- `88268` Rust code lines under `src` and `crates`
+- `4614` code lines in `crates/turin-app`
+- `4126` code lines in `crates/turin-tui`
 - `720` code lines in `crates/turin-web`
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
