@@ -18,7 +18,10 @@ session state, invent renderer-specific harness APIs, or bypass
   - Hyper HTTP/1 server startup, shutdown, bind policy, and shared state setup.
 - `crates/turin-web/src/routes.rs`
   - JSON route handling for status, app registry, UI list loading, action runs,
-    liveness, and SSE event streaming.
+    liveness, SSE event streaming, and first-party static shell routes.
+- `crates/turin-web/static/`
+  - Dependency-free browser shell assets for rendering semantic UI intent
+    against the HTTP API.
 - `crates/turin-web/tests/release_operator.rs`
   - End-to-end smoke against a temporary daemon and the Release Operator
     harness, both through local IPC and through `turin-remote`.
@@ -34,7 +37,9 @@ session state, invent renderer-specific harness APIs, or bypass
    bounded worklist item queries.
 6. SSE event streams proxy managed runtime subscriptions for invalidation and
    refresh hints.
-7. The browser remains responsible for selected app, active screen, form drafts,
+7. Static browser assets load from the same origin and call `/api/*` routes
+   directly.
+8. The browser remains responsible for selected app, active screen, form drafts,
    panes, modals, filters, loading, and local error state.
 
 ## Invariants
@@ -49,6 +54,8 @@ session state, invent renderer-specific harness APIs, or bypass
   not silent empty responses.
 - `GET /api/events` is an invalidation/event feed. It should not grow into a
   live-query result cache.
+- Static assets are a bootstrap shell, not the final web framework decision.
+  Keep them small unless the project deliberately adopts a frontend build step.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes

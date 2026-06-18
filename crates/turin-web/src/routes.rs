@@ -21,6 +21,9 @@ use url::form_urlencoded;
 
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
 const EVENT_KEEPALIVE: Duration = Duration::from_secs(15);
+const INDEX_HTML: &str = include_str!("../static/index.html");
+const APP_CSS: &str = include_str!("../static/app.css");
+const APP_JS: &str = include_str!("../static/app.js");
 
 pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 
@@ -163,6 +166,21 @@ async fn route_request(
     }
 
     match (method, path.as_str()) {
+        (Method::GET, "/") | (Method::GET, "/index.html") => Ok(static_response(
+            StatusCode::OK,
+            "text/html; charset=utf-8",
+            INDEX_HTML,
+        )),
+        (Method::GET, "/assets/app.css") => Ok(static_response(
+            StatusCode::OK,
+            "text/css; charset=utf-8",
+            APP_CSS,
+        )),
+        (Method::GET, "/assets/app.js") => Ok(static_response(
+            StatusCode::OK,
+            "application/javascript; charset=utf-8",
+            APP_JS,
+        )),
         (Method::GET, "/api/healthz") => Ok(json_response(
             StatusCode::OK,
             &WebHealthz {
@@ -468,6 +486,19 @@ fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<WebBod
         .expect("JSON response builds")
 }
 
+fn static_response(
+    status: StatusCode,
+    content_type: &'static str,
+    body: &'static str,
+) -> Response<WebBody> {
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, content_type)
+        .header(CACHE_CONTROL, "no-store")
+        .body(full_body(body))
+        .expect("static response builds")
+}
+
 fn full_body(data: impl Into<Bytes>) -> WebBody {
     http_body_util::BodyExt::boxed_unsync(Full::new(data.into()))
 }
@@ -500,6 +531,19 @@ mod tests {
     fn error_response_uses_json_envelope() {
         let response = WebError::not_found("missing").into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn static_response_uses_declared_content_type() {
+        let response = static_response(StatusCode::OK, "text/plain", "hello");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
     }
 
     #[test]

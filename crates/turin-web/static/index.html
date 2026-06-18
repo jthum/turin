@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Turin Web</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <span class="brand-mark">T</span>
+          <div>
+            <strong>Turin</strong>
+            <span>Agentic runtime</span>
+          </div>
+        </div>
+        <div class="rail-status" id="connection-status">Connecting...</div>
+        <nav class="app-list" id="app-list" aria-label="Harness apps"></nav>
+      </aside>
+
+      <main class="stage">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="runtime-target">Runtime</p>
+            <h1 id="app-title">Turin Web</h1>
+            <p class="lede" id="app-about">
+              Loading semantic harness UI intent from Turin.
+            </p>
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" id="refresh-button" type="button">
+              Refresh
+            </button>
+          </div>
+        </header>
+
+        <section class="notice-stack" id="notice-stack" aria-live="polite"></section>
+
+        <div class="workspace">
+          <aside class="screen-nav" id="screen-nav" aria-label="Screens"></aside>
+          <section class="screen" id="screen"></section>
+        </div>
+      </main>
+    </div>
+
+    <template id="empty-state-template">
+      <div class="empty-state">
+        <span>No UI apps yet</span>
+        <p>Open a harness with semantic UI intent to render it here.</p>
+      </div>
+    </template>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

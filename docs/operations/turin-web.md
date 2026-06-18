@@ -2,9 +2,10 @@
 
 `turin-web` is the web-facing client surface for Turin.
 
-The first implementation is server/API-first. It exists to prove the web
-boundary against the same semantic UI model used by `turin-app` and
-`turin-tui` before a browser shell is designed.
+The first implementation is server/API-first with a small dependency-free
+browser shell. It exists to prove the web boundary against the same semantic UI
+model used by `turin-app` and `turin-tui` before a larger frontend structure is
+chosen.
 
 ## Role
 
@@ -51,6 +52,9 @@ Start with a small API that mirrors what the current clients already need.
 | `POST /api/actions/run` | Implemented. Runs a harness action with typed daemon params. |
 | `GET /api/events` | Implemented. SSE stream of runtime and UI intent events for invalidation. |
 | `GET /api/healthz` | Implemented. Web process liveness. |
+| `GET /` | Implemented. Minimal same-origin browser shell. |
+| `GET /assets/app.css` | Implemented. First-party shell styling. |
+| `GET /assets/app.js` | Implemented. First-party shell behavior. |
 
 The current version proxies through `turin-control-client` rather than exposing
 new daemon operations.
@@ -108,6 +112,22 @@ client-side JavaScript.
 The Release Operator web smoke covers both deployment modes: direct local IPC
 and `turin-web` connected through `turin-remote`.
 
+## Browser Shell
+
+The current browser shell is intentionally small:
+
+- no frontend build system
+- no persistent browser-side storage
+- same-origin calls to the `turin-web` API
+- local selected app/screen/list/form/action state
+- table rendering for worklist-backed lists
+- basic form and action execution
+- SSE invalidation for runtime/UI/action events
+- placeholders for activity, detail, report, and chart nodes
+
+This is a validation shell, not the final Dashbase/Svelte decision. It should
+stay easy to replace once the web UX shape is better proven.
+
 ## Technology Bias
 
 The web client should stay lean.
@@ -132,7 +152,9 @@ The first useful slice is complete:
 3. It exposes status, apps, one app, semantic list loading, action execution,
    and liveness routes.
 4. It exposes SSE events for invalidation without adding live query semantics.
-5. It has an integration smoke using the Release Operator harness.
+5. It serves a minimal browser shell from the same process.
+6. It has an integration smoke using the Release Operator harness.
 
-Next work should build a minimal browser shell against these endpoints and use
-the SSE stream to invalidate local list/status caches.
+Next work should tighten browser rendering parity for activity/detail/form edge
+cases, then decide whether to keep iterating on the static shell or introduce a
+light frontend build step.

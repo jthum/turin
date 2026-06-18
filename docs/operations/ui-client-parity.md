@@ -16,7 +16,7 @@ Core rule:
 | --- | --- |
 | `turin-app` | Rich graphical operator client built on egui/Cast. |
 | `turin-tui` | Lean keyboard-first terminal client built on Ratatui. |
-| `turin-web` | API-first web adapter over the same semantic contract. Browser shell is not started yet. See `docs/operations/turin-web.md`. |
+| `turin-web` | API-first web adapter with a minimal same-origin browser shell. See `docs/operations/turin-web.md`. |
 
 ## Static UI Intent
 
@@ -64,8 +64,8 @@ Core rule:
 
 ## Web API Coverage
 
-`turin-web` currently exposes semantic intent and data over HTTP rather than
-rendering a browser interface.
+`turin-web` exposes semantic intent and data over HTTP and serves a minimal
+browser shell that consumes those routes.
 
 | Route | Current coverage |
 | --- | --- |
@@ -75,6 +75,7 @@ rendering a browser interface.
 | `POST /api/ui/list` | Worklist-backed semantic list loading. |
 | `POST /api/actions/run` | Harness action execution with JSON result. |
 | `GET /api/events` | SSE runtime/UI event stream for client-side invalidation. |
+| `GET /` | Static browser shell for app/screen/list/form/action rendering. |
 
 ## Current Gaps
 
@@ -82,7 +83,7 @@ rendering a browser interface.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - The TUI has no item-selection-driven detail pane yet.
-- `turin-web` has no browser shell yet; only the API-first adapter exists.
+- `turin-web` activity/detail/report/chart rendering is still placeholder-level.
 - There is no automated screenshot/terminal golden test layer; current coverage is unit and smoke tests.
 
 ## Update Rule

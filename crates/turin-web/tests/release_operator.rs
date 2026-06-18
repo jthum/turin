@@ -196,6 +196,35 @@ async fn turin_web_release_operator_smoke_remote() -> Result<()> {
 }
 
 async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -> Result<()> {
+    let html = client
+        .get(format!("{base_url}/"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(html.contains("Turin Web"));
+    assert!(html.contains("/assets/app.js"));
+
+    let css = client
+        .get(format!("{base_url}/assets/app.css"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(css.contains("--accent"));
+
+    let js = client
+        .get(format!("{base_url}/assets/app.js"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(js.contains("/api/status"));
+    assert!(js.contains("EventSource"));
+
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
         .send()
