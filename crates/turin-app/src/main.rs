@@ -304,6 +304,45 @@ impl PendingHarnessUiAction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DefaultConsoleSummary {
+    connection: String,
+    target: String,
+    freshness: String,
+    agents: usize,
+    harnesses: usize,
+    channels: usize,
+    live_sessions: usize,
+    stored_sessions: usize,
+    tasks: usize,
+    ui_notices: usize,
+    ui_requests: usize,
+}
+
+impl DefaultConsoleSummary {
+    fn from_dashboard(dashboard: &DashboardState) -> Self {
+        let health = dashboard.health.as_ref();
+        Self {
+            connection: connection_kind_label(dashboard.connection_kind).to_string(),
+            target: dashboard.connection_target.clone(),
+            freshness: freshness_label(dashboard.snapshot_freshness()).to_string(),
+            agents: dashboard.agents().len(),
+            harnesses: health
+                .map(|health| health.harness_count)
+                .unwrap_or_default(),
+            channels: dashboard.channels().len(),
+            live_sessions: dashboard.live_sessions.len(),
+            stored_sessions: dashboard.sessions.len(),
+            tasks: dashboard.tasks.len(),
+            ui_notices: dashboard.ui.notices().len(),
+            ui_requests: dashboard.ui.opens().len()
+                + dashboard.ui.shows().len()
+                + dashboard.ui.focuses().len()
+                + dashboard.ui.refreshes().len(),
+        }
+    }
+}
+
 impl PendingDraftAction {
     fn description(&self) -> String {
         match self {
@@ -2232,9 +2271,7 @@ impl TurinDesktopApp {
 
             ScrollArea::vertical().show(&mut columns[1], |ui| {
                 let Some(app) = selected else {
-                    cast::Panel::new().show(ui, |ui| {
-                        ui.label("Select a UI app to render its declared screens.");
-                    });
+                    self.render_default_operator_console(ui);
                     return;
                 };
 
@@ -2278,6 +2315,62 @@ impl TurinDesktopApp {
                     }
                 }
             });
+        });
+    }
+
+    fn render_default_operator_console(&self, ui: &mut egui::Ui) {
+        let summary = DefaultConsoleSummary::from_dashboard(&self.dashboard);
+
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Default Operator Console").strong());
+                ui.add(
+                    cast::Badge::new(summary.freshness.clone())
+                        .intent(freshness_intent(self.dashboard.snapshot_freshness()))
+                        .status_dot(),
+                );
+                ui.add(
+                    cast::Badge::new(format!("{} connection", summary.connection))
+                        .variant(cast::Variant::Outline),
+                );
+            });
+            ui.add_space(8.0);
+            ui.label(
+                "Turin remains useful without harness-defined UI. Use the built-in runtime tabs for health, agents, sessions, tasks, channels, events, and connection profiles.",
+            );
+            ui.add_space(8.0);
+            detail_kv(ui, "Target", summary.target);
+        });
+
+        ui.add_space(10.0);
+        ui.columns(3, |columns| {
+            cast::Panel::new().show(&mut columns[0], |ui| {
+                ui.label(RichText::new("Runtime").strong());
+                detail_kv(ui, "Agents", summary.agents);
+                detail_kv(ui, "Harnesses", summary.harnesses);
+                detail_kv(ui, "Channels", summary.channels);
+            });
+            cast::Panel::new().show(&mut columns[1], |ui| {
+                ui.label(RichText::new("Work").strong());
+                detail_kv(ui, "Live Sessions", summary.live_sessions);
+                detail_kv(ui, "Stored Sessions", summary.stored_sessions);
+                detail_kv(ui, "Tasks", summary.tasks);
+            });
+            cast::Panel::new().show(&mut columns[2], |ui| {
+                ui.label(RichText::new("UI Signals").strong());
+                detail_kv(ui, "Harness Apps", self.dashboard.ui.apps().count());
+                detail_kv(ui, "Notices", summary.ui_notices);
+                detail_kv(ui, "Requests", summary.ui_requests);
+            });
+        });
+
+        ui.add_space(10.0);
+        cast::Panel::new().show(ui, |ui| {
+            ui.label(RichText::new("When to add harness UI").strong());
+            ui.add_space(6.0);
+            ui.label(
+                "Keep the default console for simple agents. Add ui.app(...) when a harness needs workflow-specific screens, lists, forms, reports, panes, badges, or action buttons.",
+            );
         });
     }
 
@@ -3496,6 +3589,25 @@ mod tests {
     }
 
     #[test]
+    fn default_console_summary_uses_dashboard_counts() {
+        let dashboard = empty_dashboard_state();
+
+        let summary = DefaultConsoleSummary::from_dashboard(&dashboard);
+
+        assert_eq!(summary.connection, "local");
+        assert_eq!(summary.target, ".turin/config.toml");
+        assert_eq!(summary.freshness, "stale");
+        assert_eq!(summary.agents, 0);
+        assert_eq!(summary.harnesses, 0);
+        assert_eq!(summary.channels, 0);
+        assert_eq!(summary.live_sessions, 0);
+        assert_eq!(summary.stored_sessions, 0);
+        assert_eq!(summary.tasks, 0);
+        assert_eq!(summary.ui_notices, 0);
+        assert_eq!(summary.ui_requests, 0);
+    }
+
+    #[test]
     fn harness_action_failure_matching_filters_other_apps() {
         let app = test_app();
         let matching = HarnessActionFailure {
@@ -3529,6 +3641,32 @@ mod tests {
         };
 
         assert!(harness_action_failure_matches_app(&failure, &app));
+    }
+
+    fn empty_dashboard_state() -> DashboardState {
+        DashboardState {
+            connection_kind: ConnectionKind::Local,
+            connection_target: ".turin/config.toml".to_string(),
+            health: None,
+            status: None,
+            live_sessions: Vec::new(),
+            sessions: Vec::new(),
+            tasks: Vec::new(),
+            session_details: BTreeMap::new(),
+            ui: Default::default(),
+            recent_events: Vec::new(),
+            recent_notices: Vec::new(),
+            last_snapshot_unix_ms: 0,
+            last_event_unix_ms: None,
+            last_notice_unix_ms: None,
+            total_event_count: 0,
+            refresh_success_count: 0,
+            refresh_failure_count: 0,
+            last_refresh_duration_ms: None,
+            last_refresh_ok: None,
+            last_error: None,
+            last_info: None,
+        }
     }
 
     fn test_app() -> UiAppRecord {

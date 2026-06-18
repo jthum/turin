@@ -27,7 +27,9 @@ All clients can talk to:
 If no harness declares `ui.app(...)`, the clients still behave as default Turin
 operator consoles. Runtime overview, tasks, events, status, and control actions
 remain available; harness-specific screens appear when semantic UI intent is
-declared.
+declared. `turin-app` and `turin-web` show default console summaries in the UI
+area, while `turin-tui` keeps the same default-console guidance in its harness
+tab.
 
 ## Current Client Scope
 
@@ -52,10 +54,10 @@ declared.
   derived through shared stateless worklist helpers
 
 `turin-app` is the broader graphical operator console. It currently has more
-desktop-specific surface area, including the connection profile editor, editable
-harness forms, app-local worklist row detail, dynamic UI navigation, latest
-action result/failure panels, returned action UI intent handling, app-local
-shown panes, and wider runtime tabs.
+desktop-specific surface area, including the connection profile editor, a
+default no-harness console summary, editable harness forms, app-local worklist
+row detail, dynamic UI navigation, latest action result/failure panels, returned
+action UI intent handling, app-local shown panes, and wider runtime tabs.
 
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE
