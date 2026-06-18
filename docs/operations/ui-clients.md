@@ -324,7 +324,8 @@ The TUI renders harness UI contracts semantically:
 - forms open a terminal editor that keeps draft values local to the client,
   validates required/numeric fields, coerces common scalar types, and submits
   merged action params
-- unsupported list/detail/activity sources remain visible with source metadata
+- unsupported list/activity/detail/report/chart sources remain visible with
+  source metadata
 - shown panes render as terminal overlays, load any visible worklist-backed
   nodes through the same cache/invalidation path as screens, and support
   pane-local item/action/form selection with confirmation when needed
