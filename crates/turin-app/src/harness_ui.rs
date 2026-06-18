@@ -12,6 +12,8 @@ use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
 
 const ACTIVITY_LIMIT: u32 = 12;
 const DETAIL_LIMIT: u32 = 25;
+const REPORT_LIMIT: u32 = 100;
+const CHART_LIMIT: u32 = 100;
 
 #[derive(Debug, Clone)]
 pub(super) enum HarnessUiEvent {
@@ -231,8 +233,8 @@ fn render_nodes(
             UiNode::Activity(activity) => render_activity(ui, activity, lists, requested_lists),
             UiNode::Detail(detail) => render_detail(ui, detail, lists, requested_lists),
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
-            UiNode::Report(report) => render_report(ui, report),
-            UiNode::Chart(chart) => render_chart(ui, chart),
+            UiNode::Report(report) => render_report(ui, report, lists, requested_lists),
+            UiNode::Chart(chart) => render_chart(ui, chart, lists, requested_lists),
         }
         ui.add_space(10.0);
     }
@@ -427,34 +429,19 @@ fn render_worklist_detail(ui: &mut egui::Ui, detail: &UiDetailNode, items: &Work
 }
 
 fn render_worklist_snapshot(ui: &mut egui::Ui, items: &WorkItemList) {
-    let pending = items
-        .items
-        .iter()
-        .filter(|item| item.status == "pending")
-        .count();
-    let claimed = items
-        .items
-        .iter()
-        .filter(|item| item.status == "claimed")
-        .count();
-    let done = items
-        .items
-        .iter()
-        .filter(|item| item.status == "done")
-        .count();
-    let failed = items
-        .items
-        .iter()
-        .filter(|item| item.status == "failed")
-        .count();
+    let counts = status_counts(items);
 
     ui.horizontal_wrapped(|ui| {
         ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
-        ui.add(cast::Badge::new(format!("{pending} pending")).intent(cast::Intent::Info));
-        ui.add(cast::Badge::new(format!("{claimed} claimed")).intent(cast::Intent::Warning));
-        ui.add(cast::Badge::new(format!("{done} done")).intent(cast::Intent::Success));
-        if failed > 0 {
-            ui.add(cast::Badge::new(format!("{failed} failed")).intent(cast::Intent::Danger));
+        ui.add(cast::Badge::new(format!("{} pending", counts.pending)).intent(cast::Intent::Info));
+        ui.add(
+            cast::Badge::new(format!("{} claimed", counts.claimed)).intent(cast::Intent::Warning),
+        );
+        ui.add(cast::Badge::new(format!("{} done", counts.done)).intent(cast::Intent::Success));
+        if counts.failed > 0 {
+            ui.add(
+                cast::Badge::new(format!("{} failed", counts.failed)).intent(cast::Intent::Danger),
+            );
         }
     });
 
@@ -795,44 +782,206 @@ fn form_value_string(value: &Value) -> String {
     }
 }
 
-fn render_report(ui: &mut egui::Ui, report: &UiReportNode) {
-    render_placeholder(
-        ui,
-        &report.title,
-        "report",
-        &report.source,
-        "Reports are declared but not rendered by turin-app yet.",
-    );
-    if let Some(prompt) = &report.prompt {
-        ui.add(cast::Markdown::new(prompt.clone()));
-    }
+fn render_report(
+    ui: &mut egui::Ui,
+    report: &UiReportNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+) {
+    cast::ReportSection::new(report.title.clone())
+        .description(format!("Report data from {}", report.source))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.add(cast::Badge::new("report").variant(cast::Variant::Outline));
+                ui.add(cast::Badge::new(report.source.clone()).variant(cast::Variant::Outline));
+            });
+            if let Some(prompt) = &report.prompt {
+                ui.add_space(8.0);
+                ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
+            }
+            ui.add_space(8.0);
+
+            let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
+                ui.label(format!(
+                    "Report source '{}' is declared but this client only knows worklist-backed reports yet.",
+                    report.source
+                ));
+                return;
+            };
+
+            let key = request.cache_key();
+            match lists.get(&key) {
+                Some(items) => render_worklist_report(ui, items),
+                None if requested_lists.contains(&key) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(cast::Loader::new().size(cast::Size::Small));
+                        ui.label("Loading report data...");
+                    });
+                }
+                None => {
+                    ui.label("Report data has not loaded yet.");
+                }
+            }
+        });
 }
 
-fn render_chart(ui: &mut egui::Ui, chart: &UiChartNode) {
+fn render_chart(
+    ui: &mut egui::Ui,
+    chart: &UiChartNode,
+    lists: &BTreeMap<String, WorkItemList>,
+    requested_lists: &BTreeSet<String>,
+) {
     let source = chart
         .render_as
         .as_ref()
         .map(|render_as| format!("{} as {}", chart.source, render_as))
         .unwrap_or_else(|| chart.source.clone());
-    render_placeholder(
-        ui,
-        &chart.title,
-        chart.intent.as_deref().unwrap_or("chart"),
-        &source,
-        "Charts are declared but not rendered by turin-app yet.",
-    );
+    let intent = chart.intent.as_deref().unwrap_or("status_breakdown");
+    cast::ReportSection::new(chart.title.clone())
+        .description(format!("Chart data from {source}; intent {intent}"))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.add(cast::Badge::new("chart").variant(cast::Variant::Outline));
+                ui.add(cast::Badge::new(intent.to_string()).intent(cast::Intent::Info));
+                ui.add(cast::Badge::new(source.clone()).variant(cast::Variant::Outline));
+            });
+            ui.add_space(8.0);
+
+            let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
+                ui.label(format!(
+                    "Chart source '{}' is declared but this client only knows worklist-backed charts yet.",
+                    chart.source
+                ));
+                return;
+            };
+
+            let key = request.cache_key();
+            match lists.get(&key) {
+                Some(items) => render_worklist_chart(ui, chart, items),
+                None if requested_lists.contains(&key) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(cast::Loader::new().size(cast::Size::Small));
+                        ui.label("Loading chart data...");
+                    });
+                }
+                None => {
+                    ui.label("Chart data has not loaded yet.");
+                }
+            }
+        });
 }
 
-fn render_placeholder(ui: &mut egui::Ui, title: &str, kind: &str, source: &str, message: &str) {
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(title).strong());
-            ui.add(cast::Badge::new(kind.to_string()).variant(cast::Variant::Outline));
-            ui.add(cast::Badge::new(source.to_string()));
-        });
-        ui.add_space(6.0);
-        ui.label(message);
+fn render_worklist_report(ui: &mut egui::Ui, items: &WorkItemList) {
+    let counts = status_counts(items);
+    ui.horizontal_wrapped(|ui| {
+        ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
+        ui.add(cast::Badge::new(format!("{} pending", counts.pending)).intent(cast::Intent::Info));
+        ui.add(
+            cast::Badge::new(format!("{} claimed", counts.claimed)).intent(cast::Intent::Warning),
+        );
+        ui.add(cast::Badge::new(format!("{} done", counts.done)).intent(cast::Intent::Success));
+        if counts.failed > 0 {
+            ui.add(
+                cast::Badge::new(format!("{} failed", counts.failed)).intent(cast::Intent::Danger),
+            );
+        }
     });
+
+    if let Some(next) = items
+        .items
+        .iter()
+        .filter(|item| item.status == "pending")
+        .max_by_key(|item| item.priority)
+    {
+        ui.add_space(10.0);
+        ui.label(RichText::new("Next highest-priority pending item").strong());
+        render_work_item_detail(ui, next);
+    }
+}
+
+fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkItemList) {
+    let field = chart_group_field(chart.intent.as_deref());
+    let counts = grouped_counts(items, field);
+    if counts.is_empty() {
+        ui.label("No chart data yet.");
+        return;
+    }
+
+    let data = counts
+        .iter()
+        .map(|(label, count)| {
+            cast::BarDatum::new(label.clone(), *count as f32).intent(chart_bar_intent(field, label))
+        })
+        .collect::<Vec<_>>();
+    ui.add(
+        cast::BarChart::new(data)
+            .height(150.0)
+            .width(ui.available_width()),
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        for (label, count) in counts {
+            ui.add(
+                cast::Badge::new(format!("{label}: {count}"))
+                    .intent(chart_bar_intent(field, &label))
+                    .variant(cast::Variant::Subtle),
+            );
+        }
+    });
+}
+
+fn chart_group_field(intent: Option<&str>) -> &'static str {
+    match intent {
+        Some("kind_breakdown") => "kind",
+        Some("priority_breakdown") => "priority",
+        _ => "status",
+    }
+}
+
+fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
+    if field == "status" {
+        status_intent(label)
+    } else if field == "priority" {
+        cast::Intent::Warning
+    } else {
+        cast::Intent::Info
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WorklistStatusCounts {
+    pending: usize,
+    claimed: usize,
+    done: usize,
+    failed: usize,
+}
+
+fn status_counts(items: &WorkItemList) -> WorklistStatusCounts {
+    let mut counts = WorklistStatusCounts::default();
+    for item in &items.items {
+        match item.status.as_str() {
+            "pending" => counts.pending += 1,
+            "claimed" => counts.claimed += 1,
+            "done" => counts.done += 1,
+            "failed" => counts.failed += 1,
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn grouped_counts(items: &WorkItemList, field: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for item in &items.items {
+        let label = work_item_field(item, field);
+        let label = if label.is_empty() {
+            "unknown".to_string()
+        } else {
+            label
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn field_label(field: &str) -> String {

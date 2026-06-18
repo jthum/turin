@@ -144,6 +144,11 @@ fn connection_options(args: &Args) -> ConnectionOptions {
     }
 }
 
+const UI_ACTIVITY_LIMIT: u32 = 12;
+const UI_DETAIL_LIMIT: u32 = 25;
+const UI_REPORT_LIMIT: u32 = 100;
+const UI_CHART_LIMIT: u32 = 100;
+
 fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
     for node in nodes {
         match node {
@@ -159,14 +164,28 @@ fn collect_ui_list_requests(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
                 out.push(UiListRequest {
                     source: activity.source.clone(),
                     filter: Default::default(),
-                    limit: Some(12),
+                    limit: Some(UI_ACTIVITY_LIMIT),
                 });
             }
             UiNode::Detail(detail) if detail.source.starts_with("worklists.") => {
                 out.push(UiListRequest {
                     source: detail.source.clone(),
                     filter: Default::default(),
-                    limit: Some(25),
+                    limit: Some(UI_DETAIL_LIMIT),
+                });
+            }
+            UiNode::Report(report) if report.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: report.source.clone(),
+                    filter: Default::default(),
+                    limit: Some(UI_REPORT_LIMIT),
+                });
+            }
+            UiNode::Chart(chart) if chart.source.starts_with("worklists.") => {
+                out.push(UiListRequest {
+                    source: chart.source.clone(),
+                    filter: Default::default(),
+                    limit: Some(UI_CHART_LIMIT),
                 });
             }
             _ => {}

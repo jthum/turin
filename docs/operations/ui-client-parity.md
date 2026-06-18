@@ -39,8 +39,8 @@ Core rule:
 | `form` | Editable Cast form controls. | Terminal modal with local drafts and typed scalar coercion. | TUI rich text areas degrade to line-oriented text. |
 | `activity` | Worklist-backed recent activity; unsupported adapters show metadata. | Compact worklist-backed recent activity; unsupported adapters show metadata. | Uses cached `worklists.*` data for now, not a live event query. |
 | `detail` | Worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Compact worklist-backed snapshot or explicit item detail; unsupported adapters show metadata. | Without `item_id`, clients show a bounded worklist snapshot. |
-| `report` | Placeholder with prompt text. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Needs shared data/query semantics before rich rendering. |
-| `chart` | Placeholder with source/rendering metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | `intent` and `as` remain advisory. |
+| `report` | Cast report section with lightweight worklist-backed summary; unsupported adapters show metadata. | Lightweight worklist-backed summary; unsupported adapters show metadata. | Needs shared data/query semantics before rich rendering. |
+| `chart` | Cast report/chart section with lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown; unsupported adapters show metadata. | `intent` and `as` remain advisory. |
 
 ## Dynamic UI Intent
 
@@ -79,8 +79,8 @@ browser shell that consumes those routes.
 
 ## Current Gaps
 
-- `report` and `chart` need shared semantics across app/TUI/web; TUI and web
-  have lightweight worklist-backed summary/bar adapters only.
+- `report` and `chart` need shared semantics across app/TUI/web; app, TUI, and
+  web have lightweight worklist-backed summary/bar adapters only.
 - List data loading only supports worklist sources.
 - Dynamic badge rendering is not yet strong enough in either client.
 - TUI item selection is local to visible compact table rows; richer table navigation can still improve.
