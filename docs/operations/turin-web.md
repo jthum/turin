@@ -75,6 +75,145 @@ SSE responses are also `no-store` and use the runtime event name as the SSE
 event name. Stream failures are emitted as `web.error` events before the stream
 closes.
 
+## Route Contracts
+
+The API is intentionally small. It mirrors the current operator-client needs
+rather than exposing the full daemon protocol.
+
+### `GET /api/status`
+
+Returns the current dashboard snapshot, web-process metadata, and the UI
+registry derived from harness intent:
+
+```json
+{
+  "web": {
+    "ready": true,
+    "version": "<turin-web-version>",
+    "bind": "127.0.0.1:8787",
+    "connection_kind": "local",
+    "connection_target": ".turin/daemon.sock"
+  },
+  "snapshot": {},
+  "ui": {}
+}
+```
+
+`snapshot` and `ui` use the same shared Rust types consumed by `turin-app` and
+`turin-tui`; browser state such as active screen or selected rows is not stored
+there.
+
+### `GET /api/apps`
+
+Returns declared harness UI apps:
+
+```json
+{ "apps": [] }
+```
+
+An empty array is valid. It means the browser should render the default Turin
+operator shell rather than a harness-specific app.
+
+### `GET /api/apps/{app_id}`
+
+Returns one app record:
+
+```json
+{ "app": {} }
+```
+
+Missing apps return a `404` JSON error envelope. The response contains semantic
+screens, menus, panes, badges, and nodes, not renderer state.
+
+### `POST /api/ui/list`
+
+Loads a semantic list request:
+
+```json
+{
+  "source": "worklists.release",
+  "filter": {},
+  "limit": 50
+}
+```
+
+Returns:
+
+```json
+{
+  "request": {
+    "source": "worklists.release",
+    "filter": {},
+    "limit": 50
+  },
+  "list": {
+    "worklist_id": "release",
+    "items": []
+  }
+}
+```
+
+Only `worklists.*` sources are supported today. Other sources return
+`unsupported_ui_list_source`; `worklists.` without a name returns
+`invalid_ui_list_source`. This keeps list intent semantic while avoiding a raw
+daemon-query escape hatch before the UI data model needs one.
+
+### `POST /api/actions/run`
+
+Runs a harness action through the control layer:
+
+```json
+{
+  "agent_id": null,
+  "harness_id": null,
+  "action": "release.seed_demo_work",
+  "params": {
+    "count": 3
+  }
+}
+```
+
+Returns:
+
+```json
+{ "result": {} }
+```
+
+The browser owns confirmation and duplicate-run suppression locally. Durable
+workflow outcomes should still be written through harness/runtime primitives
+such as worklists, events, memory, KV, or runtime DB tables.
+
+### `GET /api/events`
+
+Streams runtime/UI events as Server-Sent Events.
+
+Optional filters:
+
+- `agent_id`
+- `session_id`
+- `slot_id`
+
+Each SSE frame uses the runtime event name as the SSE event name and the event
+data as JSON. If the managed event stream fails, `turin-web` emits a `web.error`
+event and closes the stream.
+
+### `GET /api/healthz`
+
+Returns liveness for the web process:
+
+```json
+{ "ok": true, "version": "<turin-web-version>" }
+```
+
+This does not prove a specific harness app is available; use `/api/status` or
+`/api/apps` for that.
+
+### Request Limits
+
+JSON request bodies are limited to 1 MiB. Oversized bodies return
+`request_body_too_large`, malformed bodies return `invalid_json`, and failed
+control-layer calls return `control_unavailable`.
+
 ## Browser Client State
 
 The browser should own ephemeral UI state:
