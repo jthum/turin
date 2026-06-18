@@ -303,6 +303,18 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(shown.result["status"], "shown");
     assert_release_operator_show_intent(&shown);
 
+    let opened = client
+        .run_harness_action(HarnessActionRunParams {
+            action: "release.open_intake".to_string(),
+            agent_id: None,
+            harness_id: Some("default".to_string()),
+            params: serde_json::json!({}),
+        })
+        .await?;
+    assert_eq!(opened.action, "release.open_intake");
+    assert_eq!(opened.result["status"], "opened");
+    assert_release_operator_open_focus_intents(&opened);
+
     let remaining = client
         .list_worklist_items(WorklistItemsParams {
             id: release_worklist.public_id,
@@ -363,6 +375,27 @@ fn assert_release_operator_show_intent(result: &turin_daemon_protocol::HarnessAc
                 if show.app_id == "release-operator"
                     && show.target == "release-notes"
                     && show.presentation.as_deref() == Some("sheet")
+        )
+    }));
+}
+
+fn assert_release_operator_open_focus_intents(
+    result: &turin_daemon_protocol::HarnessActionRunResult,
+) {
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Open(open)
+                if open.app_id == "release-operator"
+                    && open.target == "intake"
+        )
+    }));
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Focus(focus)
+                if focus.app_id == "release-operator"
+                    && focus.target == "seed-demo-form"
         )
     }));
 }

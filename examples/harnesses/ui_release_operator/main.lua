@@ -142,6 +142,16 @@ action.define("release.show_notes", function(_ctx, _params)
   }
 end)
 
+action.define("release.open_intake", function(_ctx, _params)
+  app:open("intake")
+  app:focus("seed-demo-form")
+  return {
+    status = "opened",
+    target = "intake",
+    focus = "seed-demo-form",
+  }
+end)
+
 app:home("Release Desk", function(screen)
   screen:text("Coordinate a release from a client-rendered harness UI. Seed demo work first, then approve or reject pending approvals.")
 
@@ -169,6 +179,9 @@ app:home("Release Desk", function(screen)
     })
     section:action("Show Release Notes", "release.show_notes", {
       id = "show-release-notes",
+    })
+    section:action("Open Intake Form", "release.open_intake", {
+      id = "open-intake-form",
     })
   end)
 

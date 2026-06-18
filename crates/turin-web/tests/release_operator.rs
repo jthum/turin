@@ -460,6 +460,34 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             && intent["presentation"] == "sheet"
     });
 
+    let opened: Value = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": "release.open_intake",
+            "harness_id": "default",
+            "params": {}
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(opened["result"]["action"], "release.open_intake");
+    assert_eq!(opened["result"]["result"]["status"], "opened");
+    assert_eq!(opened["result"]["result"]["target"], "intake");
+    assert_eq!(opened["result"]["result"]["focus"], "seed-demo-form");
+    let opened_intents = ui_intents(&opened)?;
+    assert_has_ui_intent(opened_intents, "open intake", |intent| {
+        intent["type"] == "open"
+            && intent["app_id"] == "release-operator"
+            && intent["target"] == "intake"
+    });
+    assert_has_ui_intent(opened_intents, "focus intake form", |intent| {
+        intent["type"] == "focus"
+            && intent["app_id"] == "release-operator"
+            && intent["target"] == "seed-demo-form"
+    });
+
     let list: Value = client
         .post(format!("{base_url}/api/ui/list"))
         .json(&json!({
