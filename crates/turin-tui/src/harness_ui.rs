@@ -871,7 +871,7 @@ fn work_item_row_marker(index: usize, selected: bool) -> String {
 
 fn work_item_action_marker(item: &WorkItemDetail) -> String {
     if item.action.is_some() {
-        "run".to_string()
+        "review".to_string()
     } else {
         "-".to_string()
     }
@@ -1847,7 +1847,7 @@ mod tests {
         assert!(text.contains("#"));
         assert!(text.contains("action"));
         assert!(text.contains("●1"));
-        assert!(text.contains("run"));
+        assert!(text.contains("review"));
         assert!(text.contains("Run QA"));
         assert_eq!(work_item_row_marker(1, false), "2");
     }

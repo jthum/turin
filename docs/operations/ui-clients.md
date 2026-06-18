@@ -341,7 +341,8 @@ The TUI renders harness UI contracts semantically:
 
 - screens and menus become terminal navigation
 - nested menu items are flattened with indentation
-- worklist-backed lists become compact terminal tables
+- worklist-backed lists become compact terminal tables with a `review` action
+  cue when a row has an item action that will be queued for confirmation
 - selected worklist rows appear in the inspector; rows with item actions can be
   queued for confirmation from the item focus
 - worklist-backed activity and detail nodes become compact recent-activity or
