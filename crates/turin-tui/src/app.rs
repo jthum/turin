@@ -1814,7 +1814,11 @@ impl TuiApp {
             }
         }
 
-        if let Some(result) = self.latest_harness_action_result.as_ref() {
+        if let Some(result) = self
+            .latest_harness_action_result
+            .as_ref()
+            .filter(|result| harness_action_result_matches_app(result, &app))
+        {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("Latest Result", theme::title())));
             lines.push(kv_line("Action", result.action.clone()));
@@ -2178,6 +2182,23 @@ fn pending_action_from_work_item(
         harness_id: app.source.harness_id.clone(),
         params: action.params.clone().unwrap_or(Value::Null),
     })
+}
+
+fn harness_action_result_matches_app(
+    result: &HarnessActionRunResult,
+    app: &turin_ui_core::UiAppRecord,
+) -> bool {
+    if let Some(harness_id) = result.harness_id.as_deref()
+        && app.source.harness_id.as_deref() != Some(harness_id)
+    {
+        return false;
+    }
+    if let Some(agent_id) = app.source.agent_id.as_deref()
+        && result.agent_id != agent_id
+    {
+        return false;
+    }
+    true
 }
 
 fn pane_actions(
@@ -2553,6 +2574,44 @@ mod tests {
         };
 
         assert!(pending_action_from_work_item(&app, &selection).is_none());
+    }
+
+    #[test]
+    fn harness_action_result_matching_filters_other_apps() {
+        let app = test_app();
+        let matching = HarnessActionRunResult {
+            action: "release.seed".to_string(),
+            agent_id: "release-agent".to_string(),
+            harness_id: Some("release-harness".to_string()),
+            result: json!({ "status": "ok" }),
+            ui_intents: Vec::new(),
+        };
+        let other_harness = HarnessActionRunResult {
+            harness_id: Some("qa-harness".to_string()),
+            ..matching.clone()
+        };
+        let other_agent = HarnessActionRunResult {
+            agent_id: "qa-agent".to_string(),
+            ..matching.clone()
+        };
+
+        assert!(harness_action_result_matches_app(&matching, &app));
+        assert!(!harness_action_result_matches_app(&other_harness, &app));
+        assert!(!harness_action_result_matches_app(&other_agent, &app));
+    }
+
+    #[test]
+    fn harness_action_result_without_harness_matches_selected_agent() {
+        let app = test_app();
+        let result = HarnessActionRunResult {
+            action: "release.seed".to_string(),
+            agent_id: "release-agent".to_string(),
+            harness_id: None,
+            result: json!({ "status": "ok" }),
+            ui_intents: Vec::new(),
+        };
+
+        assert!(harness_action_result_matches_app(&result, &app));
     }
 
     #[test]
