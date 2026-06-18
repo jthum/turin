@@ -17,10 +17,10 @@ use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
     ConnectionProfileActivityBook, ConnectionProfileCatalog, ConnectionProfileDraft,
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftValidation,
-    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, HarnessActionFailure,
-    OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate, connect_dashboard,
-    ensure_local_daemon_for_draft, preflight_connection_blocking, preflight_draft_blocking,
-    spawn_controller,
+    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, DefaultOperatorConsoleSummary,
+    HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate,
+    connect_dashboard, ensure_local_daemon_for_draft, preflight_connection_blocking,
+    preflight_draft_blocking, spawn_controller,
 };
 
 mod harness_ui;
@@ -300,45 +300,6 @@ impl PendingHarnessUiAction {
             agent_id: app.source.agent_id.clone(),
             harness_id: app.source.harness_id.clone(),
             params,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DefaultConsoleSummary {
-    connection: String,
-    target: String,
-    freshness: String,
-    agents: usize,
-    harnesses: usize,
-    channels: usize,
-    live_sessions: usize,
-    stored_sessions: usize,
-    tasks: usize,
-    ui_notices: usize,
-    ui_requests: usize,
-}
-
-impl DefaultConsoleSummary {
-    fn from_dashboard(dashboard: &DashboardState) -> Self {
-        let health = dashboard.health.as_ref();
-        Self {
-            connection: connection_kind_label(dashboard.connection_kind).to_string(),
-            target: dashboard.connection_target.clone(),
-            freshness: freshness_label(dashboard.snapshot_freshness()).to_string(),
-            agents: dashboard.agents().len(),
-            harnesses: health
-                .map(|health| health.harness_count)
-                .unwrap_or_default(),
-            channels: dashboard.channels().len(),
-            live_sessions: dashboard.live_sessions.len(),
-            stored_sessions: dashboard.sessions.len(),
-            tasks: dashboard.tasks.len(),
-            ui_notices: dashboard.ui.notices().len(),
-            ui_requests: dashboard.ui.opens().len()
-                + dashboard.ui.shows().len()
-                + dashboard.ui.focuses().len()
-                + dashboard.ui.refreshes().len(),
         }
     }
 }
@@ -2319,7 +2280,7 @@ impl TurinDesktopApp {
     }
 
     fn render_default_operator_console(&self, ui: &mut egui::Ui) {
-        let summary = DefaultConsoleSummary::from_dashboard(&self.dashboard);
+        let summary = DefaultOperatorConsoleSummary::from_dashboard(&self.dashboard);
 
         cast::Panel::new().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -3589,25 +3550,6 @@ mod tests {
     }
 
     #[test]
-    fn default_console_summary_uses_dashboard_counts() {
-        let dashboard = empty_dashboard_state();
-
-        let summary = DefaultConsoleSummary::from_dashboard(&dashboard);
-
-        assert_eq!(summary.connection, "local");
-        assert_eq!(summary.target, ".turin/config.toml");
-        assert_eq!(summary.freshness, "stale");
-        assert_eq!(summary.agents, 0);
-        assert_eq!(summary.harnesses, 0);
-        assert_eq!(summary.channels, 0);
-        assert_eq!(summary.live_sessions, 0);
-        assert_eq!(summary.stored_sessions, 0);
-        assert_eq!(summary.tasks, 0);
-        assert_eq!(summary.ui_notices, 0);
-        assert_eq!(summary.ui_requests, 0);
-    }
-
-    #[test]
     fn harness_action_failure_matching_filters_other_apps() {
         let app = test_app();
         let matching = HarnessActionFailure {
@@ -3641,32 +3583,6 @@ mod tests {
         };
 
         assert!(harness_action_failure_matches_app(&failure, &app));
-    }
-
-    fn empty_dashboard_state() -> DashboardState {
-        DashboardState {
-            connection_kind: ConnectionKind::Local,
-            connection_target: ".turin/config.toml".to_string(),
-            health: None,
-            status: None,
-            live_sessions: Vec::new(),
-            sessions: Vec::new(),
-            tasks: Vec::new(),
-            session_details: BTreeMap::new(),
-            ui: Default::default(),
-            recent_events: Vec::new(),
-            recent_notices: Vec::new(),
-            last_snapshot_unix_ms: 0,
-            last_event_unix_ms: None,
-            last_notice_unix_ms: None,
-            total_event_count: 0,
-            refresh_success_count: 0,
-            refresh_failure_count: 0,
-            last_refresh_duration_ms: None,
-            last_refresh_ok: None,
-            last_error: None,
-            last_info: None,
-        }
     }
 
     fn test_app() -> UiAppRecord {

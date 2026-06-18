@@ -16,7 +16,7 @@ pub use controller::{
 };
 pub use dashboard::{
     DashboardFreshness, DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot,
-    DashboardState, format_relative_age,
+    DashboardState, DefaultOperatorConsoleSummary, format_relative_age,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
 pub use worklist_view::{

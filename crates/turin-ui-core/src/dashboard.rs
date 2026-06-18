@@ -105,6 +105,51 @@ pub enum DashboardFreshness {
     Stale,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultOperatorConsoleSummary {
+    pub connection: String,
+    pub target: String,
+    pub freshness: String,
+    pub agents: usize,
+    pub harnesses: usize,
+    pub channels: usize,
+    pub live_sessions: usize,
+    pub stored_sessions: usize,
+    pub tasks: usize,
+    pub ui_notices: usize,
+    pub ui_requests: usize,
+}
+
+impl DefaultOperatorConsoleSummary {
+    pub fn from_dashboard(dashboard: &DashboardState) -> Self {
+        let health = dashboard.health.as_ref();
+        Self {
+            connection: connection_kind_label(dashboard.connection_kind).to_string(),
+            target: dashboard.connection_target.clone(),
+            freshness: freshness_label(dashboard.snapshot_freshness()).to_string(),
+            agents: dashboard.agents().len(),
+            harnesses: health
+                .map(|health| health.harness_count)
+                .or_else(|| {
+                    dashboard
+                        .status
+                        .as_ref()
+                        .map(|status| status.harnesses.len())
+                })
+                .unwrap_or_default(),
+            channels: dashboard.channels().len(),
+            live_sessions: dashboard.live_sessions.len(),
+            stored_sessions: dashboard.sessions.len(),
+            tasks: dashboard.tasks.len(),
+            ui_notices: dashboard.ui.notices().len(),
+            ui_requests: dashboard.ui.opens().len()
+                + dashboard.ui.shows().len()
+                + dashboard.ui.focuses().len()
+                + dashboard.ui.refreshes().len(),
+        }
+    }
+}
+
 impl DashboardState {
     pub async fn load(client: &ControlClient) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
@@ -434,6 +479,21 @@ fn freshness_at(now_ms: u64, last_snapshot_ms: u64) -> DashboardFreshness {
     }
 }
 
+fn connection_kind_label(kind: ConnectionKind) -> &'static str {
+    match kind {
+        ConnectionKind::Local => "local",
+        ConnectionKind::Remote => "remote",
+    }
+}
+
+fn freshness_label(freshness: DashboardFreshness) -> &'static str {
+    match freshness {
+        DashboardFreshness::Fresh => "fresh",
+        DashboardFreshness::Quiet => "quiet",
+        DashboardFreshness::Stale => "stale",
+    }
+}
+
 fn ui_intents_from_status(status: &DaemonStatus) -> Vec<UiIntentMessage> {
     status
         .harnesses
@@ -445,8 +505,8 @@ fn ui_intents_from_status(status: &DaemonStatus) -> Vec<UiIntentMessage> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DashboardFreshness, DashboardNoticeLevel, DashboardState, MAX_RECENT_NOTICES,
-        format_relative_age, freshness_at,
+        DashboardFreshness, DashboardNoticeLevel, DashboardState, DefaultOperatorConsoleSummary,
+        MAX_RECENT_NOTICES, format_relative_age, freshness_at,
     };
     use serde_json::json;
     use turin_control_client::ConnectionKind;
@@ -542,6 +602,25 @@ mod tests {
         assert_eq!(dashboard.last_refresh_ok, Some(false));
         assert_eq!(dashboard.last_refresh_latency_label(), "120ms");
         assert_eq!(dashboard.last_refresh_status_label(), "failed");
+    }
+
+    #[test]
+    fn default_operator_console_summary_uses_dashboard_counts() {
+        let dashboard = empty_dashboard();
+
+        let summary = DefaultOperatorConsoleSummary::from_dashboard(&dashboard);
+
+        assert_eq!(summary.connection, "local");
+        assert_eq!(summary.target, DEFAULT_BOOTSTRAP_CONFIG_PATH);
+        assert_eq!(summary.freshness, "stale");
+        assert_eq!(summary.agents, 0);
+        assert_eq!(summary.harnesses, 0);
+        assert_eq!(summary.channels, 0);
+        assert_eq!(summary.live_sessions, 0);
+        assert_eq!(summary.stored_sessions, 0);
+        assert_eq!(summary.tasks, 0);
+        assert_eq!(summary.ui_notices, 0);
+        assert_eq!(summary.ui_requests, 0);
     }
 
     #[test]
