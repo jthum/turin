@@ -411,6 +411,25 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         })
     }));
 
+    let invalid_action = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": " ",
+            "harness_id": "default",
+            "params": {}
+        }))
+        .send()
+        .await?;
+    assert_eq!(invalid_action.status().as_u16(), 400);
+    let invalid_action: Value = invalid_action.json().await?;
+    assert_eq!(invalid_action["error"]["code"], "invalid_action_request");
+    assert_eq!(invalid_action["error"]["details"]["field"], "action");
+    assert!(
+        invalid_action["error"]["details"]["guidance"]
+            .as_str()
+            .is_some_and(|guidance| guidance.contains("declared harness action name"))
+    );
+
     let seeded: Value = client
         .post(format!("{base_url}/api/actions/run"))
         .json(&json!({

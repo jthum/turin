@@ -204,6 +204,22 @@ duplicate-run suppression locally. Durable workflow outcomes should still be
 written through harness/runtime primitives such as worklists, events, memory,
 KV, or runtime DB tables.
 
+An empty or whitespace-only `action` is rejected before control dispatch with
+`invalid_action_request` and structured details:
+
+```json
+{
+  "error": {
+    "code": "invalid_action_request",
+    "message": "Action name must not be empty",
+    "details": {
+      "field": "action",
+      "guidance": "Send the declared harness action name, for example 'release.seed_demo_work'."
+    }
+  }
+}
+```
+
 ### `GET /api/events`
 
 Streams runtime/UI events as Server-Sent Events.

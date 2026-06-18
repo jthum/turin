@@ -272,12 +272,29 @@ async fn handle_action_run(
     state: &WebState,
 ) -> std::result::Result<Response<WebBody>, WebError> {
     let params: HarnessActionRunParams = read_json(req).await?;
+    validate_action_run_params(&params)?;
     let result = state
         .client
         .run_harness_action(params)
         .await
         .map_err(|err| WebError::upstream(format!("Failed to run harness action: {}", err)))?;
     Ok(json_response(StatusCode::OK, &WebActionResponse { result }))
+}
+
+fn validate_action_run_params(
+    params: &HarnessActionRunParams,
+) -> std::result::Result<(), WebError> {
+    if params.action.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_action_request",
+            "Action name must not be empty",
+        )
+        .with_details(json!({
+            "field": "action",
+            "guidance": "Send the declared harness action name, for example 'release.seed_demo_work'."
+        })));
+    }
+    Ok(())
 }
 
 async fn handle_sse_events(
@@ -544,6 +561,27 @@ mod tests {
         let err = worklist_name_from_source("worklists.").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
         assert_eq!(err.code, "invalid_ui_list_source");
+    }
+
+    #[test]
+    fn empty_action_name_is_bad_request() {
+        let err = validate_action_run_params(&HarnessActionRunParams {
+            action: "  ".to_string(),
+            agent_id: None,
+            harness_id: Some("default".to_string()),
+            params: Value::Null,
+        })
+        .unwrap_err();
+
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "invalid_action_request");
+        let details = err.details.expect("invalid action details");
+        assert_eq!(details["field"], "action");
+        assert!(
+            details["guidance"]
+                .as_str()
+                .is_some_and(|guidance| guidance.contains("declared harness action name"))
+        );
     }
 
     #[test]
