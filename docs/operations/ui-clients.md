@@ -118,19 +118,19 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample from `.workspace/perf-reports/footprint-1781806031.md`:
+Recent local sample from `.workspace/perf-reports/footprint-1781824783.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,774 |
-| `crates/turin-tui` | 3,942 |
-| `crates/turin-ui-core` | 3,211 |
-| `crates/turin-web` | 671 |
+| `crates/turin-app` | 4,735 |
+| `crates/turin-tui` | 4,002 |
+| `crates/turin-ui-core` | 3,306 |
+| `crates/turin-web` | 676 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
-| `crates/turin-web/static/app.css` | 13,332 | 760 |
-| `crates/turin-web/static/app.js` | 53,323 | 1,678 |
+| `crates/turin-web/static/app.css` | 13,426 | 766 |
+| `crates/turin-web/static/app.js` | 56,320 | 1,757 |
 | `crates/turin-web/static/index.html` | 1,547 | 50 |
 
 No binary sizes were recorded in that run. Use the release and idle-memory
@@ -381,12 +381,12 @@ binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample on June 19, 2026 reported:
 
-- `86017` Rust code lines under `src` and `crates`
-- `4720` code lines in `crates/turin-app`
-- `3966` code lines in `crates/turin-tui`
+- `86073` Rust code lines under `src` and `crates`
+- `4735` code lines in `crates/turin-app`
+- `4002` code lines in `crates/turin-tui`
 - `3306` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
-- `70546` bytes across first-party `turin-web` static assets
+- `71293` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
