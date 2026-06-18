@@ -316,6 +316,9 @@ Form options:
 - `opts.params` supplies base action params. Client-entered field values are
   merged over these params by field name.
 - `opts.fields` is an array of `{ name, label, type?/kind?, default?, required?, options? }`.
+- Clients should seed field drafts from `field.default` first, then matching
+  `opts.params[field.name]`. Optional blank fields preserve the base param
+  instead of overwriting it with null.
 - `type` is accepted as DX sugar for the protocol field `kind`.
 - clients may validate and coerce common field kinds such as `text`, `number`,
   `integer`, and `boolean`; unsupported kinds should degrade to text input.

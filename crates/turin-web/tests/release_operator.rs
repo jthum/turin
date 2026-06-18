@@ -369,6 +369,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         Some("worklists.release"),
     )?;
     assert_node(&app, "intake", "form", "seed-demo-form", None)?;
+    assert_form_uses_static_count_param_as_default(&app)?;
     assert_node(
         &app,
         "overview",
@@ -666,6 +667,31 @@ fn assert_pane_node(
             source
         ))
     }
+}
+
+fn assert_form_uses_static_count_param_as_default(app: &Value) -> Result<()> {
+    let screen = app["app"]["screens"]
+        .get("intake")
+        .context("missing intake screen")?;
+    let nodes = screen["nodes"]
+        .as_array()
+        .context("intake screen should include nodes")?;
+    let form = flatten_nodes(nodes)
+        .into_iter()
+        .find(|node| node["kind"] == "form" && node["id"] == "seed-demo-form")
+        .context("missing seed demo form")?;
+    assert_eq!(form["params"]["count"], json!(1));
+    let count_field = form["fields"]
+        .as_array()
+        .context("form should include fields")?
+        .iter()
+        .find(|field| field["name"] == "count")
+        .context("missing count field")?;
+    assert!(
+        count_field.get("default").is_none(),
+        "count field should rely on form params instead of duplicating a default"
+    );
+    Ok(())
 }
 
 fn flatten_nodes(nodes: &[Value]) -> Vec<&Value> {

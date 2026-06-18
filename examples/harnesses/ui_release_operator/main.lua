@@ -224,7 +224,7 @@ app:screen("intake", "Intake", function(screen)
     },
     fields = {
       { name = "release", label = "Release", type = "text", default = "2026.06" },
-      { name = "count", label = "Count", type = "number", default = 1 },
+      { name = "count", label = "Count", type = "number" },
     },
   })
 end)
