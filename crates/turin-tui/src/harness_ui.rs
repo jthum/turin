@@ -722,7 +722,11 @@ fn render_work_items(
     selected_work_item_id: Option<&str>,
 ) {
     if items.items.is_empty() {
-        lines.push(indent_line(depth, "No items".to_string(), theme::muted()));
+        lines.push(indent_line(
+            depth,
+            "No matching items".to_string(),
+            theme::muted(),
+        ));
         return;
     }
 
@@ -1797,6 +1801,31 @@ mod tests {
         assert!(text.contains("review"));
         assert!(text.contains("Run QA"));
         assert_eq!(work_item_row_marker(1, false), "2");
+    }
+
+    #[test]
+    fn work_item_table_empty_state_names_matching_items() {
+        let list = UiListNode {
+            id: Some("pending-approvals".to_string()),
+            title: "Pending Approvals".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec!["title".to_string(), "status".to_string()],
+            sort: Vec::new(),
+            limit: Some(8),
+            intent: Some("approvals".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: Vec::new(),
+        };
+        let mut lines = Vec::new();
+
+        render_work_items(&list, &items, &mut lines, 0, 72, None);
+        let text = line_text(&lines);
+
+        assert!(text.contains("No matching items"));
     }
 
     #[test]
