@@ -1119,10 +1119,10 @@ function renderField(field, node, formKey) {
   if (required) input.required = true;
   setInputValue(input, draftValueForField(formKey, field, node), kind);
   input.addEventListener("input", () => {
-    rememberFormDraft(formKey, field.name, coerceFieldValue(input.value, kind, field));
+    rememberFormDraft(formKey, field.name, draftValueFromInput(input, kind, field));
   });
   input.addEventListener("change", () => {
-    rememberFormDraft(formKey, field.name, coerceFieldValue(input.value, kind, field));
+    rememberFormDraft(formKey, field.name, draftValueFromInput(input, kind, field));
   });
   wrapper.append(input);
   return wrapper;
@@ -1532,6 +1532,16 @@ function draftValueForField(formKey, field, node) {
 
 function rememberFormDraft(formKey, fieldName, value) {
   state.formDrafts.set(fieldDraftKey(formKey, fieldName), value);
+}
+
+function draftValueFromInput(input, kind, field) {
+  if (input.tagName === "SELECT" && field.options?.length) {
+    return decodeFieldValue(input.value);
+  }
+  if (kind === "boolean") {
+    return input.value === "true";
+  }
+  return input.value;
 }
 
 function setInputValue(input, value, kind) {

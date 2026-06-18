@@ -228,6 +228,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderDetail"));
     assert!(js.contains("collectFormParams"));
     assert!(js.contains("formDrafts"));
+    assert!(js.contains("draftValueFromInput"));
+    assert!(js.contains("rememberFormDraft(formKey, field.name, draftValueFromInput"));
     assert!(js.contains("draftValueForField(formKey, field, node)"));
     assert!(js.contains("field.name in node.params"));
     assert!(
