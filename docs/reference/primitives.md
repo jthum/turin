@@ -333,10 +333,10 @@ Current behavior:
   `from = "release"` and `from = "worklists.release"` both become
   `worklists.release`
 - `intent` and `as` fields are advisory signals; clients may degrade or ignore them
-- current clients load `worklists.*` sources for lists, activity, detail,
+- current clients load named `worklists.<name>` sources for lists, activity, detail,
   reports, and charts; other sources should remain visible with explicit
   unsupported-adapter messages that name the source and point authors toward
-  `worklists.*` or a deliberate client adapter
+  `worklists.<name>` or a deliberate client adapter
 - report and chart nodes currently have lightweight worklist-backed client
   adapters, including report counts and next pending item highlights, not shared
   analytics/query semantics

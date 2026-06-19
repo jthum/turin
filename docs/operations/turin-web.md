@@ -159,7 +159,7 @@ Returns:
 }
 ```
 
-Only `worklists.*` sources are supported today. Other sources return
+Only named `worklists.<name>` sources are supported today. Other sources return
 `unsupported_ui_list_source` with structured `details.source`,
 `details.supported_prefixes`, and author guidance; `worklists.` without a name
 returns `invalid_ui_list_source` with the same structured source/guidance
