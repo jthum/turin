@@ -17,6 +17,10 @@ use turin_ui_core::{
     worklist_chart_group_field, worklist_chart_group_label, worklist_group_counts,
     worklist_highest_priority_pending_item, worklist_status_counts,
 };
+pub(super) use turin_ui_core::{
+    ui_default_screen_index as default_screen_index,
+    ui_screen_index_for_target as screen_index_for_target,
+};
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
 
@@ -36,19 +40,6 @@ pub(super) enum HarnessUiEvent {
 pub(super) enum HarnessFocusTarget {
     Screen { screen_index: usize },
     Node { screen_index: usize },
-}
-
-pub(super) fn default_screen_index(app: &UiAppRecord) -> usize {
-    app.opens_with
-        .as_deref()
-        .and_then(|target| screen_index_for_target(app, target))
-        .unwrap_or_default()
-}
-
-pub(super) fn screen_index_for_target(app: &UiAppRecord, target: &str) -> Option<usize> {
-    app.screens
-        .values()
-        .position(|screen| screen.id == target || screen.title == target)
 }
 
 pub(super) fn find_focus_target(app: &UiAppRecord, target: &str) -> Option<HarnessFocusTarget> {

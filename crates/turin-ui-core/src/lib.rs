@@ -4,6 +4,7 @@ mod form_values;
 mod intents;
 mod ui_copy;
 mod ui_data;
+mod ui_navigation;
 mod worklist_view;
 
 pub use controller::{
@@ -31,6 +32,7 @@ pub use ui_data::{
     DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
     DEFAULT_UI_REPORT_LIMIT, collect_ui_list_requests, is_worklist_ui_source, ui_worklist_request,
 };
+pub use ui_navigation::{ui_default_screen_index, ui_screen_index_for_target};
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,
     worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,

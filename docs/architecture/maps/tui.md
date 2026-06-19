@@ -8,8 +8,8 @@ terminal-specific degradation of harness UI intent. Interactive form drafts,
 field focus, and shown pane overlays are also TUI-local state.
 
 Keep this crate as a lean Ratatui client. Runtime semantics, daemon transport,
-and shared operator commands belong in `turin-ui-core`, `turin-control-client`,
-and `turin-daemon-protocol`.
+shared operator commands, and default-screen lookup belong in `turin-ui-core`,
+`turin-control-client`, and `turin-daemon-protocol`.
 
 ## Files
 
@@ -150,8 +150,8 @@ focused regions, dynamic open/focus handling, shown pane overlays with
 pane-local item/action selection, editable forms, worklist-backed
 activity/detail/report/chart surfaces with explicit no-data copy and grouping
 hints, latest action result feedback, task and event inspectors, confirmation
-flow, UI notices, and list invalidation. Form field defaults and typed scalar
-coercion come from stateless `turin-ui-core` helpers, while drafts, focus, and
-modal editing remain terminal-local. Chat, search, connection profile editing,
-and deeper inspectors should be reintroduced only as they fit the new terminal
-UX model.
+flow, UI notices, and list invalidation. Default-screen lookup, form field
+defaults, and typed scalar coercion come from stateless `turin-ui-core` helpers,
+while drafts, focus, and modal editing remain terminal-local. Chat, search,
+connection profile editing, and deeper inspectors should be reintroduced only as
+they fit the new terminal UX model.

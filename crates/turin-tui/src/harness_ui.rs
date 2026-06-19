@@ -21,9 +21,10 @@ use turin_ui_core::{
     worklist_status_counts,
 };
 pub use turin_ui_core::{
-    ui_form_default_value as default_form_value, ui_form_field_kind as normalized_form_field_kind,
-    ui_form_is_bool_field as is_bool_field, ui_form_is_multiline_field as is_multiline_field,
-    ui_form_value_string as form_value_string,
+    ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
+    ui_form_field_kind as normalized_form_field_kind, ui_form_is_bool_field as is_bool_field,
+    ui_form_is_multiline_field as is_multiline_field, ui_form_value_string as form_value_string,
+    ui_screen_index_for_target as screen_index_for_target,
 };
 
 use crate::app::PendingHarnessAction;
@@ -95,21 +96,8 @@ impl HarnessAction {
     }
 }
 
-pub fn default_screen_index(app: &UiAppRecord) -> usize {
-    app.opens_with
-        .as_deref()
-        .and_then(|screen_id| screen_index_for_target(app, screen_id))
-        .unwrap_or(0)
-}
-
 pub fn screen_at(app: &UiAppRecord, index: usize) -> Option<&UiScreenIntent> {
     app.screens.values().nth(index)
-}
-
-pub fn screen_index_for_target(app: &UiAppRecord, target: &str) -> Option<usize> {
-    app.screens
-        .values()
-        .position(|screen| screen.id == target || screen.title == target)
 }
 
 pub fn collect_nav_items(app: &UiAppRecord) -> Vec<HarnessNavItem> {
