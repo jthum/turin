@@ -1119,6 +1119,16 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
         theme::base(),
     ));
     lines.push(indent_line(depth, truncate(&item.title, 88), theme::base()));
+    lines.push(indent_line(
+        depth,
+        format!("created: {}", item.created_at),
+        theme::muted(),
+    ));
+    lines.push(indent_line(
+        depth,
+        format!("updated: {}", item.updated_at),
+        theme::muted(),
+    ));
     if item.paused {
         lines.push(indent_line(
             depth,
@@ -1140,10 +1150,24 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
             theme::muted(),
         ));
     }
+    if let Some(claimed_at) = item.claimed_at.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("claimed at: {claimed_at}"),
+            theme::muted(),
+        ));
+    }
     if let Some(parent_id) = item.parent_id.as_ref() {
         lines.push(indent_line(
             depth,
             format!("parent: {parent_id}"),
+            theme::muted(),
+        ));
+    }
+    if let Some(completed_at) = item.completed_at.as_ref() {
+        lines.push(indent_line(
+            depth,
+            format!("completed: {completed_at}"),
             theme::muted(),
         ));
     }
@@ -2016,6 +2040,8 @@ mod tests {
                 "Next highest-priority pending item",
                 "REL-1 pending approval priority 11 worklist release",
                 "Approve release",
+                "created: 2026-06-18T00:00:00Z",
+                "updated: 2026-06-18T00:00:00Z",
                 "metadata: {\"release\":\"2026.06\"}",
                 "Chart: Approval Flow worklists.release as bar intent=kind_breakdown grouped_by=Kind",
                 "approval ██████████████████ 1",
@@ -2257,6 +2283,8 @@ mod tests {
         item.paused = true;
         item.pause_reason = Some("Waiting for sign-off".to_string());
         item.claim_agent_id = Some("release-bot".to_string());
+        item.claimed_at = Some("2026-06-18T01:00:00Z".to_string());
+        item.completed_at = Some("2026-06-18T02:00:00Z".to_string());
         item.parent_id = Some("REL-0".to_string());
         let mut lines = Vec::new();
 
@@ -2264,9 +2292,13 @@ mod tests {
         let text = line_text(&lines);
 
         assert!(text.contains("REL-1  pending  approval  priority 10  worklist release"));
+        assert!(text.contains("created: 2026-06-18T00:00:00Z"));
+        assert!(text.contains("updated: 2026-06-18T00:00:00Z"));
         assert!(text.contains("paused: yes"));
         assert!(text.contains("pause reason: Waiting for sign-off"));
         assert!(text.contains("claimed by: release-bot"));
+        assert!(text.contains("claimed at: 2026-06-18T01:00:00Z"));
+        assert!(text.contains("completed: 2026-06-18T02:00:00Z"));
         assert!(text.contains("parent: REL-0"));
     }
 
