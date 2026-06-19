@@ -2755,6 +2755,32 @@ mod tests {
     }
 
     #[test]
+    fn form_params_preserve_typed_option_values() {
+        let form = UiFormNode {
+            id: Some("intake".to_string()),
+            title: "Intake".to_string(),
+            action: "release.create_item".to_string(),
+            fields: vec![UiFormField {
+                name: "count".to_string(),
+                label: "Count".to_string(),
+                kind: Some("integer".to_string()),
+                default: None,
+                required: None,
+                options: vec![json!(2), json!("3")],
+            }],
+            params: Value::Null,
+        };
+        let numeric_values = BTreeMap::from([("count".to_string(), "2".to_string())]);
+        let string_values = BTreeMap::from([("count".to_string(), "3".to_string())]);
+
+        let numeric_params = form_params(&form, &numeric_values).expect("numeric option");
+        let string_params = form_params(&form, &string_values).expect("string option");
+
+        assert_eq!(numeric_params["count"], json!(2));
+        assert_eq!(string_params["count"], json!("3"));
+    }
+
+    #[test]
     fn form_params_validate_required_and_numeric_fields() {
         let form = UiFormNode {
             id: None,
