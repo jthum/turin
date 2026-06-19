@@ -247,6 +247,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderActionResult"));
     assert!(js.contains("actionResultMeta(result)"));
     assert!(js.contains("function actionResultMeta(result)"));
+    assert!(js.contains("function actionCompletedBody(result)"));
+    assert!(js.contains("completed without a result payload"));
+    assert!(js.contains("body: actionCompletedBody(result.result)"));
+    assert!(js.contains(
+        "pushNotice(\"success\", \"Action completed\", actionCompletedBody(result.result))"
+    ));
     assert!(js.contains("Action ${result.action}"));
     assert!(js.contains("Agent ${result.agentId}"));
     assert!(js.contains("Harness ${result.harnessId}"));

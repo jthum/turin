@@ -59,6 +59,8 @@ session state, invent renderer-specific harness APIs, or bypass
 - Browser action feedback may display action/harness/agent routing metadata
   from the request or response, but this is operator context only and should not
   become persisted `turin-web` session state.
+- Browser action completion feedback should explicitly distinguish a successful
+  action with no result payload from a successful action with JSON detail.
 - Browser-local dynamic badge overlays may survive status refreshes, but they
   still remain client memory state and must not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.

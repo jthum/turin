@@ -346,8 +346,8 @@ The current browser shell is intentionally small:
   actions
 - action start/completion/failure feedback, latest action result panels on
   screens and open panes scoped to the originating app, returned action UI
-  intent application, action/harness/agent metadata when known, and
-  duplicate-run suppression
+  intent application, action/harness/agent metadata when known, explicit
+  no-payload completion copy, and duplicate-run suppression
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces, including filtered empty-list copy when declared
   `where` constraints match no rows

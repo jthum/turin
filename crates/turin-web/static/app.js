@@ -1308,6 +1308,12 @@ function actionResultMeta(result) {
   ].filter(Boolean);
 }
 
+function actionCompletedBody(result) {
+  return result.result === undefined || result.result === null
+    ? `${result.action} completed without a result payload.`
+    : `${result.action} finished.`;
+}
+
 async function runAction(node, app, options = {}) {
   if (node.confirm && !options.confirmed) {
     requestActionConfirmation(node, app);
@@ -1341,10 +1347,10 @@ async function runAction(node, app, options = {}) {
       harnessId: result.result.harness_id || app?.source?.harness_id || null,
       level: "success",
       title: "Action completed",
-      body: `${result.result.action} finished.`,
+      body: actionCompletedBody(result.result),
       detail: result.result.result,
     };
-    pushNotice("success", "Action completed", `${result.result.action} finished.`);
+    pushNotice("success", "Action completed", actionCompletedBody(result.result));
     applyUiIntentMessages(result.result.ui_intents, { reloadRefresh: false });
     invalidateLists();
     await refresh({ reason: "action" });
