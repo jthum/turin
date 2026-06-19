@@ -1905,35 +1905,13 @@ impl TuiApp {
     }
 
     fn render_default_harness_inspector(&self, frame: &mut Frame<'_>, area: Rect) {
-        let summary = DefaultOperatorConsoleSummary::from_dashboard(&self.dashboard);
-        let lines = vec![
-            Line::from(Span::styled("Default Console", theme::title())),
-            Line::from(""),
-            kv_line("Connection", summary.connection),
-            kv_line("Freshness", summary.freshness),
-            kv_line("Target", truncate(&summary.target, 42)),
-            Line::from(""),
-            Line::from(Span::styled("Runtime", theme::title())),
-            kv_line("Agents", summary.agents.to_string()),
-            kv_line("Harnesses", summary.harnesses.to_string()),
-            kv_line("Channels", summary.channels.to_string()),
-            Line::from(""),
-            Line::from(Span::styled("Work", theme::title())),
-            kv_line("Live Sessions", summary.live_sessions.to_string()),
-            kv_line("Stored", summary.stored_sessions.to_string()),
-            kv_line("Tasks", summary.tasks.to_string()),
-            Line::from(""),
-            Line::from(Span::styled("UI Signals", theme::title())),
-            kv_line("Apps", self.dashboard.ui.apps().count().to_string()),
-            kv_line("Notices", summary.ui_notices.to_string()),
-            kv_line("Requests", summary.ui_requests.to_string()),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Use Overview, Tasks, and Events until a harness declares ui.app(...).",
-                theme::muted(),
-            )),
-        ];
-        frame.render_widget(panel("Inspector", lines), area);
+        frame.render_widget(
+            panel(
+                "Inspector",
+                default_harness_inspector_lines(&self.dashboard),
+            ),
+            area,
+        );
     }
 
     fn render_tasks(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2535,6 +2513,37 @@ fn ui_notice_level_style(level: Option<turin_daemon_protocol::UiNoticeLevel>) ->
     }
 }
 
+fn default_harness_inspector_lines(dashboard: &DashboardState) -> Vec<Line<'static>> {
+    let summary = DefaultOperatorConsoleSummary::from_dashboard(dashboard);
+    vec![
+        Line::from(Span::styled("Default Console", theme::title())),
+        Line::from(""),
+        kv_line("Connection", summary.connection),
+        kv_line("Freshness", summary.freshness),
+        kv_line("Target", truncate(&summary.target, 42)),
+        Line::from(""),
+        Line::from(Span::styled("Runtime", theme::title())),
+        kv_line("Agents", summary.agents.to_string()),
+        kv_line("Harnesses", summary.harnesses.to_string()),
+        kv_line("Channels", summary.channels.to_string()),
+        Line::from(""),
+        Line::from(Span::styled("Work", theme::title())),
+        kv_line("Live Sessions", summary.live_sessions.to_string()),
+        kv_line("Stored", summary.stored_sessions.to_string()),
+        kv_line("Tasks", summary.tasks.to_string()),
+        Line::from(""),
+        Line::from(Span::styled("UI Signals", theme::title())),
+        kv_line("Apps", dashboard.ui.apps().count().to_string()),
+        kv_line("Notices", summary.ui_notices.to_string()),
+        kv_line("Requests", summary.ui_requests.to_string()),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Use Overview, Tasks, and Events until a harness declares ui.app(...).",
+            theme::muted(),
+        )),
+    ]
+}
+
 fn form_field_meta(field: &turin_daemon_protocol::UiFormField) -> String {
     let mut parts = vec![harness_ui::normalized_form_field_kind(field)];
     if field.required.unwrap_or(false) {
@@ -2668,6 +2677,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use serde_json::json;
+    use turin_control_client::ConnectionKind;
     use turin_daemon_protocol::{
         ScheduleActionParams, UiActionNode, UiFormField, UiIntentSource, UiListNode, UiNode,
         UiPaneIntent, UiScreenIntent, WorkItemDetail,
@@ -2753,6 +2763,34 @@ mod tests {
         assert!(text.contains("[runtime]"));
         assert!(text.contains("No custom harness UI is declared."));
         assert!(text.contains("Overview, Tasks, and Events remain available."));
+    }
+
+    #[test]
+    fn terminal_golden_default_harness_inspector_stays_stable() {
+        let text = rendered_default_inspector_text(&empty_dashboard());
+
+        assert_eq!(
+            terminal_compact_content_lines(&text),
+            vec![
+                "Default Console",
+                "Connection local",
+                "Freshness stale",
+                "Target local-test",
+                "Runtime",
+                "Agents 0",
+                "Harnesses 0",
+                "Channels 0",
+                "Work",
+                "Live Sessions 0",
+                "Stored 0",
+                "Tasks 0",
+                "UI Signals",
+                "Apps 0",
+                "Notices 0",
+                "Requests 0",
+                "Use Overview, Tasks, and Events until a harness declares ui.app(...).",
+            ]
+        );
     }
 
     #[test]
@@ -3358,6 +3396,20 @@ mod tests {
         buffer_text(terminal.backend().buffer())
     }
 
+    fn rendered_default_inspector_text(dashboard: &DashboardState) -> String {
+        let backend = TestBackend::new(96, 26);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    panel("Inspector", default_harness_inspector_lines(dashboard)),
+                    frame.area(),
+                );
+            })
+            .expect("draw default inspector panel");
+        buffer_text(terminal.backend().buffer())
+    }
+
     fn terminal_compact_content_lines(text: &str) -> Vec<String> {
         text.lines()
             .filter_map(|line| {
@@ -3389,5 +3441,31 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn empty_dashboard() -> DashboardState {
+        DashboardState {
+            connection_kind: ConnectionKind::Local,
+            connection_target: "local-test".to_string(),
+            health: None,
+            status: None,
+            live_sessions: Vec::new(),
+            sessions: Vec::new(),
+            tasks: Vec::new(),
+            session_details: Default::default(),
+            ui: Default::default(),
+            recent_events: Vec::new(),
+            recent_notices: Vec::new(),
+            last_snapshot_unix_ms: 0,
+            last_event_unix_ms: None,
+            last_notice_unix_ms: None,
+            total_event_count: 0,
+            refresh_success_count: 0,
+            refresh_failure_count: 0,
+            last_refresh_duration_ms: None,
+            last_refresh_ok: None,
+            last_error: None,
+            last_info: None,
+        }
     }
 }
