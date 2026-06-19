@@ -199,22 +199,35 @@ tools/ui-client-baseline
 ```
 
 For idle memory, start the client against a local daemon, wait a few seconds,
-then sample the process. On Linux, prefer `smaps_rollup` when available:
+then sample the process. On Linux, use the idle snapshot collector; it prefers
+`smaps_rollup` and falls back to `/proc/<pid>/status` when needed:
 
 ```bash
-pid="$(pgrep -n turin-web)"
-awk '
-  /^Rss:/ { rss_kb = $2 }
-  /^Pss:/ { pss_kb = $2 }
-  END { printf "rss_kb=%s pss_kb=%s\n", rss_kb, pss_kb }
-' "/proc/$pid/smaps_rollup"
+tools/ui-client-idle-snapshot --settle 5
+```
+
+To sample a known process explicitly:
+
+```bash
+tools/ui-client-idle-snapshot --pid "$pid"
 ```
 
 For `turin-tui` and `turin-app`, run the client in a normal terminal or desktop
-session and sample the newest matching process with `pgrep -n turin-tui` or
-`pgrep -n turin-app`. Close the client normally after sampling. Do not compare
-numbers across machines as hard budgets; compare them against previous samples
-from the same machine and release profile.
+session before sampling. Close the client normally after sampling. Do not
+compare numbers across machines as hard budgets; compare them against previous
+samples from the same machine and release profile.
+
+Recent local live web checkpoint from
+`.workspace/perf-reports/ui-client-idle-snapshot-1781831251-1761607.md`:
+
+| client | path | rss KB | pss KB | source |
+| --- | --- | ---: | ---: | --- |
+| `turin-web` | `target/release/turin-web` | 5,564 | 3,042 | `smaps_rollup` |
+
+This sample launched `turin-web` against `.turin/config.toml` on
+`127.0.0.1:9349`, waited roughly three seconds, sampled the process, and shut it
+down. App/TUI live idle samples should be taken from an interactive desktop or
+terminal session.
 
 ## Local Usage
 

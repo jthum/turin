@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="."
+report_dir=".workspace/perf-reports"
+settle_seconds=0
+processes=()
+pids=()
+
+usage() {
+  cat <<'USAGE'
+Usage: tools/ui-client-idle-snapshot [options]
+
+Sample RSS/PSS for already-running UI client processes. This tool does not
+build Turin or launch clients.
+
+Options:
+  --repo-root PATH       Repository root (default: .)
+  --report-dir PATH      Report output directory (default: .workspace/perf-reports)
+  --process NAME         Process name to sample via pgrep -n -x; repeatable
+  --pid PID              Specific process id to sample; repeatable
+  --settle SECONDS       Sleep before sampling to let clients settle (default: 0)
+  -h, --help             Show this help
+
+When neither --process nor --pid is supplied, the default process names are
+turin-tui, turin-app, and turin-web.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo-root)
+      repo_root="${2:?missing value for --repo-root}"
+      shift 2
+      ;;
+    --report-dir)
+      report_dir="${2:?missing value for --report-dir}"
+      shift 2
+      ;;
+    --process)
+      processes+=("${2:?missing value for --process}")
+      shift 2
+      ;;
+    --pid)
+      pids+=("${2:?missing value for --pid}")
+      shift 2
+      ;;
+    --settle)
+      settle_seconds="${2:?missing value for --settle}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if ! [[ "$settle_seconds" =~ ^[0-9]+$ ]]; then
+  echo "--settle must be a non-negative integer number of seconds" >&2
+  exit 2
+fi
+
+if [[ "${#processes[@]}" -eq 0 && "${#pids[@]}" -eq 0 ]]; then
+  processes=(turin-tui turin-app turin-web)
+fi
+
+repo_root="$(cd "$repo_root" && pwd -P)"
+report_dir_path="$repo_root/$report_dir"
+mkdir -p "$report_dir_path"
+
+if [[ "$settle_seconds" -gt 0 ]]; then
+  sleep "$settle_seconds"
+fi
+
+stamp="$(date +%s)-$$"
+json_path="$report_dir_path/ui-client-idle-snapshot-$stamp.json"
+md_path="$report_dir_path/ui-client-idle-snapshot-$stamp.md"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+samples_tsv="$tmp_dir/samples.tsv"
+seen_tsv="$tmp_dir/seen.tsv"
+: > "$samples_tsv"
+: > "$seen_tsv"
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+json_number_or_null() {
+  local value="$1"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+  else
+    printf 'null'
+  fi
+}
+
+json_string_or_null() {
+  local value="$1"
+  if [[ -n "$value" ]]; then
+    printf '"%s"' "$(json_escape "$value")"
+  else
+    printf 'null'
+  fi
+}
+
+sanitize_cell() {
+  local value="$1"
+  value="${value//$'\t'/ }"
+  value="${value//|/ }"
+  value="${value//$'\n'/ }"
+  printf '%s' "$value"
+}
+
+record_missing() {
+  local label="$1"
+  local error="$2"
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    "$(sanitize_cell "$label")" "" "0" "" "" "" "" "" "$(sanitize_cell "$error")" \
+    >> "$samples_tsv"
+}
+
+read_command() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    tr '\0' ' ' < "/proc/$pid/cmdline" | sed 's/[[:space:]]*$//'
+  elif [[ -r "/proc/$pid/comm" ]]; then
+    cat "/proc/$pid/comm"
+  fi
+}
+
+record_pid() {
+  local label="$1"
+  local pid="$2"
+  local exe command rss pss source error
+
+  if [[ -z "$pid" || ! -d "/proc/$pid" ]]; then
+    record_missing "$label" "not running"
+    return
+  fi
+  if grep -Fxq "$pid" "$seen_tsv"; then
+    return
+  fi
+  printf '%s\n' "$pid" >> "$seen_tsv"
+
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  command="$(read_command "$pid" 2>/dev/null || true)"
+  rss=""
+  pss=""
+  source=""
+  error=""
+
+  if [[ -r "/proc/$pid/smaps_rollup" ]]; then
+    read -r rss pss < <(awk '
+      /^Rss:/ { rss = $2 }
+      /^Pss:/ { pss = $2 }
+      END { printf "%s %s\n", rss, pss }
+    ' "/proc/$pid/smaps_rollup")
+    source="smaps_rollup"
+  elif [[ -r "/proc/$pid/status" ]]; then
+    rss="$(awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status")"
+    source="status"
+  else
+    error="proc memory data unavailable"
+  fi
+
+  if [[ -z "$rss" && -z "$error" ]]; then
+    error="rss unavailable"
+  fi
+
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    "$(sanitize_cell "$label")" "$pid" "1" "$(sanitize_cell "$exe")" \
+    "$rss" "$pss" "$source" "$(sanitize_cell "$command")" "$(sanitize_cell "$error")" \
+    >> "$samples_tsv"
+}
+
+for process in "${processes[@]}"; do
+  pid="$(pgrep -n -x "$process" 2>/dev/null || true)"
+  record_pid "$process" "$pid"
+done
+
+for pid in "${pids[@]}"; do
+  if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+    record_missing "pid:$pid" "invalid pid"
+  else
+    record_pid "pid:$pid" "$pid"
+  fi
+done
+
+{
+  printf '{\n'
+  printf '  "scenario": "ui-client-idle-snapshot",\n'
+  printf '  "config": {\n'
+  printf '    "repo_root": "%s",\n' "$(json_escape "$repo_root")"
+  printf '    "collector": "tools/ui-client-idle-snapshot",\n'
+  printf '    "settle_seconds": %s,\n' "$settle_seconds"
+  printf '    "note": "Samples RSS/PSS for already-running UI client processes. This script does not build Turin or launch clients."\n'
+  printf '  },\n'
+  printf '  "samples": [\n'
+  first=1
+  while IFS='|' read -r label pid running exe rss pss source command error; do
+    [[ "$first" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {'
+    printf '"label":"%s",' "$(json_escape "$label")"
+    printf '"pid":%s,' "$(json_number_or_null "$pid")"
+    printf '"running":%s,' "$([[ "$running" -eq 1 ]] && printf true || printf false)"
+    printf '"exe":%s,' "$(json_string_or_null "$exe")"
+    printf '"rss_kb":%s,' "$(json_number_or_null "$rss")"
+    printf '"pss_kb":%s,' "$(json_number_or_null "$pss")"
+    printf '"source":%s,' "$(json_string_or_null "$source")"
+    printf '"command":%s,' "$(json_string_or_null "$command")"
+    printf '"error":%s' "$(json_string_or_null "$error")"
+    printf '}'
+  done < "$samples_tsv"
+  printf '\n  ]\n'
+  printf '}\n'
+} > "$json_path"
+
+{
+  printf '# UI Client Idle Snapshot\n\n'
+  printf -- '- collector: `tools/ui-client-idle-snapshot`\n'
+  printf -- '- repo_root: `%s`\n' "$repo_root"
+  printf -- '- settle_seconds: `%s`\n\n' "$settle_seconds"
+  printf 'This report samples already-running processes only. It does not build Turin or launch clients.\n\n'
+  printf '| label | pid | running | rss_kb | pss_kb | source | exe | error |\n'
+  printf '|---|---:|---:|---:|---:|---|---|---|\n'
+  while IFS='|' read -r label pid running exe rss pss source command error; do
+    printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+      "$label" "${pid:-}" "$running" "${rss:-}" "${pss:-}" "${source:-}" "${exe:-}" "${error:-}"
+  done < "$samples_tsv"
+} > "$md_path"
+
+printf 'json_report=%s\n' "${json_path#$repo_root/}"
+printf 'markdown_report=%s\n' "${md_path#$repo_root/}"
