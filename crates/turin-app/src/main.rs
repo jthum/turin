@@ -242,6 +242,18 @@ struct PendingHarnessUiAction {
     params: serde_json::Value,
 }
 
+const DEFAULT_OPERATOR_EMPTY_TITLE: &str = "Default operator console is active";
+const DEFAULT_OPERATOR_EMPTY_BODY: &str = "Overview, Tasks, and Events work without custom harness UI. Declare ui.app(...) only when a harness needs workflow-specific screens here.";
+const DEFAULT_OPERATOR_INTRO: &str = "Turin remains useful without harness-defined UI. Use the built-in runtime tabs for health, agents, sessions, tasks, channels, events, and connection profiles.";
+const DEFAULT_OPERATOR_GUIDANCE_TITLE: &str = "When to add harness UI";
+const DEFAULT_OPERATOR_GUIDANCE_BODY: &str = "Keep the default console for simple agents. Add ui.app(...) when a harness needs workflow-specific screens, lists, forms, reports, panes, badges, or action buttons.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DefaultOperatorMetricGroup {
+    title: &'static str,
+    metrics: Vec<(&'static str, usize)>,
+}
+
 impl PendingHarnessUiAction {
     fn new(app: &UiAppRecord, label: String, action: String, params: serde_json::Value) -> Self {
         Self {
@@ -2117,10 +2129,8 @@ impl TurinDesktopApp {
                 });
                 ui.add_space(8.0);
                 if apps.is_empty() {
-                    cast::EmptyState::new("Default operator console is active")
-                        .body(
-                            "Overview, Tasks, and Events work without custom harness UI. Declare ui.app(...) only when a harness needs workflow-specific screens here.",
-                        )
+                    cast::EmptyState::new(DEFAULT_OPERATOR_EMPTY_TITLE)
+                        .body(DEFAULT_OPERATOR_EMPTY_BODY)
                         .icon("UI")
                         .intent(cast::Intent::Info)
                         .show(ui, |_| {});
@@ -2247,42 +2257,29 @@ impl TurinDesktopApp {
                 );
             });
             ui.add_space(8.0);
-            ui.label(
-                "Turin remains useful without harness-defined UI. Use the built-in runtime tabs for health, agents, sessions, tasks, channels, events, and connection profiles.",
-            );
+            ui.label(DEFAULT_OPERATOR_INTRO);
             ui.add_space(8.0);
-            detail_kv(ui, "Target", summary.target);
+            detail_kv(ui, "Target", &summary.target);
         });
 
         ui.add_space(10.0);
+        let groups = default_operator_metric_groups(&summary, self.dashboard.ui.apps().count());
         ui.columns(3, |columns| {
-            cast::Panel::new().show(&mut columns[0], |ui| {
-                ui.label(RichText::new("Runtime").strong());
-                detail_kv(ui, "Agents", summary.agents);
-                detail_kv(ui, "Harnesses", summary.harnesses);
-                detail_kv(ui, "Channels", summary.channels);
-            });
-            cast::Panel::new().show(&mut columns[1], |ui| {
-                ui.label(RichText::new("Work").strong());
-                detail_kv(ui, "Live Sessions", summary.live_sessions);
-                detail_kv(ui, "Stored Sessions", summary.stored_sessions);
-                detail_kv(ui, "Tasks", summary.tasks);
-            });
-            cast::Panel::new().show(&mut columns[2], |ui| {
-                ui.label(RichText::new("UI Signals").strong());
-                detail_kv(ui, "Harness Apps", self.dashboard.ui.apps().count());
-                detail_kv(ui, "Notices", summary.ui_notices);
-                detail_kv(ui, "Requests", summary.ui_requests);
-            });
+            for (column, group) in columns.iter_mut().zip(groups) {
+                cast::Panel::new().show(column, |ui| {
+                    ui.label(RichText::new(group.title).strong());
+                    for (label, value) in group.metrics {
+                        detail_kv(ui, label, value);
+                    }
+                });
+            }
         });
 
         ui.add_space(10.0);
         cast::Panel::new().show(ui, |ui| {
-            ui.label(RichText::new("When to add harness UI").strong());
+            ui.label(RichText::new(DEFAULT_OPERATOR_GUIDANCE_TITLE).strong());
             ui.add_space(6.0);
-            ui.label(
-                "Keep the default console for simple agents. Add ui.app(...) when a harness needs workflow-specific screens, lists, forms, reports, panes, badges, or action buttons.",
-            );
+            ui.label(DEFAULT_OPERATOR_GUIDANCE_BODY);
         });
     }
 
@@ -3444,6 +3441,38 @@ fn harness_action_result_matches_app(result: &HarnessActionRunResult, app: &UiAp
     true
 }
 
+fn default_operator_metric_groups(
+    summary: &DefaultOperatorConsoleSummary,
+    harness_apps: usize,
+) -> Vec<DefaultOperatorMetricGroup> {
+    vec![
+        DefaultOperatorMetricGroup {
+            title: "Runtime",
+            metrics: vec![
+                ("Agents", summary.agents),
+                ("Harnesses", summary.harnesses),
+                ("Channels", summary.channels),
+            ],
+        },
+        DefaultOperatorMetricGroup {
+            title: "Work",
+            metrics: vec![
+                ("Live Sessions", summary.live_sessions),
+                ("Stored Sessions", summary.stored_sessions),
+                ("Tasks", summary.tasks),
+            ],
+        },
+        DefaultOperatorMetricGroup {
+            title: "UI Signals",
+            metrics: vec![
+                ("Harness Apps", harness_apps),
+                ("Notices", summary.ui_notices),
+                ("Requests", summary.ui_requests),
+            ],
+        },
+    ]
+}
+
 fn harness_action_failure_matches_app(failure: &HarnessActionFailure, app: &UiAppRecord) -> bool {
     if let Some(harness_id) = failure.harness_id.as_deref()
         && app.source.harness_id.as_deref() != Some(harness_id)
@@ -3498,6 +3527,58 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].source, "worklists.other");
         assert_eq!(requests[0].limit, Some(7));
+    }
+
+    #[test]
+    fn default_operator_console_copy_explains_no_harness_path() {
+        assert_eq!(
+            DEFAULT_OPERATOR_EMPTY_TITLE,
+            "Default operator console is active"
+        );
+        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("Overview, Tasks, and Events"));
+        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("Declare ui.app(...)"));
+        assert!(DEFAULT_OPERATOR_INTRO.contains("without harness-defined UI"));
+        assert!(DEFAULT_OPERATOR_INTRO.contains("runtime tabs"));
+        assert_eq!(DEFAULT_OPERATOR_GUIDANCE_TITLE, "When to add harness UI");
+        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("Keep the default console"));
+        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("lists, forms, reports"));
+    }
+
+    #[test]
+    fn default_operator_metric_groups_keep_app_local_counts() {
+        let summary = DefaultOperatorConsoleSummary {
+            connection: "local".to_string(),
+            target: ".turin/config.toml".to_string(),
+            freshness: "fresh".to_string(),
+            agents: 2,
+            harnesses: 3,
+            channels: 4,
+            live_sessions: 5,
+            stored_sessions: 6,
+            tasks: 7,
+            ui_notices: 8,
+            ui_requests: 9,
+        };
+
+        let groups = default_operator_metric_groups(&summary, 10);
+
+        assert_eq!(
+            groups,
+            vec![
+                DefaultOperatorMetricGroup {
+                    title: "Runtime",
+                    metrics: vec![("Agents", 2), ("Harnesses", 3), ("Channels", 4)],
+                },
+                DefaultOperatorMetricGroup {
+                    title: "Work",
+                    metrics: vec![("Live Sessions", 5), ("Stored Sessions", 6), ("Tasks", 7)],
+                },
+                DefaultOperatorMetricGroup {
+                    title: "UI Signals",
+                    metrics: vec![("Harness Apps", 10), ("Notices", 8), ("Requests", 9)],
+                },
+            ]
+        );
     }
 
     #[test]

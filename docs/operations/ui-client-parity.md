@@ -104,6 +104,8 @@ browser shell that consumes those routes.
   and points authors toward `worklists.*` or a deliberate client adapter.
 - Visible worklist-backed surfaces whose data has not loaded yet remain visible
   with explicit not-yet-loaded copy instead of rendering blank panels.
+- App has helper-level checks for the default no-harness console copy and
+  runtime/work/UI metric grouping.
 - TUI has seed normalized terminal golden fixtures for the default no-harness
   console, a harness screen, a loaded worklist table with selected-row/action
   cues, a pane overlay with pane-local selection cues, and a form modal with
