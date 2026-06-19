@@ -320,7 +320,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("close.dataset.autofocus = \"true\""));
     assert!(js.contains("close.dataset.dialogAction = \"close\""));
     assert!(js.contains("Confirm and run"));
-    assert!(js.contains("Requires confirmation before running."));
+    assert!(js.contains("Queue for confirmation"));
+    assert!(js.contains("Action ${item.action.name} requires confirmation before running."));
     assert!(!js.contains("window.confirm"));
     assert!(js.contains("renderDefaultConsole"));
     assert!(js.contains("Default Operator Console"));
@@ -374,7 +375,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("[\"Claimed by\", item.claim_agent_id]"));
     assert!(js.contains("[\"Failure\", item.failure_reason]"));
     assert!(js.contains("item.action.name"));
-    assert!(js.contains("Review ${item.action.name}"));
+    assert!(js.contains("Action ${item.action.name} requires confirmation before running."));
     assert!(js.contains("selectedListItems"));
     assert!(js.contains("selectedListItem"));
     assert!(js.contains("selectedListItemIndex"));

@@ -873,7 +873,7 @@ fn work_item_row_marker(index: usize, selected: bool) -> String {
 
 fn work_item_action_marker(item: &WorkItemDetail) -> String {
     if item.action.is_some() {
-        "review".to_string()
+        "action".to_string()
     } else {
         "-".to_string()
     }
@@ -1954,7 +1954,7 @@ mod tests {
                 "Recent Release Work worklists.release intent=tasks as=table limit=8",
                 "Rows 1-2 of 2 · selected 1",
                 "# | Title | Status | Kind | Priority | action",
-                "●1 | Approve release | pending | approval | 10 | review",
+                "●1 | Approve release | pending | approval | 10 | action",
                 "2 | Run QA signoff | done | qa | 4 | -",
             ]
         );
@@ -2230,9 +2230,10 @@ mod tests {
         assert!(text.contains("action"));
         assert!(text.contains("Rows 1-2 of 2 · selected 1"));
         assert!(text.contains("●1"));
-        assert!(text.contains("review"));
         assert!(text.contains("Run QA"));
         assert_eq!(work_item_row_marker(1, false), "2");
+        assert_eq!(work_item_action_marker(&items.items[0]), "action");
+        assert_eq!(work_item_action_marker(&items.items[1]), "-");
     }
 
     #[test]
@@ -2773,7 +2774,7 @@ mod tests {
                 "Pane List worklists.release intent=pane as=table limit=5",
                 "Rows 1-2 of 2 · selected 1",
                 "# | Title | Status | action",
-                "●1 | Approve release | pending | review",
+                "●1 | Approve release | pending | action",
                 "2 | Run QA signoff | pending | -",
                 "● Approve visible item",
                 "f switches items/actions j/k moves Enter selects/runs Esc/q closes pane",

@@ -692,7 +692,7 @@ fn render_work_item_detail(
             ui.label(RichText::new("Requires confirmation before running.").weak());
             if ui
                 .add(
-                    cast::Button::new("Review Item Action")
+                    cast::Button::new("Queue for Confirmation")
                         .size(cast::Size::Small)
                         .intent(cast::Intent::Warning)
                         .variant(cast::Variant::Outline),

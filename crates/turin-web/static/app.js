@@ -1140,7 +1140,7 @@ function renderWorkItemDetail(item, app) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "danger-button";
-    button.textContent = `Review ${item.action.name}`;
+    button.textContent = "Queue for confirmation";
     button.addEventListener("click", () => {
       runAction(
         {
@@ -1154,7 +1154,7 @@ function renderWorkItemDetail(item, app) {
     });
     const hint = document.createElement("p");
     hint.className = "muted";
-    hint.textContent = "Requires confirmation before running.";
+    hint.textContent = `Action ${item.action.name} requires confirmation before running.`;
     actions.append(hint, button);
     wrapper.append(actions);
   }
