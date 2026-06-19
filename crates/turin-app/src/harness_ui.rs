@@ -1422,7 +1422,7 @@ mod tests {
         assert!(message.contains("This list is declared and visible"));
         assert!(message.contains("source 'tables.release'"));
         assert!(message.contains("cannot load in the desktop app yet"));
-        assert!(message.contains("Only worklists.* sources load today"));
+        assert!(message.contains("Only named worklists.<name> sources load today"));
         assert!(message.contains("deliberate adapter for this client"));
     }
 

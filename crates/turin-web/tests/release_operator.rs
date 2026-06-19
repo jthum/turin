@@ -425,7 +425,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("envelope: error.envelope || null"));
     assert!(js.contains("status: error.status || null"));
     assert!(js.contains("details.source"));
-    assert!(js.contains("Only worklists.* sources load today"));
+    assert!(js.contains("Only named worklists.<name> sources load today"));
     assert!(js.contains("deliberate adapter for this client"));
     assert!(js.contains("function dataNotLoadedMessage(kind)"));
     assert!(js.contains("dataNotLoadedMessage(\"list\")"));

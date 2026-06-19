@@ -1650,7 +1650,7 @@ mod tests {
         assert!(line.contains("This list is declared and visible"));
         assert!(line.contains("source 'tables.release'"));
         assert!(line.contains("cannot load in the terminal yet"));
-        assert!(line.contains("Only worklists.* sources load today"));
+        assert!(line.contains("Only named worklists.<name> sources load today"));
         assert!(line.contains("deliberate adapter for this client"));
     }
 

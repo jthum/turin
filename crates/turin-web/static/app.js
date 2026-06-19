@@ -1344,8 +1344,8 @@ function renderPlaceholder(node, app) {
 function unsupportedSourceMessage(kind, source) {
   const surface = String(kind || "").trim() || "surface";
   const normalizedSource = String(source || "").trim();
-  if (!normalizedSource) return `This ${surface} is declared and visible, but no source was provided. Add a worklists.* source or a deliberate adapter for this client.`;
-  return `This ${surface} is declared and visible, but source '${normalizedSource}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter for this client.`;
+  if (!normalizedSource) return `This ${surface} is declared and visible, but no source was provided. Add a worklists.<name> source or a deliberate adapter for this client.`;
+  return `This ${surface} is declared and visible, but source '${normalizedSource}' cannot load in the browser yet. Only named worklists.<name> sources load today; model this data as a worklist or add a deliberate adapter for this client.`;
 }
 
 function dataNotLoadedMessage(kind) {

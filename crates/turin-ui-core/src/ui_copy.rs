@@ -8,7 +8,7 @@ pub fn unsupported_ui_source_message(surface: &str, source: &str, client: &str) 
     let source = source.trim();
     if source.is_empty() {
         return format!(
-            "This {surface} is declared and visible, but no source was provided. Add a worklists.* source or a deliberate adapter for this client."
+            "This {surface} is declared and visible, but no source was provided. Add a worklists.<name> source or a deliberate adapter for this client."
         );
     }
 
@@ -19,7 +19,7 @@ pub fn unsupported_ui_source_message(surface: &str, source: &str, client: &str) 
         client
     };
     format!(
-        "This {surface} is declared and visible, but source '{source}' cannot load in {client} yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter for this client."
+        "This {surface} is declared and visible, but source '{source}' cannot load in {client} yet. Only named worklists.<name> sources load today; model this data as a worklist or add a deliberate adapter for this client."
     )
 }
 
@@ -46,7 +46,7 @@ mod tests {
         assert!(message.contains("This list is declared and visible"));
         assert!(message.contains("source 'tables.release'"));
         assert!(message.contains("cannot load in the terminal yet"));
-        assert!(message.contains("Only worklists.* sources load today"));
+        assert!(message.contains("Only named worklists.<name> sources load today"));
         assert!(message.contains("deliberate adapter for this client"));
     }
 
@@ -56,7 +56,7 @@ mod tests {
 
         assert!(message.contains("This detail is declared and visible"));
         assert!(message.contains("no source was provided"));
-        assert!(message.contains("worklists.* source"));
+        assert!(message.contains("worklists.<name> source"));
         assert!(!message.contains("the desktop app"));
     }
 
