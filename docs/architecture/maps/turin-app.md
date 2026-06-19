@@ -108,7 +108,7 @@ git diff --check
 The current app is the richest local client. It includes connection profile
 editing, runtime overview tabs, semantic harness app rendering, nested menu
 navigation, app-local row detail with named filter/sort/limit metadata,
-row-count and selected-row feedback, sorted-column markers,
+row-count and selected-row feedback, direction-aware sorted-column markers,
 timeline/pause/claim/failure item context, filtered empty-list copy, editable
 forms with masked password-like fields, confirmation modals, latest action
 result feedback, shown panes,

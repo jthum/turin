@@ -1814,11 +1814,18 @@ function fieldLabel(field) {
 function fieldHeaderLabel(field, node) {
   const label = fieldLabel(field);
   const index = sortFieldIndex(field, node?.sort || []);
-  return index >= 0 ? `${label} [sort ${index + 1}]` : label;
+  if (index < 0) return label;
+  const direction = sortFieldDirection(field, node?.sort || []);
+  return `${label} [sort ${index + 1}${direction ? ` ${direction}` : ""}]`;
 }
 
 function sortFieldIndex(field, sort) {
   return sort.findIndex(entry => sortEntryField(entry) === field);
+}
+
+function sortFieldDirection(field, sort) {
+  const entry = sort.find(candidate => sortEntryField(candidate) === field);
+  return sortEntryDirection(entry);
 }
 
 function sortEntryField(entry) {
@@ -1828,6 +1835,22 @@ function sortEntryField(entry) {
     .trim()
     .split(/\s+/)[0]
     .split(":")[0];
+}
+
+function sortEntryDirection(entry) {
+  const raw = String(entry || "").trim();
+  const prefixDirection = raw.startsWith("-") ? "desc" : raw.startsWith("+") ? "asc" : "";
+  const normalized = raw.replace(/^[+-]+/, "").trim();
+  const [fieldToken, directionToken] = normalized.split(/\s+/);
+  const colonDirection = directionLabel((fieldToken || "").split(":")[1]);
+  return colonDirection || directionLabel(directionToken) || prefixDirection;
+}
+
+function directionLabel(value) {
+  const normalized = String(value || "").trim().replace(/[,;]+$/, "").toLowerCase();
+  if (normalized === "asc" || normalized === "ascending") return "asc";
+  if (normalized === "desc" || normalized === "descending") return "desc";
+  return "";
 }
 
 function reportMetrics(items) {

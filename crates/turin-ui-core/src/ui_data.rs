@@ -66,6 +66,36 @@ pub fn ui_sort_entry_field(entry: &str) -> &str {
     entry.split(':').next().unwrap_or(entry)
 }
 
+pub fn ui_sort_entry_direction(entry: &str) -> Option<&'static str> {
+    let raw = entry.trim();
+    let prefix_direction = match raw.chars().next() {
+        Some('-') => Some("desc"),
+        Some('+') => Some("asc"),
+        _ => None,
+    };
+    let entry = raw.trim_start_matches(|ch| ch == '+' || ch == '-').trim();
+    let mut tokens = entry.split_whitespace();
+    let first = tokens.next().unwrap_or(entry);
+    if let Some(direction) = first.split(':').nth(1).and_then(ui_sort_direction_label) {
+        return Some(direction);
+    }
+    tokens
+        .next()
+        .and_then(ui_sort_direction_label)
+        .or(prefix_direction)
+}
+
+fn ui_sort_direction_label(value: &str) -> Option<&'static str> {
+    let value = value.trim().trim_matches([',', ';']);
+    if value.eq_ignore_ascii_case("asc") || value.eq_ignore_ascii_case("ascending") {
+        return Some("asc");
+    }
+    if value.eq_ignore_ascii_case("desc") || value.eq_ignore_ascii_case("descending") {
+        return Some("desc");
+    }
+    None
+}
+
 pub fn collect_ui_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
     let mut out = Vec::new();
     collect_ui_list_requests_into(nodes, &mut out);
@@ -156,8 +186,8 @@ mod tests {
         DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
         DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
         is_named_worklist_ui_source, is_worklist_ui_source, ui_list_filter_fields,
-        ui_list_sort_fields, ui_refresh_requests_for_binding, ui_sort_entry_field,
-        ui_worklist_name_from_source, ui_worklist_request,
+        ui_list_sort_fields, ui_refresh_requests_for_binding, ui_sort_entry_direction,
+        ui_sort_entry_field, ui_worklist_name_from_source, ui_worklist_request,
     };
 
     #[test]
@@ -227,6 +257,10 @@ mod tests {
             ui_sort_entry_field("metadata.release:asc"),
             "metadata.release"
         );
+        assert_eq!(ui_sort_entry_direction("-updated_at desc"), Some("desc"));
+        assert_eq!(ui_sort_entry_direction("+priority"), Some("asc"));
+        assert_eq!(ui_sort_entry_direction("metadata.release:asc"), Some("asc"));
+        assert_eq!(ui_sort_entry_direction("status"), None);
     }
 
     #[test]

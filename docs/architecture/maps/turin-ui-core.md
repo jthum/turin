@@ -104,9 +104,9 @@ runtime-owned UI session store, or a second daemon implementation.
   identify the failed semantic request, but retry state, visible error copy, and
   cache invalidation remain client-owned.
 - Worklist source validation, request-discovery, selected item key matching,
-  list filter/sort field derivation, default-screen target lookup, node target
-  matching, show-target classification, refresh request selection, badge text
-  derivation, and display helpers must stay stateless and
+  list filter/sort field and sort-direction derivation, default-screen target
+  lookup, node target matching, show-target classification, refresh request
+  selection, badge text derivation, and display helpers must stay stateless and
   renderer-neutral.
 - Form value helpers may parse/default individual field values, but form drafts,
   field focus, validation display, submission timing, and modal state remain in
@@ -179,7 +179,7 @@ shared fallback/not-loaded copy, harness action command dispatch with returned
 UI intent application, stateless form value coercion and password-field
 classification, and small
 worklist summaries, including stable work-item key matching for client-local
-row selection and list filter/sort field summaries. It intentionally does not
-provide a common active-screen model or shared UI session state; those seams
-should be extracted later only if the clients independently converge on the
-same shape.
+row selection, list filter/sort field summaries, and advisory sort-direction
+labels. It intentionally does not provide a common active-screen model or
+shared UI session state; those seams should be extracted later only if the
+clients independently converge on the same shape.

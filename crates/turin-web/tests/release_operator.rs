@@ -418,9 +418,14 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("workItemActionMarker(item)"));
     assert!(js.contains("function workItemActionMarker(item)"));
     assert!(js.contains("return item.action?.name ? \"action\" : \"-\";"));
-    assert!(js.contains("[sort ${index + 1}]"));
+    assert!(js.contains("[sort ${index + 1}${direction"));
+    assert!(js.contains("sortFieldDirection(field, node?.sort || [])"));
+    assert!(js.contains("${direction ? ` ${direction}` : \"\"}"));
+    assert!(js.contains("function sortEntryDirection(entry)"));
+    assert!(js.contains("function directionLabel(value)"));
     assert!(js.contains("function sortFieldIndex(field, sort)"));
     assert!(js.contains("function sortEntryField(entry)"));
+    assert!(js.contains(".split(/\\s+/)[0]"));
     assert!(js.contains("function fieldLabel(field)"));
     assert!(js.contains(".split(/[_.]/)"));
     assert!(js.contains("counts.done"));

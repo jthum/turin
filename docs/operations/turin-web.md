@@ -326,8 +326,8 @@ The current browser shell is intentionally small:
 - local selected app/screen/list row/form draft/action-running state
 - browser-local pane overlay state for `ui.show` pane targets
 - table rendering for worklist-backed lists, including human-readable field
-  labels, sorted-column markers, filter/sort/limit metadata, row-count, and
-  selected row feedback
+  labels, direction-aware sorted-column markers, filter/sort/limit metadata,
+  row-count, and selected row feedback
 - click, Enter/Space, ArrowUp/ArrowDown, Home, and End selection for
   worklist-backed list rows
 - inline selected-row detail for worklist-backed lists, with browser-local item
