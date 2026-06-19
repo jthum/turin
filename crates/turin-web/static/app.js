@@ -1320,7 +1320,7 @@ function renderField(field, node, formKey) {
     }
   } else {
     input = document.createElement("input");
-    input.type = kind === "number" || kind === "integer" ? "number" : "text";
+    input.type = inputTypeForFieldKind(kind);
     if (kind === "number") input.step = "any";
     if (kind === "integer") input.step = "1";
   }
@@ -1914,7 +1914,14 @@ function normalizeFieldKind(kind) {
   if (normalized === "int") return "integer";
   if (normalized === "float" || normalized === "decimal") return "number";
   if (normalized === "multiline") return "textarea";
+  if (normalized === "secret" || normalized === "passphrase") return "password";
   return normalized;
+}
+
+function inputTypeForFieldKind(kind) {
+  if (kind === "number" || kind === "integer") return "number";
+  if (kind === "password") return "password";
+  return "text";
 }
 
 function formDraftKey(node) {

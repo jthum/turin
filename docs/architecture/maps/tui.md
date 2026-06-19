@@ -98,9 +98,10 @@ shared operator commands, and stateless target lookup belong in
   shared analytics/query semantics layer. Empty report/chart data should remain
   visible with explicit no-data copy.
 - Form nodes render as editable terminal modals. Textarea/markdown fields can
-  accept `Ctrl+J` newlines but still display as compact previews. Unsupported
-  rich form controls should degrade to text/option/boolean editing rather than
-  forcing renderer concepts into the protocol.
+  accept `Ctrl+J` newlines but still display as compact previews.
+  Password-like fields keep terminal input local and mask preview text.
+  Unsupported rich form controls should degrade to text/option/boolean editing
+  rather than forcing renderer concepts into the protocol.
 - Form field edits, clears, option cycles, and boolean toggles clear stale
   validation feedback locally; validation still runs again on submit.
 - Pane targets render as terminal overlays with their own local item/action
@@ -153,7 +154,8 @@ navigation, focus cycling that skips empty regions, local work-item selection
 with inspector detail that includes worklist, timeline, pause, claim, parent,
 completion, failure, and action context, selected-row table windowing,
 page/boundary navigation in focused regions, dynamic open/focus handling, shown pane overlays with
-pane-local item/action selection, editable forms, worklist-backed
+pane-local item/action selection, editable forms with masked password-like
+field previews, worklist-backed
 activity/detail/report/chart surfaces with explicit no-data copy and grouping
 hints, latest action result feedback, task and event inspectors, confirmation
 flow, UI notices, and list invalidation. Default-screen lookup, node-id

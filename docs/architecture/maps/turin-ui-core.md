@@ -41,7 +41,8 @@ runtime-owned UI session store, or a second daemon implementation.
     still decide local focus behavior.
 - `crates/turin-ui-core/src/form_values.rs`
   - Stateless semantic UI form value helpers for default display values, field
-    kind aliases, typed option preservation, and scalar coercion.
+    kind aliases, typed option preservation, password-field classification, and
+    scalar coercion.
 - `crates/turin-ui-core/src/worklist_view.rs`
   - Stateless worklist display derivation helpers for counts, grouping, and
     field labels.
@@ -175,7 +176,8 @@ badge text derivation, stateless show-target classification, stateless action
 feedback app-scoping, stateless visible-node request derivation,
 stateless refresh request selection for matching semantic list bindings,
 shared fallback/not-loaded copy, harness action command dispatch with returned
-UI intent application, stateless form value coercion, and small
+UI intent application, stateless form value coercion and password-field
+classification, and small
 worklist summaries, including stable work-item key matching for client-local
 row selection and list filter/sort field summaries. It intentionally does not
 provide a common active-screen model or shared UI session state; those seams

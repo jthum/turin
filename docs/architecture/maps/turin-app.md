@@ -60,6 +60,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
   view and should stay behind confirmation when launched from item detail.
 - Form drafts are local until submit. Submitted values become action params
   only through the action command path.
+- Password-like form fields render with Cast password inputs when declared, but
+  this remains a client presentation behavior; submitted values are still
+  ordinary form params.
 - Latest action results are local operator feedback. Returned UI intents from
   those action results are local presentation hints. Durable workflow state
   belongs in runtime primitives such as worklists, events, memory, or KV.
@@ -107,7 +110,8 @@ editing, runtime overview tabs, semantic harness app rendering, nested menu
 navigation, app-local row detail with named filter/sort/limit metadata,
 row-count and selected-row feedback, sorted-column markers,
 timeline/pause/claim/failure item context, filtered empty-list copy, editable
-forms, confirmation modals, latest action result feedback, shown panes,
+forms with masked password-like fields, confirmation modals, latest action
+result feedback, shown panes,
 dynamic UI navigation/focus/refresh
 handling, dynamic badges, and lightweight worklist-backed activity, detail,
 report, and chart surfaces with explicit no-data copy and grouping hints. Form

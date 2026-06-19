@@ -248,6 +248,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("input.tagName === \"SELECT\" && field.options?.length"));
     assert!(js.contains("return decodeFieldValue(input.value)"));
     assert!(js.contains("function encodeFieldValue(value)"));
+    assert!(js.contains("function inputTypeForFieldKind(kind)"));
+    assert!(js.contains("if (kind === \"password\") return \"password\""));
+    assert!(js.contains("normalized === \"secret\" || normalized === \"passphrase\""));
     assert!(js.contains("function decodeFieldValue(value)"));
     assert!(js.contains("if (kind === \"number\") input.step = \"any\""));
     assert!(

@@ -26,7 +26,7 @@ pub use dashboard::{
 };
 pub use form_values::{
     parse_ui_form_value, ui_form_default_value, ui_form_field_kind, ui_form_is_bool_field,
-    ui_form_is_multiline_field, ui_form_value_string,
+    ui_form_is_multiline_field, ui_form_is_password_field, ui_form_value_string,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
 pub use ui_actions::{ui_harness_action_failure_matches_app, ui_harness_action_result_matches_app};

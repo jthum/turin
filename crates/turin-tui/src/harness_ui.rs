@@ -24,7 +24,8 @@ use turin_ui_core::{
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
     ui_form_field_kind as normalized_form_field_kind, ui_form_is_bool_field as is_bool_field,
-    ui_form_is_multiline_field as is_multiline_field, ui_form_value_string as form_value_string,
+    ui_form_is_multiline_field as is_multiline_field,
+    ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
     ui_node_id_matches as node_id_matches, ui_screen_index_for_target as screen_index_for_target,
 };
 

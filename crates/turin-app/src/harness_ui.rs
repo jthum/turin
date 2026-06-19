@@ -13,11 +13,11 @@ use turin_ui_core::{
     UiListRequest, is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
-    ui_form_value_string as form_value_string, ui_list_filter_fields, ui_list_sort_fields,
-    ui_sort_entry_field as sort_entry_field, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, work_item_index_by_key, work_item_key, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
+    ui_list_filter_fields, ui_list_sort_fields, ui_sort_entry_field as sort_entry_field,
+    ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
+    work_item_index_by_key, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -952,6 +952,7 @@ fn render_form_field(
         ui.add(
             cast::TextInput::new(value)
                 .hint_text(field.name.clone())
+                .password(is_password_field(field))
                 .width(260.0),
         );
     }

@@ -389,6 +389,7 @@ The TUI renders harness UI contracts semantically:
   context
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
+- password-like form fields keep drafts terminal-local and mask preview text
 - worklist-backed report and chart nodes become lightweight summaries, next
   pending item highlights, and bar breakdowns
 - forms open a terminal editor that keeps draft values local to the client,

@@ -45,6 +45,13 @@ pub fn ui_form_is_multiline_field(field: &UiFormField) -> bool {
     )
 }
 
+pub fn ui_form_is_password_field(field: &UiFormField) -> bool {
+    matches!(
+        ui_form_field_kind(field).as_str(),
+        "password" | "secret" | "passphrase"
+    )
+}
+
 pub fn parse_ui_form_value(field: &UiFormField, value: &str) -> Result<Value, String> {
     if let Some(option) = field
         .options
@@ -83,7 +90,7 @@ mod tests {
 
     use super::{
         parse_ui_form_value, ui_form_default_value, ui_form_field_kind, ui_form_is_bool_field,
-        ui_form_is_multiline_field,
+        ui_form_is_multiline_field, ui_form_is_password_field,
     };
 
     #[test]
@@ -142,10 +149,12 @@ mod tests {
     fn field_kind_helpers_normalize_common_aliases() {
         let bool_field = test_field("confirmed", "checkbox");
         let multiline_field = test_field("notes", "markdown");
+        let password_field = test_field("token", "SECRET");
 
         assert_eq!(ui_form_field_kind(&test_field("plain", "TEXT")), "text");
         assert!(ui_form_is_bool_field(&bool_field));
         assert!(ui_form_is_multiline_field(&multiline_field));
+        assert!(ui_form_is_password_field(&password_field));
     }
 
     fn test_field(name: &str, kind: &str) -> UiFormField {

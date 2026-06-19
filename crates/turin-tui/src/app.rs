@@ -2556,6 +2556,9 @@ fn form_field_value_preview(field: &turin_daemon_protocol::UiFormField, value: &
     if value.is_empty() {
         return "<empty>".to_string();
     }
+    if harness_ui::is_password_field(field) {
+        return "••••••••".to_string();
+    }
     if harness_ui::is_multiline_field(field) {
         let line_count = value.split('\n').count();
         let preview = value.replace('\n', " ↵ ");
@@ -3036,6 +3039,24 @@ mod tests {
 
         assert_eq!(preview, "2 lines · first line ↵ second line");
         assert!(harness_ui::is_multiline_field(&field));
+    }
+
+    #[test]
+    fn form_field_value_preview_masks_password_text() {
+        let field = UiFormField {
+            name: "token".to_string(),
+            label: "Token".to_string(),
+            kind: Some("secret".to_string()),
+            default: None,
+            required: None,
+            options: Vec::new(),
+        };
+
+        let preview = form_field_value_preview(&field, "super-secret-token");
+
+        assert_eq!(preview, "••••••••");
+        assert!(harness_ui::is_password_field(&field));
+        assert!(!preview.contains("super-secret-token"));
     }
 
     #[test]
