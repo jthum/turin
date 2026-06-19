@@ -387,14 +387,15 @@ target artifacts, scratch data, and inline `#[cfg(test)] mod tests` blocks,
 records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
-The latest local UI-chapter sample on June 19, 2026 reported:
+The latest local UI-chapter sample
+(`.workspace/perf-reports/footprint-1781830147.md`) reported:
 
-- `86290` Rust code lines under `src` and `crates`
+- `86301` Rust code lines under `src` and `crates`
 - `4819` code lines in `crates/turin-app`
-- `4116` code lines in `crates/turin-tui`
+- `4127` code lines in `crates/turin-tui`
 - `3325` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
-- `77380` bytes across first-party `turin-web` static assets
+- `79637` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
