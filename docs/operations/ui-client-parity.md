@@ -108,10 +108,11 @@ browser shell that consumes those routes.
   runtime/work/UI metric grouping.
 - TUI has seed normalized terminal golden fixtures for the default no-harness
   console, a harness screen, a loaded worklist table with selected-row/action
-  cues, a pane overlay with pane-local selection cues, and a form modal with
-  typed previews and validation copy. There is still no broader screenshot or
-  terminal-golden suite across clients. Current coverage is otherwise semantic
-  helper tests plus app/web/TUI smoke and unit tests.
+  cues, a loaded report/chart screen, a pane overlay with pane-local selection
+  cues, and a form modal with typed previews and validation copy. There is still
+  no broader screenshot or terminal-golden suite across clients. Current
+  coverage is otherwise semantic helper tests plus app/web/TUI smoke and unit
+  tests.
 
 ## Update Rule
 
