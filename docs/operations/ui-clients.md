@@ -217,17 +217,23 @@ session before sampling. Close the client normally after sampling. Do not
 compare numbers across machines as hard budgets; compare them against previous
 samples from the same machine and release profile.
 
-Recent local live web checkpoint from
-`.workspace/perf-reports/ui-client-idle-snapshot-1781831251-1761607.md`:
+Recent local live release-client checkpoints:
 
 | client | path | rss KB | pss KB | source |
 | --- | --- | ---: | ---: | --- |
+| `turin-tui` | `target/release/turin-tui` | 6,172 | 3,646 | `smaps_rollup` |
+| `turin-app` | `target/release/turin-app` | 92,656 | 83,198 | `smaps_rollup` |
 | `turin-web` | `target/release/turin-web` | 5,564 | 3,042 | `smaps_rollup` |
 
-This sample launched `turin-web` against `.turin/config.toml` on
-`127.0.0.1:9349`, waited roughly three seconds, sampled the process, and shut it
-down. App/TUI live idle samples should be taken from an interactive desktop or
-terminal session.
+Reports:
+
+- `.workspace/perf-reports/ui-client-idle-snapshot-1781831522-1764905.md`
+- `.workspace/perf-reports/ui-client-idle-snapshot-1781831569-1765289.md`
+- `.workspace/perf-reports/ui-client-idle-snapshot-1781831251-1761607.md`
+
+These samples launched release clients against `.turin/config.toml`, waited a
+few seconds, sampled the process, and shut it down. Treat the values as
+same-machine trend baselines, not universal budgets.
 
 ## Local Usage
 
