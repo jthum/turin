@@ -58,6 +58,9 @@ session state, invent renderer-specific harness APIs, or bypass
   memory-local and should not be persisted by `turin-web`.
 - Browser option-backed form selects should encode and decode option values as
   JSON scalars so non-string options stay typed through submission.
+- Browser multiline form aliases such as `textarea`, `markdown`, and
+  `multiline` should render as textarea controls while remaining browser-local
+  drafts until submit.
 - Browser password-like form fields should use password inputs while keeping
   drafts browser-local and submitted params unchanged.
 - Dynamic UI intents returned by action responses are local presentation hints,

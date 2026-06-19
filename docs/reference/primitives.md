@@ -321,8 +321,9 @@ Form options:
   instead of overwriting it with null.
 - `type` is accepted as DX sugar for the protocol field `kind`.
 - clients may validate and coerce common field kinds such as `text`, `number`,
-  `integer`, and `boolean`; `password`/`secret`/`passphrase` fields may render
-  as masked controls while still submitting strings; unsupported kinds should
+  `integer`, and `boolean`; `textarea`/`markdown`/`multiline` fields may render
+  as multiline controls; `password`/`secret`/`passphrase` fields may render as
+  masked controls while still submitting strings; unsupported kinds should
   degrade to text input.
 
 Current behavior:

@@ -258,6 +258,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             "if (normalized === \"float\" || normalized === \"decimal\") return \"number\""
         )
     );
+    assert!(js.contains(
+        "if (normalized === \"multiline\" || normalized === \"markdown\") return \"textarea\""
+    ));
     assert!(js.contains("runningActions"));
     assert!(js.contains("renderReport"));
     assert!(js.contains("renderReportHighlight"));

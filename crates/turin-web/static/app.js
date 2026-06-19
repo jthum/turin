@@ -1913,7 +1913,7 @@ function normalizeFieldKind(kind) {
   if (normalized === "bool" || normalized === "checkbox" || normalized === "switch") return "boolean";
   if (normalized === "int") return "integer";
   if (normalized === "float" || normalized === "decimal") return "number";
-  if (normalized === "multiline") return "textarea";
+  if (normalized === "multiline" || normalized === "markdown") return "textarea";
   if (normalized === "secret" || normalized === "passphrase") return "password";
   return normalized;
 }
