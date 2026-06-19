@@ -48,6 +48,8 @@ session state, invent renderer-specific harness APIs, or bypass
 11. Browser-local dynamic badges are re-applied to freshly fetched app records
     after status refreshes, because action-returned badges are presentation
     hints rather than durable daemon state.
+12. Browser list-load failures are cached per semantic request and can be
+    retried by deleting that local cache entry and calling `/api/ui/list` again.
 
 ## Invariants
 
@@ -98,6 +100,8 @@ session state, invent renderer-specific harness APIs, or bypass
   selection in `turin-web`.
 - Browser empty-list copy should name declared filters when they may explain an
   empty worklist-backed result.
+- Browser list-load error states should offer a local per-request retry path so
+  a failed cache entry does not require a full page reload.
 - Browser report/chart surfaces should remain visible with explicit no-data
   copy when the backing worklist has no rows.
 - Non-loopback binds require explicit opt-in.

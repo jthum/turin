@@ -422,6 +422,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("errorMessageFromEnvelope"));
     assert!(js.contains("details?.guidance"));
     assert!(js.contains("appendCachedDataError"));
+    assert!(js.contains("Retry data load"));
+    assert!(js.contains("function retryDataRequest(request)"));
+    assert!(js.contains("state.listCache.delete(listKey(request));"));
     assert!(js.contains("envelope: error.envelope || null"));
     assert!(js.contains("status: error.status || null"));
     assert!(js.contains("details.source"));
@@ -470,6 +473,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(css.contains(".rail-status[data-state=\"error\"]"));
     assert!(css.contains(".surface-state"));
     assert!(css.contains(".surface-state[data-level=\"error\"]"));
+    assert!(css.contains(".surface-state .ghost-button"));
     assert!(css.contains(".confirm-overlay"));
     assert!(css.contains(".confirm-dialog"));
     assert!(css.contains(".default-console"));

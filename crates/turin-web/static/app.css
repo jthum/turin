@@ -539,6 +539,11 @@ tr:last-child td {
   color: var(--muted);
 }
 
+.surface-state .ghost-button {
+  justify-self: start;
+  margin-top: var(--space-1);
+}
+
 .surface-state[data-level="loading"] {
   border-left-color: var(--info);
 }

@@ -956,7 +956,7 @@ function renderList(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendCachedDataError(panel, "List failed to load", cached);
+    appendCachedDataError(panel, "List failed to load", cached, request);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1044,7 +1044,7 @@ function renderActivity(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendCachedDataError(panel, "Activity failed to load", cached);
+    appendCachedDataError(panel, "Activity failed to load", cached, request);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1086,7 +1086,7 @@ function renderDetail(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendCachedDataError(panel, "Detail failed to load", cached);
+    appendCachedDataError(panel, "Detail failed to load", cached, request);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1178,7 +1178,7 @@ function renderReport(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendCachedDataError(panel, "Report failed to load", cached);
+    appendCachedDataError(panel, "Report failed to load", cached, request);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1211,7 +1211,7 @@ function renderChart(node, app) {
     return panel;
   }
   if (cached.error) {
-    appendCachedDataError(panel, "Chart failed to load", cached);
+    appendCachedDataError(panel, "Chart failed to load", cached, request);
     return panel;
   }
   const items = cached.list?.items ?? [];
@@ -1371,13 +1371,26 @@ function appendState(panel, level, title, body) {
   panel.append(renderState(title, body, level));
 }
 
-function appendCachedDataError(panel, title, cached) {
+function appendCachedDataError(panel, title, cached, request) {
   const details = cached.envelope?.details || {};
   const context = [cached.envelope?.code, details.source]
     .filter(value => typeof value === "string" && value.trim())
     .join(" · ");
   const body = context ? `${cached.error} (${context})` : cached.error;
-  appendState(panel, "error", title, body);
+  const node = renderState(title, body, "error");
+  if (request) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "ghost-button";
+    retry.textContent = "Retry data load";
+    retry.addEventListener("click", () => {
+      retryDataRequest(request).catch(error => {
+        pushNotice("error", "Retry failed", error.message);
+      });
+    });
+    node.append(retry);
+  }
+  panel.append(node);
 }
 
 function renderState(title, body, level = "info") {
@@ -1567,6 +1580,14 @@ async function loadDataRequest(request) {
   } finally {
     state.loadingLists.delete(key);
   }
+}
+
+async function retryDataRequest(request) {
+  state.listCache.delete(listKey(request));
+  const loading = loadDataRequest(request);
+  render();
+  await loading;
+  render();
 }
 
 function invalidateLists() {
