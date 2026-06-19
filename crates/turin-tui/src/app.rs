@@ -9,15 +9,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
 use turin_control_client::TaskStatus;
-use turin_daemon_protocol::{
-    EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemDetail, WorkItemList,
-};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemList};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, DefaultOperatorConsoleSummary,
     HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiShowTarget, UiUpdate,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
-    ui_refresh_requests_for_binding, ui_show_target_for,
+    ui_refresh_requests_for_binding, ui_show_target_for, work_item_key,
 };
 
 use crate::{harness_ui, theme};
@@ -2365,16 +2363,8 @@ fn work_item_selection_key(selection: &harness_ui::HarnessWorkItemSelection) -> 
     format!(
         "{}:{}",
         selection.list_source,
-        work_item_identity(&selection.item)
+        work_item_key(&selection.item)
     )
-}
-
-fn work_item_identity(item: &WorkItemDetail) -> String {
-    if item.public_id.is_empty() {
-        item.id.to_string()
-    } else {
-        item.public_id.clone()
-    }
 }
 
 fn pane_actions(

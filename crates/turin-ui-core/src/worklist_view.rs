@@ -101,6 +101,21 @@ pub fn work_item_key(item: &WorkItemDetail) -> String {
     }
 }
 
+pub fn work_item_matches_key(item: &WorkItemDetail, key: &str) -> bool {
+    if item.public_id == key {
+        return true;
+    }
+    key.parse::<i64>().ok() == Some(item.id)
+}
+
+pub fn work_item_index_by_key(items: &WorkItemList, key: Option<&str>) -> Option<usize> {
+    let key = key?;
+    items
+        .items
+        .iter()
+        .position(|item| work_item_matches_key(item, key))
+}
+
 fn value_label(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
@@ -193,6 +208,32 @@ mod tests {
         assert_eq!(work_item_field_label(&item, "id"), "REL-42");
         assert_eq!(work_item_field_label(&item, "internal_id"), "42");
         assert_eq!(work_item_field_label(&item, "release"), "2026.06");
+    }
+
+    #[test]
+    fn work_item_matching_accepts_public_or_numeric_keys() {
+        let item = test_work_item(42, "REL-42", "pending", "approval");
+
+        assert!(work_item_matches_key(&item, "REL-42"));
+        assert!(work_item_matches_key(&item, "42"));
+        assert!(work_item_matches_key(&item, "042"));
+        assert!(!work_item_matches_key(&item, "REL-1"));
+    }
+
+    #[test]
+    fn work_item_index_by_key_preserves_selection_after_reorder() {
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![
+                test_work_item(2, "REL-2", "pending", "approval"),
+                test_work_item(1, "REL-1", "pending", "approval"),
+            ],
+        };
+
+        assert_eq!(work_item_index_by_key(&items, Some("REL-1")), Some(1));
+        assert_eq!(work_item_index_by_key(&items, Some("2")), Some(0));
+        assert_eq!(work_item_index_by_key(&items, Some("missing")), None);
+        assert_eq!(work_item_index_by_key(&items, None), None);
     }
 
     fn test_work_item(id: i64, public_id: &str, status: &str, kind: &str) -> WorkItemDetail {

@@ -14,8 +14,9 @@ use turin_ui_core::{
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_value_string as form_value_string, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    work_item_field_label, work_item_index_by_key, work_item_key, worklist_chart_group_field,
+    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -501,7 +502,9 @@ fn render_work_items(
     let mut columns = columns;
     columns.insert(0, String::new());
     columns.push("action".to_string());
-    let selected_index = selected_work_item_index(items, selected_list_items.get(list_key));
+    let selected_index =
+        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
+            .unwrap_or(0);
     if let Some(item) = items.items.get(selected_index) {
         selected_list_items.insert(list_key.to_string(), work_item_key(item));
     }
@@ -1222,16 +1225,6 @@ fn sort_entry_field(entry: &str) -> &str {
     entry.split(':').next().unwrap_or(entry)
 }
 
-fn selected_work_item_index(items: &WorkItemList, selected: Option<&String>) -> usize {
-    selected
-        .and_then(|selected| {
-            items.items.iter().position(|item| {
-                item.public_id == *selected || item.id.to_string() == selected.as_str()
-            })
-        })
-        .unwrap_or(0)
-}
-
 fn work_item_selection_summary(item_count: usize, selected_index: usize) -> String {
     if item_count == 0 {
         return "Rows 0-0 of 0".to_string();
@@ -1515,20 +1508,6 @@ mod tests {
         assert!(worklist_request("worklists.release", 25).is_some());
         assert!(worklist_request("worklists.", 25).is_none());
         assert!(worklist_request("worklists. ", 25).is_none());
-    }
-
-    #[test]
-    fn selected_work_item_index_preserves_selected_item_after_reorder() {
-        let selected = "REL-2".to_string();
-        let items = WorkItemList {
-            worklist_id: "release".to_string(),
-            items: vec![
-                test_work_item(2, "REL-2", "Second release gate"),
-                test_work_item(1, "REL-1", "First release gate"),
-            ],
-        };
-
-        assert_eq!(selected_work_item_index(&items, Some(&selected)), 0);
     }
 
     #[test]

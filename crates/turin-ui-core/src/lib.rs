@@ -45,7 +45,7 @@ pub use ui_navigation::{
     ui_nodes_contain_target, ui_screen_index_for_target, ui_show_target_for,
 };
 pub use worklist_view::{
-    WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    WorklistStatusCounts, work_item_field_label, work_item_index_by_key, work_item_key,
+    work_item_matches_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };

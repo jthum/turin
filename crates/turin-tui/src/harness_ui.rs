@@ -17,8 +17,8 @@ use turin_ui_core::{
     is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
-    worklist_chart_group_field, worklist_chart_group_label, worklist_group_counts,
-    worklist_highest_priority_pending_item, worklist_status_counts,
+    work_item_index_by_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
@@ -771,7 +771,7 @@ fn render_work_items(
     );
     columns.push("action".to_string());
     let widths = work_item_table_widths(&fields, max_width.saturating_sub(depth * 2));
-    let selected_index = selected_work_item_index(items, selected_work_item_id);
+    let selected_index = work_item_index_by_key(items, selected_work_item_id);
     let (start, end) = work_item_visible_window(items.items.len(), selected_index);
     lines.push(indent_line(
         depth,
@@ -823,17 +823,6 @@ fn render_work_items(
             theme::muted(),
         ));
     }
-}
-
-fn selected_work_item_index(
-    items: &WorkItemList,
-    selected_work_item_id: Option<&str>,
-) -> Option<usize> {
-    let selected_work_item_id = selected_work_item_id?;
-    let selected_numeric_id = selected_work_item_id.parse::<i64>().ok();
-    items.items.iter().position(|item| {
-        item.public_id == selected_work_item_id || selected_numeric_id == Some(item.id)
-    })
 }
 
 fn work_item_visible_window(item_count: usize, selected_index: Option<usize>) -> (usize, usize) {
