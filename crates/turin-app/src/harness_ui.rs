@@ -1274,7 +1274,7 @@ fn work_item_context_badges(item: &WorkItemDetail) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use turin_daemon_protocol::{UiAppIntent, UiFormField, UiIntentSource};
+    use turin_daemon_protocol::{UiAppIntent, UiFormField, UiIntentSource, UiScreenIntent};
 
     fn test_app() -> UiAppRecord {
         UiAppRecord {
@@ -1292,6 +1292,69 @@ mod tests {
             opens_with: None,
             badges: BTreeMap::new(),
         }
+    }
+
+    fn focus_test_app() -> UiAppRecord {
+        let mut app = test_app();
+        app.screens = BTreeMap::from([
+            (
+                "home".to_string(),
+                UiScreenIntent {
+                    app_id: app.id.clone(),
+                    id: "home".to_string(),
+                    title: "Release Desk".to_string(),
+                    presentation: None,
+                    nodes: vec![
+                        UiNode::Action(UiActionNode {
+                            id: Some("seed-demo-work".to_string()),
+                            label: "Seed Demo Work".to_string(),
+                            action: "release.seed_demo_work".to_string(),
+                            params: Value::Null,
+                            confirm: false,
+                        }),
+                        UiNode::Section(UiSectionNode {
+                            id: Some("work-section".to_string()),
+                            title: "Work".to_string(),
+                            nodes: vec![UiNode::List(UiListNode {
+                                id: Some("recent-release-work".to_string()),
+                                title: "Recent Release Work".to_string(),
+                                source: "worklists.release".to_string(),
+                                filter: Map::new(),
+                                fields: Vec::new(),
+                                sort: Vec::new(),
+                                limit: Some(8),
+                                intent: Some("tasks".to_string()),
+                                render_as: Some("table".to_string()),
+                            })],
+                        }),
+                    ],
+                },
+            ),
+            (
+                "intake".to_string(),
+                UiScreenIntent {
+                    app_id: app.id.clone(),
+                    id: "intake".to_string(),
+                    title: "Intake".to_string(),
+                    presentation: None,
+                    nodes: vec![UiNode::Form(UiFormNode {
+                        id: Some("seed-demo-form".to_string()),
+                        title: "Create Demo Approval Batch".to_string(),
+                        action: "release.seed_demo_work".to_string(),
+                        fields: Vec::new(),
+                        params: Value::Null,
+                    })],
+                },
+            ),
+        ]);
+        app
+    }
+
+    fn screen_id_at(app: &UiAppRecord, screen_index: usize) -> Option<&str> {
+        app.screens
+            .values()
+            .nth(screen_index)
+            .map(|screen| screen.id.as_str())
     }
 
     #[test]
@@ -1439,6 +1502,33 @@ mod tests {
             "Metadata Release [sort 3]"
         );
         assert_eq!(sorted_field_label("status", &sort), "Status");
+    }
+
+    #[test]
+    fn focus_targets_resolve_screens_actions_forms_and_node_ids() {
+        let app = focus_test_app();
+
+        assert!(matches!(
+            find_focus_target(&app, "Release Desk"),
+            Some(HarnessFocusTarget::Screen { screen_index })
+                if screen_id_at(&app, screen_index) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "seed-demo-work"),
+            Some(HarnessFocusTarget::Node { screen_index })
+                if screen_id_at(&app, screen_index) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "recent-release-work"),
+            Some(HarnessFocusTarget::Node { screen_index })
+                if screen_id_at(&app, screen_index) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "seed-demo-form"),
+            Some(HarnessFocusTarget::Node { screen_index })
+                if screen_id_at(&app, screen_index) == Some("intake")
+        ));
+        assert_eq!(find_focus_target(&app, "unknown"), None);
     }
 
     #[test]
