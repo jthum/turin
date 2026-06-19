@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -6,7 +7,9 @@ use bytes::Bytes;
 use futures::stream;
 use http::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE};
 use http::{Method, Request, Response, StatusCode};
-use http_body_util::{BodyExt, Full, StreamBody, combinators::UnsyncBoxBody};
+use http_body_util::{
+    BodyExt, Full, LengthLimitError, Limited, StreamBody, combinators::UnsyncBoxBody,
+};
 use hyper::body::{Frame, Incoming};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -475,29 +478,39 @@ fn format_sse_error(message: &str) -> String {
 async fn read_json<T: DeserializeOwned>(
     req: Request<Incoming>,
 ) -> std::result::Result<T, WebError> {
-    let body = req
-        .into_body()
+    read_json_body(req.into_body()).await
+}
+
+async fn read_json_body<T, B>(body: B) -> std::result::Result<T, WebError>
+where
+    T: DeserializeOwned,
+    B: BodyExt,
+    B::Error: Into<Box<dyn Error + Send + Sync>>,
+{
+    let body = Limited::new(body, MAX_JSON_BODY_BYTES)
         .collect()
         .await
-        .map_err(|err| {
-            WebError::bad_request(
-                "invalid_request_body",
-                format!("Failed to read request body: {}", err),
-            )
-        })?
+        .map_err(json_body_read_error)?
         .to_bytes();
-    if body.len() > MAX_JSON_BODY_BYTES {
-        return Err(WebError::bad_request(
-            "request_body_too_large",
-            format!("JSON request body exceeds {} bytes", MAX_JSON_BODY_BYTES),
-        ));
-    }
     serde_json::from_slice(&body).map_err(|err| {
         WebError::bad_request(
             "invalid_json",
             format!("Failed to decode request JSON: {}", err),
         )
     })
+}
+
+fn json_body_read_error(err: Box<dyn Error + Send + Sync>) -> WebError {
+    if err.downcast_ref::<LengthLimitError>().is_some() {
+        return WebError::bad_request(
+            "request_body_too_large",
+            format!("JSON request body exceeds {} bytes", MAX_JSON_BODY_BYTES),
+        );
+    }
+    WebError::bad_request(
+        "invalid_request_body",
+        format!("Failed to read request body: {}", err),
+    )
 }
 
 fn normalized_path(raw_path: &str) -> String {
@@ -608,6 +621,26 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("no-store")
         );
+    }
+
+    #[tokio::test]
+    async fn json_body_under_limit_decodes() {
+        let decoded = read_json_body::<Value, _>(Full::new(Bytes::from_static(br#"{"ok":true}"#)))
+            .await
+            .expect("under-limit JSON decodes");
+
+        assert_eq!(decoded["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn json_body_over_limit_is_rejected() {
+        let oversized = Bytes::from(vec![b' '; MAX_JSON_BODY_BYTES + 1]);
+        let err = read_json_body::<Value, _>(Full::new(oversized))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.code, "request_body_too_large");
     }
 
     #[test]

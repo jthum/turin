@@ -86,6 +86,8 @@ session state, invent renderer-specific harness APIs, or bypass
   daemon-query escape hatches only after the UI model proves it needs them.
 - Unsupported sources and planned endpoints should return explicit JSON errors,
   not silent empty responses.
+- JSON request body limits should be enforced while reading the body, not after
+  buffering an oversized request.
 - `GET /api/events` is an invalidation/event feed. Browser `ui.refresh`
   handling should stay cache invalidation plus visible-data reload, not grow
   into a live-query result cache.

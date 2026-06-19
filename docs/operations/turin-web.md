@@ -257,8 +257,8 @@ This does not prove a specific harness app is available; use `/api/status` or
 ### Request Limits
 
 JSON request bodies are limited to 1 MiB. Oversized bodies return
-`request_body_too_large`, malformed bodies return `invalid_json`, and failed
-control-layer calls return `control_unavailable`.
+`request_body_too_large` while the body is being read, malformed bodies return
+`invalid_json`, and failed control-layer calls return `control_unavailable`.
 
 ## Browser Client State
 
