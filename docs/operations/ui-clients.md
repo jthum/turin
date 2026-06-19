@@ -408,14 +408,14 @@ records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample
-(`.workspace/perf-reports/footprint-1781830998.md`) reported:
+(`.workspace/perf-reports/footprint-1781834630-1803539.md`) reported:
 
-- `86327` Rust code lines under `src` and `crates`
-- `4845` code lines in `crates/turin-app`
-- `4127` code lines in `crates/turin-tui`
-- `3325` code lines in `crates/turin-ui-core`
+- `86268` Rust code lines under `src` and `crates`
+- `4722` code lines in `crates/turin-app`
+- `4008` code lines in `crates/turin-tui`
+- `3508` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
-- `79637` bytes across first-party `turin-web` static assets
+- `80112` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.

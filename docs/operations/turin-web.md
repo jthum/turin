@@ -400,6 +400,6 @@ The first useful slice is complete:
    client-local dynamic UI navigation handling.
 6. It has an integration smoke using the Release Operator harness.
 
-Next work should tighten shared report/chart semantics across app/TUI/web, then
-decide whether to keep iterating on the static shell or introduce a light
-frontend build step.
+Next work should turn the current report/chart smoke parity into a fuller shared
+data semantics decision across app/TUI/web, then decide whether to keep
+iterating on the static shell or introduce a light frontend build step.
