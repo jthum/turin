@@ -1,5 +1,6 @@
 mod controller;
 mod dashboard;
+mod form_values;
 mod intents;
 mod ui_copy;
 mod ui_data;
@@ -19,6 +20,10 @@ pub use controller::{
 pub use dashboard::{
     DashboardFreshness, DashboardHealth, DashboardNotice, DashboardNoticeLevel, DashboardSnapshot,
     DashboardState, DefaultOperatorConsoleSummary, format_relative_age,
+};
+pub use form_values::{
+    parse_ui_form_value, ui_form_default_value, ui_form_field_kind, ui_form_is_bool_field,
+    ui_form_is_multiline_field, ui_form_value_string,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
 pub use ui_copy::{ui_data_not_loaded_message, unsupported_ui_source_message};

@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 use turin_daemon_protocol::{
     UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
     UiNode, UiNoticeLevel, UiPaneIntent, UiReportNode, UiScreenIntent, WorkItemDetail,
@@ -15,9 +15,15 @@ use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests, is_worklist_ui_source,
-    ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    parse_ui_form_value as parse_form_value, ui_data_not_loaded_message, ui_worklist_request,
+    unsupported_ui_source_message, work_item_field_label, worklist_chart_group_field,
+    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
+};
+pub use turin_ui_core::{
+    ui_form_default_value as default_form_value, ui_form_field_kind as normalized_form_field_kind,
+    ui_form_is_bool_field as is_bool_field, ui_form_is_multiline_field as is_multiline_field,
+    ui_form_value_string as form_value_string,
 };
 
 use crate::app::PendingHarnessAction;
@@ -1499,84 +1505,6 @@ pub fn form_params(form: &UiFormNode, values: &BTreeMap<String, String>) -> Resu
         params.insert(field.name.clone(), parse_form_value(field, &value)?);
     }
     Ok(Value::Object(params))
-}
-
-pub fn default_form_value(form: &UiFormNode, field: &turin_daemon_protocol::UiFormField) -> String {
-    field
-        .default
-        .as_ref()
-        .or_else(|| form.params.get(&field.name))
-        .map(form_value_string)
-        .or_else(|| field.options.first().map(form_value_string))
-        .unwrap_or_else(|| {
-            if is_bool_field(field) {
-                "false".to_string()
-            } else {
-                String::new()
-            }
-        })
-}
-
-pub fn normalized_form_field_kind(field: &turin_daemon_protocol::UiFormField) -> String {
-    field.kind.as_deref().unwrap_or("text").to_ascii_lowercase()
-}
-
-pub fn form_value_string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(value) => value.clone(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::Array(_) | Value::Object(_) => value.to_string(),
-    }
-}
-
-pub fn is_bool_field(field: &turin_daemon_protocol::UiFormField) -> bool {
-    matches!(
-        normalized_form_field_kind(field).as_str(),
-        "bool" | "boolean" | "checkbox" | "switch"
-    )
-}
-
-pub fn is_multiline_field(field: &turin_daemon_protocol::UiFormField) -> bool {
-    matches!(
-        normalized_form_field_kind(field).as_str(),
-        "textarea" | "multiline" | "markdown"
-    )
-}
-
-fn parse_form_value(
-    field: &turin_daemon_protocol::UiFormField,
-    value: &str,
-) -> Result<Value, String> {
-    if let Some(option) = field
-        .options
-        .iter()
-        .find(|option| form_value_string(option) == value)
-    {
-        return Ok(option.clone());
-    }
-
-    match normalized_form_field_kind(field).as_str() {
-        "number" | "float" | "decimal" => {
-            let parsed = value
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| format!("Form field '{}' must be a valid number", field.label))?;
-            Number::from_f64(parsed)
-                .map(Value::Number)
-                .ok_or_else(|| format!("Form field '{}' must be a finite number", field.label))
-        }
-        "int" | "integer" => value
-            .trim()
-            .parse::<i64>()
-            .map(|value| Value::Number(value.into()))
-            .map_err(|_| format!("Form field '{}' must be a valid integer", field.label)),
-        "bool" | "boolean" | "checkbox" | "switch" => {
-            Ok(Value::Bool(matches!(value, "true" | "1" | "yes" | "on")))
-        }
-        _ => Ok(Value::String(value.to_string())),
-    }
 }
 
 fn panel(title: &'static str, lines: Vec<Line<'static>>) -> Paragraph<'static> {

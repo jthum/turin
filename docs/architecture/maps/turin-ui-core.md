@@ -29,6 +29,9 @@ runtime-owned UI session store, or a second daemon implementation.
 - `crates/turin-ui-core/src/ui_data.rs`
   - Stateless semantic UI data-source helpers, including default worklist-backed
     surface limits and `UiListRequest` discovery from node trees.
+- `crates/turin-ui-core/src/form_values.rs`
+  - Stateless semantic UI form value helpers for default display values, field
+    kind aliases, typed option preservation, and scalar coercion.
 - `crates/turin-ui-core/src/worklist_view.rs`
   - Stateless worklist display derivation helpers for counts, grouping, and
     field labels.
@@ -85,6 +88,9 @@ runtime-owned UI session store, or a second daemon implementation.
   this crate unless the UI contract explicitly grows that escape hatch.
 - Worklist source, request-discovery, and display helpers must stay stateless
   and renderer-neutral.
+- Form value helpers may parse/default individual field values, but form drafts,
+  field focus, validation display, submission timing, and modal state remain in
+  each client.
 - Do not add renderer-specific concepts such as egui widgets, Ratatui layout,
   browser route state, or CSS classes to this crate.
 - Connection/profile helpers may be shared here because they affect all Rust
@@ -114,6 +120,13 @@ Add shared display derivation:
 2. Keep formatting suitable for multiple clients; renderer-specific truncation,
    colors, focus, and layout stay in the client crate.
 
+Add shared form value behavior:
+
+1. Keep helpers stateless and field-level.
+2. Preserve typed option values before scalar parsing.
+3. Keep form drafts, focus, validation messages, and submit lifecycle in the
+   client crate.
+
 ## Tests
 
 Focused checks:
@@ -139,7 +152,7 @@ new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
 bounded notices/events, UI list loading for worklists, stateless visible-node
 request derivation, shared fallback/not-loaded copy, harness action command
-dispatch with returned UI intent application, and small worklist summaries. It
-intentionally does not provide a common active-screen model or shared UI session
-state; those seams should be extracted later only if the clients independently
-converge on the same shape.
+dispatch with returned UI intent application, stateless form value coercion, and
+small worklist summaries. It intentionally does not provide a common
+active-screen model or shared UI session state; those seams should be extracted
+later only if the clients independently converge on the same shape.

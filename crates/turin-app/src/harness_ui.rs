@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use eframe::egui::{self, RichText};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 use turin_daemon_protocol::{
     UiActionNode, UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode,
     UiMenuItem, UiNode, UiNoticeLevel, UiPaneIntent, UiReportNode, UiSectionNode, UiTextNode,
@@ -10,8 +10,10 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, is_worklist_ui_source, ui_data_not_loaded_message, ui_worklist_request,
-    unsupported_ui_source_message, work_item_field_label, work_item_key,
+    UiListRequest, is_worklist_ui_source, parse_ui_form_value as parse_form_value,
+    ui_data_not_loaded_message, ui_form_default_value as default_form_value,
+    ui_form_field_kind as normalized_field_kind, ui_form_value_string as form_value_string,
+    ui_worklist_request, unsupported_ui_source_message, work_item_field_label, work_item_key,
     worklist_chart_group_field, worklist_chart_group_label, worklist_group_counts,
     worklist_highest_priority_pending_item, worklist_status_counts,
 };
@@ -973,32 +975,6 @@ fn form_params(
     Ok(Value::Object(params))
 }
 
-fn parse_form_value(
-    field: &turin_daemon_protocol::UiFormField,
-    value: &str,
-) -> Result<Value, String> {
-    match normalized_field_kind(field).as_str() {
-        "number" | "float" | "decimal" => {
-            let parsed = value
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| format!("Form field '{}' must be a valid number", field.label))?;
-            Number::from_f64(parsed)
-                .map(Value::Number)
-                .ok_or_else(|| format!("Form field '{}' must be a finite number", field.label))
-        }
-        "int" | "integer" => value
-            .trim()
-            .parse::<i64>()
-            .map(|value| Value::Number(value.into()))
-            .map_err(|_| format!("Form field '{}' must be a valid integer", field.label)),
-        "bool" | "boolean" | "checkbox" | "switch" => {
-            Ok(Value::Bool(matches!(value, "true" | "1" | "yes" | "on")))
-        }
-        _ => Ok(Value::String(value.to_string())),
-    }
-}
-
 fn form_field_key(
     app: &UiAppRecord,
     form: &UiFormNode,
@@ -1010,39 +986,6 @@ fn form_field_key(
         form.id.as_deref().unwrap_or(&form.title),
         field.name
     )
-}
-
-fn default_form_value(form: &UiFormNode, field: &turin_daemon_protocol::UiFormField) -> String {
-    field
-        .default
-        .as_ref()
-        .or_else(|| form.params.get(&field.name))
-        .map(form_value_string)
-        .or_else(|| field.options.first().map(form_value_string))
-        .unwrap_or_else(|| {
-            if matches!(
-                normalized_field_kind(field).as_str(),
-                "bool" | "boolean" | "checkbox" | "switch"
-            ) {
-                "false".to_string()
-            } else {
-                String::new()
-            }
-        })
-}
-
-fn normalized_field_kind(field: &turin_daemon_protocol::UiFormField) -> String {
-    field.kind.as_deref().unwrap_or("text").to_ascii_lowercase()
-}
-
-fn form_value_string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(value) => value.clone(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::Array(_) | Value::Object(_) => value.to_string(),
-    }
 }
 
 fn render_report(
@@ -1561,6 +1504,34 @@ mod tests {
 
         assert_eq!(params["count"], json!(3));
         assert_eq!(params["source"], json!("app"));
+    }
+
+    #[test]
+    fn form_params_preserve_typed_option_values() {
+        let app = test_app();
+        let form = UiFormNode {
+            id: Some("seed".to_string()),
+            title: "Seed".to_string(),
+            action: "release.seed".to_string(),
+            fields: vec![UiFormField {
+                name: "count".to_string(),
+                label: "Count".to_string(),
+                kind: Some("integer".to_string()),
+                default: None,
+                required: None,
+                options: vec![json!(2), json!("3")],
+            }],
+            params: Value::Null,
+        };
+        let key = form_field_key(&app, &form, &form.fields[0]);
+        let numeric_values = BTreeMap::from([(key.clone(), "2".to_string())]);
+        let string_values = BTreeMap::from([(key, "3".to_string())]);
+
+        let numeric_params = form_params(&app, &form, &numeric_values).expect("numeric option");
+        let string_params = form_params(&app, &form, &string_values).expect("string option");
+
+        assert_eq!(numeric_params["count"], json!(2));
+        assert_eq!(string_params["count"], json!("3"));
     }
 
     fn test_work_item(id: i64, public_id: &str, title: &str) -> WorkItemDetail {
