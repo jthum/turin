@@ -210,7 +210,7 @@ function selectDefaults() {
     return;
   }
   if (!screenIds.includes(state.selectedScreenId)) {
-    state.selectedScreenId = app.opens_with || screenIds[0];
+    state.selectedScreenId = defaultScreenIdForApp(app);
     state.pendingAction = null;
   }
 }
@@ -372,6 +372,10 @@ function screenIdForTarget(app, target) {
   return Object.values(app?.screens ?? []).find(screen => screen.title === target)?.id || null;
 }
 
+function defaultScreenIdForApp(app) {
+  return screenIdForTarget(app, app?.opens_with) || Object.keys(app?.screens ?? {})[0] || null;
+}
+
 function focusScreenIdForTarget(app, target) {
   const screenId = screenIdForTarget(app, target);
   if (screenId) return screenId;
@@ -452,7 +456,7 @@ function renderApps() {
     button.textContent = app.definition?.title || app.id;
     button.addEventListener("click", () => {
       state.selectedAppId = app.id;
-      state.selectedScreenId = app.opens_with || Object.keys(app.screens ?? {})[0] || null;
+      state.selectedScreenId = defaultScreenIdForApp(app);
       state.activePaneId = null;
       state.pendingAction = null;
       loadVisibleLists().then(render);

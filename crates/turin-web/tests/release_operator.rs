@@ -345,6 +345,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("appById(appId)"));
     assert!(js.contains("invalidateListBinding"));
     assert!(js.contains("parseListKey"));
+    assert!(js.contains("defaultScreenIdForApp(app)"));
+    assert!(
+        js.contains("return screenIdForTarget(app, app?.opens_with) || Object.keys(app?.screens ?? {})[0] || null")
+    );
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("if (app?.screens?.[target]) return target"));
     assert!(js.contains("screen.title === target"));
