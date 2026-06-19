@@ -231,6 +231,7 @@ Once that works, Turin can grow with you.
 
 Next:
 
+- `docs/concepts/who-is-turin-for.md`
 - `docs/concepts/scenarios.md`
 - `docs/concepts/harness-apps-and-ui-clients.md`
 - `docs/getting-started/choose-first-workflow.md`

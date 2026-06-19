@@ -39,6 +39,7 @@ decides what is allowed and Turin keeps the workflow durable and inspectable.
 If you are evaluating Turin rather than implementing a harness yet, start with:
 
 - [What is Turin?](docs/concepts/what-is-turin.md)
+- [Who is Turin for?](docs/concepts/who-is-turin-for.md)
 - [What can you do with Turin?](docs/concepts/what-can-you-do.md)
 - [Scenario blueprints](docs/concepts/scenarios.md)
 - [Release Operator Console](docs/guides/release-operator-console.md)

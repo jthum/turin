@@ -6,6 +6,7 @@ This section covers Turin’s core framing and longer-lived conceptual material.
 
 - `docs/concepts/turin.md` — product framing and why Turin exists
 - `docs/concepts/what-is-turin.md` — plain-language product explanation for new readers
+- `docs/concepts/who-is-turin-for.md` — audience guide for deciding whether Turin fits a workflow
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for evaluating Turin
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/harness-apps-and-ui-clients.md` — product framing for default consoles, harness apps, and local UI client state

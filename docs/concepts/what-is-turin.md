@@ -125,6 +125,7 @@ and governable.
 ## Where To Go Next
 
 - `docs/concepts/what-can-you-do.md` — concrete use-cases and examples
+- `docs/concepts/who-is-turin-for.md` — audience guide for deciding whether Turin fits
 - `docs/concepts/scenarios.md` — practical workflow blueprints
 - `docs/concepts/harness-apps-and-ui-clients.md` — how custom harness UI fits
   with the default app, TUI, and web clients

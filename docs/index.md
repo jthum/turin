@@ -6,6 +6,7 @@ This is the documentation landing page for Turin.
 
 - `README.md` — quickstart, feature overview, canonical API summary, live smoke commands
 - `docs/concepts/what-is-turin.md` — plain-language answer to what Turin is and why it exists
+- `docs/concepts/who-is-turin-for.md` — audience guide for people deciding whether Turin fits their work
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for people asking what Turin is useful for
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/harness-apps-and-ui-clients.md` — how default consoles, harness apps, and local UI client state fit together
@@ -44,11 +45,12 @@ into technical reference material.
 
 1. `README.md`
 2. `docs/concepts/what-is-turin.md`
-3. `docs/concepts/what-can-you-do.md`
-4. `docs/concepts/scenarios.md`
-5. `docs/concepts/harness-apps-and-ui-clients.md`
-6. `docs/guides/release-operator-console.md`
-7. `docs/getting-started/choose-first-workflow.md`
+3. `docs/concepts/who-is-turin-for.md`
+4. `docs/concepts/what-can-you-do.md`
+5. `docs/concepts/scenarios.md`
+6. `docs/concepts/harness-apps-and-ui-clients.md`
+7. `docs/guides/release-operator-console.md`
+8. `docs/getting-started/choose-first-workflow.md`
 
 This path answers the non-developer questions first: what Turin is, what it can
 be used for, which workflows fit, and when custom UI is worth adding.
@@ -112,20 +114,21 @@ The longer linear path is useful when reading the docs as a broad tour:
 
 1. `README.md`
 2. `docs/concepts/what-is-turin.md`
-3. `docs/concepts/what-can-you-do.md`
-4. `docs/concepts/scenarios.md`
-5. `docs/getting-started/choose-first-workflow.md`
-6. `docs/concepts/harness-apps-and-ui-clients.md`
-7. `docs/guides/release-operator-console.md`
-8. `docs/getting-started/index.md`
-9. `docs/concepts/turin.md`
-10. `docs/getting-started/harness-cookbook.md`
-11. `docs/reference/hooks.md`
-12. `docs/reference/primitives.md`
-13. `docs/concepts/memory-vs-kv.md`
-14. `docs/concepts/worklists.md`
-15. `docs/guides/inference-routing.md`
-16. `docs/guides/multimodal.md`
+3. `docs/concepts/who-is-turin-for.md`
+4. `docs/concepts/what-can-you-do.md`
+5. `docs/concepts/scenarios.md`
+6. `docs/getting-started/choose-first-workflow.md`
+7. `docs/concepts/harness-apps-and-ui-clients.md`
+8. `docs/guides/release-operator-console.md`
+9. `docs/getting-started/index.md`
+10. `docs/concepts/turin.md`
+11. `docs/getting-started/harness-cookbook.md`
+12. `docs/reference/hooks.md`
+13. `docs/reference/primitives.md`
+14. `docs/concepts/memory-vs-kv.md`
+15. `docs/concepts/worklists.md`
+16. `docs/guides/inference-routing.md`
+17. `docs/guides/multimodal.md`
 
 ## Channel Setup
 
