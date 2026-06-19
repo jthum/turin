@@ -29,6 +29,24 @@ In Turin:
 
 The result can still include chat, but it does not have to be only chat.
 
+## What You See When You Open It
+
+If you open Turin without a custom harness UI, you should still get a useful
+operator console: runtime health, agents, work, tasks, events, actions, and
+recent activity remain visible. You do not need to design an app before Turin is
+useful.
+
+When a harness declares UI intent, the same client can become more specific. A
+release harness can expose approval lists, intake forms, readiness reports, and
+confirmed actions. A coding harness can expose repository tasks, review
+checklists, or patch context. A documentation harness can expose research work,
+draft queues, and source-backed summaries.
+
+That custom surface is still client-local. The terminal UI, desktop app, and web
+client may render it differently, and each open client keeps its own selected
+screen, row, pane, and form draft. The runtime owns durable workflow state; the
+client owns presentation state.
+
 ## Why That Matters
 
 Many AI workflows fail because important things are implicit:
