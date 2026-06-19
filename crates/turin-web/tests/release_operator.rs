@@ -660,6 +660,52 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             && intent["binding"] == "worklists.release"
     });
 
+    let approved: Value = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": "release.approve_next",
+            "harness_id": "default",
+            "params": {
+                "release": "2026.06"
+            }
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(approved["result"]["action"], "release.approve_next");
+    assert_eq!(approved["result"]["result"]["status"], "approved");
+    assert_action_notice_and_refresh(
+        ui_intents(&approved)?,
+        "approved next item",
+        "Approved next item",
+        "success",
+    );
+
+    let rejected: Value = client
+        .post(format!("{base_url}/api/actions/run"))
+        .json(&json!({
+            "action": "release.reject_next",
+            "harness_id": "default",
+            "params": {
+                "release": "2026.06"
+            }
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(rejected["result"]["action"], "release.reject_next");
+    assert_eq!(rejected["result"]["result"]["status"], "rejected");
+    assert_action_notice_and_refresh(
+        ui_intents(&rejected)?,
+        "rejected next item",
+        "Rejected next item",
+        "warning",
+    );
+
     let shown: Value = client
         .post(format!("{base_url}/api/actions/run"))
         .json(&json!({
@@ -756,7 +802,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     let items = list["list"]["items"]
         .as_array()
         .context("list response should include items")?;
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 2);
     assert!(items.iter().all(|item| item["status"] == "pending"));
     assert!(items.iter().all(|item| item["kind"] == "approval"));
     assert!(
@@ -776,6 +822,20 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     );
 
     Ok(())
+}
+
+fn assert_action_notice_and_refresh(intents: &[Value], label: &str, title: &str, level: &str) {
+    assert_has_ui_intent(intents, &format!("{label} notify"), |intent| {
+        intent["type"] == "notify"
+            && intent["app_id"] == "release-operator"
+            && intent["title"] == title
+            && intent["level"] == level
+    });
+    assert_has_ui_intent(intents, &format!("{label} refresh"), |intent| {
+        intent["type"] == "refresh"
+            && intent["app_id"] == "release-operator"
+            && intent["binding"] == "worklists.release"
+    });
 }
 
 fn ui_intents(response: &Value) -> Result<&[Value]> {
