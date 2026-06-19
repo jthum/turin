@@ -16,7 +16,10 @@ use turin_daemon_protocol::{
     EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
     WorkItemList, WorklistItemsParams, WorklistListParams,
 };
-use turin_ui_core::{DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry};
+use turin_ui_core::{
+    DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
+    UiWorklistSourceError, ui_worklist_name_from_source as core_worklist_name_from_source,
+};
 use url::form_urlencoded;
 
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
@@ -401,8 +404,8 @@ async fn load_ui_list(
 }
 
 fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError> {
-    let worklist_name = source.strip_prefix("worklists.").ok_or_else(|| {
-        WebError::bad_request(
+    core_worklist_name_from_source(source).map_err(|err| match err {
+        UiWorklistSourceError::Unsupported => WebError::bad_request(
             "unsupported_ui_list_source",
             format!("Unsupported UI list source '{}'", source),
         )
@@ -410,10 +413,8 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
             "source": source,
             "supported_prefixes": ["worklists."],
             "guidance": "Model this data as a worklist source or add a deliberate UI list adapter."
-        }))
-    })?;
-    if worklist_name.is_empty() {
-        return Err(WebError::bad_request(
+        })),
+        UiWorklistSourceError::MissingName => WebError::bad_request(
             "invalid_ui_list_source",
             format!("UI list source '{}' is missing a worklist name", source),
         )
@@ -421,9 +422,8 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
             "source": source,
             "supported_prefixes": ["worklists.<name>"],
             "guidance": "Use a non-empty worklist source, for example 'worklists.release'."
-        })));
-    }
-    Ok(worklist_name)
+        })),
+    })
 }
 
 fn parse_event_filter(

@@ -20,6 +20,7 @@ use turin_daemon_protocol::{
 };
 use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_UI_PROFILES_PATH};
 
+use crate::ui_data::{UiWorklistSourceError, ui_worklist_name_from_source};
 use crate::{DashboardSnapshot, DashboardState};
 
 pub const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -2078,16 +2079,17 @@ fn spawn_command_task(
 }
 
 async fn load_ui_list(client: &ControlClient, request: &UiListRequest) -> Result<WorkItemList> {
-    let worklist_name = request
-        .source
-        .strip_prefix("worklists.")
-        .ok_or_else(|| anyhow!("unsupported UI list source '{}'", request.source))?;
-    if worklist_name.is_empty() {
-        return Err(anyhow!(
-            "UI list source '{}' is missing a worklist name",
-            request.source
-        ));
-    }
+    let worklist_name = ui_worklist_name_from_source(&request.source).map_err(|err| match err {
+        UiWorklistSourceError::Unsupported => {
+            anyhow!("unsupported UI list source '{}'", request.source)
+        }
+        UiWorklistSourceError::MissingName => {
+            anyhow!(
+                "UI list source '{}' is missing a worklist name",
+                request.source
+            )
+        }
+    })?;
 
     let worklists = client
         .list_worklists(WorklistListParams {

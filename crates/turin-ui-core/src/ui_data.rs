@@ -8,8 +8,25 @@ pub const DEFAULT_UI_DETAIL_LIMIT: u32 = 25;
 pub const DEFAULT_UI_REPORT_LIMIT: u32 = 100;
 pub const DEFAULT_UI_CHART_LIMIT: u32 = 100;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiWorklistSourceError {
+    Unsupported,
+    MissingName,
+}
+
 pub fn is_worklist_ui_source(source: &str) -> bool {
     source.starts_with("worklists.")
+}
+
+pub fn ui_worklist_name_from_source(source: &str) -> Result<&str, UiWorklistSourceError> {
+    let name = source
+        .strip_prefix("worklists.")
+        .ok_or(UiWorklistSourceError::Unsupported)?;
+    if name.is_empty() {
+        Err(UiWorklistSourceError::MissingName)
+    } else {
+        Ok(name)
+    }
 }
 
 pub fn ui_worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
@@ -79,8 +96,8 @@ mod tests {
 
     use super::{
         DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
-        DEFAULT_UI_REPORT_LIMIT, collect_ui_list_requests, is_worklist_ui_source,
-        ui_worklist_request,
+        DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
+        is_worklist_ui_source, ui_worklist_name_from_source, ui_worklist_request,
     };
 
     #[test]
@@ -88,6 +105,22 @@ mod tests {
         assert!(is_worklist_ui_source("worklists.release"));
         assert!(is_worklist_ui_source("worklists."));
         assert!(!is_worklist_ui_source("tables.release"));
+    }
+
+    #[test]
+    fn worklist_name_reports_missing_name_and_unsupported_source() {
+        assert_eq!(
+            ui_worklist_name_from_source("worklists.release"),
+            Ok("release")
+        );
+        assert_eq!(
+            ui_worklist_name_from_source("worklists."),
+            Err(UiWorklistSourceError::MissingName)
+        );
+        assert_eq!(
+            ui_worklist_name_from_source("tables.release"),
+            Err(UiWorklistSourceError::Unsupported)
+        );
     }
 
     #[test]

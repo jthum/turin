@@ -34,7 +34,8 @@ pub use ui_badges::ui_badge_text;
 pub use ui_copy::{ui_data_not_loaded_message, unsupported_ui_source_message};
 pub use ui_data::{
     DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
-    DEFAULT_UI_REPORT_LIMIT, collect_ui_list_requests, is_worklist_ui_source, ui_worklist_request,
+    DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
+    is_worklist_ui_source, ui_worklist_name_from_source, ui_worklist_request,
 };
 pub use ui_navigation::{
     ui_default_screen_index, ui_node_id_matches, ui_node_matches_target, ui_nodes_contain_target,
