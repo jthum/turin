@@ -1125,9 +1125,10 @@ function renderChart(node, app) {
   if (!request) return renderPlaceholder(node, app);
   const panel = document.createElement("section");
   panel.className = "panel";
+  const groupField = chartGroupField(node);
   const label = node.render_as ? `${node.intent || "breakdown"} · ${node.render_as}` : node.intent || "breakdown";
   appendPanelHeading(panel, node.title, node, app);
-  panel.append(renderText(label, "muted"));
+  panel.append(renderText(`${label} · grouped by ${chartGroupLabel(node)}`, "muted"));
   const cached = state.listCache.get(listKey(request));
   if (state.loadingLists.has(listKey(request))) {
     appendState(panel, "loading", "Loading chart", "Fetching worklist rows for this chart.");
@@ -1142,7 +1143,7 @@ function renderChart(node, app) {
     return panel;
   }
   const items = cached.list?.items ?? [];
-  panel.append(renderBars(groupCounts(items, chartGroupField(node))));
+  panel.append(renderBars(groupCounts(items, groupField)));
   return panel;
 }
 
@@ -1726,6 +1727,10 @@ function chartGroupField(node) {
   if (node.intent === "kind_breakdown") return "kind";
   if (node.intent === "priority_breakdown") return "priority";
   return "status";
+}
+
+function chartGroupLabel(node) {
+  return fieldLabel(chartGroupField(node));
 }
 
 function groupCounts(items, field) {

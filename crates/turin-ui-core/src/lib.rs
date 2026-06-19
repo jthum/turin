@@ -28,5 +28,6 @@ pub use ui_data::{
 };
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };

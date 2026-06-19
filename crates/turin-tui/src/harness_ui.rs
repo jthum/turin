@@ -16,8 +16,8 @@ use turin_ui_core::{
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests, is_worklist_ui_source,
     ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, worklist_chart_group_field, worklist_group_counts,
-    worklist_highest_priority_pending_item, worklist_status_counts,
+    work_item_field_label, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 
 use crate::app::PendingHarnessAction;
@@ -1209,13 +1209,16 @@ fn render_chart(
         .as_ref()
         .map(|render_as| format!("{} as {}", chart.source, render_as))
         .unwrap_or_else(|| chart.source.clone());
+    let intent = chart.intent.as_deref().unwrap_or("breakdown");
+    let group = worklist_chart_group_label(chart.intent.as_deref());
     lines.push(indent_line(
         depth,
         format!(
-            "Chart: {}  {}  intent={}",
+            "Chart: {}  {}  intent={}  grouped_by={}",
             title_with_node_badge(app, chart.id.as_deref(), &chart.title),
             label,
-            chart.intent.as_deref().unwrap_or("breakdown")
+            intent,
+            group
         ),
         theme::accent(),
     ));
@@ -1265,6 +1268,11 @@ fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, 
         lines.push(indent_line(
             depth,
             "No report data yet".to_string(),
+            theme::muted(),
+        ));
+        lines.push(indent_line(
+            depth,
+            "This report will populate when the backing worklist has rows.".to_string(),
             theme::muted(),
         ));
         return;
@@ -2047,6 +2055,7 @@ mod tests {
 
         assert!(text.contains("0 loaded"));
         assert!(text.contains("No report data yet"));
+        assert!(text.contains("This report will populate when the backing worklist has rows."));
     }
 
     #[test]
@@ -2069,6 +2078,31 @@ mod tests {
 
         assert!(text.contains("No chart data yet"));
         assert!(text.contains("This chart will populate when the backing worklist has rows."));
+    }
+
+    #[test]
+    fn chart_heading_names_grouping_field() {
+        let chart = UiChartNode {
+            id: Some("approval-flow".to_string()),
+            title: "Approval Flow".to_string(),
+            source: "worklists.release".to_string(),
+            intent: Some("priority_breakdown".to_string()),
+            render_as: Some("bar".to_string()),
+        };
+        let mut lines = Vec::new();
+
+        render_chart(
+            &release_app(),
+            &chart,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &mut lines,
+            0,
+        );
+        let text = line_text(&lines);
+
+        assert!(text.contains("intent=priority_breakdown"));
+        assert!(text.contains("grouped_by=Priority"));
     }
 
     #[test]

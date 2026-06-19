@@ -48,6 +48,14 @@ pub fn worklist_chart_group_field(intent: Option<&str>) -> &'static str {
     }
 }
 
+pub fn worklist_chart_group_label(intent: Option<&str>) -> &'static str {
+    match worklist_chart_group_field(intent) {
+        "kind" => "Kind",
+        "priority" => "Priority",
+        _ => "Status",
+    }
+}
+
 pub fn worklist_group_counts(items: &WorkItemList, field: &str) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for item in &items.items {
@@ -169,6 +177,10 @@ mod tests {
         assert_eq!(
             worklist_chart_group_field(Some("priority_breakdown")),
             "priority"
+        );
+        assert_eq!(
+            worklist_chart_group_label(Some("priority_breakdown")),
+            "Priority"
         );
     }
 

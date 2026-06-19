@@ -148,7 +148,8 @@ navigation, focus cycling that skips empty regions, local work-item selection
 with inspector detail, selected-row table windowing, page/boundary navigation in
 focused regions, dynamic open/focus handling, shown pane overlays with
 pane-local item/action selection, editable forms, worklist-backed
-activity/detail/report/chart surfaces, latest action result feedback, task and
-event inspectors, confirmation flow, UI notices, and list invalidation. Chat,
-search, connection profile editing, and deeper inspectors should be reintroduced
-only as they fit the new terminal UX model.
+activity/detail/report/chart surfaces with explicit no-data copy and grouping
+hints, latest action result feedback, task and event inspectors, confirmation
+flow, UI notices, and list invalidation. Chat, search, connection profile
+editing, and deeper inspectors should be reintroduced only as they fit the new
+terminal UX model.

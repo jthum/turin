@@ -247,6 +247,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("highestPriorityPendingItem"));
     assert!(js.contains("Next highest-priority pending item"));
     assert!(js.contains("renderChart"));
+    assert!(js.contains("chartGroupLabel(node)"));
+    assert!(js.contains("grouped by ${chartGroupLabel(node)}"));
     assert!(js.contains("renderState"));
     assert!(js.contains("appendState"));
     assert!(js.contains("surface-state"));
