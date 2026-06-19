@@ -121,19 +121,19 @@ tools/footprint-report \
 ```
 
 Recent local release-backed sample from
-`.workspace/perf-reports/footprint-1781830998.md`:
+`.workspace/perf-reports/footprint-1781834630-1803539.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,845 |
-| `crates/turin-tui` | 4,127 |
-| `crates/turin-ui-core` | 3,325 |
+| `crates/turin-app` | 4,722 |
+| `crates/turin-tui` | 4,008 |
+| `crates/turin-ui-core` | 3,508 |
 | `crates/turin-web` | 676 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
 | `crates/turin-web/static/app.css` | 14,082 | 795 |
-| `crates/turin-web/static/app.js` | 63,955 | 2,006 |
+| `crates/turin-web/static/app.js` | 64,430 | 2,020 |
 | `crates/turin-web/static/index.html` | 1,600 | 52 |
 
 | release binary | bytes |
