@@ -70,7 +70,7 @@ Errors have the shape:
     "message": "Unsupported UI list source 'tables.release'",
     "details": {
       "source": "tables.release",
-      "supported_prefixes": ["worklists."],
+      "supported_prefixes": ["worklists.<name>"],
       "guidance": "Model this data as a worklist source or add a deliberate UI list adapter."
     }
   }

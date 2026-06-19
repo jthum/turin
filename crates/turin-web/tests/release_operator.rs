@@ -787,7 +787,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     );
     assert_eq!(
         unsupported_source["error"]["details"]["supported_prefixes"][0],
-        "worklists."
+        "worklists.<name>"
     );
     assert!(
         unsupported_source["error"]["details"]["guidance"]

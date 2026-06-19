@@ -411,7 +411,7 @@ fn worklist_name_from_source(source: &str) -> std::result::Result<&str, WebError
         )
         .with_details(json!({
             "source": source,
-            "supported_prefixes": ["worklists."],
+            "supported_prefixes": ["worklists.<name>"],
             "guidance": "Model this data as a worklist source or add a deliberate UI list adapter."
         })),
         UiWorklistSourceError::MissingName => WebError::bad_request(
@@ -553,7 +553,7 @@ mod tests {
         assert_eq!(err.code, "unsupported_ui_list_source");
         let details = err.details.expect("unsupported source details");
         assert_eq!(details["source"], "tables.release");
-        assert_eq!(details["supported_prefixes"][0], "worklists.");
+        assert_eq!(details["supported_prefixes"][0], "worklists.<name>");
         assert!(
             details["guidance"]
                 .as_str()
