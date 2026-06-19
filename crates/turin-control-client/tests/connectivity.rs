@@ -266,6 +266,29 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
         .await?;
     assert_eq!(approved.action, "release.approve_next");
     assert_eq!(approved.result["status"], "approved");
+    assert_release_operator_action_notice_and_refresh(
+        &approved,
+        "Approved next item",
+        UiNoticeLevel::Success,
+    );
+
+    let rejected = client
+        .run_harness_action(HarnessActionRunParams {
+            action: "release.reject_next".to_string(),
+            agent_id: None,
+            harness_id: Some("default".to_string()),
+            params: serde_json::json!({
+                "release": "2026.06",
+            }),
+        })
+        .await?;
+    assert_eq!(rejected.action, "release.reject_next");
+    assert_eq!(rejected.result["status"], "rejected");
+    assert_release_operator_action_notice_and_refresh(
+        &rejected,
+        "Rejected next item",
+        UiNoticeLevel::Warning,
+    );
 
     let shown = client
         .run_harness_action(HarnessActionRunParams {
@@ -304,7 +327,7 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
             limit: None,
         })
         .await?;
-    assert_eq!(remaining.items.len(), 3);
+    assert_eq!(remaining.items.len(), 2);
 
     Ok(())
 }
@@ -534,6 +557,30 @@ fn assert_release_operator_seeded_ui_intents(
                     && badge.target == "approvals"
                     && badge.count == Some(4)
                     && badge.level == Some(UiNoticeLevel::Info)
+        )
+    }));
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Refresh(refresh)
+                if refresh.app_id == "release-operator"
+                    && refresh.binding == "worklists.release"
+        )
+    }));
+}
+
+fn assert_release_operator_action_notice_and_refresh(
+    result: &turin_daemon_protocol::HarnessActionRunResult,
+    title: &str,
+    level: UiNoticeLevel,
+) {
+    assert!(result.ui_intents.iter().any(|message| {
+        matches!(
+            &message.intent,
+            UiIntent::Notify(notice)
+                if notice.app_id == "release-operator"
+                    && notice.title == title
+                    && notice.level == Some(level)
         )
     }));
     assert!(result.ui_intents.iter().any(|message| {
