@@ -242,6 +242,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(
         js.contains("if (!field.required && (rawValue === null || rawValue === \"\")) continue")
     );
+    assert!(js.contains("if (kind === \"number\") input.step = \"any\""));
+    assert!(
+        js.contains(
+            "if (normalized === \"float\" || normalized === \"decimal\") return \"number\""
+        )
+    );
     assert!(js.contains("runningActions"));
     assert!(js.contains("renderReport"));
     assert!(js.contains("renderReportHighlight"));

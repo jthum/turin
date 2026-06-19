@@ -1307,6 +1307,7 @@ function renderField(field, node, formKey) {
   } else {
     input = document.createElement("input");
     input.type = kind === "number" || kind === "integer" ? "number" : "text";
+    if (kind === "number") input.step = "any";
     if (kind === "integer") input.step = "1";
   }
   input.name = field.name;
@@ -1848,6 +1849,7 @@ function normalizeFieldKind(kind) {
   const normalized = (kind || "text").toLowerCase();
   if (normalized === "bool" || normalized === "checkbox" || normalized === "switch") return "boolean";
   if (normalized === "int") return "integer";
+  if (normalized === "float" || normalized === "decimal") return "number";
   if (normalized === "multiline") return "textarea";
   return normalized;
 }
