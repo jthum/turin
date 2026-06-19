@@ -344,6 +344,8 @@ The current browser shell is intentionally small:
   params instead of overwriting them with null
 - browser-local confirmation overlay for explicit-confirm actions and work-item
   actions
+- accessible browser-local modal behavior for confirmation and pane overlays,
+  including dialog roles and initial focus on a safe control
 - action start/completion/failure feedback, latest action result panels on
   screens and open panes scoped to the originating app, returned action UI
   intent application, action/harness/agent metadata when known, explicit

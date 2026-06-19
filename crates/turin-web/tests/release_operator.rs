@@ -205,6 +205,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .await?;
     assert!(html.contains("Turin Web"));
     assert!(html.contains("/assets/app.js"));
+    assert!(html.contains("id=\"connection-status\" role=\"status\" aria-live=\"polite\""));
 
     let css = client
         .get(format!("{base_url}/assets/app.css"))
@@ -282,6 +283,13 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("pendingAction"));
     assert!(js.contains("renderActionConfirmation"));
     assert!(js.contains("requestActionConfirmation"));
+    assert!(js.contains("function focusDialogAction(dialog)"));
+    assert!(js.contains("focusDialogAction(dialog)"));
+    assert!(js.contains("focusDialogAction(sheet)"));
+    assert!(js.contains("cancel.dataset.autofocus = \"true\""));
+    assert!(js.contains("close.dataset.autofocus = \"true\""));
+    assert!(js.contains("document.activeElement?.closest?.(\".confirm-dialog\")"));
+    assert!(js.contains("document.activeElement?.closest?.(\".pane-sheet\")"));
     assert!(js.contains("Confirm and run"));
     assert!(js.contains("Requires confirmation before running."));
     assert!(!js.contains("window.confirm"));

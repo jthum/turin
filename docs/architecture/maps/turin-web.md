@@ -64,6 +64,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Browser connection feedback should distinguish HTTP refresh health from SSE
   event-stream health so a successful refresh does not hide event invalidation
   reconnects or stream errors.
+- Browser modal/pane overlays should expose dialog semantics and move initial
+  keyboard focus into a safe dialog control while preserving focus on rerender
+  when the operator is already inside the overlay.
 - Browser-local dynamic badge overlays may survive status refreshes, but they
   still remain client memory state and must not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.

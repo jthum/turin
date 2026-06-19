@@ -685,6 +685,7 @@ function renderMetricPanel(title, rows) {
 }
 
 function renderPane() {
+  const hadPaneFocus = document.activeElement?.closest?.(".pane-sheet");
   document.querySelectorAll(".pane-overlay").forEach(node => node.remove());
   const app = selectedApp();
   const pane = selectedPane();
@@ -709,6 +710,7 @@ function renderPane() {
   const close = document.createElement("button");
   close.type = "button";
   close.className = "ghost-button";
+  close.dataset.autofocus = "true";
   close.textContent = "Close";
   close.addEventListener("click", closePane);
   header.append(title, close);
@@ -727,6 +729,7 @@ function renderPane() {
   sheet.append(stack);
   overlay.append(sheet);
   document.body.append(overlay);
+  if (!hadPaneFocus) focusDialogAction(sheet);
 }
 
 function closePane() {
@@ -735,6 +738,7 @@ function closePane() {
 }
 
 function renderActionConfirmation() {
+  const hadConfirmFocus = document.activeElement?.closest?.(".confirm-dialog");
   document.querySelectorAll(".confirm-overlay").forEach(node => node.remove());
   const pending = state.pendingAction;
   if (!pending) return;
@@ -768,6 +772,7 @@ function renderActionConfirmation() {
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "ghost-button";
+  cancel.dataset.autofocus = "true";
   cancel.textContent = "Cancel";
   cancel.addEventListener("click", clearPendingAction);
   const run = document.createElement("button");
@@ -786,6 +791,14 @@ function renderActionConfirmation() {
   dialog.append(row);
   overlay.append(dialog);
   document.body.append(overlay);
+  if (!hadConfirmFocus) focusDialogAction(dialog);
+}
+
+function focusDialogAction(dialog) {
+  const target =
+    dialog.querySelector("[data-autofocus]:not(:disabled)") ||
+    dialog.querySelector("button:not(:disabled)");
+  target?.focus();
 }
 
 function requestActionConfirmation(node, app) {
