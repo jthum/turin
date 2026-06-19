@@ -25,7 +25,7 @@ pub(super) use turin_ui_core::{
 
 use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum HarnessUiEvent {
     OpenScreen(String),
     RunAction {
@@ -678,13 +678,9 @@ fn render_work_item_detail(
                         .variant(cast::Variant::Outline),
                 )
                 .clicked()
+                && let Some(action_event) = work_item_action_event(item)
             {
-                *event = Some(HarnessUiEvent::RunAction {
-                    label: format!("Work item: {}", item.title),
-                    action: action.name.clone(),
-                    params: action.params.clone().unwrap_or(Value::Null),
-                    confirm: true,
-                });
+                *event = Some(action_event);
             }
         });
     }
@@ -1185,6 +1181,16 @@ fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
         .show(ui, |_| {});
 }
 
+fn work_item_action_event(item: &WorkItemDetail) -> Option<HarnessUiEvent> {
+    let action = item.action.as_ref()?;
+    Some(HarnessUiEvent::RunAction {
+        label: format!("Work item: {}", item.title),
+        action: action.name.clone(),
+        params: action.params.clone().unwrap_or(Value::Null),
+        confirm: true,
+    })
+}
+
 fn unsupported_source_message(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the desktop app")
 }
@@ -1232,7 +1238,9 @@ fn work_item_context_badges(item: &WorkItemDetail) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use turin_daemon_protocol::{UiAppIntent, UiFormField, UiIntentSource, UiScreenIntent};
+    use turin_daemon_protocol::{
+        ScheduleActionParams, UiAppIntent, UiFormField, UiIntentSource, UiScreenIntent,
+    };
 
     fn test_app() -> UiAppRecord {
         UiAppRecord {
@@ -1499,6 +1507,57 @@ mod tests {
                 "parent REL-0"
             ]
         );
+    }
+
+    #[test]
+    fn work_item_action_event_requires_confirmation_and_preserves_params() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: Some(json!({
+                "release": "2026.06",
+                "mode": "hotfix"
+            })),
+        });
+
+        assert_eq!(
+            work_item_action_event(&item),
+            Some(HarnessUiEvent::RunAction {
+                label: "Work item: Approve release".to_string(),
+                action: "release.approve_next".to_string(),
+                params: json!({
+                    "release": "2026.06",
+                    "mode": "hotfix"
+                }),
+                confirm: true,
+            })
+        );
+    }
+
+    #[test]
+    fn work_item_action_event_defaults_missing_params_to_null() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: None,
+        });
+
+        assert_eq!(
+            work_item_action_event(&item),
+            Some(HarnessUiEvent::RunAction {
+                label: "Work item: Approve release".to_string(),
+                action: "release.approve_next".to_string(),
+                params: Value::Null,
+                confirm: true,
+            })
+        );
+    }
+
+    #[test]
+    fn work_item_action_event_ignores_items_without_actions() {
+        let item = test_work_item(1, "REL-1", "Approve release");
+
+        assert_eq!(work_item_action_event(&item), None);
     }
 
     #[test]
