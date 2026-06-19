@@ -26,6 +26,8 @@ runtime-owned UI session store, or a second daemon implementation.
     plus dynamic UI intent queues.
 - `crates/turin-ui-core/src/ui_copy.rs`
   - Stateless shared copy for semantic UI fallback and not-yet-loaded states.
+- `crates/turin-ui-core/src/ui_badges.rs`
+  - Stateless semantic UI badge text derivation shared by Rust clients.
 - `crates/turin-ui-core/src/ui_data.rs`
   - Stateless semantic UI data-source helpers, including default worklist-backed
     surface limits and `UiListRequest` discovery from node trees.
@@ -92,7 +94,8 @@ runtime-owned UI session store, or a second daemon implementation.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
 - Worklist source, request-discovery, default-screen target lookup, node target
-  matching, and display helpers must stay stateless and renderer-neutral.
+  matching, badge text derivation, and display helpers must stay stateless and
+  renderer-neutral.
 - Form value helpers may parse/default individual field values, but form drafts,
   field focus, validation display, submission timing, and modal state remain in
   each client.
@@ -156,7 +159,8 @@ git diff --check
 new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
 bounded notices/events, UI list loading for worklists, stateless default-screen
-lookup, stateless node target matching, stateless visible-node request
+lookup, stateless node target matching, stateless badge text derivation,
+stateless visible-node request
 derivation, shared fallback/not-loaded copy, harness action command dispatch
 with returned UI intent application, stateless form value coercion, and small
 worklist summaries. It intentionally does not provide a common active-screen

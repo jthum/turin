@@ -151,7 +151,8 @@ pane-local item/action selection, editable forms, worklist-backed
 activity/detail/report/chart surfaces with explicit no-data copy and grouping
 hints, latest action result feedback, task and event inspectors, confirmation
 flow, UI notices, and list invalidation. Default-screen lookup, node-id
-matching, form field defaults, and typed scalar coercion come from stateless
-`turin-ui-core` helpers, while drafts, focus, and modal editing remain
-terminal-local. Chat, search, connection profile editing, and deeper inspectors
-should be reintroduced only as they fit the new terminal UX model.
+matching, badge-text derivation, form field defaults, and typed scalar coercion
+come from stateless `turin-ui-core` helpers, while drafts, focus, and modal
+editing remain terminal-local. Chat, search, connection profile editing, and
+deeper inspectors should be reintroduced only as they fit the new terminal UX
+model.

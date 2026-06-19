@@ -7,18 +7,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use serde_json::{Map, Value};
 use turin_daemon_protocol::{
-    UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem,
-    UiNode, UiNoticeLevel, UiPaneIntent, UiReportNode, UiScreenIntent, WorkItemDetail,
-    WorkItemList,
+    UiActivityNode, UiChartNode, UiDetailNode, UiFormNode, UiListNode, UiMenuItem, UiNode,
+    UiNoticeLevel, UiPaneIntent, UiReportNode, UiScreenIntent, WorkItemDetail, WorkItemList,
 };
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests, is_worklist_ui_source,
-    parse_ui_form_value as parse_form_value, ui_data_not_loaded_message, ui_worklist_request,
-    unsupported_ui_source_message, work_item_field_label, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    parse_ui_form_value as parse_form_value, ui_badge_text as badge_text,
+    ui_data_not_loaded_message, ui_worklist_request, unsupported_ui_source_message,
+    work_item_field_label, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
@@ -157,20 +156,6 @@ fn nav_badge(
         badge_text(dynamic, fallback),
         dynamic.and_then(|badge| badge.level),
     )
-}
-
-fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<String> {
-    let label = badge
-        .and_then(|badge| badge.label.as_deref())
-        .or(fallback)
-        .filter(|label| !label.is_empty());
-    let count = badge.and_then(|badge| badge.count);
-    match (label, count) {
-        (Some(label), Some(count)) => Some(format!("{label} {count}")),
-        (Some(label), None) => Some(label.to_string()),
-        (None, Some(count)) => Some(count.to_string()),
-        (None, None) => None,
-    }
 }
 
 fn title_with_node_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) -> String {

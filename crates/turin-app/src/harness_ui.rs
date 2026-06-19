@@ -11,11 +11,11 @@ use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, is_worklist_ui_source, parse_ui_form_value as parse_form_value,
-    ui_data_not_loaded_message, ui_form_default_value as default_form_value,
-    ui_form_field_kind as normalized_field_kind, ui_form_value_string as form_value_string,
-    ui_worklist_request, unsupported_ui_source_message, work_item_field_label, work_item_key,
-    worklist_chart_group_field, worklist_chart_group_label, worklist_group_counts,
-    worklist_highest_priority_pending_item, worklist_status_counts,
+    ui_badge_text as badge_text, ui_data_not_loaded_message,
+    ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
+    ui_form_value_string as form_value_string, ui_worklist_request, unsupported_ui_source_message,
+    work_item_field_label, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -243,20 +243,6 @@ fn screen_nav_label(app: &UiAppRecord, screen: &turin_daemon_protocol::UiScreenI
     badge_text(app.badges.get(&screen.id), screen.presentation.as_deref())
         .map(|badge| format!("{} · {badge}", screen.title))
         .unwrap_or_else(|| screen.title.clone())
-}
-
-fn badge_text(badge: Option<&UiBadgeIntent>, fallback: Option<&str>) -> Option<String> {
-    let label = badge
-        .and_then(|badge| badge.label.as_deref())
-        .or(fallback)
-        .filter(|label| !label.is_empty());
-    let count = badge.and_then(|badge| badge.count);
-    match (label, count) {
-        (Some(label), Some(count)) => Some(format!("{label} {count}")),
-        (Some(label), None) => Some(label.to_string()),
-        (None, Some(count)) => Some(count.to_string()),
-        (None, None) => None,
-    }
 }
 
 fn badge_intent(badge: Option<&UiBadgeIntent>) -> cast::Intent {
