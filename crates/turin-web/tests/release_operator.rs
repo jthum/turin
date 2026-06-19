@@ -394,6 +394,14 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("function fieldLabel(field)"));
     assert!(js.contains(".split(/[_.]/)"));
     assert!(js.contains("counts.done"));
+    assert!(js.contains("const other = items.length - known"));
+    assert!(js.contains("if (other > 0) metrics.push({ label: \"Other\", value: other })"));
+    assert!(js.contains("item.status === \"pending\""));
+    assert!(js.contains("(right.priority || 0) - (left.priority || 0)"));
+    assert!(js.contains("if (node.intent === \"kind_breakdown\") return \"kind\""));
+    assert!(js.contains("if (node.intent === \"priority_breakdown\") return \"priority\""));
+    assert!(js.contains("return \"status\""));
+    assert!(js.contains("const label = fieldValue(item, field) || \"unknown\""));
     assert!(js.contains("No report data yet"));
     assert!(js.contains("This report will populate when the backing worklist has rows."));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
