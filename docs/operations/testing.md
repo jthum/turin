@@ -173,6 +173,33 @@ Reports are written to `.workspace/perf-reports/`. Capture one report before a
 runtime refactor and another after the change, then compare RSS/PSS, DB main
 file, WAL, SHM, total state bytes, and elapsed time at the same checkpoints.
 
+### UI client footprint and memory
+
+When UI work may affect `turin-app`, `turin-tui`, or `turin-web`, record the UI
+client baselines as well:
+
+```bash
+tools/footprint-report \
+  --top-files 30 \
+  --binary target/release/turin-tui \
+  --binary target/release/turin-app \
+  --binary target/release/turin-web
+```
+
+```bash
+tools/ui-client-baseline
+```
+
+For live idle memory, start the release clients, let them settle, and sample
+the running processes:
+
+```bash
+tools/ui-client-idle-snapshot --settle 5
+```
+
+See `docs/operations/ui-clients.md` for the current release binary,
+`--help` startup RSS, and live idle-memory samples.
+
 ## Running Turin Manually
 
 ## One-shot run
