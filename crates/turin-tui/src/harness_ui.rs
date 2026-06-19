@@ -1293,6 +1293,11 @@ fn render_worklist_chart(
             "No chart data yet".to_string(),
             theme::muted(),
         ));
+        lines.push(indent_line(
+            depth,
+            "This chart will populate when the backing worklist has rows.".to_string(),
+            theme::muted(),
+        ));
         return;
     }
     let max = counts.values().copied().max().unwrap_or(1);
@@ -2042,6 +2047,28 @@ mod tests {
 
         assert!(text.contains("0 loaded"));
         assert!(text.contains("No report data yet"));
+    }
+
+    #[test]
+    fn worklist_chart_empty_state_names_missing_rows() {
+        let chart = UiChartNode {
+            id: Some("approval-flow".to_string()),
+            title: "Approval Flow".to_string(),
+            source: "worklists.release".to_string(),
+            intent: Some("status_breakdown".to_string()),
+            render_as: Some("bar".to_string()),
+        };
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: Vec::new(),
+        };
+        let mut lines = Vec::new();
+
+        render_worklist_chart(&chart, &items, &mut lines, 0);
+        let text = line_text(&lines);
+
+        assert!(text.contains("No chart data yet"));
+        assert!(text.contains("This chart will populate when the backing worklist has rows."));
     }
 
     #[test]
