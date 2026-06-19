@@ -56,7 +56,7 @@ repo_root="$(cd "$repo_root" && pwd -P)"
 report_dir_path="$repo_root/$report_dir"
 mkdir -p "$report_dir_path"
 
-stamp="$(date +%s)"
+stamp="$(date +%s)-$$"
 json_path="$report_dir_path/ui-client-baseline-$stamp.json"
 md_path="$report_dir_path/ui-client-baseline-$stamp.md"
 
