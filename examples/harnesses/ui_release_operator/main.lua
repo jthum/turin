@@ -29,6 +29,7 @@ end
 action.define("release.seed_demo_work", function(_ctx, params)
   local release = selected_release(params)
   local count = tonumber(params and params.count or 3) or 3
+  local risk_threshold = tonumber(params and params.risk_threshold or 0.75) or 0.75
   local list = release_list()
 
   for i = 1, count do
@@ -43,6 +44,7 @@ action.define("release.seed_demo_work", function(_ctx, params)
       metadata = {
         lane = i % 2 == 0 and "qa" or "ops",
         release = release,
+        risk_threshold = risk_threshold,
       },
     })
   end
@@ -61,6 +63,7 @@ action.define("release.seed_demo_work", function(_ctx, params)
     status = "seeded",
     release = release,
     count = count,
+    risk_threshold = risk_threshold,
   }
 end)
 
@@ -232,10 +235,12 @@ app:screen("intake", "Intake", function(screen)
     params = {
       release = "2026.06",
       count = 1,
+      risk_threshold = 0.75,
     },
     fields = {
       { name = "release", label = "Release", type = "text", default = "2026.06" },
       { name = "count", label = "Count", type = "number" },
+      { name = "risk_threshold", label = "Risk Threshold", type = "decimal" },
     },
   })
 end)

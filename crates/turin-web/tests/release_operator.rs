@@ -487,7 +487,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         Some("worklists.release"),
     )?;
     assert_node(&app, "intake", "form", "seed-demo-form", None)?;
-    assert_form_uses_static_count_param_as_default(&app)?;
+    assert_intake_form_uses_static_params_as_defaults(&app)?;
     assert_node(
         &app,
         "overview",
@@ -586,7 +586,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             "harness_id": "default",
             "params": {
                 "release": "2026.06",
-                "count": 4
+                "count": 4,
+                "risk_threshold": 0.82
             }
         }))
         .send()
@@ -597,6 +598,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(seeded["result"]["action"], "release.seed_demo_work");
     assert_eq!(seeded["result"]["result"]["status"], "seeded");
     assert_eq!(seeded["result"]["result"]["count"], 4);
+    assert_eq!(seeded["result"]["result"]["risk_threshold"], json!(0.82));
     let seeded_intents = ui_intents(&seeded)?;
     assert_has_ui_intent(seeded_intents, "seeded notify", |intent| {
         intent["type"] == "notify"
@@ -720,6 +722,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(
         items
             .iter()
+            .all(|item| item["metadata"]["risk_threshold"] == json!(0.82))
+    );
+    assert!(
+        items
+            .iter()
             .all(|item| item["action"]["name"] == "release.approve_next")
     );
 
@@ -812,7 +819,7 @@ fn assert_pane_node(
     }
 }
 
-fn assert_form_uses_static_count_param_as_default(app: &Value) -> Result<()> {
+fn assert_intake_form_uses_static_params_as_defaults(app: &Value) -> Result<()> {
     let screen = app["app"]["screens"]
         .get("intake")
         .context("missing intake screen")?;
@@ -833,6 +840,18 @@ fn assert_form_uses_static_count_param_as_default(app: &Value) -> Result<()> {
     assert!(
         count_field.get("default").is_none(),
         "count field should rely on form params instead of duplicating a default"
+    );
+    assert_eq!(form["params"]["risk_threshold"], json!(0.75));
+    let risk_field = form["fields"]
+        .as_array()
+        .context("form should include fields")?
+        .iter()
+        .find(|field| field["name"] == "risk_threshold")
+        .context("missing risk threshold field")?;
+    assert_eq!(risk_field["kind"], "decimal");
+    assert!(
+        risk_field.get("default").is_none(),
+        "risk threshold should rely on form params instead of duplicating a default"
     );
     Ok(())
 }
