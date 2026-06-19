@@ -15,6 +15,8 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, DefaultOperatorConsoleSummary,
     HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiUpdate,
+    ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
+    ui_harness_action_result_matches_app as harness_action_result_matches_app,
 };
 
 use crate::{harness_ui, theme};
@@ -2340,43 +2342,6 @@ fn work_item_identity(item: &WorkItemDetail) -> String {
     } else {
         item.public_id.clone()
     }
-}
-
-fn harness_action_result_matches_app(
-    result: &HarnessActionRunResult,
-    app: &turin_ui_core::UiAppRecord,
-) -> bool {
-    if let Some(harness_id) = result.harness_id.as_deref()
-        && app.source.harness_id.as_deref() != Some(harness_id)
-    {
-        return false;
-    }
-    if let Some(agent_id) = app.source.agent_id.as_deref()
-        && result.agent_id != agent_id
-    {
-        return false;
-    }
-    true
-}
-
-fn harness_action_failure_matches_app(
-    failure: &HarnessActionFailure,
-    app: &turin_ui_core::UiAppRecord,
-) -> bool {
-    if let Some(harness_id) = failure.harness_id.as_deref()
-        && app.source.harness_id.as_deref() != Some(harness_id)
-    {
-        return false;
-    }
-    if let Some(agent_id) = app.source.agent_id.as_deref()
-        && failure
-            .agent_id
-            .as_deref()
-            .is_some_and(|value| value != agent_id)
-    {
-        return false;
-    }
-    true
 }
 
 fn pane_actions(

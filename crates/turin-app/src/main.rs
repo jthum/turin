@@ -21,6 +21,8 @@ use turin_ui_core::{
     HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate,
     collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
     preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
+    ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
+    ui_harness_action_result_matches_app as harness_action_result_matches_app,
 };
 
 mod harness_ui;
@@ -3427,20 +3429,6 @@ impl eframe::App for TurinDesktopApp {
     }
 }
 
-fn harness_action_result_matches_app(result: &HarnessActionRunResult, app: &UiAppRecord) -> bool {
-    if let Some(harness_id) = result.harness_id.as_deref()
-        && app.source.harness_id.as_deref() != Some(harness_id)
-    {
-        return false;
-    }
-    if let Some(agent_id) = app.source.agent_id.as_deref()
-        && result.agent_id != agent_id
-    {
-        return false;
-    }
-    true
-}
-
 fn default_operator_metric_groups(
     summary: &DefaultOperatorConsoleSummary,
     harness_apps: usize,
@@ -3471,23 +3459,6 @@ fn default_operator_metric_groups(
             ],
         },
     ]
-}
-
-fn harness_action_failure_matches_app(failure: &HarnessActionFailure, app: &UiAppRecord) -> bool {
-    if let Some(harness_id) = failure.harness_id.as_deref()
-        && app.source.harness_id.as_deref() != Some(harness_id)
-    {
-        return false;
-    }
-    if let Some(agent_id) = app.source.agent_id.as_deref()
-        && failure
-            .agent_id
-            .as_deref()
-            .is_some_and(|value| value != agent_id)
-    {
-        return false;
-    }
-    true
 }
 
 #[cfg(test)]

@@ -108,7 +108,7 @@ result feedback, shown panes, dynamic UI navigation/focus/refresh
 handling, dynamic badges, and lightweight worklist-backed activity, detail,
 report, and chart surfaces with explicit no-data copy and grouping hints. Form
 field defaults and typed scalar coercion come from stateless `turin-ui-core`
-helpers, default-screen, node-target, and badge-text lookup also come from
-`turin-ui-core`, and drafts and controls remain app-local. It should remain
-replaceable at the presentation layer while preserving the semantic client
-contract.
+helpers, default-screen, node-target, badge-text, and action-feedback
+app-scoping lookup also come from `turin-ui-core`, and drafts and controls
+remain app-local. It should remain replaceable at the presentation layer while
+preserving the semantic client contract.

@@ -2,6 +2,7 @@ mod controller;
 mod dashboard;
 mod form_values;
 mod intents;
+mod ui_actions;
 mod ui_badges;
 mod ui_copy;
 mod ui_data;
@@ -28,6 +29,7 @@ pub use form_values::{
     ui_form_is_multiline_field, ui_form_value_string,
 };
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
+pub use ui_actions::{ui_harness_action_failure_matches_app, ui_harness_action_result_matches_app};
 pub use ui_badges::ui_badge_text;
 pub use ui_copy::{ui_data_not_loaded_message, unsupported_ui_source_message};
 pub use ui_data::{
