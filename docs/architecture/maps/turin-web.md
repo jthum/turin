@@ -54,6 +54,8 @@ session state, invent renderer-specific harness APIs, or bypass
 - Runtime state remains in the daemon; web session state remains in the browser.
 - Browser form drafts, confirmation modals, and action-running state are
   memory-local and should not be persisted by `turin-web`.
+- Browser option-backed form selects should encode and decode option values as
+  JSON scalars so non-string options stay typed through submission.
 - Dynamic UI intents returned by action responses are local presentation hints,
   not durable browser session state.
 - Browser action feedback may display action/harness/agent routing metadata
