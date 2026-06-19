@@ -32,6 +32,8 @@ runtime-owned UI session store, or a second daemon implementation.
 - `crates/turin-ui-core/src/ui_navigation.rs`
   - Stateless semantic UI navigation helpers for declared screen target lookup
     and default screen selection from `opens_with`.
+  - Stateless node target matching for semantic focus/open helpers; clients
+    still decide local focus behavior.
 - `crates/turin-ui-core/src/form_values.rs`
   - Stateless semantic UI form value helpers for default display values, field
     kind aliases, typed option preservation, and scalar coercion.
@@ -89,8 +91,8 @@ runtime-owned UI session store, or a second daemon implementation.
   `turin-control-client`.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
-- Worklist source, request-discovery, default-screen target lookup, and display
-  helpers must stay stateless and renderer-neutral.
+- Worklist source, request-discovery, default-screen target lookup, node target
+  matching, and display helpers must stay stateless and renderer-neutral.
 - Form value helpers may parse/default individual field values, but form drafts,
   field focus, validation display, submission timing, and modal state remain in
   each client.
@@ -154,9 +156,9 @@ git diff --check
 new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
 bounded notices/events, UI list loading for worklists, stateless default-screen
-lookup, stateless visible-node request derivation, shared fallback/not-loaded
-copy, harness action command dispatch with returned UI intent application,
-stateless form value coercion, and small worklist summaries. It intentionally
-does not provide a common active-screen model or shared UI session state; those
-seams should be extracted later only if the clients independently converge on
-the same shape.
+lookup, stateless node target matching, stateless visible-node request
+derivation, shared fallback/not-loaded copy, harness action command dispatch
+with returned UI intent application, stateless form value coercion, and small
+worklist summaries. It intentionally does not provide a common active-screen
+model or shared UI session state; those seams should be extracted later only if
+the clients independently converge on the same shape.

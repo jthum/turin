@@ -9,7 +9,7 @@ degradation of semantic harness UI intent.
 
 Keep this crate as a client over `turin-ui-core` and `turin-control-client`.
 Runtime semantics, daemon transport, harness UI indexing, and shared
-worklist/default-screen derivation belong outside this crate.
+worklist/default-screen/node-target derivation belong outside this crate.
 
 ## Files
 
@@ -108,6 +108,6 @@ result feedback, shown panes, dynamic UI navigation/focus/refresh
 handling, dynamic badges, and lightweight worklist-backed activity, detail,
 report, and chart surfaces with explicit no-data copy and grouping hints. Form
 field defaults and typed scalar coercion come from stateless `turin-ui-core`
-helpers, default-screen lookup also comes from `turin-ui-core`, and drafts and
-controls remain app-local. It should remain replaceable at the presentation
-layer while preserving the semantic client contract.
+helpers, default-screen and node-target lookup also come from `turin-ui-core`,
+and drafts and controls remain app-local. It should remain replaceable at the
+presentation layer while preserving the semantic client contract.

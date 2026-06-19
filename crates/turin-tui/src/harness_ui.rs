@@ -24,7 +24,7 @@ pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
     ui_form_field_kind as normalized_form_field_kind, ui_form_is_bool_field as is_bool_field,
     ui_form_is_multiline_field as is_multiline_field, ui_form_value_string as form_value_string,
-    ui_screen_index_for_target as screen_index_for_target,
+    ui_node_id_matches as node_id_matches, ui_screen_index_for_target as screen_index_for_target,
 };
 
 use crate::app::PendingHarnessAction;
@@ -357,10 +357,6 @@ fn find_focus_target_in_nodes_with_action_index(
         }
     }
     None
-}
-
-fn node_id_matches(id: Option<&str>, target: &str) -> bool {
-    id == Some(target)
 }
 
 pub fn render_harness_screen(

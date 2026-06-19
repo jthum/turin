@@ -19,6 +19,7 @@ use turin_ui_core::{
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
+    ui_nodes_contain_target as nodes_contain_target,
     ui_screen_index_for_target as screen_index_for_target,
 };
 
@@ -53,35 +54,6 @@ pub(super) fn find_focus_target(app: &UiAppRecord, target: &str) -> Option<Harne
         }
     }
     None
-}
-
-fn nodes_contain_target(nodes: &[UiNode], target: &str) -> bool {
-    nodes.iter().any(|node| match node {
-        UiNode::Section(section) => {
-            node_id_matches(section.id.as_deref(), target)
-                || nodes_contain_target(&section.nodes, target)
-        }
-        UiNode::Text(text) => node_id_matches(text.id.as_deref(), target),
-        UiNode::Action(action) => {
-            node_id_matches(action.id.as_deref(), target)
-                || action.action == target
-                || action.label == target
-        }
-        UiNode::List(list) => node_id_matches(list.id.as_deref(), target),
-        UiNode::Activity(activity) => node_id_matches(activity.id.as_deref(), target),
-        UiNode::Detail(detail) => node_id_matches(detail.id.as_deref(), target),
-        UiNode::Form(form) => {
-            node_id_matches(form.id.as_deref(), target)
-                || form.action == target
-                || form.title == target
-        }
-        UiNode::Report(report) => node_id_matches(report.id.as_deref(), target),
-        UiNode::Chart(chart) => node_id_matches(chart.id.as_deref(), target),
-    })
-}
-
-fn node_id_matches(id: Option<&str>, target: &str) -> bool {
-    id == Some(target)
 }
 
 pub(super) fn render_harness_app(
