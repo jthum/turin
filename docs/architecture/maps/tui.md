@@ -149,7 +149,8 @@ git diff --check
 The current TUI foundation is intentionally smaller than the previous terminal
 client. It starts with an operator overview, harness app rendering, nested menu
 navigation, focus cycling that skips empty regions, local work-item selection
-with inspector detail, selected-row table windowing, page/boundary navigation in
+with inspector detail that includes worklist, pause, claim, parent, failure, and
+action context, selected-row table windowing, page/boundary navigation in
 focused regions, dynamic open/focus handling, shown pane overlays with
 pane-local item/action selection, editable forms, worklist-backed
 activity/detail/report/chart surfaces with explicit no-data copy and grouping

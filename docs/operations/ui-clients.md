@@ -381,7 +381,8 @@ The TUI renders harness UI contracts semantically:
   visible row-range and selected-row feedback
 - selected worklist rows appear in the inspector; row identity is preserved
   across refresh/reorder where possible, and rows with item actions can be
-  queued for confirmation from the item focus
+  queued for confirmation from the item focus; inspector detail includes
+  worklist, pause, claim, parent, failure, metadata, and action context
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
 - worklist-backed report and chart nodes become lightweight summaries, next

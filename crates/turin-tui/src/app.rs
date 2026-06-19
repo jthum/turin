@@ -2231,6 +2231,7 @@ fn work_item_selection_lines(
         kv_line("Position", position),
         kv_line("List", selection.list_title.clone()),
         kv_line("Source", selection.list_source.clone()),
+        kv_line("Worklist", item.worklist_id.clone()),
         kv_line(
             "State",
             format!(
@@ -2240,6 +2241,18 @@ fn work_item_selection_lines(
         ),
         kv_line("Item", item.public_id.clone()),
     ];
+    if let Some(parent_id) = item.parent_id.as_ref() {
+        lines.push(kv_line("Parent", parent_id.clone()));
+    }
+    if item.paused {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<14}", "Paused"), theme::muted()),
+            Span::styled("yes", theme::warning()),
+        ]));
+    }
+    if let Some(reason) = item.pause_reason.as_ref() {
+        lines.push(kv_line("Pause reason", truncate(reason, 60)));
+    }
     if let Some(agent_id) = item.claim_agent_id.as_ref() {
         lines.push(kv_line("Claimed by", agent_id.clone()));
     }
@@ -2963,22 +2976,42 @@ mod tests {
 
     #[test]
     fn work_item_selection_lines_include_position_and_action_hint() {
+        let mut item = test_work_item(Some(ScheduleActionParams {
+            name: "release.approve".to_string(),
+            params: Some(json!({ "item": "REL-1" })),
+        }));
+        item.parent_id = Some("REL-0".to_string());
+        item.paused = true;
+        item.pause_reason = Some("Waiting for release captain signoff".to_string());
+        item.claim_agent_id = Some("release-bot".to_string());
+        item.failure_reason = Some("Previous gate check failed".to_string());
+        item.metadata = Some(json!({ "release": "2026.06" }));
         let selection = harness_ui::HarnessWorkItemSelection {
             list_title: "Approvals".to_string(),
             list_source: "worklists.release".to_string(),
-            item: test_work_item(Some(ScheduleActionParams {
-                name: "release.approve".to_string(),
-                params: Some(json!({ "item": "REL-1" })),
-            })),
+            item,
         };
 
         let text = line_text(&work_item_selection_lines(&selection, true, 1, 3));
 
         assert!(text.contains("Position"));
         assert!(text.contains("2 / 3"));
+        assert!(text.contains("Worklist"));
+        assert!(text.contains("release"));
+        assert!(text.contains("Parent"));
+        assert!(text.contains("REL-0"));
+        assert!(text.contains("Paused"));
+        assert!(text.contains("yes"));
+        assert!(text.contains("Pause reason"));
+        assert!(text.contains("Waiting for release captain signoff"));
+        assert!(text.contains("Claimed by"));
+        assert!(text.contains("release-bot"));
         assert!(text.contains("Action"));
         assert!(text.contains("release.approve"));
         assert!(text.contains("Enter queues this work-item action for confirmation"));
+        assert!(text.contains("Failure: Previous gate check failed"));
+        assert!(text.contains("Metadata"));
+        assert!(text.contains("2026.06"));
     }
 
     #[test]
