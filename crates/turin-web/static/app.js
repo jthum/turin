@@ -1743,12 +1743,21 @@ function appendListMetadata(panel, node) {
 
 function listMetadataParts(node) {
   const parts = [];
-  const whereCount =
-    node.where && typeof node.where === "object" ? Object.keys(node.where).length : 0;
-  if (whereCount) parts.push(`Where ${whereCount}`);
-  if (node.sort?.length) parts.push(`Sort ${node.sort.length}`);
+  const whereFields = filterFields(node.where);
+  if (whereFields.length) parts.push(`Where ${whereFields.join(",")}`);
+  const sortFields = sortFieldsForDisplay(node.sort || []);
+  if (sortFields.length) parts.push(`Sort ${sortFields.join(",")}`);
   if (node.limit) parts.push(`Limit ${node.limit}`);
   return parts;
+}
+
+function filterFields(where) {
+  if (!where || typeof where !== "object" || Array.isArray(where)) return [];
+  return Object.keys(where).sort();
+}
+
+function sortFieldsForDisplay(sort) {
+  return sort.map(sortEntryField).filter(Boolean);
 }
 
 function emptyListMessage(node) {

@@ -13,7 +13,8 @@ use turin_ui_core::{
     UiListRequest, is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
-    ui_form_value_string as form_value_string, ui_worklist_request, unsupported_ui_source_message,
+    ui_form_value_string as form_value_string, ui_list_filter_fields, ui_list_sort_fields,
+    ui_sort_entry_field as sort_entry_field, ui_worklist_request, unsupported_ui_source_message,
     work_item_field_label, work_item_index_by_key, work_item_key, worklist_chart_group_field,
     worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
     worklist_status_counts,
@@ -1216,15 +1217,6 @@ fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
         .position(|entry| sort_entry_field(entry) == field)
 }
 
-fn sort_entry_field(entry: &str) -> &str {
-    let entry = entry
-        .trim()
-        .trim_start_matches(|ch| ch == '+' || ch == '-')
-        .trim();
-    let entry = entry.split_whitespace().next().unwrap_or(entry);
-    entry.split(':').next().unwrap_or(entry)
-}
-
 fn work_item_selection_summary(item_count: usize, selected_index: usize) -> String {
     if item_count == 0 {
         return "Rows 0-0 of 0".to_string();
@@ -1261,10 +1253,16 @@ fn unsupported_source_message(surface: &str, source: &str) -> String {
 fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
     let mut meta = Vec::new();
     if !list.filter.is_empty() {
-        meta.push(format!("where {}", list.filter.len()));
+        meta.push(format!(
+            "where {}",
+            ui_list_filter_fields(&list.filter).join(",")
+        ));
     }
     if !list.sort.is_empty() {
-        meta.push(format!("sort {}", list.sort.len()));
+        meta.push(format!(
+            "sort {}",
+            ui_list_sort_fields(&list.sort).join(",")
+        ));
     }
     if let Some(limit) = list.limit {
         meta.push(format!("limit {limit}"));
@@ -1529,7 +1527,7 @@ mod tests {
 
         assert_eq!(
             list_metadata_badges(&list),
-            vec!["where 2", "sort 1", "limit 25"]
+            vec!["where kind,status", "sort priority", "limit 25"]
         );
     }
 

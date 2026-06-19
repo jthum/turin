@@ -72,7 +72,7 @@ shared operator commands, and stateless target lookup belong in
   widgets exist.
 - Worklist-backed `list` nodes render as compact terminal tables with
   human-readable field labels, sorted-column markers, terminal-local
-  row-position, filter/sort/limit metadata, and action-available cues. When
+  row-position, named filter/sort metadata, and action-available cues. When
   selection moves beyond the first visible page, the renderer windows rows
   around the selected item instead of making selection disappear off-screen,
   and shows the current visible row range plus selected row number. Other list

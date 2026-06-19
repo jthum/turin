@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Map;
+use serde_json::{Map, Value};
 use turin_daemon_protocol::UiNode;
 
 use crate::controller::UiListRequest;
@@ -41,6 +41,29 @@ pub fn ui_worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
         filter: Map::new(),
         limit: Some(limit),
     })
+}
+
+pub fn ui_list_filter_fields(filter: &Map<String, Value>) -> Vec<String> {
+    let mut fields = filter.keys().cloned().collect::<Vec<_>>();
+    fields.sort();
+    fields
+}
+
+pub fn ui_list_sort_fields(sort: &[String]) -> Vec<String> {
+    sort.iter()
+        .map(|entry| ui_sort_entry_field(entry))
+        .filter(|field| !field.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn ui_sort_entry_field(entry: &str) -> &str {
+    let entry = entry
+        .trim()
+        .trim_start_matches(|ch| ch == '+' || ch == '-')
+        .trim();
+    let entry = entry.split_whitespace().next().unwrap_or(entry);
+    entry.split(':').next().unwrap_or(entry)
 }
 
 pub fn collect_ui_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
@@ -132,7 +155,8 @@ mod tests {
     use super::{
         DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
         DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
-        is_named_worklist_ui_source, is_worklist_ui_source, ui_refresh_requests_for_binding,
+        is_named_worklist_ui_source, is_worklist_ui_source, ui_list_filter_fields,
+        ui_list_sort_fields, ui_refresh_requests_for_binding, ui_sort_entry_field,
         ui_worklist_name_from_source, ui_worklist_request,
     };
 
@@ -179,6 +203,30 @@ mod tests {
         assert_eq!(request.limit, Some(25));
         assert!(ui_worklist_request("worklists.", 25).is_none());
         assert!(ui_worklist_request("tables.release", 25).is_none());
+    }
+
+    #[test]
+    fn list_filter_and_sort_fields_are_stable_for_display() {
+        let filter = Map::from_iter([
+            ("status".to_string(), json!("pending")),
+            ("kind".to_string(), json!("approval")),
+        ]);
+        let sort = vec![
+            "-updated_at desc".to_string(),
+            "+priority".to_string(),
+            "metadata.release:asc".to_string(),
+        ];
+
+        assert_eq!(ui_list_filter_fields(&filter), vec!["kind", "status"]);
+        assert_eq!(
+            ui_list_sort_fields(&sort),
+            vec!["updated_at", "priority", "metadata.release"]
+        );
+        assert_eq!(ui_sort_entry_field("-updated_at desc"), "updated_at");
+        assert_eq!(
+            ui_sort_entry_field("metadata.release:asc"),
+            "metadata.release"
+        );
     }
 
     #[test]

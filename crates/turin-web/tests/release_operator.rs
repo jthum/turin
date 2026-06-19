@@ -391,8 +391,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("function emptyListMessage(node)"));
     assert!(js.contains("after applying ${whereCount} declared filter(s)"));
     assert!(js.contains("Object.keys(node.where).length"));
-    assert!(js.contains("Where ${whereCount}"));
-    assert!(js.contains("Sort ${node.sort.length}"));
+    assert!(js.contains("filterFields(node.where)"));
+    assert!(js.contains("Where ${whereFields.join(\",\")}"));
+    assert!(js.contains("Sort ${sortFields.join(\",\")}"));
+    assert!(js.contains("function filterFields(where)"));
+    assert!(js.contains("function sortFieldsForDisplay(sort)"));
     assert!(js.contains("Limit ${node.limit}"));
     assert!(js.contains("selectListItemAt"));
     assert!(js.contains("focusSelectedListRow"));

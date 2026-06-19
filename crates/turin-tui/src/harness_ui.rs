@@ -16,6 +16,7 @@ use turin_ui_core::{
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests,
     is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
+    ui_list_filter_fields, ui_list_sort_fields, ui_sort_entry_field as sort_entry_field,
     ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
     work_item_index_by_key, worklist_chart_group_field, worklist_chart_group_label,
     worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
@@ -1501,15 +1502,6 @@ fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
         .position(|entry| sort_entry_field(entry) == field)
 }
 
-fn sort_entry_field(entry: &str) -> &str {
-    let entry = entry
-        .trim()
-        .trim_start_matches(|ch| ch == '+' || ch == '-')
-        .trim();
-    let entry = entry.split_whitespace().next().unwrap_or(entry);
-    entry.split(':').next().unwrap_or(entry)
-}
-
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
     ui_worklist_request(source, limit)
 }
@@ -1517,10 +1509,16 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
 fn list_metadata_parts(list: &UiListNode) -> Vec<String> {
     let mut meta = Vec::new();
     if !list.filter.is_empty() {
-        meta.push(format!("where={}", list.filter.len()));
+        meta.push(format!(
+            "where={}",
+            ui_list_filter_fields(&list.filter).join(",")
+        ));
     }
     if !list.sort.is_empty() {
-        meta.push(format!("sort={}", list.sort.len()));
+        meta.push(format!(
+            "sort={}",
+            ui_list_sort_fields(&list.sort).join(",")
+        ));
     }
     meta
 }
@@ -1811,7 +1809,10 @@ mod tests {
             render_as: None,
         };
 
-        assert_eq!(list_metadata_parts(&list), vec!["where=2", "sort=1"]);
+        assert_eq!(
+            list_metadata_parts(&list),
+            vec!["where=kind,status", "sort=priority"]
+        );
     }
 
     #[test]
