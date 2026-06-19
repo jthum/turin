@@ -69,6 +69,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Browser modal/pane overlays should expose dialog semantics, close on Escape,
   keep Tab navigation inside the active overlay, and keep keyboard focus inside
   a safe dialog control across initial render and overlay rerender.
+- Browser `ui.focus` handling should resolve screen ids/titles, node ids,
+  action names/labels, form actions/titles, and nested section targets while
+  keeping the selected screen as browser-local state.
 - Browser-local dynamic badge overlays may survive status refreshes, but they
   still remain client memory state and must not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.
