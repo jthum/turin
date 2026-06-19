@@ -6,6 +6,7 @@ This section is for practical, task-oriented documentation.
 
 - `docs/guides/harness-guide.md` — writing production-quality harness scripts
 - `docs/guides/harness-library.md` — navigating and adopting the checked-in Harness Library
+- `docs/guides/coding-workspace.md` — scenario guide for a project-specific coding workspace
 - `docs/guides/release-operator-console.md` — scenario guide for a release desk built from semantic harness UI
 - `docs/guides/inference-routing.md` — named inference profiles, context-window management, and compaction policy
 - `docs/guides/multimodal.md` — image and file task input, attachment storage, and current channel/provider support

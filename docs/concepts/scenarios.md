@@ -101,6 +101,9 @@ Begin with a coding harness that reads the right architecture maps and runs one
 focused test command. Add worklists only when tasks need to survive across
 sessions.
 
+For a deeper walkthrough of this scenario, see
+`docs/guides/coding-workspace.md`.
+
 ## Release Operator Console
 
 ### What It Feels Like

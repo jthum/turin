@@ -11,6 +11,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/scenario-starter-cards.md` — compact first-slice cards for choosing an initial Turin workflow
 - `docs/concepts/harness-apps-and-ui-clients.md` — how default consoles, harness apps, and local UI client state fit together
+- `docs/guides/coding-workspace.md` — concrete walkthrough of a repository-specific coding workspace
 - `docs/guides/release-operator-console.md` — concrete walkthrough of a release desk as a Turin harness app
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
 - `docs/getting-started/choose-first-workflow.md` — choose a first workflow and decide when custom UI is worth adding
@@ -51,8 +52,9 @@ into technical reference material.
 5. `docs/concepts/scenario-starter-cards.md`
 6. `docs/concepts/scenarios.md`
 7. `docs/concepts/harness-apps-and-ui-clients.md`
-8. `docs/guides/release-operator-console.md`
-9. `docs/getting-started/choose-first-workflow.md`
+8. `docs/guides/coding-workspace.md`
+9. `docs/guides/release-operator-console.md`
+10. `docs/getting-started/choose-first-workflow.md`
 
 This path answers the non-developer questions first: what Turin is, what it can
 be used for, which workflows fit, and when custom UI is worth adding.
@@ -122,16 +124,17 @@ The longer linear path is useful when reading the docs as a broad tour:
 6. `docs/concepts/scenarios.md`
 7. `docs/getting-started/choose-first-workflow.md`
 8. `docs/concepts/harness-apps-and-ui-clients.md`
-9. `docs/guides/release-operator-console.md`
-10. `docs/getting-started/index.md`
-11. `docs/concepts/turin.md`
-12. `docs/getting-started/harness-cookbook.md`
-13. `docs/reference/hooks.md`
-14. `docs/reference/primitives.md`
-15. `docs/concepts/memory-vs-kv.md`
-16. `docs/concepts/worklists.md`
-17. `docs/guides/inference-routing.md`
-18. `docs/guides/multimodal.md`
+9. `docs/guides/coding-workspace.md`
+10. `docs/guides/release-operator-console.md`
+11. `docs/getting-started/index.md`
+12. `docs/concepts/turin.md`
+13. `docs/getting-started/harness-cookbook.md`
+14. `docs/reference/hooks.md`
+15. `docs/reference/primitives.md`
+16. `docs/concepts/memory-vs-kv.md`
+17. `docs/concepts/worklists.md`
+18. `docs/guides/inference-routing.md`
+19. `docs/guides/multimodal.md`
 
 ## Channel Setup
 

@@ -235,6 +235,7 @@ Next:
 - `docs/concepts/scenario-starter-cards.md`
 - `docs/concepts/scenarios.md`
 - `docs/concepts/harness-apps-and-ui-clients.md`
+- `docs/guides/coding-workspace.md`
 - `docs/getting-started/choose-first-workflow.md`
 - `docs/getting-started/index.md`
 - `docs/getting-started/harness-cookbook.md`

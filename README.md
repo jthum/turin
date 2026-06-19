@@ -43,6 +43,7 @@ If you are evaluating Turin rather than implementing a harness yet, start with:
 - [What can you do with Turin?](docs/concepts/what-can-you-do.md)
 - [Scenario starter cards](docs/concepts/scenario-starter-cards.md)
 - [Scenario blueprints](docs/concepts/scenarios.md)
+- [Coding Workspace](docs/guides/coding-workspace.md)
 - [Release Operator Console](docs/guides/release-operator-console.md)
 - [Choose a first workflow](docs/getting-started/choose-first-workflow.md)
 
@@ -676,6 +677,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/reference/primitives.md` — canonical stdlib API + aliases
 - `docs/guides/harness-guide.md` — writing production harness scripts
 - `docs/guides/harness-library.md` — ready-to-use harness library entries
+- `docs/guides/coding-workspace.md` — concrete coding-workspace scenario guide
 - `docs/guides/release-operator-console.md` — concrete release desk scenario guide
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
 - `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
