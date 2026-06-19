@@ -385,7 +385,8 @@ The TUI renders harness UI contracts semantically:
 - selected worklist rows appear in the inspector; row identity is preserved
   across refresh/reorder where possible, and rows with item actions can be
   queued for confirmation from the item focus; inspector detail includes
-  worklist, pause, claim, parent, failure, metadata, and action context
+  timeline, worklist, pause, claim, parent, failure, metadata, and action
+  context
 - worklist-backed activity and detail nodes become compact recent-activity or
   snapshot/detail views
 - worklist-backed report and chart nodes become lightweight summaries, next
@@ -414,14 +415,14 @@ records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample
-(`.workspace/perf-reports/footprint-1781853200-1869339.md`) reported:
+(`.workspace/perf-reports/footprint-1781856843-1915216.md`) reported:
 
-- `86320` Rust code lines under `src` and `crates`
-- `4723` code lines in `crates/turin-app`
-- `4004` code lines in `crates/turin-tui`
-- `3563` code lines in `crates/turin-ui-core`
-- `676` code lines in `crates/turin-web`
-- `80380` bytes across first-party `turin-web` static assets
+- `86595` Rust code lines under `src` and `crates`
+- `4822` code lines in `crates/turin-app`
+- `4136` code lines in `crates/turin-tui`
+- `3596` code lines in `crates/turin-ui-core`
+- `687` code lines in `crates/turin-web`
+- `81554` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
