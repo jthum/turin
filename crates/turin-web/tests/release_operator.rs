@@ -406,6 +406,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("This report will populate when the backing worklist has rows."));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("unsupportedSourceMessage"));
+    assert!(js.contains("const normalizedSource = String(source || \"\").trim()"));
+    assert!(js.contains("This ${surface} is declared and visible, but no source was provided."));
     assert!(js.contains("errorMessageFromEnvelope"));
     assert!(js.contains("details?.guidance"));
     assert!(js.contains("appendCachedDataError"));
@@ -414,6 +416,14 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("details.source"));
     assert!(js.contains("Only worklists.* sources load today"));
     assert!(js.contains("deliberate adapter for this client"));
+    assert!(js.contains("function dataNotLoadedMessage(kind)"));
+    assert!(js.contains("dataNotLoadedMessage(\"list\")"));
+    assert!(js.contains("dataNotLoadedMessage(\"activity\")"));
+    assert!(js.contains("dataNotLoadedMessage(\"detail\")"));
+    assert!(js.contains("dataNotLoadedMessage(\"report\")"));
+    assert!(js.contains("dataNotLoadedMessage(\"chart\")"));
+    assert!(js.contains("This ${surface} is visible, but its backing data has not loaded yet."));
+    assert!(js.contains("client requests and receives the current data."));
     assert!(js.contains("isWorklistSource"));
     assert!(js.contains("node.kind === \"activity\" && isWorklistSource(node.source)"));
     assert!(js.contains("node.kind === \"detail\" && isWorklistSource(node.source)"));

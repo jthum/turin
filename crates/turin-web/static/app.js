@@ -935,7 +935,7 @@ function renderList(node, app) {
   panel.className = "panel";
   appendPanelHeading(panel, node.title, node, app);
   if (!node.source) {
-    appendState(panel, "warning", "List source missing", "This list is declared, but no source was provided.");
+    appendState(panel, "warning", "List source missing", unsupportedSourceMessage("list", node.source));
     return panel;
   }
   if (!isWorklistSource(node.source)) {
@@ -952,7 +952,7 @@ function renderList(node, app) {
     return panel;
   }
   if (!cached) {
-    appendState(panel, "info", "List not loaded yet", "This visible list has not been fetched yet.");
+    appendState(panel, "info", "List not loaded yet", dataNotLoadedMessage("list"));
     return panel;
   }
   if (cached.error) {
@@ -1040,7 +1040,7 @@ function renderActivity(node, app) {
     return panel;
   }
   if (!cached) {
-    appendState(panel, "info", "Activity not loaded yet", "This visible activity surface has not been fetched yet.");
+    appendState(panel, "info", "Activity not loaded yet", dataNotLoadedMessage("activity"));
     return panel;
   }
   if (cached.error) {
@@ -1082,7 +1082,7 @@ function renderDetail(node, app) {
     return panel;
   }
   if (!cached) {
-    appendState(panel, "info", "Detail not loaded yet", "This visible detail surface has not been fetched yet.");
+    appendState(panel, "info", "Detail not loaded yet", dataNotLoadedMessage("detail"));
     return panel;
   }
   if (cached.error) {
@@ -1174,7 +1174,7 @@ function renderReport(node, app) {
     return panel;
   }
   if (!cached) {
-    appendState(panel, "info", "Report not loaded yet", "This visible report surface has not been fetched yet.");
+    appendState(panel, "info", "Report not loaded yet", dataNotLoadedMessage("report"));
     return panel;
   }
   if (cached.error) {
@@ -1207,7 +1207,7 @@ function renderChart(node, app) {
     return panel;
   }
   if (!cached) {
-    appendState(panel, "info", "Chart not loaded yet", "This visible chart surface has not been fetched yet.");
+    appendState(panel, "info", "Chart not loaded yet", dataNotLoadedMessage("chart"));
     return panel;
   }
   if (cached.error) {
@@ -1342,8 +1342,15 @@ function renderPlaceholder(node, app) {
 }
 
 function unsupportedSourceMessage(kind, source) {
-  if (!source) return `This ${kind} is declared and visible, but no source was provided. Add a worklists.* source or a deliberate adapter for this client.`;
-  return `This ${kind} is declared and visible, but source '${source}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter for this client.`;
+  const surface = String(kind || "").trim() || "surface";
+  const normalizedSource = String(source || "").trim();
+  if (!normalizedSource) return `This ${surface} is declared and visible, but no source was provided. Add a worklists.* source or a deliberate adapter for this client.`;
+  return `This ${surface} is declared and visible, but source '${normalizedSource}' cannot load in the browser yet. Only worklists.* sources load today; model this data as a worklist or add a deliberate adapter for this client.`;
+}
+
+function dataNotLoadedMessage(kind) {
+  const surface = String(kind || "").trim() || "surface";
+  return `This ${surface} is visible, but its backing data has not loaded yet. It will appear after the client requests and receives the current data.`;
 }
 
 function renderPanel(text, className) {
