@@ -41,6 +41,7 @@ If you are evaluating Turin rather than implementing a harness yet, start with:
 - [What is Turin?](docs/concepts/what-is-turin.md)
 - [Who is Turin for?](docs/concepts/who-is-turin-for.md)
 - [What can you do with Turin?](docs/concepts/what-can-you-do.md)
+- [Scenario starter cards](docs/concepts/scenario-starter-cards.md)
 - [Scenario blueprints](docs/concepts/scenarios.md)
 - [Release Operator Console](docs/guides/release-operator-console.md)
 - [Choose a first workflow](docs/getting-started/choose-first-workflow.md)

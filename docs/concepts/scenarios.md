@@ -305,6 +305,7 @@ harness UI can turn a workflow into a purpose-built application when needed.
 ## Next Reading
 
 - `docs/concepts/what-can-you-do.md`
+- `docs/concepts/scenario-starter-cards.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/concepts/worklists.md`
 - `docs/operations/ui-clients.md`

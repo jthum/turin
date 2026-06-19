@@ -13,9 +13,10 @@ This section is the fastest path from "what is Turin?" to "I can run and adapt i
 1. `README.md`
 2. `docs/concepts/what-is-turin.md`
 3. `docs/concepts/what-can-you-do.md`
-4. `docs/concepts/scenarios.md`
-5. `docs/getting-started/choose-first-workflow.md`
-6. `docs/concepts/turin.md`
-7. `docs/getting-started/harness-cookbook.md`
-8. `docs/reference/hooks.md`
-9. `docs/reference/primitives.md`
+4. `docs/concepts/scenario-starter-cards.md`
+5. `docs/concepts/scenarios.md`
+6. `docs/getting-started/choose-first-workflow.md`
+7. `docs/concepts/turin.md`
+8. `docs/getting-started/harness-cookbook.md`
+9. `docs/reference/hooks.md`
+10. `docs/reference/primitives.md`

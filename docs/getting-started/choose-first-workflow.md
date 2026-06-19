@@ -101,6 +101,7 @@ multi-agent review only after the single-agent drafting loop is useful.
 ## Next Reading
 
 - `docs/concepts/what-can-you-do.md`
+- `docs/concepts/scenario-starter-cards.md`
 - `docs/concepts/scenarios.md`
 - `docs/concepts/harness-apps-and-ui-clients.md`
 - `docs/guides/release-operator-console.md`
