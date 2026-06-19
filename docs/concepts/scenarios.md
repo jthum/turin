@@ -144,6 +144,9 @@ Use `examples/harnesses/ui_release_operator` as the reference shape. Keep the
 first version worklist-backed and add richer data adapters only when worklists
 stop being enough.
 
+For a deeper walkthrough of this scenario, see
+`docs/guides/release-operator-console.md`.
+
 ## Bug Triage Desk
 
 ### What It Feels Like

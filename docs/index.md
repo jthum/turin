@@ -9,6 +9,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for people asking what Turin is useful for
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/harness-apps-and-ui-clients.md` — how default consoles, harness apps, and local UI client state fit together
+- `docs/guides/release-operator-console.md` — concrete walkthrough of a release desk as a Turin harness app
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
 - `docs/getting-started/choose-first-workflow.md` — choose a first workflow and decide when custom UI is worth adding
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
@@ -46,7 +47,8 @@ into technical reference material.
 3. `docs/concepts/what-can-you-do.md`
 4. `docs/concepts/scenarios.md`
 5. `docs/concepts/harness-apps-and-ui-clients.md`
-6. `docs/getting-started/choose-first-workflow.md`
+6. `docs/guides/release-operator-console.md`
+7. `docs/getting-started/choose-first-workflow.md`
 
 This path answers the non-developer questions first: what Turin is, what it can
 be used for, which workflows fit, and when custom UI is worth adding.
@@ -114,15 +116,16 @@ The longer linear path is useful when reading the docs as a broad tour:
 4. `docs/concepts/scenarios.md`
 5. `docs/getting-started/choose-first-workflow.md`
 6. `docs/concepts/harness-apps-and-ui-clients.md`
-7. `docs/getting-started/index.md`
-8. `docs/concepts/turin.md`
-9. `docs/getting-started/harness-cookbook.md`
-10. `docs/reference/hooks.md`
-11. `docs/reference/primitives.md`
-12. `docs/concepts/memory-vs-kv.md`
-13. `docs/concepts/worklists.md`
-14. `docs/guides/inference-routing.md`
-15. `docs/guides/multimodal.md`
+7. `docs/guides/release-operator-console.md`
+8. `docs/getting-started/index.md`
+9. `docs/concepts/turin.md`
+10. `docs/getting-started/harness-cookbook.md`
+11. `docs/reference/hooks.md`
+12. `docs/reference/primitives.md`
+13. `docs/concepts/memory-vs-kv.md`
+14. `docs/concepts/worklists.md`
+15. `docs/guides/inference-routing.md`
+16. `docs/guides/multimodal.md`
 
 ## Channel Setup
 

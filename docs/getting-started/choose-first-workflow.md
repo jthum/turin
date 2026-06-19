@@ -103,6 +103,7 @@ multi-agent review only after the single-agent drafting loop is useful.
 - `docs/concepts/what-can-you-do.md`
 - `docs/concepts/scenarios.md`
 - `docs/concepts/harness-apps-and-ui-clients.md`
+- `docs/guides/release-operator-console.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/concepts/worklists.md`
 - `docs/guides/harness-guide.md`
