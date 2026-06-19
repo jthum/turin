@@ -120,11 +120,12 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local debug sample from `.workspace/perf-reports/footprint-1781830147.md`:
+Recent local release-backed sample from
+`.workspace/perf-reports/footprint-1781830998.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,819 |
+| `crates/turin-app` | 4,845 |
 | `crates/turin-tui` | 4,127 |
 | `crates/turin-ui-core` | 3,325 |
 | `crates/turin-web` | 676 |
@@ -135,11 +136,11 @@ Recent local debug sample from `.workspace/perf-reports/footprint-1781830147.md`
 | `crates/turin-web/static/app.js` | 63,955 | 2,006 |
 | `crates/turin-web/static/index.html` | 1,600 | 52 |
 
-| debug binary | bytes |
+| release binary | bytes |
 | --- | ---: |
-| `target/debug/turin-tui` | 26,038,816 |
-| `target/debug/turin-app` | 70,506,848 |
-| `target/debug/turin-web` | 22,666,656 |
+| `target/release/turin-tui` | 5,558,048 |
+| `target/release/turin-app` | 14,084,568 |
+| `target/release/turin-web` | 5,135,112 |
 
 Use the release and idle-memory baseline below when a UI change may affect
 startup or resident memory.
@@ -162,18 +163,18 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 `.workspace/perf-reports/` and never builds Turin. Use `--skip-help` when you
 only want binary sizes.
 
-Recent no-build debug checkpoint from
-`.workspace/perf-reports/ui-client-baseline-1781830147.md`:
+Recent no-build release checkpoint from
+`.workspace/perf-reports/ui-client-baseline-1781830998.md`:
 
 | client | path | bytes | help max RSS KB |
 | --- | --- | ---: | ---: |
-| `turin-tui` | `target/debug/turin-tui` | 26,038,816 | 7,940 |
-| `turin-app` | `target/debug/turin-app` | 70,506,848 | 10,220 |
-| `turin-web` | `target/debug/turin-web` | 22,666,656 | 7,504 |
+| `turin-tui` | `target/release/turin-tui` | 5,558,048 | 5,524 |
+| `turin-app` | `target/release/turin-app` | 14,084,568 | 6,704 |
+| `turin-web` | `target/release/turin-web` | 5,135,112 | 5,032 |
 
-This is a local debug-artifact checkpoint only. Use release binaries for
-meaningful size comparisons, but the debug sample is useful when disk space
-rules out a release rebuild during UI iteration.
+This is a local release-artifact checkpoint for `--help` startup only. For true
+idle memory, run the client against a daemon and sample the live process with
+the procedure below.
 
 Build release clients:
 
@@ -388,10 +389,10 @@ records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample
-(`.workspace/perf-reports/footprint-1781830147.md`) reported:
+(`.workspace/perf-reports/footprint-1781830998.md`) reported:
 
-- `86301` Rust code lines under `src` and `crates`
-- `4819` code lines in `crates/turin-app`
+- `86327` Rust code lines under `src` and `crates`
+- `4845` code lines in `crates/turin-app`
 - `4127` code lines in `crates/turin-tui`
 - `3325` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
