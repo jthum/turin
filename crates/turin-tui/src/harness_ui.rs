@@ -1808,6 +1808,81 @@ mod tests {
     }
 
     #[test]
+    fn terminal_golden_report_chart_surface_stays_stable() {
+        let mut app = release_app();
+        app.screens.insert(
+            "reporting".to_string(),
+            UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "reporting".to_string(),
+                title: "Release Insights".to_string(),
+                presentation: Some("dashboard".to_string()),
+                nodes: vec![
+                    UiNode::Report(UiReportNode {
+                        id: Some("release-readiness".to_string()),
+                        title: "Release Readiness".to_string(),
+                        source: "worklists.release".to_string(),
+                        prompt: Some("Summarize release readiness.".to_string()),
+                    }),
+                    UiNode::Chart(UiChartNode {
+                        id: Some("approval-flow".to_string()),
+                        title: "Approval Flow".to_string(),
+                        source: "worklists.release".to_string(),
+                        intent: Some("kind_breakdown".to_string()),
+                        render_as: Some("bar".to_string()),
+                    }),
+                ],
+            },
+        );
+        let reporting_index = screen_index_for_target(&app, "reporting").expect("reporting screen");
+        let mut approval = test_work_item(1, "REL-1", "Approve release");
+        approval.priority = 11;
+        let mut qa = test_work_item(2, "REL-2", "Run QA signoff");
+        qa.kind = "qa".to_string();
+        qa.status = "done".to_string();
+        qa.priority = 4;
+        let mut paused = test_work_item(3, "REL-3", "Paused operations gate");
+        paused.kind = "ops".to_string();
+        paused.status = "paused".to_string();
+        paused.priority = 7;
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![approval, qa, paused],
+        };
+        let report_request =
+            worklist_request("worklists.release", REPORT_LIMIT).expect("report request");
+        let chart_request =
+            worklist_request("worklists.release", CHART_LIMIT).expect("chart request");
+        let text = rendered_screen_text_with_lists(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), reporting_index)]),
+            BTreeMap::from([
+                (report_request.cache_key(), items.clone()),
+                (chart_request.cache_key(), items),
+            ]),
+            BTreeSet::new(),
+        );
+
+        assert_eq!(
+            terminal_compact_content_lines(&text),
+            vec![
+                "Release Insights reporting",
+                "Report: Release Readiness worklists.release",
+                "prompt: Summarize release readiness.",
+                "3 loaded 1 pending 0 claimed 1 done 0 failed 1 other",
+                "Next highest-priority pending item",
+                "REL-1 pending approval priority 11 worklist release",
+                "Approve release",
+                "metadata: {\"release\":\"2026.06\"}",
+                "Chart: Approval Flow worklists.release as bar intent=kind_breakdown grouped_by=Kind",
+                "approval ██████████████████ 1",
+                "ops ██████████████████ 1",
+                "qa ██████████████████ 1",
+            ]
+        );
+    }
+
+    #[test]
     fn default_screen_uses_declared_opens_with() {
         let app = release_app();
         let default = default_screen_index(&app);
