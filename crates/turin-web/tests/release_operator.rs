@@ -369,10 +369,14 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("return node.action === target || node.title === target"));
     assert!(js.contains("renderWorkItemDetail"));
     assert!(js.contains("[\"ID\", item.public_id || String(item.id)]"));
+    assert!(js.contains("[\"Created\", item.created_at]"));
+    assert!(js.contains("[\"Updated\", item.updated_at]"));
     assert!(js.contains("[\"Parent\", item.parent_id]"));
     assert!(js.contains("[\"Paused\", item.paused ? \"yes\" : null]"));
     assert!(js.contains("[\"Pause reason\", item.pause_reason]"));
     assert!(js.contains("[\"Claimed by\", item.claim_agent_id]"));
+    assert!(js.contains("[\"Claimed at\", item.claimed_at]"));
+    assert!(js.contains("[\"Completed\", item.completed_at]"));
     assert!(js.contains("[\"Failure\", item.failure_reason]"));
     assert!(js.contains("item.action.name"));
     assert!(js.contains("Action ${item.action.name} requires confirmation before running."));

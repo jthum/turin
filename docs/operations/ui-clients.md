@@ -46,6 +46,8 @@ default-console guidance and counts in its harness tab.
   action params
 - local worklist row selection that preserves selected item identity across
   refresh/reorder where possible
+- selected work-item inspectors with timeline, pause, claim, parent, failure,
+  metadata, and action context
 - task and event tables with detail inspectors
 - page and boundary navigation inside the currently focused terminal region
 - event-driven harness list refresh through `ui.refresh(...)` and
@@ -61,18 +63,19 @@ default-console guidance and counts in its harness tab.
 `turin-app` is the broader graphical operator console. It currently has more
 desktop-specific surface area, including the connection profile editor, a
 default no-harness console summary, editable harness forms, app-local worklist
-row detail, row-level work-item action cues, dynamic UI navigation, latest
-action result/failure panels, returned action UI intent handling, app-local
-shown panes, and wider runtime tabs.
+row detail with timeline and operational context, row-level work-item action
+cues, dynamic UI navigation, latest action result/failure panels, returned
+action UI intent handling, app-local shown panes, and wider runtime tabs.
 
 `turin-web` is an API-first web adapter with a small browser shell. It exposes
 status, app registry, semantic list loading, action execution, and SSE
 invalidation routes, and it renders the current semantic harness UI vocabulary
 without a frontend build step. When no harness declares `ui.app(...)`, the shell
 renders a default runtime console from `/api/status` instead of a blank custom-UI
-placeholder. Browser list rows include action-availability cues, and
-browser-local `ui.show` pane targets render as overlays and reuse the same
-node/list adapters as screens. See `docs/operations/turin-web.md`.
+placeholder. Browser list rows include action-availability cues, selected-row
+timeline and operational context, and browser-local `ui.show` pane targets
+render as overlays and reuse the same node/list adapters as screens. See
+`docs/operations/turin-web.md`.
 
 The old chat-first TUI, TUI settings file, in-TUI connection editor, and session
 transcript panes were removed during the clean TUI rebuild. Reintroduce those

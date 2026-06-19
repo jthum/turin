@@ -1121,14 +1121,17 @@ function renderWorkItemDetail(item, app) {
     ["Kind", item.kind],
     ["Priority", item.priority],
     ["Worklist", item.worklist_id],
+    ["Created", item.created_at],
+    ["Updated", item.updated_at],
     ["Parent", item.parent_id],
     ["Paused", item.paused ? "yes" : null],
     ["Pause reason", item.pause_reason],
     ["Claimed by", item.claim_agent_id],
+    ["Claimed at", item.claimed_at],
+    ["Completed", item.completed_at],
     ["Release", metadata.release],
     ["Lane", metadata.lane],
     ["Failure", item.failure_reason],
-    ["Updated", item.updated_at],
   ];
   wrapper.innerHTML = fields
     .filter(([, value]) => value !== undefined && value !== null && value !== "")

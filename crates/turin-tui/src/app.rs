@@ -2240,6 +2240,8 @@ fn work_item_selection_lines(
             ),
         ),
         kv_line("Item", item.public_id.clone()),
+        kv_line("Created", item.created_at.clone()),
+        kv_line("Updated", item.updated_at.clone()),
     ];
     if let Some(parent_id) = item.parent_id.as_ref() {
         lines.push(kv_line("Parent", parent_id.clone()));
@@ -2255,6 +2257,12 @@ fn work_item_selection_lines(
     }
     if let Some(agent_id) = item.claim_agent_id.as_ref() {
         lines.push(kv_line("Claimed by", agent_id.clone()));
+    }
+    if let Some(claimed_at) = item.claimed_at.as_ref() {
+        lines.push(kv_line("Claimed at", claimed_at.clone()));
+    }
+    if let Some(completed_at) = item.completed_at.as_ref() {
+        lines.push(kv_line("Completed", completed_at.clone()));
     }
     if let Some(action) = item.action.as_ref() {
         lines.push(kv_line("Action", action.name.clone()));
@@ -2984,6 +2992,8 @@ mod tests {
         item.paused = true;
         item.pause_reason = Some("Waiting for release captain signoff".to_string());
         item.claim_agent_id = Some("release-bot".to_string());
+        item.claimed_at = Some("2026-06-18T01:00:00Z".to_string());
+        item.completed_at = Some("2026-06-18T02:00:00Z".to_string());
         item.failure_reason = Some("Previous gate check failed".to_string());
         item.metadata = Some(json!({ "release": "2026.06" }));
         let selection = harness_ui::HarnessWorkItemSelection {
@@ -2998,6 +3008,9 @@ mod tests {
         assert!(text.contains("2 / 3"));
         assert!(text.contains("Worklist"));
         assert!(text.contains("release"));
+        assert!(text.contains("Created"));
+        assert!(text.contains("2026-06-18T00:00:00Z"));
+        assert!(text.contains("Updated"));
         assert!(text.contains("Parent"));
         assert!(text.contains("REL-0"));
         assert!(text.contains("Paused"));
@@ -3006,6 +3019,10 @@ mod tests {
         assert!(text.contains("Waiting for release captain signoff"));
         assert!(text.contains("Claimed by"));
         assert!(text.contains("release-bot"));
+        assert!(text.contains("Claimed at"));
+        assert!(text.contains("2026-06-18T01:00:00Z"));
+        assert!(text.contains("Completed"));
+        assert!(text.contains("2026-06-18T02:00:00Z"));
         assert!(text.contains("Action"));
         assert!(text.contains("release.approve"));
         assert!(text.contains("Enter queues this work-item action for confirmation"));

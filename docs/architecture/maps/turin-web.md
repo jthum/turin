@@ -96,8 +96,8 @@ session state, invent renderer-specific harness APIs, or bypass
   table headers, but those constraints are request metadata, not browser
   session state.
 - Browser selected-row detail should surface existing work-item operational
-  fields such as pause, claim, parent, and failure context without persisting
-  selection in `turin-web`.
+  fields such as created/updated timestamps, pause, claim, parent, completion,
+  and failure context without persisting selection in `turin-web`.
 - Browser empty-list copy should name declared filters when they may explain an
   empty worklist-backed result.
 - Browser list-load error states should offer a local per-request retry path so

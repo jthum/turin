@@ -689,6 +689,12 @@ fn render_work_item_detail(
     });
     ui.add_space(6.0);
     ui.label(RichText::new(item.title.clone()).strong());
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        for (label, value) in work_item_timeline_labels(item) {
+            ui.label(RichText::new(format!("{label}: {value}")).weak());
+        }
+    });
     if let Some(reason) = item.pause_reason.as_ref() {
         ui.add_space(6.0);
         ui.label(RichText::new(format!("Pause reason: {reason}")).weak());
@@ -1298,6 +1304,20 @@ fn work_item_context_badges(item: &WorkItemDetail) -> Vec<String> {
     badges
 }
 
+fn work_item_timeline_labels(item: &WorkItemDetail) -> Vec<(&'static str, String)> {
+    let mut labels = vec![
+        ("Created", item.created_at.clone()),
+        ("Updated", item.updated_at.clone()),
+    ];
+    if let Some(claimed_at) = item.claimed_at.as_ref() {
+        labels.push(("Claimed at", claimed_at.clone()));
+    }
+    if let Some(completed_at) = item.completed_at.as_ref() {
+        labels.push(("Completed", completed_at.clone()));
+    }
+    labels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1576,6 +1596,23 @@ mod tests {
                 "paused",
                 "claimed by release-bot",
                 "parent REL-0"
+            ]
+        );
+    }
+
+    #[test]
+    fn work_item_timeline_labels_include_base_and_optional_dates() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.claimed_at = Some("2026-06-18T01:00:00Z".to_string());
+        item.completed_at = Some("2026-06-18T02:00:00Z".to_string());
+
+        assert_eq!(
+            work_item_timeline_labels(&item),
+            vec![
+                ("Created", "2026-06-18T00:00:00Z".to_string()),
+                ("Updated", "2026-06-18T00:00:00Z".to_string()),
+                ("Claimed at", "2026-06-18T01:00:00Z".to_string()),
+                ("Completed", "2026-06-18T02:00:00Z".to_string()),
             ]
         );
     }
