@@ -2103,51 +2103,7 @@ impl TuiApp {
             return;
         };
         frame.render_widget(Clear, area);
-        let mut lines = vec![
-            Line::from(Span::styled(
-                format!(
-                    "{}  ({})",
-                    form_session.form.title, form_session.form.action
-                ),
-                theme::title(),
-            )),
-            Line::from(""),
-        ];
-        if form_session.form.fields.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "This form has no editable fields.",
-                theme::muted(),
-            )));
-        }
-        for (index, field) in form_session.form.fields.iter().enumerate() {
-            let selected = index == form_session.field_index;
-            let style = if selected {
-                theme::selected()
-            } else {
-                theme::base()
-            };
-            let value = form_session
-                .values
-                .get(&field.name)
-                .cloned()
-                .unwrap_or_else(|| harness_ui::default_form_value(&form_session.form, field));
-            lines.push(Line::from(vec![
-                Span::styled(if selected { "● " } else { "  " }, style),
-                Span::styled(format!("{:<18}", field.label), style),
-                Span::styled(format!("{:<22}", form_field_meta(field)), theme::muted()),
-                Span::styled(form_field_value_preview(field, &value), style),
-            ]));
-        }
-        if let Some(error) = form_session.error.as_ref() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(error.clone(), theme::danger())));
-        }
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Tab/↑/↓ fields  type edit  Ctrl+J newline  Space bool  h/l or ←/→ options  Enter submit  Esc cancel",
-            theme::muted(),
-        )));
-        frame.render_widget(panel("Form", lines), area);
+        frame.render_widget(active_form_panel(form_session), area);
     }
 
     fn render_pending_action(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -2193,6 +2149,54 @@ fn panel(title: &'static str, lines: Vec<Line<'static>>) -> Paragraph<'static> {
         .block(block(title))
         .wrap(Wrap { trim: true })
         .style(Style::default().bg(theme::BG))
+}
+
+fn active_form_panel(form_session: &TuiFormSession) -> Paragraph<'static> {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "{}  ({})",
+                form_session.form.title, form_session.form.action
+            ),
+            theme::title(),
+        )),
+        Line::from(""),
+    ];
+    if form_session.form.fields.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "This form has no editable fields.",
+            theme::muted(),
+        )));
+    }
+    for (index, field) in form_session.form.fields.iter().enumerate() {
+        let selected = index == form_session.field_index;
+        let style = if selected {
+            theme::selected()
+        } else {
+            theme::base()
+        };
+        let value = form_session
+            .values
+            .get(&field.name)
+            .cloned()
+            .unwrap_or_else(|| harness_ui::default_form_value(&form_session.form, field));
+        lines.push(Line::from(vec![
+            Span::styled(if selected { "● " } else { "  " }, style),
+            Span::styled(format!("{:<18}", field.label), style),
+            Span::styled(format!("{:<22}", form_field_meta(field)), theme::muted()),
+            Span::styled(form_field_value_preview(field, &value), style),
+        ]));
+    }
+    if let Some(error) = form_session.error.as_ref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(error.clone(), theme::danger())));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/↑/↓ fields  type edit  Ctrl+J newline  Space bool  h/l or ←/→ options  Enter submit  Esc cancel",
+        theme::muted(),
+    )));
+    panel("Form", lines)
 }
 
 fn empty_panel(title: &'static str, message: &'static str) -> Paragraph<'static> {
@@ -2660,6 +2664,9 @@ fn freshness_label(freshness: DashboardFreshness) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use serde_json::json;
     use turin_daemon_protocol::{
         ScheduleActionParams, UiActionNode, UiFormField, UiIntentSource, UiListNode, UiNode,
@@ -2977,6 +2984,78 @@ mod tests {
     }
 
     #[test]
+    fn terminal_golden_active_form_modal_stays_stable() {
+        let form = UiFormNode {
+            id: Some("seed-demo-form".to_string()),
+            title: "Seed Demo Work".to_string(),
+            action: "release.seed_demo_work".to_string(),
+            fields: vec![
+                UiFormField {
+                    name: "title".to_string(),
+                    label: "Title".to_string(),
+                    kind: Some("text".to_string()),
+                    default: Some(json!("Release 2026.06")),
+                    required: Some(true),
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "confirmed".to_string(),
+                    label: "Confirmed".to_string(),
+                    kind: Some("boolean".to_string()),
+                    default: Some(json!(true)),
+                    required: None,
+                    options: Vec::new(),
+                },
+                UiFormField {
+                    name: "lane".to_string(),
+                    label: "Lane".to_string(),
+                    kind: Some("select".to_string()),
+                    default: Some(json!("qa")),
+                    required: None,
+                    options: vec![json!("dev"), json!("qa")],
+                },
+                UiFormField {
+                    name: "notes".to_string(),
+                    label: "Notes".to_string(),
+                    kind: Some("markdown".to_string()),
+                    default: None,
+                    required: None,
+                    options: Vec::new(),
+                },
+            ],
+            params: Value::Null,
+        };
+        let session = TuiFormSession {
+            app_id: "release".to_string(),
+            form,
+            agent_id: Some("release-agent".to_string()),
+            harness_id: Some("release-harness".to_string()),
+            values: BTreeMap::from([
+                ("title".to_string(), "Release 2026.06".to_string()),
+                ("confirmed".to_string(), "true".to_string()),
+                ("lane".to_string(), "qa".to_string()),
+                ("notes".to_string(), "first line\nsecond line".to_string()),
+            ]),
+            field_index: 3,
+            error: Some("Form field 'Count' must be a valid integer".to_string()),
+        };
+
+        assert_eq!(
+            terminal_compact_content_lines(&rendered_form_text(&session)),
+            vec![
+                "Seed Demo Work (release.seed_demo_work)",
+                "Title text required Release 2026.06",
+                "Confirmed boolean [x]",
+                "Lane select 2 options < qa >",
+                "● Notes markdown 2 lines · first line ↵ second line",
+                "Form field 'Count' must be a valid integer",
+                "Tab/↑/↓ fields type edit Ctrl+J newline Space bool h/l or ←/→ options Enter submit Esc",
+                "cancel",
+            ]
+        );
+    }
+
+    #[test]
     fn form_session_field_mutations_clear_stale_errors() {
         let form = UiFormNode {
             id: Some("seed".to_string()),
@@ -3266,5 +3345,49 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn rendered_form_text(session: &TuiFormSession) -> String {
+        let backend = TestBackend::new(96, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(active_form_panel(session), frame.area());
+            })
+            .expect("draw form panel");
+        buffer_text(terminal.backend().buffer())
+    }
+
+    fn terminal_compact_content_lines(text: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| {
+                if line.contains('─') {
+                    return None;
+                }
+                let line = line.trim_end();
+                let line = line.strip_prefix('│').unwrap_or(line);
+                let line = line.strip_suffix('│').unwrap_or(line);
+                let line = line.trim_end();
+                if line.trim().is_empty() {
+                    None
+                } else {
+                    Some(line.split_whitespace().collect::<Vec<_>>().join(" "))
+                }
+            })
+            .collect()
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        let area = *buffer.area();
+        let mut out = String::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
+            }
+            out.push('\n');
+        }
+        out
     }
 }

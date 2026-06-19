@@ -106,9 +106,10 @@ browser shell that consumes those routes.
   with explicit not-yet-loaded copy instead of rendering blank panels.
 - TUI has seed normalized terminal golden fixtures for a harness screen, a
   loaded worklist table with selected-row/action cues, and a pane overlay with
-  pane-local selection cues, but there is still no broader screenshot or
-  terminal-golden suite across clients. Current coverage is otherwise semantic
-  helper tests plus app/web/TUI smoke and unit tests.
+  pane-local selection cues, plus a form modal with typed previews and
+  validation copy. There is still no broader screenshot or terminal-golden
+  suite across clients. Current coverage is otherwise semantic helper tests plus
+  app/web/TUI smoke and unit tests.
 
 ## Update Rule
 
