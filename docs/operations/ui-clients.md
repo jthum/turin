@@ -121,13 +121,13 @@ tools/footprint-report \
 ```
 
 Recent local release-backed sample from
-`.workspace/perf-reports/footprint-1781852160-1849656.md`:
+`.workspace/perf-reports/footprint-1781852987-1864735.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,722 |
-| `crates/turin-tui` | 4,008 |
-| `crates/turin-ui-core` | 3,508 |
+| `crates/turin-app` | 4,719 |
+| `crates/turin-tui` | 4,000 |
+| `crates/turin-ui-core` | 3,549 |
 | `crates/turin-web` | 676 |
 
 | static asset | bytes | lines |
@@ -408,12 +408,12 @@ records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample
-(`.workspace/perf-reports/footprint-1781852160-1849656.md`) reported:
+(`.workspace/perf-reports/footprint-1781852987-1864735.md`) reported:
 
-- `86268` Rust code lines under `src` and `crates`
-- `4722` code lines in `crates/turin-app`
-- `4008` code lines in `crates/turin-tui`
-- `3508` code lines in `crates/turin-ui-core`
+- `86298` Rust code lines under `src` and `crates`
+- `4719` code lines in `crates/turin-app`
+- `4000` code lines in `crates/turin-tui`
+- `3549` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
 - `80380` bytes across first-party `turin-web` static assets
 
