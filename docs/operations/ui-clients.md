@@ -121,7 +121,7 @@ tools/footprint-report \
 ```
 
 Recent local release-backed sample from
-`.workspace/perf-reports/footprint-1781834630-1803539.md`:
+`.workspace/perf-reports/footprint-1781852160-1849656.md`:
 
 | area | code lines |
 | --- | ---: |
@@ -133,7 +133,7 @@ Recent local release-backed sample from
 | static asset | bytes | lines |
 | --- | ---: | ---: |
 | `crates/turin-web/static/app.css` | 14,082 | 795 |
-| `crates/turin-web/static/app.js` | 64,430 | 2,020 |
+| `crates/turin-web/static/app.js` | 64,698 | 2,027 |
 | `crates/turin-web/static/index.html` | 1,600 | 52 |
 
 | release binary | bytes |
@@ -408,14 +408,14 @@ records first-party web static asset bytes/lines separately, and records release
 binary sizes only when artifacts already exist. It does not build Turin.
 
 The latest local UI-chapter sample
-(`.workspace/perf-reports/footprint-1781834630-1803539.md`) reported:
+(`.workspace/perf-reports/footprint-1781852160-1849656.md`) reported:
 
 - `86268` Rust code lines under `src` and `crates`
 - `4722` code lines in `crates/turin-app`
 - `4008` code lines in `crates/turin-tui`
 - `3508` code lines in `crates/turin-ui-core`
 - `676` code lines in `crates/turin-web`
-- `80112` bytes across first-party `turin-web` static assets
+- `80380` bytes across first-party `turin-web` static assets
 
 Use this as a trend signal, not a hard budget. The goal is to keep UI clients
 lean and to notice accidental source or binary growth before it becomes normal.
