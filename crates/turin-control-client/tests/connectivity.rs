@@ -206,6 +206,7 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
             harness_id: Some("default".to_string()),
             params: serde_json::json!({
                 "release": "2026.06",
+                "release_mode": "hotfix",
                 "count": 4,
             }),
         })
@@ -213,6 +214,7 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
     assert_eq!(seeded.action, "release.seed_demo_work");
     assert_eq!(seeded.result["status"], "seeded");
     assert_eq!(seeded.result["count"], 4);
+    assert_eq!(seeded.result["release_mode"], "hotfix");
     assert_release_operator_seeded_ui_intents(&seeded);
 
     let release_worklist = client
@@ -244,6 +246,12 @@ async fn assert_release_operator_ui_workflow(client: &ControlClient) -> Result<(
             .as_ref()
             .and_then(|metadata| metadata.get("release"))
             == Some(&serde_json::json!("2026.06"))
+    }));
+    assert!(pending.items.iter().all(|item| {
+        item.metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("release_mode"))
+            == Some(&serde_json::json!("hotfix"))
     }));
 
     let approved = client
@@ -406,9 +414,20 @@ fn assert_release_operator_static_ui_intents(intents: &[UiIntentMessage]) {
                 if form.id.as_deref() == Some("seed-demo-form")
                     && form.action == "release.seed_demo_work"
                     && form.params.get("count") == Some(&serde_json::json!(1))
+                    && form.params.get("release_mode") == Some(&serde_json::json!("standard"))
                     && form.fields.iter().any(|field| {
                         field.name == "count"
                             && field.kind.as_deref() == Some("number")
+                            && field.default.is_none()
+                    })
+                    && form.fields.iter().any(|field| {
+                        field.name == "release_mode"
+                            && field.kind.as_deref() == Some("select")
+                            && field.options == vec![
+                                serde_json::json!("standard"),
+                                serde_json::json!("hotfix"),
+                                serde_json::json!("rollback"),
+                            ]
                             && field.default.is_none()
                     })
         )

@@ -18,6 +18,13 @@ local function selected_release(params)
   return "2026.06"
 end
 
+local function selected_release_mode(params)
+  if params and params.release_mode then
+    return tostring(params.release_mode)
+  end
+  return "standard"
+end
+
 local function notify_refresh(title, body, level)
   app:notice(title, {
     body = body,
@@ -28,6 +35,7 @@ end
 
 action.define("release.seed_demo_work", function(_ctx, params)
   local release = selected_release(params)
+  local release_mode = selected_release_mode(params)
   local count = tonumber(params and params.count or 3) or 3
   local risk_threshold = tonumber(params and params.risk_threshold or 0.75) or 0.75
   local list = release_list()
@@ -44,6 +52,7 @@ action.define("release.seed_demo_work", function(_ctx, params)
       metadata = {
         lane = i % 2 == 0 and "qa" or "ops",
         release = release,
+        release_mode = release_mode,
         risk_threshold = risk_threshold,
       },
     })
@@ -62,6 +71,7 @@ action.define("release.seed_demo_work", function(_ctx, params)
   return {
     status = "seeded",
     release = release,
+    release_mode = release_mode,
     count = count,
     risk_threshold = risk_threshold,
   }
@@ -168,6 +178,7 @@ app:home("Release Desk", function(screen)
       id = "seed-demo-work",
       params = {
         release = "2026.06",
+        release_mode = "standard",
         count = 4,
       },
     })
@@ -234,11 +245,13 @@ app:screen("intake", "Intake", function(screen)
     action = "release.seed_demo_work",
     params = {
       release = "2026.06",
+      release_mode = "standard",
       count = 1,
       risk_threshold = 0.75,
     },
     fields = {
       { name = "release", label = "Release", type = "text", default = "2026.06" },
+      { name = "release_mode", label = "Release Mode", type = "select", options = { "standard", "hotfix", "rollback" } },
       { name = "count", label = "Count", type = "number" },
       { name = "risk_threshold", label = "Risk Threshold", type = "decimal" },
     },

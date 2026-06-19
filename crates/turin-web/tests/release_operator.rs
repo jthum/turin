@@ -590,6 +590,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             "params": {
                 "release": "2026.06",
                 "count": 4,
+                "release_mode": "hotfix",
                 "risk_threshold": 0.82
             }
         }))
@@ -601,6 +602,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert_eq!(seeded["result"]["action"], "release.seed_demo_work");
     assert_eq!(seeded["result"]["result"]["status"], "seeded");
     assert_eq!(seeded["result"]["result"]["count"], 4);
+    assert_eq!(seeded["result"]["result"]["release_mode"], "hotfix");
     assert_eq!(seeded["result"]["result"]["risk_threshold"], json!(0.82));
     let seeded_intents = ui_intents(&seeded)?;
     assert_has_ui_intent(seeded_intents, "seeded notify", |intent| {
@@ -730,6 +732,11 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(
         items
             .iter()
+            .all(|item| item["metadata"]["release_mode"] == "hotfix")
+    );
+    assert!(
+        items
+            .iter()
             .all(|item| item["action"]["name"] == "release.approve_next")
     );
 
@@ -833,10 +840,11 @@ fn assert_intake_form_uses_static_params_as_defaults(app: &Value) -> Result<()> 
         .into_iter()
         .find(|node| node["kind"] == "form" && node["id"] == "seed-demo-form")
         .context("missing seed demo form")?;
-    assert_eq!(form["params"]["count"], json!(1));
-    let count_field = form["fields"]
+    let fields = form["fields"]
         .as_array()
-        .context("form should include fields")?
+        .context("form should include fields")?;
+    assert_eq!(form["params"]["count"], json!(1));
+    let count_field = fields
         .iter()
         .find(|field| field["name"] == "count")
         .context("missing count field")?;
@@ -844,10 +852,22 @@ fn assert_intake_form_uses_static_params_as_defaults(app: &Value) -> Result<()> 
         count_field.get("default").is_none(),
         "count field should rely on form params instead of duplicating a default"
     );
+    assert_eq!(form["params"]["release_mode"], json!("standard"));
+    let release_mode_field = fields
+        .iter()
+        .find(|field| field["name"] == "release_mode")
+        .context("missing release mode field")?;
+    assert_eq!(release_mode_field["kind"], "select");
+    assert!(
+        release_mode_field.get("default").is_none(),
+        "release mode should rely on form params instead of duplicating a default"
+    );
+    assert_eq!(
+        release_mode_field["options"],
+        json!(["standard", "hotfix", "rollback"])
+    );
     assert_eq!(form["params"]["risk_threshold"], json!(0.75));
-    let risk_field = form["fields"]
-        .as_array()
-        .context("form should include fields")?
+    let risk_field = fields
         .iter()
         .find(|field| field["name"] == "risk_threshold")
         .context("missing risk threshold field")?;
