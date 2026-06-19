@@ -1273,6 +1273,13 @@ function renderActionResult(result) {
     <h3>${escapeHtml(result.title)}</h3>
     <p class="muted">${escapeHtml(result.body)}</p>
   `;
+  const meta = actionResultMeta(result);
+  if (meta.length) {
+    const row = document.createElement("p");
+    row.className = "action-result-meta";
+    row.textContent = meta.join(" · ");
+    panel.append(row);
+  }
   if (result.detail !== undefined && result.detail !== null) {
     const pre = document.createElement("pre");
     pre.className = "json-preview";
@@ -1289,6 +1296,14 @@ function latestActionResultForApp(app) {
   return (result.appId || null) === appId ? result : null;
 }
 
+function actionResultMeta(result) {
+  return [
+    result.action ? `Action ${result.action}` : null,
+    result.agentId ? `Agent ${result.agentId}` : null,
+    result.harnessId ? `Harness ${result.harnessId}` : null,
+  ].filter(Boolean);
+}
+
 async function runAction(node, app, options = {}) {
   if (node.confirm && !options.confirmed) {
     requestActionConfirmation(node, app);
@@ -1299,6 +1314,9 @@ async function runAction(node, app, options = {}) {
   state.runningActions.add(actionKey);
   state.latestActionResult = {
     appId: app?.id || null,
+    action: node.action,
+    agentId: app?.source?.agent_id || null,
+    harnessId: app?.source?.harness_id || null,
     level: "info",
     title: "Action running",
     body: `Running ${node.label || node.action}.`,
@@ -1314,6 +1332,9 @@ async function runAction(node, app, options = {}) {
     });
     state.latestActionResult = {
       appId: app?.id || null,
+      action: result.result.action,
+      agentId: result.result.agent_id || app?.source?.agent_id || null,
+      harnessId: result.result.harness_id || app?.source?.harness_id || null,
       level: "success",
       title: "Action completed",
       body: `${result.result.action} finished.`,
@@ -1326,6 +1347,9 @@ async function runAction(node, app, options = {}) {
   } catch (error) {
     state.latestActionResult = {
       appId: app?.id || null,
+      action: node.action,
+      agentId: app?.source?.agent_id || null,
+      harnessId: app?.source?.harness_id || null,
       level: "error",
       title: "Action failed",
       body: error.message,

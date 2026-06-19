@@ -209,8 +209,9 @@ KV, or runtime DB tables.
 Declared action failures return the standard `control_unavailable` JSON error
 envelope from the web boundary. The browser keeps that failure local: it shows an
 error notice and an action-result panel scoped to the app that initiated the
-action, preserving the structured error envelope as panel detail without
-persisting any UI session state in Turin.
+action, preserving the structured error envelope as panel detail and showing
+action/harness/agent metadata when known without persisting any UI session state
+in Turin.
 
 An empty or whitespace-only `action` is rejected before control dispatch with
 `invalid_action_request` and structured details:
@@ -345,7 +346,8 @@ The current browser shell is intentionally small:
   actions
 - action start/completion/failure feedback, latest action result panels on
   screens and open panes scoped to the originating app, returned action UI
-  intent application, and duplicate-run suppression
+  intent application, action/harness/agent metadata when known, and
+  duplicate-run suppression
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces, including filtered empty-list copy when declared
   `where` constraints match no rows

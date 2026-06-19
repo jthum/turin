@@ -56,6 +56,9 @@ session state, invent renderer-specific harness APIs, or bypass
   memory-local and should not be persisted by `turin-web`.
 - Dynamic UI intents returned by action responses are local presentation hints,
   not durable browser session state.
+- Browser action feedback may display action/harness/agent routing metadata
+  from the request or response, but this is operator context only and should not
+  become persisted `turin-web` session state.
 - Browser-local dynamic badge overlays may survive status refreshes, but they
   still remain client memory state and must not be persisted by `turin-web`.
 - Local and remote control connections should stay behaviorally symmetric.

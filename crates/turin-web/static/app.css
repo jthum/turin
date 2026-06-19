@@ -409,6 +409,11 @@ h1 {
   border-color: rgba(255, 124, 111, 0.5);
 }
 
+.action-result-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .json-preview {
   overflow: auto;
   max-height: 16rem;
