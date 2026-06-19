@@ -14,11 +14,10 @@ use turin_ui_core::{
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
-    ui_list_filter_fields, ui_list_sort_fields, ui_sort_entry_direction as sort_entry_direction,
-    ui_sort_entry_field as sort_entry_field, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, work_item_index_by_key, work_item_key, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    ui_list_filter_fields, ui_list_sort_fields, ui_sorted_field_label as sorted_field_label,
+    ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
+    work_item_index_by_key, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -1189,43 +1188,6 @@ fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
     } else {
         cast::Intent::Info
     }
-}
-
-fn field_label(field: &str) -> String {
-    field
-        .split(['_', '.'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn sorted_field_label(field: &str, sort: &[String]) -> String {
-    let mut label = field_label(field);
-    if let Some(index) = sort_field_index(field, sort) {
-        let direction = sort_field_direction(field, sort)
-            .map(|direction| format!(" {direction}"))
-            .unwrap_or_default();
-        label.push_str(&format!(" [sort {}{}]", index + 1, direction));
-    }
-    label
-}
-
-fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
-    sort.iter()
-        .position(|entry| sort_entry_field(entry) == field)
-}
-
-fn sort_field_direction(field: &str, sort: &[String]) -> Option<&'static str> {
-    sort.iter()
-        .find(|entry| sort_entry_field(entry) == field)
-        .and_then(|entry| sort_entry_direction(entry))
 }
 
 fn work_item_selection_summary(item_count: usize, selected_index: usize) -> String {

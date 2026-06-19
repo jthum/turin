@@ -57,6 +57,43 @@ pub fn ui_list_sort_fields(sort: &[String]) -> Vec<String> {
         .collect()
 }
 
+pub fn ui_display_field_label(field: &str) -> String {
+    field
+        .split(['_', '.'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn ui_sorted_field_label(field: &str, sort: &[String]) -> String {
+    let mut label = ui_display_field_label(field);
+    if let Some(index) = ui_sort_field_index(field, sort) {
+        let direction = ui_sort_field_direction(field, sort)
+            .map(|direction| format!(" {direction}"))
+            .unwrap_or_default();
+        label.push_str(&format!(" [sort {}{}]", index + 1, direction));
+    }
+    label
+}
+
+fn ui_sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
+    sort.iter()
+        .position(|entry| ui_sort_entry_field(entry) == field)
+}
+
+fn ui_sort_field_direction(field: &str, sort: &[String]) -> Option<&'static str> {
+    sort.iter()
+        .find(|entry| ui_sort_entry_field(entry) == field)
+        .and_then(|entry| ui_sort_entry_direction(entry))
+}
+
 pub fn ui_sort_entry_field(entry: &str) -> &str {
     let entry = entry
         .trim()
@@ -187,7 +224,8 @@ mod tests {
         DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
         is_named_worklist_ui_source, is_worklist_ui_source, ui_list_filter_fields,
         ui_list_sort_fields, ui_refresh_requests_for_binding, ui_sort_entry_direction,
-        ui_sort_entry_field, ui_worklist_name_from_source, ui_worklist_request,
+        ui_sort_entry_field, ui_sorted_field_label, ui_worklist_name_from_source,
+        ui_worklist_request,
     };
 
     #[test]
@@ -261,6 +299,10 @@ mod tests {
         assert_eq!(ui_sort_entry_direction("+priority"), Some("asc"));
         assert_eq!(ui_sort_entry_direction("metadata.release:asc"), Some("asc"));
         assert_eq!(ui_sort_entry_direction("status"), None);
+        assert_eq!(
+            ui_sorted_field_label("metadata.release", &sort),
+            "Metadata Release [sort 3 asc]"
+        );
     }
 
     #[test]

@@ -37,8 +37,9 @@ pub use ui_copy::{
 pub use ui_data::{
     DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
     DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
-    is_named_worklist_ui_source, is_worklist_ui_source, ui_list_filter_fields, ui_list_sort_fields,
-    ui_refresh_requests_for_binding, ui_sort_entry_direction, ui_sort_entry_field,
+    is_named_worklist_ui_source, is_worklist_ui_source, ui_display_field_label,
+    ui_list_filter_fields, ui_list_sort_fields, ui_refresh_requests_for_binding,
+    ui_sort_entry_direction, ui_sort_entry_field, ui_sorted_field_label,
     ui_worklist_name_from_source, ui_worklist_request,
 };
 pub use ui_navigation::{

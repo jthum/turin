@@ -16,11 +16,10 @@ use turin_ui_core::{
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests,
     is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
-    ui_list_filter_fields, ui_list_sort_fields, ui_sort_entry_direction as sort_entry_direction,
-    ui_sort_entry_field as sort_entry_field, ui_worklist_request, unsupported_ui_source_message,
-    work_item_field_label, work_item_index_by_key, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    ui_list_filter_fields, ui_list_sort_fields, ui_sorted_field_label as sorted_field_label,
+    ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
+    work_item_index_by_key, worklist_chart_group_field, worklist_chart_group_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
@@ -1495,43 +1494,6 @@ fn json_value(value: &Value) -> String {
         Value::Number(value) => value.to_string(),
         Value::Array(_) | Value::Object(_) => truncate(&value.to_string(), 48),
     }
-}
-
-fn field_label(field: &str) -> String {
-    field
-        .split(['_', '.'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn sorted_field_label(field: &str, sort: &[String]) -> String {
-    let mut label = field_label(field);
-    if let Some(index) = sort_field_index(field, sort) {
-        let direction = sort_field_direction(field, sort)
-            .map(|direction| format!(" {direction}"))
-            .unwrap_or_default();
-        label.push_str(&format!(" [sort {}{}]", index + 1, direction));
-    }
-    label
-}
-
-fn sort_field_index(field: &str, sort: &[String]) -> Option<usize> {
-    sort.iter()
-        .position(|entry| sort_entry_field(entry) == field)
-}
-
-fn sort_field_direction(field: &str, sort: &[String]) -> Option<&'static str> {
-    sort.iter()
-        .find(|entry| sort_entry_field(entry) == field)
-        .and_then(|entry| sort_entry_direction(entry))
 }
 
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
