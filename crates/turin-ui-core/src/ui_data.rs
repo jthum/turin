@@ -95,10 +95,7 @@ fn ui_sort_field_direction(field: &str, sort: &[String]) -> Option<&'static str>
 }
 
 pub fn ui_sort_entry_field(entry: &str) -> &str {
-    let entry = entry
-        .trim()
-        .trim_start_matches(|ch| ch == '+' || ch == '-')
-        .trim();
+    let entry = entry.trim().trim_start_matches(['+', '-']).trim();
     let entry = entry.split_whitespace().next().unwrap_or(entry);
     entry.split(':').next().unwrap_or(entry)
 }
@@ -110,7 +107,7 @@ pub fn ui_sort_entry_direction(entry: &str) -> Option<&'static str> {
         Some('+') => Some("asc"),
         _ => None,
     };
-    let entry = raw.trim_start_matches(|ch| ch == '+' || ch == '-').trim();
+    let entry = raw.trim_start_matches(['+', '-']).trim();
     let mut tokens = entry.split_whitespace();
     let first = tokens.next().unwrap_or(entry);
     if let Some(direction) = first.split(':').nth(1).and_then(ui_sort_direction_label) {
