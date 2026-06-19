@@ -90,7 +90,8 @@ and `turin-daemon-protocol`.
 - Worklist-backed `report` and `chart` nodes render lightweight terminal
   summaries from bounded cached worklist data using stateless worklist
   derivation helpers from `turin-ui-core`. This is still a client adapter, not a
-  shared analytics/query semantics layer.
+  shared analytics/query semantics layer. Empty report/chart data should remain
+  visible with explicit no-data copy.
 - Form nodes render as editable terminal modals. Textarea/markdown fields can
   accept `Ctrl+J` newlines but still display as compact previews. Unsupported
   rich form controls should degrade to text/option/boolean editing rather than

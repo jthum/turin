@@ -1159,6 +1159,16 @@ fn render_worklist_report(
         }
     });
 
+    if items.items.is_empty() {
+        ui.add_space(8.0);
+        render_empty_state(
+            ui,
+            "No report data yet",
+            "This report will populate when the backing worklist has rows.",
+        );
+        return;
+    }
+
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(10.0);
         ui.label(RichText::new("Next highest-priority pending item").strong());

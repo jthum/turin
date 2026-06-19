@@ -1261,6 +1261,14 @@ fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, 
         ),
         theme::base(),
     ));
+    if items.items.is_empty() {
+        lines.push(indent_line(
+            depth,
+            "No report data yet".to_string(),
+            theme::muted(),
+        ));
+        return;
+    }
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         lines.push(indent_line(
             depth,
@@ -2019,6 +2027,21 @@ mod tests {
         assert!(text.contains("pause reason: Waiting for sign-off"));
         assert!(text.contains("claimed by: release-bot"));
         assert!(text.contains("parent: REL-0"));
+    }
+
+    #[test]
+    fn worklist_report_empty_state_names_missing_rows() {
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: Vec::new(),
+        };
+        let mut lines = Vec::new();
+
+        render_worklist_report(&items, &mut lines, 0);
+        let text = line_text(&lines);
+
+        assert!(text.contains("0 loaded"));
+        assert!(text.contains("No report data yet"));
     }
 
     #[test]

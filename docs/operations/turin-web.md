@@ -351,8 +351,8 @@ The current browser shell is intentionally small:
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces, including filtered empty-list copy when declared
   `where` constraints match no rows
-- lightweight worklist-backed report summaries with next pending item
-  highlights, plus chart breakdowns
+- lightweight worklist-backed report summaries with no-data copy and next
+  pending item highlights, plus chart breakdowns
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`
   invalidation for cached list requests
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`

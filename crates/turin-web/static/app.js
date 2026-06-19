@@ -1030,6 +1030,10 @@ function renderReport(node, app) {
   }
   const items = cached.list?.items ?? [];
   panel.append(renderMetricGrid(reportMetrics(items)));
+  if (!items.length) {
+    appendState(panel, "empty", "No report data yet", "This report will populate when the backing worklist has rows.");
+    return panel;
+  }
   const next = highestPriorityPendingItem(items);
   if (next) panel.append(renderReportHighlight(next, app));
   return panel;

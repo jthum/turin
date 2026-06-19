@@ -82,6 +82,8 @@ session state, invent renderer-specific harness APIs, or bypass
   selection in `turin-web`.
 - Browser empty-list copy should name declared filters when they may explain an
   empty worklist-backed result.
+- Browser report/chart surfaces should remain visible with explicit no-data
+  copy when the backing worklist has no rows.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes

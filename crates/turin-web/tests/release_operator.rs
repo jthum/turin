@@ -333,6 +333,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("function fieldLabel(field)"));
     assert!(js.contains(".split(/[_.]/)"));
     assert!(js.contains("counts.done"));
+    assert!(js.contains("No report data yet"));
+    assert!(js.contains("This report will populate when the backing worklist has rows."));
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("unsupportedSourceMessage"));
     assert!(js.contains("errorMessageFromEnvelope"));
