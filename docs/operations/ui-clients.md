@@ -118,23 +118,29 @@ tools/footprint-report \
   --binary target/debug/turin-web
 ```
 
-Recent local sample from `.workspace/perf-reports/footprint-1781828339.md`:
+Recent local debug sample from `.workspace/perf-reports/footprint-1781830147.md`:
 
 | area | code lines |
 | --- | ---: |
 | `crates/turin-app` | 4,819 |
-| `crates/turin-tui` | 4,116 |
+| `crates/turin-tui` | 4,127 |
 | `crates/turin-ui-core` | 3,325 |
 | `crates/turin-web` | 676 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
 | `crates/turin-web/static/app.css` | 14,082 | 795 |
-| `crates/turin-web/static/app.js` | 61,751 | 1,938 |
-| `crates/turin-web/static/index.html` | 1,547 | 50 |
+| `crates/turin-web/static/app.js` | 63,955 | 2,006 |
+| `crates/turin-web/static/index.html` | 1,600 | 52 |
 
-No binary sizes were recorded in that run. Use the release and idle-memory
-baseline below when a UI change may affect startup or resident memory.
+| debug binary | bytes |
+| --- | ---: |
+| `target/debug/turin-tui` | 26,038,816 |
+| `target/debug/turin-app` | 70,506,848 |
+| `target/debug/turin-web` | 22,666,656 |
+
+Use the release and idle-memory baseline below when a UI change may affect
+startup or resident memory.
 
 ## Release And Idle-Memory Baseline
 
@@ -155,13 +161,13 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 only want binary sizes.
 
 Recent no-build debug checkpoint from
-`.workspace/perf-reports/ui-client-baseline-1781828339.md`:
+`.workspace/perf-reports/ui-client-baseline-1781830147.md`:
 
 | client | path | bytes | help max RSS KB |
 | --- | --- | ---: | ---: |
-| `turin-tui` | `target/debug/turin-tui` | 25,452,288 | 8,072 |
-| `turin-app` | `target/debug/turin-app` | 69,948,320 | 10,624 |
-| `turin-web` | `target/debug/turin-web` | 23,330,976 | 7,424 |
+| `turin-tui` | `target/debug/turin-tui` | 26,038,816 | 7,940 |
+| `turin-app` | `target/debug/turin-app` | 70,506,848 | 10,220 |
+| `turin-web` | `target/debug/turin-web` | 22,666,656 | 7,504 |
 
 This is a local debug-artifact checkpoint only. Use release binaries for
 meaningful size comparisons, but the debug sample is useful when disk space
