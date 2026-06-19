@@ -253,6 +253,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("renderReportHighlight"));
     assert!(js.contains("highestPriorityPendingItem"));
     assert!(js.contains("Next highest-priority pending item"));
+    assert!(js.contains("const known ="));
+    assert!(js.contains("(counts.claimed || 0)"));
+    assert!(js.contains("if (other > 0) metrics.push({ label: \"Other\", value: other })"));
     assert!(js.contains("renderChart"));
     assert!(js.contains("chartGroupLabel(node)"));
     assert!(js.contains("grouped by ${chartGroupLabel(node)}"));

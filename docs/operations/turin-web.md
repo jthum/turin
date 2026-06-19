@@ -292,7 +292,8 @@ For v1 parity:
 - list rows should support click and keyboard selection without persisting
   selected-row state in the runtime
 - worklist-backed activity/detail can reuse the same bounded adapters as app/TUI
-- forms should support text, number, integer, boolean, options, and textarea
+- forms should support text, integer, number/float/decimal aliases, boolean,
+  options, and textarea
 - worklist-backed reports/charts can render lightweight summary and breakdown
   adapters until their shared query shape is clearer
 - unsupported sources should show explicit fallback messages rather than fail
@@ -340,8 +341,8 @@ The current browser shell is intentionally small:
   action buttons when item action payloads exist
 - typed form defaults from field definitions or static form params, local
   drafts that tolerate in-progress text/number edits, required fields, options,
-  submit-time scalar coercion, and optional blank fields that preserve static
-  params instead of overwriting them with null
+  number/float/decimal aliases, submit-time scalar coercion, and optional blank
+  fields that preserve static params instead of overwriting them with null
 - browser-local confirmation overlay for explicit-confirm actions and work-item
   actions
 - accessible browser-local modal behavior for confirmation and pane overlays,
@@ -354,8 +355,9 @@ The current browser shell is intentionally small:
 - compact state panels for unsupported, missing, loading, empty, and failed
   semantic data surfaces, including filtered empty-list copy when declared
   `where` constraints match no rows
-- lightweight worklist-backed report summaries with no-data copy and next
-  pending item highlights, plus chart breakdowns
+- lightweight worklist-backed report summaries with no-data copy,
+  nonstandard-status buckets when present, and next pending item highlights,
+  plus chart breakdowns
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`
   invalidation for cached list requests
 - split browser-local connection feedback for HTTP refresh health and SSE

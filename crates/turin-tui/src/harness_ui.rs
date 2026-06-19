@@ -1252,15 +1252,21 @@ fn render_chart(
 
 fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
     let counts = worklist_status_counts(items);
+    let other = if counts.other > 0 {
+        format!("  {} other", counts.other)
+    } else {
+        String::new()
+    };
     lines.push(indent_line(
         depth,
         format!(
-            "{} loaded  {} pending  {} claimed  {} done  {} failed",
+            "{} loaded  {} pending  {} claimed  {} done  {} failed{}",
             items.items.len(),
             counts.pending,
             counts.claimed,
             counts.done,
-            counts.failed
+            counts.failed,
+            other
         ),
         theme::base(),
     ));
@@ -2130,6 +2136,23 @@ mod tests {
         assert!(text.contains("0 loaded"));
         assert!(text.contains("No report data yet"));
         assert!(text.contains("This report will populate when the backing worklist has rows."));
+    }
+
+    #[test]
+    fn worklist_report_names_other_status_bucket_when_present() {
+        let mut paused = test_work_item(1, "REL-1", "Paused gate");
+        paused.status = "paused".to_string();
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![paused],
+        };
+        let mut lines = Vec::new();
+
+        render_worklist_report(&items, &mut lines, 0);
+        let text = line_text(&lines);
+
+        assert!(text.contains("1 loaded"));
+        assert!(text.contains("1 other"));
     }
 
     #[test]

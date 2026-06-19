@@ -1164,6 +1164,9 @@ fn render_worklist_report(
                 cast::Badge::new(format!("{} failed", counts.failed)).intent(cast::Intent::Danger),
             );
         }
+        if counts.other > 0 {
+            ui.add(cast::Badge::new(format!("{} other", counts.other)));
+        }
     });
 
     if items.items.is_empty() {

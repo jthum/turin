@@ -1777,13 +1777,21 @@ function sortEntryField(entry) {
 
 function reportMetrics(items) {
   const counts = groupCounts(items, "status");
-  return [
+  const metrics = [
     { label: "Total", value: items.length },
     { label: "Pending", value: counts.pending || 0 },
     { label: "Claimed", value: counts.claimed || 0 },
     { label: "Done", value: counts.done || 0 },
     { label: "Failed", value: counts.failed || 0 },
   ];
+  const known =
+    (counts.pending || 0) +
+    (counts.claimed || 0) +
+    (counts.done || 0) +
+    (counts.failed || 0);
+  const other = items.length - known;
+  if (other > 0) metrics.push({ label: "Other", value: other });
+  return metrics;
 }
 
 function highestPriorityPendingItem(items) {
