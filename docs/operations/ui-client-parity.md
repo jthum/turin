@@ -74,7 +74,7 @@ browser shell that consumes those routes.
 | `GET /api/apps/{app_id}` | One app's screens, menus, panes, and badges. |
 | `POST /api/ui/list` | Worklist-backed semantic list loading. |
 | `POST /api/actions/run` | Harness action execution with JSON result. |
-| `GET /api/events` | SSE runtime/UI event stream for client-side invalidation. |
+| `GET /api/events` | SSE runtime/UI event stream for client-side invalidation; the browser shell tracks event-stream health separately from HTTP refresh health. |
 | `GET /` | Static browser shell for default runtime status plus app/screen/list/form/action rendering, including typed local form drafts. |
 
 ## Current Gaps
