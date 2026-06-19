@@ -1349,6 +1349,65 @@ mod tests {
     }
 
     #[test]
+    fn screen_nav_label_uses_dynamic_badge_then_presentation_fallback() {
+        let mut app = test_app();
+        let mut screen = UiScreenIntent {
+            app_id: app.id.clone(),
+            id: "approvals".to_string(),
+            title: "Approvals".to_string(),
+            presentation: Some("workflow".to_string()),
+            nodes: Vec::new(),
+        };
+
+        assert_eq!(screen_nav_label(&app, &screen), "Approvals · workflow");
+
+        app.badges = BTreeMap::from([(
+            "approvals".to_string(),
+            UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "approvals".to_string(),
+                count: Some(3),
+                label: Some("ready".to_string()),
+                level: Some(UiNoticeLevel::Info),
+                data: Map::new(),
+            },
+        )]);
+        assert_eq!(screen_nav_label(&app, &screen), "Approvals · ready 3");
+
+        screen.presentation = None;
+        assert_eq!(screen_nav_label(&app, &screen), "Approvals · ready 3");
+    }
+
+    #[test]
+    fn node_title_with_badge_appends_titled_node_badges() {
+        let mut app = test_app();
+        app.badges = BTreeMap::from([(
+            "release-readiness".to_string(),
+            UiBadgeIntent {
+                app_id: "release".to_string(),
+                target: "release-readiness".to_string(),
+                count: None,
+                label: Some("live".to_string()),
+                level: Some(UiNoticeLevel::Info),
+                data: Map::new(),
+            },
+        )]);
+
+        assert_eq!(
+            node_title_with_badge(&app, Some("release-readiness"), "Release Readiness"),
+            "Release Readiness · live"
+        );
+        assert_eq!(
+            node_title_with_badge(&app, Some("missing"), "Release Readiness"),
+            "Release Readiness"
+        );
+        assert_eq!(
+            node_title_with_badge(&app, None, "Release Readiness"),
+            "Release Readiness"
+        );
+    }
+
+    #[test]
     fn unsupported_source_message_names_surface_and_source() {
         let message = unsupported_source_message("list", "tables.release");
 
