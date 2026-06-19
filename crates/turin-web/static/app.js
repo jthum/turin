@@ -41,6 +41,11 @@ const els = {
 
 els.refreshButton.addEventListener("click", () => refresh({ reason: "manual" }));
 document.addEventListener("keydown", event => {
+  const dialog = activeOverlayDialog();
+  if (event.key === "Tab" && dialog) {
+    trapDialogTab(event, dialog);
+    return;
+  }
   if (event.key === "Escape" && state.pendingAction) {
     clearPendingAction();
     return;
@@ -816,6 +821,39 @@ function dialogActionButton(dialog, action) {
   return Array.from(dialog.querySelectorAll("[data-dialog-action]")).find(
     button => button.dataset.dialogAction === action && !button.disabled
   ) || null;
+}
+
+function activeOverlayDialog() {
+  return document.querySelector(".confirm-dialog") || document.querySelector(".pane-sheet");
+}
+
+function trapDialogTab(event, dialog) {
+  const controls = focusableDialogControls(dialog);
+  if (controls.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  const active = document.activeElement;
+  if (!dialog.contains(active)) {
+    event.preventDefault();
+    first.focus();
+    return;
+  }
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function focusableDialogControls(dialog) {
+  return Array.from(dialog.querySelectorAll(
+    "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])"
+  )).filter(element => element.tabIndex >= 0);
 }
 
 function requestActionConfirmation(node, app) {

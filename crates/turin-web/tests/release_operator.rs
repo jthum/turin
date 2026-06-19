@@ -286,6 +286,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("function focusedDialogAction(selector)"));
     assert!(js.contains("function focusDialogAction(dialog, preferredAction = null)"));
     assert!(js.contains("function dialogActionButton(dialog, action)"));
+    assert!(js.contains("function activeOverlayDialog()"));
+    assert!(js.contains("function trapDialogTab(event, dialog)"));
+    assert!(js.contains("function focusableDialogControls(dialog)"));
+    assert!(js.contains("event.key === \"Tab\" && dialog"));
+    assert!(js.contains("event.key === \"Escape\" && state.pendingAction"));
+    assert!(js.contains("event.key === \"Escape\" && state.activePaneId"));
     assert!(js.contains("const preferredAction = focusedDialogAction(\".confirm-dialog\")"));
     assert!(js.contains("const preferredAction = focusedDialogAction(\".pane-sheet\")"));
     assert!(js.contains("return active.dataset.dialogAction || null"));
