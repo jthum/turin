@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Map;
 use turin_daemon_protocol::UiNode;
 
@@ -41,6 +43,31 @@ pub fn collect_ui_list_requests(nodes: &[UiNode]) -> Vec<UiListRequest> {
     let mut out = Vec::new();
     collect_ui_list_requests_into(nodes, &mut out);
     out
+}
+
+pub fn ui_refresh_requests_for_binding(
+    binding: &str,
+    known_requests: &BTreeMap<String, UiListRequest>,
+    visible_requests: Vec<UiListRequest>,
+) -> Vec<UiListRequest> {
+    let mut requests = Vec::new();
+    let mut keys = BTreeSet::new();
+
+    for (key, request) in known_requests {
+        if request.source == binding {
+            keys.insert(key.clone());
+            requests.push(request.clone());
+        }
+    }
+
+    for request in visible_requests {
+        let key = request.cache_key();
+        if request.source == binding && keys.insert(key) {
+            requests.push(request);
+        }
+    }
+
+    requests
 }
 
 fn collect_ui_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>) {
@@ -89,15 +116,20 @@ fn collect_ui_list_requests_into(nodes: &[UiNode], out: &mut Vec<UiListRequest>)
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::{Map, json};
     use turin_daemon_protocol::{
         UiActivityNode, UiChartNode, UiDetailNode, UiListNode, UiNode, UiReportNode, UiSectionNode,
     };
 
+    use crate::controller::UiListRequest;
+
     use super::{
         DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
         DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
-        is_worklist_ui_source, ui_worklist_name_from_source, ui_worklist_request,
+        is_worklist_ui_source, ui_refresh_requests_for_binding, ui_worklist_name_from_source,
+        ui_worklist_request,
     };
 
     #[test]
@@ -129,6 +161,51 @@ mod tests {
         assert_eq!(request.source, "worklists.release");
         assert!(request.filter.is_empty());
         assert_eq!(request.limit, Some(25));
+    }
+
+    #[test]
+    fn refresh_requests_include_known_and_visible_matching_bindings() {
+        let known = BTreeMap::from([(
+            list_request("worklists.release", Some(8)).cache_key(),
+            list_request("worklists.release", Some(8)),
+        )]);
+        let visible = vec![
+            list_request("worklists.release", Some(25)),
+            list_request("worklists.other", Some(10)),
+        ];
+
+        let requests = ui_refresh_requests_for_binding("worklists.release", &known, visible);
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].source, "worklists.release");
+        assert_eq!(requests[0].limit, Some(8));
+        assert_eq!(requests[1].source, "worklists.release");
+        assert_eq!(requests[1].limit, Some(25));
+    }
+
+    #[test]
+    fn refresh_requests_dedupe_matching_visible_cache_keys() {
+        let request = list_request("worklists.release", Some(8));
+        let known = BTreeMap::from([(request.cache_key(), request.clone())]);
+
+        let requests = ui_refresh_requests_for_binding("worklists.release", &known, vec![request]);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].source, "worklists.release");
+        assert_eq!(requests[0].limit, Some(8));
+    }
+
+    #[test]
+    fn refresh_requests_ignore_other_bindings() {
+        let known = BTreeMap::from([(
+            list_request("worklists.release", Some(8)).cache_key(),
+            list_request("worklists.release", Some(8)),
+        )]);
+        let visible = vec![list_request("worklists.release", Some(25))];
+
+        let requests = ui_refresh_requests_for_binding("worklists.qa", &known, visible);
+
+        assert!(requests.is_empty());
     }
 
     #[test]
@@ -195,5 +272,13 @@ mod tests {
         assert_eq!(requests[2].limit, Some(DEFAULT_UI_DETAIL_LIMIT));
         assert_eq!(requests[3].limit, Some(DEFAULT_UI_REPORT_LIMIT));
         assert_eq!(requests[4].limit, Some(DEFAULT_UI_CHART_LIMIT));
+    }
+
+    fn list_request(source: &str, limit: Option<u32>) -> UiListRequest {
+        UiListRequest {
+            source: source.to_string(),
+            filter: Map::new(),
+            limit,
+        }
     }
 }

@@ -23,6 +23,7 @@ use turin_ui_core::{
     preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
+    ui_refresh_requests_for_binding,
 };
 
 mod harness_ui;
@@ -164,31 +165,6 @@ fn visible_ui_list_requests(
     {
         requests.extend(collect_ui_list_requests(&pane.nodes));
     }
-    requests
-}
-
-fn ui_refresh_requests_for_binding(
-    binding: &str,
-    known_requests: &BTreeMap<String, UiListRequest>,
-    selected_requests: Vec<UiListRequest>,
-) -> Vec<UiListRequest> {
-    let mut requests = Vec::new();
-    let mut keys = BTreeSet::new();
-
-    for (key, request) in known_requests {
-        if request.source == binding {
-            keys.insert(key.clone());
-            requests.push(request.clone());
-        }
-    }
-
-    for request in selected_requests {
-        let key = request.cache_key();
-        if request.source == binding && keys.insert(key) {
-            requests.push(request);
-        }
-    }
-
     requests
 }
 

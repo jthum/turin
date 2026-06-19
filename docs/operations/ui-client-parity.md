@@ -51,7 +51,7 @@ Core rule:
 | `show` | Opens screen targets or displays pane targets as local modals. | Opens screen targets or displays pane targets as local terminal overlays. | Opens screen targets or displays pane targets as local overlays. | Pane behavior is intentionally client-specific. |
 | `badge` | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching screen/menu navigation targets and titled node ids. | Dynamic count/label badges render on matching navigation targets and titled node ids; action-returned badge overlays survive browser status refreshes. | Rust clients share badge text derivation; placement remains client-local chrome, not a renderer contract. |
 | `focus` | Selects screen/action target locally. | Selects screen/action target locally. | Selects matching screen/action target locally. | Focus remains client-local. |
-| `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `ui.refresh` can arrive through runtime events or returned harness action UI intents; `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. |
+| `refresh` | Invalidates matching list bindings and reloads. | Invalidates matching list bindings and reloads. | Invalidates matching browser caches and reloads visible data. | `ui.refresh` can arrive through runtime events or returned harness action UI intents; `harness.action_ran` also refreshes visible lists when no explicit refresh was emitted. Rust clients share stateless refresh request selection while keeping caches client-local. |
 
 ## Action Feedback
 
@@ -105,9 +105,9 @@ browser shell that consumes those routes.
 - Visible worklist-backed surfaces whose data has not loaded yet remain visible
   with explicit not-yet-loaded copy instead of rendering blank panels.
 - App has helper-level checks for default no-harness console copy,
-  runtime/work/UI metric grouping, visible screen/pane data requests,
-  confirmed work-item action event construction, and refresh invalidation
-  request selection.
+  runtime/work/UI metric grouping, visible screen/pane data requests, and
+  confirmed work-item action event construction. App/TUI refresh invalidation
+  request selection is covered in shared UI-core helper tests.
 - TUI has seed normalized terminal golden fixtures for the default no-harness
   console, a harness screen, a loaded worklist table with selected-row/action
   cues, a loaded report/chart screen, a pane overlay with pane-local selection

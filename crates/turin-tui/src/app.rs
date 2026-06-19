@@ -17,6 +17,7 @@ use turin_ui_core::{
     HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiUpdate,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
+    ui_refresh_requests_for_binding,
 };
 
 use crate::{harness_ui, theme};
@@ -1313,22 +1314,11 @@ impl TuiApp {
     }
 
     fn refresh_ui_binding(&mut self, binding: &str) -> usize {
-        let mut requests = Vec::new();
-        let mut keys = BTreeSet::new();
-
-        for (key, request) in &self.ui_list_requests {
-            if request.source == binding {
-                keys.insert(key.clone());
-                requests.push(request.clone());
-            }
-        }
-
-        for request in self.current_harness_list_requests() {
-            let key = request.cache_key();
-            if request.source == binding && keys.insert(key) {
-                requests.push(request);
-            }
-        }
+        let requests = ui_refresh_requests_for_binding(
+            binding,
+            &self.ui_list_requests,
+            self.current_harness_list_requests(),
+        );
 
         for request in &requests {
             let key = request.cache_key();
