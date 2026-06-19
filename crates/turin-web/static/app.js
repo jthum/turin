@@ -685,7 +685,7 @@ function renderMetricPanel(title, rows) {
 }
 
 function renderPane() {
-  const hadPaneFocus = document.activeElement?.closest?.(".pane-sheet");
+  const preferredAction = focusedDialogAction(".pane-sheet");
   document.querySelectorAll(".pane-overlay").forEach(node => node.remove());
   const app = selectedApp();
   const pane = selectedPane();
@@ -711,6 +711,7 @@ function renderPane() {
   close.type = "button";
   close.className = "ghost-button";
   close.dataset.autofocus = "true";
+  close.dataset.dialogAction = "close";
   close.textContent = "Close";
   close.addEventListener("click", closePane);
   header.append(title, close);
@@ -729,7 +730,7 @@ function renderPane() {
   sheet.append(stack);
   overlay.append(sheet);
   document.body.append(overlay);
-  if (!hadPaneFocus) focusDialogAction(sheet);
+  focusDialogAction(sheet, preferredAction);
 }
 
 function closePane() {
@@ -738,7 +739,7 @@ function closePane() {
 }
 
 function renderActionConfirmation() {
-  const hadConfirmFocus = document.activeElement?.closest?.(".confirm-dialog");
+  const preferredAction = focusedDialogAction(".confirm-dialog");
   document.querySelectorAll(".confirm-overlay").forEach(node => node.remove());
   const pending = state.pendingAction;
   if (!pending) return;
@@ -773,11 +774,13 @@ function renderActionConfirmation() {
   cancel.type = "button";
   cancel.className = "ghost-button";
   cancel.dataset.autofocus = "true";
+  cancel.dataset.dialogAction = "cancel";
   cancel.textContent = "Cancel";
   cancel.addEventListener("click", clearPendingAction);
   const run = document.createElement("button");
   run.type = "button";
   run.className = "danger-button";
+  run.dataset.dialogAction = "run";
   run.textContent = "Confirm and run";
   run.disabled = state.runningActions.has(actionRunKey(pending.action));
   run.addEventListener("click", () => {
@@ -791,14 +794,28 @@ function renderActionConfirmation() {
   dialog.append(row);
   overlay.append(dialog);
   document.body.append(overlay);
-  if (!hadConfirmFocus) focusDialogAction(dialog);
+  focusDialogAction(dialog, preferredAction);
 }
 
-function focusDialogAction(dialog) {
+function focusedDialogAction(selector) {
+  const active = document.activeElement;
+  if (!active?.closest?.(selector)) return null;
+  return active.dataset.dialogAction || null;
+}
+
+function focusDialogAction(dialog, preferredAction = null) {
   const target =
+    dialogActionButton(dialog, preferredAction) ||
     dialog.querySelector("[data-autofocus]:not(:disabled)") ||
     dialog.querySelector("button:not(:disabled)");
   target?.focus();
+}
+
+function dialogActionButton(dialog, action) {
+  if (!action) return null;
+  return Array.from(dialog.querySelectorAll("[data-dialog-action]")).find(
+    button => button.dataset.dialogAction === action && !button.disabled
+  ) || null;
 }
 
 function requestActionConfirmation(node, app) {
