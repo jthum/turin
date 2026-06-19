@@ -2524,6 +2524,79 @@ mod tests {
     }
 
     #[test]
+    fn terminal_golden_release_pane_loaded_list_stays_stable() {
+        let mut app = release_app();
+        let list = UiListNode {
+            id: Some("pane-list".to_string()),
+            title: "Pane List".to_string(),
+            source: "worklists.release".to_string(),
+            filter: Default::default(),
+            fields: vec!["title".to_string(), "status".to_string()],
+            sort: Vec::new(),
+            limit: Some(5),
+            intent: Some("pane".to_string()),
+            render_as: Some("table".to_string()),
+        };
+        let pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: "release-list-pane".to_string(),
+            title: "Release List Pane".to_string(),
+            presentation: Some("sheet".to_string()),
+            nodes: vec![
+                UiNode::List(list.clone()),
+                UiNode::Action(UiActionNode {
+                    id: Some("approve-visible".to_string()),
+                    label: "Approve visible item".to_string(),
+                    action: "release.approve_visible".to_string(),
+                    params: json!({}),
+                    confirm: true,
+                }),
+            ],
+        };
+        app.panes.insert(pane.id.clone(), pane);
+        let request = UiListRequest {
+            source: list.source,
+            filter: list.filter,
+            limit: list.limit,
+        };
+        let mut approval = test_work_item(1, "REL-1", "Approve release");
+        approval.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: Some(json!({ "worklist": "release" })),
+        });
+        let lists = BTreeMap::from([(
+            request.cache_key(),
+            WorkItemList {
+                worklist_id: "release".to_string(),
+                items: vec![approval, test_work_item(2, "REL-2", "Run QA signoff")],
+            },
+        )]);
+        let text = rendered_pane_text(
+            &app,
+            "release-list-pane",
+            Some("REL-1"),
+            Some(0),
+            lists,
+            BTreeSet::new(),
+        );
+
+        assert_eq!(
+            terminal_compact_content_lines(&text),
+            vec![
+                "Release List Pane release-list-pane",
+                "presentation=sheet",
+                "Pane List worklists.release intent=pane as=table limit=5",
+                "Rows 1-2 of 2 · selected 1",
+                "# | Title | Status | action",
+                "●1 | Approve release | pending | review",
+                "2 | Run QA signoff | pending | -",
+                "● Approve visible item",
+                "f switches items/actions j/k moves Enter selects/runs Esc/q closes pane",
+            ]
+        );
+    }
+
+    #[test]
     fn pane_lines_show_empty_state() {
         let app = release_app();
         let pane = UiPaneIntent {
@@ -2858,6 +2931,33 @@ mod tests {
                 );
             })
             .expect("draw harness screen");
+        buffer_text(terminal.backend().buffer())
+    }
+
+    fn rendered_pane_text(
+        app: &UiAppRecord,
+        pane_id: &str,
+        selected_work_item_id: Option<&str>,
+        selected_action_index: Option<usize>,
+        lists: BTreeMap<String, WorkItemList>,
+        requested_lists: BTreeSet<String>,
+    ) -> String {
+        let backend = TestBackend::new(96, 32);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_harness_pane(
+                    frame,
+                    frame.area(),
+                    Some(app),
+                    Some(pane_id),
+                    selected_work_item_id,
+                    selected_action_index,
+                    &lists,
+                    &requested_lists,
+                );
+            })
+            .expect("draw harness pane");
         buffer_text(terminal.backend().buffer())
     }
 

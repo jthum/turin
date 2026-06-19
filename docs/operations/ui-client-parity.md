@@ -104,10 +104,11 @@ browser shell that consumes those routes.
   and points authors toward `worklists.*` or a deliberate client adapter.
 - Visible worklist-backed surfaces whose data has not loaded yet remain visible
   with explicit not-yet-loaded copy instead of rendering blank panels.
-- TUI has seed normalized terminal golden fixtures for a harness screen and a
-  loaded worklist table with selected-row/action cues, but there is still no
-  broader screenshot or terminal-golden suite across clients. Current coverage
-  is otherwise semantic helper tests plus app/web/TUI smoke and unit tests.
+- TUI has seed normalized terminal golden fixtures for a harness screen, a
+  loaded worklist table with selected-row/action cues, and a pane overlay with
+  pane-local selection cues, but there is still no broader screenshot or
+  terminal-golden suite across clients. Current coverage is otherwise semantic
+  helper tests plus app/web/TUI smoke and unit tests.
 
 ## Update Rule
 
