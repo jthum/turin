@@ -224,6 +224,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .await?;
     assert!(js.contains("/api/status"));
     assert!(js.contains("EventSource"));
+    assert!(js.contains("connection: {"));
+    assert!(js.contains("setHttpStatus(reason === \"initial\" ? \"connecting\" : \"refreshing\")"));
+    assert!(js.contains("function renderConnectionStatus()"));
+    assert!(js.contains("Runtime live"));
+    assert!(js.contains("events reconnecting"));
+    assert!(js.contains("Event stream errors observed"));
     assert!(js.contains("renderActivity"));
     assert!(js.contains("renderDetail"));
     assert!(js.contains("collectFormParams"));
@@ -381,6 +387,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         1
     );
     assert!(css.contains(".list-selection"));
+    assert!(css.contains(".rail-status[data-state=\"success\"]"));
+    assert!(css.contains(".rail-status[data-state=\"warning\"]"));
+    assert!(css.contains(".rail-status[data-state=\"error\"]"));
     assert!(css.contains(".surface-state"));
     assert!(css.contains(".surface-state[data-level=\"error\"]"));
     assert!(css.contains(".confirm-overlay"));

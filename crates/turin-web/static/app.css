@@ -120,6 +120,30 @@ h3 {
   font-size: 0.9rem;
 }
 
+.rail-status[data-state="success"] {
+  color: var(--success);
+  border-color: rgba(125, 231, 164, 0.42);
+  background: rgba(125, 231, 164, 0.08);
+}
+
+.rail-status[data-state="info"] {
+  color: var(--info);
+  border-color: rgba(129, 199, 255, 0.42);
+  background: rgba(129, 199, 255, 0.08);
+}
+
+.rail-status[data-state="warning"] {
+  color: var(--warning);
+  border-color: rgba(255, 211, 106, 0.42);
+  background: rgba(255, 211, 106, 0.08);
+}
+
+.rail-status[data-state="error"] {
+  color: var(--danger);
+  border-color: rgba(255, 124, 111, 0.5);
+  background: rgba(255, 124, 111, 0.08);
+}
+
 .app-list,
 .screen-nav {
   display: grid;

@@ -355,6 +355,9 @@ The current browser shell is intentionally small:
   pending item highlights, plus chart breakdowns
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`
   invalidation for cached list requests
+- split browser-local connection feedback for HTTP refresh health and SSE
+  event-stream health, so reconnects are visible without turning SSE into a
+  live-query cache
 - local handling for dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.notice`
 - dynamic badge rendering for matching navigation targets and titled node ids,
   including action-returned badges that survive browser status refreshes

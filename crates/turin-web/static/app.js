@@ -15,6 +15,11 @@ const state = {
   pendingAction: null,
   appliedStatusUiRequests: false,
   refreshing: false,
+  connection: {
+    http: "connecting",
+    events: "pending",
+    eventErrors: 0,
+  },
 };
 
 const ACTIVITY_LIMIT = 12;
@@ -55,7 +60,7 @@ async function bootstrap() {
 async function refresh({ reason } = {}) {
   if (state.refreshing) return;
   state.refreshing = true;
-  els.connectionStatus.textContent = reason === "initial" ? "Connecting..." : "Refreshing...";
+  setHttpStatus(reason === "initial" ? "connecting" : "refreshing");
   try {
     const status = await getJson("/api/status");
     state.status = status;
@@ -65,10 +70,10 @@ async function refresh({ reason } = {}) {
     applyStatusUiRequestsOnce();
     await loadVisibleLists();
     render();
-    els.connectionStatus.textContent = "Live";
+    setHttpStatus("live");
   } catch (error) {
     pushNotice("error", "Refresh failed", error.message);
-    els.connectionStatus.textContent = "Disconnected";
+    setHttpStatus("disconnected");
     render();
   } finally {
     state.refreshing = false;
@@ -76,30 +81,106 @@ async function refresh({ reason } = {}) {
 }
 
 function connectEvents() {
+  setEventStatus("connecting");
   const source = new EventSource("/api/events");
   source.addEventListener("open", () => {
-    els.connectionStatus.textContent = "Live";
+    setEventStatus("live");
   });
   source.addEventListener("runtime.snapshot", () => {
+    setEventStatus("live");
     invalidateLists();
     refresh({ reason: "event" });
   });
   source.addEventListener("ui.intent", event => {
+    setEventStatus("live");
     const applied = applyUiIntentEvent(event, { reloadRefresh: false });
     if (!applied) invalidateLists();
     refresh({ reason: "ui" });
   });
   source.addEventListener("harness.action_ran", () => {
+    setEventStatus("live");
     invalidateLists();
     refresh({ reason: "action" });
   });
   source.addEventListener("web.error", event => {
+    state.connection.eventErrors += 1;
+    setEventStatus("stream-error");
     pushNotice("error", "Event stream error", event.data || "Unknown event stream error");
     render();
   });
   source.addEventListener("error", () => {
-    els.connectionStatus.textContent = "Reconnecting...";
+    state.connection.eventErrors += 1;
+    setEventStatus(source.readyState === EventSource.CLOSED ? "closed" : "reconnecting");
   });
+}
+
+function setHttpStatus(status) {
+  state.connection.http = status;
+  renderConnectionStatus();
+}
+
+function setEventStatus(status) {
+  state.connection.events = status;
+  renderConnectionStatus();
+}
+
+function renderConnectionStatus() {
+  const http = state.connection.http;
+  const events = state.connection.events;
+  els.connectionStatus.textContent = `${httpStatusLabel(http)} · ${eventStatusLabel(events)}`;
+  els.connectionStatus.dataset.state = connectionStatusLevel(http, events);
+  els.connectionStatus.title = connectionStatusTitle(http, events);
+}
+
+function httpStatusLabel(status) {
+  switch (status) {
+    case "connecting":
+      return "Runtime connecting";
+    case "refreshing":
+      return "Runtime refreshing";
+    case "live":
+      return "Runtime live";
+    case "disconnected":
+      return "Runtime disconnected";
+    default:
+      return "Runtime unknown";
+  }
+}
+
+function eventStatusLabel(status) {
+  switch (status) {
+    case "pending":
+      return "events pending";
+    case "connecting":
+      return "events connecting";
+    case "live":
+      return "events live";
+    case "reconnecting":
+      return "events reconnecting";
+    case "stream-error":
+      return "events errored";
+    case "closed":
+      return "events closed";
+    default:
+      return "events unknown";
+  }
+}
+
+function connectionStatusLevel(http, events) {
+  if (http === "disconnected" || events === "stream-error" || events === "closed") {
+    return "error";
+  }
+  if (http === "refreshing" || events === "reconnecting") return "warning";
+  if (http === "connecting" || events === "pending" || events === "connecting") return "info";
+  return "success";
+}
+
+function connectionStatusTitle(http, events) {
+  const pieces = [`HTTP refresh: ${http}`, `Event stream: ${events}`];
+  if (state.connection.eventErrors > 0) {
+    pieces.push(`Event stream errors observed: ${state.connection.eventErrors}`);
+  }
+  return pieces.join("; ");
 }
 
 function selectDefaults() {
