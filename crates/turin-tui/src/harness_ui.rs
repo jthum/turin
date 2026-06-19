@@ -1949,8 +1949,19 @@ mod tests {
     }
 
     #[test]
-    fn focus_targets_resolve_screens_actions_and_node_ids() {
-        let app = release_app();
+    fn focus_targets_resolve_screens_actions_forms_and_node_ids() {
+        let mut app = release_app();
+        app.screens
+            .get_mut("intake")
+            .expect("intake screen")
+            .nodes
+            .push(UiNode::Form(UiFormNode {
+                id: Some("seed-demo-form".to_string()),
+                title: "Seed Demo Form".to_string(),
+                action: "release.seed_demo_form".to_string(),
+                fields: Vec::new(),
+                params: Value::Null,
+            }));
 
         assert!(matches!(
             find_focus_target(&app, "home"),
@@ -1968,6 +1979,27 @@ mod tests {
             find_focus_target(&app, "recent-release-work"),
             Some(HarnessFocusTarget::Node { screen_index })
                 if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("home")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "seed-demo-form"),
+            Some(HarnessFocusTarget::Action {
+                screen_index,
+                action_index: 0,
+            }) if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("intake")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "Seed Demo Form"),
+            Some(HarnessFocusTarget::Action {
+                screen_index,
+                action_index: 0,
+            }) if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("intake")
+        ));
+        assert!(matches!(
+            find_focus_target(&app, "release.seed_demo_form"),
+            Some(HarnessFocusTarget::Action {
+                screen_index,
+                action_index: 0,
+            }) if screen_at(&app, screen_index).map(|screen| screen.id.as_str()) == Some("intake")
         ));
         assert_eq!(find_focus_target(&app, "unknown"), None);
     }
