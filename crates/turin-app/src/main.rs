@@ -167,6 +167,31 @@ fn visible_ui_list_requests(
     requests
 }
 
+fn ui_refresh_requests_for_binding(
+    binding: &str,
+    known_requests: &BTreeMap<String, UiListRequest>,
+    selected_requests: Vec<UiListRequest>,
+) -> Vec<UiListRequest> {
+    let mut requests = Vec::new();
+    let mut keys = BTreeSet::new();
+
+    for (key, request) in known_requests {
+        if request.source == binding {
+            keys.insert(key.clone());
+            requests.push(request.clone());
+        }
+    }
+
+    for request in selected_requests {
+        let key = request.cache_key();
+        if request.source == binding && keys.insert(key) {
+            requests.push(request);
+        }
+    }
+
+    requests
+}
+
 fn configure_cast_theme(ctx: &egui::Context) {
     cast::install_cast_fonts(ctx);
     let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Dark)
@@ -483,22 +508,11 @@ impl TurinDesktopApp {
     }
 
     fn refresh_ui_binding(&mut self, binding: &str) -> usize {
-        let mut requests = Vec::new();
-        let mut keys = BTreeSet::new();
-
-        for (key, request) in &self.ui_list_requests {
-            if request.source == binding {
-                keys.insert(key.clone());
-                requests.push(request.clone());
-            }
-        }
-
-        for request in self.selected_ui_list_requests() {
-            let key = request.cache_key();
-            if request.source == binding && keys.insert(key) {
-                requests.push(request);
-            }
-        }
+        let requests = ui_refresh_requests_for_binding(
+            binding,
+            &self.ui_list_requests,
+            self.selected_ui_list_requests(),
+        );
 
         for request in &requests {
             let key = request.cache_key();
@@ -3501,6 +3515,51 @@ mod tests {
     }
 
     #[test]
+    fn ui_refresh_requests_include_known_and_visible_matching_bindings() {
+        let known = BTreeMap::from([(
+            list_request("worklists.release", Some(8)).cache_key(),
+            list_request("worklists.release", Some(8)),
+        )]);
+        let selected = vec![
+            list_request("worklists.release", Some(25)),
+            list_request("worklists.other", Some(10)),
+        ];
+
+        let requests = ui_refresh_requests_for_binding("worklists.release", &known, selected);
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].source, "worklists.release");
+        assert_eq!(requests[0].limit, Some(8));
+        assert_eq!(requests[1].source, "worklists.release");
+        assert_eq!(requests[1].limit, Some(25));
+    }
+
+    #[test]
+    fn ui_refresh_requests_dedupe_matching_visible_cache_keys() {
+        let request = list_request("worklists.release", Some(8));
+        let known = BTreeMap::from([(request.cache_key(), request.clone())]);
+
+        let requests = ui_refresh_requests_for_binding("worklists.release", &known, vec![request]);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].source, "worklists.release");
+        assert_eq!(requests[0].limit, Some(8));
+    }
+
+    #[test]
+    fn ui_refresh_requests_ignore_other_bindings() {
+        let known = BTreeMap::from([(
+            list_request("worklists.release", Some(8)).cache_key(),
+            list_request("worklists.release", Some(8)),
+        )]);
+        let selected = vec![list_request("worklists.release", Some(25))];
+
+        let requests = ui_refresh_requests_for_binding("worklists.qa", &known, selected);
+
+        assert!(requests.is_empty());
+    }
+
+    #[test]
     fn default_operator_console_copy_explains_no_harness_path() {
         assert_eq!(
             DEFAULT_OPERATOR_EMPTY_TITLE,
@@ -3647,6 +3706,14 @@ mod tests {
             limit: Some(limit),
             intent: Some("items".to_string()),
             render_as: Some("table".to_string()),
+        }
+    }
+
+    fn list_request(source: &str, limit: Option<u32>) -> UiListRequest {
+        UiListRequest {
+            source: source.to_string(),
+            filter: Default::default(),
+            limit,
         }
     }
 }
