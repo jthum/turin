@@ -69,6 +69,10 @@ pub enum UiUpdate {
         request: Box<UiListRequest>,
         items: Box<WorkItemList>,
     },
+    UiListFailed {
+        request: Box<UiListRequest>,
+        message: String,
+    },
     HarnessActionCompleted(Box<HarnessActionRunResult>),
     HarnessActionFailed(Box<HarnessActionFailure>),
     Event(EventEnvelope),
@@ -1816,7 +1820,13 @@ fn spawn_command_task(
                         }
                     }
                     Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
+                        if tx
+                            .send(UiUpdate::UiListFailed {
+                                request: request.clone(),
+                                message: err.to_string(),
+                            })
+                            .is_err()
+                        {
                             break;
                         }
                     }

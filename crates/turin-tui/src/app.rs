@@ -308,6 +308,7 @@ pub struct TuiApp {
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
+    ui_list_errors: BTreeMap<String, String>,
     pending_action: Option<PendingHarnessAction>,
     active_form: Option<TuiFormSession>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
@@ -344,6 +345,7 @@ impl TuiApp {
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
+            ui_list_errors: BTreeMap::new(),
             pending_action: None,
             active_form: None,
             latest_harness_action_result: None,
@@ -374,7 +376,16 @@ impl TuiApp {
             self.ui_list_requests
                 .insert(key.clone(), request.as_ref().clone());
             self.requested_ui_lists.remove(&key);
+            self.ui_list_errors.remove(&key);
             self.ui_lists.insert(key, items.as_ref().clone());
+        }
+        if let UiUpdate::UiListFailed { request, message } = &update {
+            let key = request.cache_key();
+            self.ui_list_requests
+                .insert(key.clone(), request.as_ref().clone());
+            self.requested_ui_lists.remove(&key);
+            self.ui_lists.remove(&key);
+            self.ui_list_errors.insert(key, message.clone());
         }
         if let UiUpdate::HarnessActionCompleted(result) = &update {
             self.latest_harness_action_result = Some(result.as_ref().clone());
@@ -1295,7 +1306,11 @@ impl TuiApp {
         if force {
             self.ui_lists.remove(&key);
             self.requested_ui_lists.remove(&key);
-        } else if self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key) {
+            self.ui_list_errors.remove(&key);
+        } else if self.ui_lists.contains_key(&key)
+            || self.requested_ui_lists.contains(&key)
+            || self.ui_list_errors.contains_key(&key)
+        {
             return Ok(());
         }
         self.requested_ui_lists.insert(key);
@@ -1324,6 +1339,7 @@ impl TuiApp {
             let key = request.cache_key();
             self.ui_lists.remove(&key);
             self.requested_ui_lists.remove(&key);
+            self.ui_list_errors.remove(&key);
         }
 
         let count = requests.len();
@@ -1679,6 +1695,7 @@ impl TuiApp {
             &self.ui_screen_indices,
             &self.ui_lists,
             &self.requested_ui_lists,
+            &self.ui_list_errors,
             selected_item_id,
         );
         self.render_harness_inspector(frame, columns[2]);
@@ -1700,6 +1717,7 @@ impl TuiApp {
             selected_action_index,
             &self.ui_lists,
             &self.requested_ui_lists,
+            &self.ui_list_errors,
         );
     }
 

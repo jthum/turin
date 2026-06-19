@@ -11,7 +11,7 @@ use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
-    ui_badge_text as badge_text, ui_data_not_loaded_message,
+    ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_value_string as form_value_string, ui_worklist_request, unsupported_ui_source_message,
     work_item_field_label, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
@@ -62,6 +62,7 @@ pub(super) fn render_harness_app(
     screen_index: &mut usize,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     form_values: &mut BTreeMap<String, String>,
     selected_list_items: &mut BTreeMap<String, String>,
 ) -> Option<HarnessUiEvent> {
@@ -111,6 +112,7 @@ pub(super) fn render_harness_app(
                 &screen.nodes,
                 lists,
                 requested_lists,
+                list_errors,
                 form_values,
                 selected_list_items,
                 &mut event,
@@ -129,6 +131,7 @@ pub(super) fn render_harness_pane(
     pane: &UiPaneIntent,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     form_values: &mut BTreeMap<String, String>,
     selected_list_items: &mut BTreeMap<String, String>,
 ) -> Option<HarnessUiEvent> {
@@ -154,6 +157,7 @@ pub(super) fn render_harness_pane(
             &pane.nodes,
             lists,
             requested_lists,
+            list_errors,
             form_values,
             selected_list_items,
             &mut event,
@@ -261,6 +265,7 @@ fn render_nodes(
     nodes: &[UiNode],
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     form_values: &mut BTreeMap<String, String>,
     selected_list_items: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
@@ -278,6 +283,7 @@ fn render_nodes(
                 section,
                 lists,
                 requested_lists,
+                list_errors,
                 form_values,
                 selected_list_items,
                 event,
@@ -290,16 +296,23 @@ fn render_nodes(
                 list,
                 lists,
                 requested_lists,
+                list_errors,
                 selected_list_items,
                 event,
             ),
             UiNode::Activity(activity) => {
-                render_activity(ui, app, activity, lists, requested_lists)
+                render_activity(ui, app, activity, lists, requested_lists, list_errors)
             }
-            UiNode::Detail(detail) => render_detail(ui, app, detail, lists, requested_lists, event),
+            UiNode::Detail(detail) => {
+                render_detail(ui, app, detail, lists, requested_lists, list_errors, event)
+            }
             UiNode::Form(form) => render_form(ui, app, form, form_values, event),
-            UiNode::Report(report) => render_report(ui, app, report, lists, requested_lists, event),
-            UiNode::Chart(chart) => render_chart(ui, app, chart, lists, requested_lists),
+            UiNode::Report(report) => {
+                render_report(ui, app, report, lists, requested_lists, list_errors, event)
+            }
+            UiNode::Chart(chart) => {
+                render_chart(ui, app, chart, lists, requested_lists, list_errors)
+            }
         }
         ui.add_space(10.0);
     }
@@ -311,6 +324,7 @@ fn render_section(
     section: &UiSectionNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     form_values: &mut BTreeMap<String, String>,
     selected_list_items: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
@@ -327,6 +341,7 @@ fn render_section(
             &section.nodes,
             lists,
             requested_lists,
+            list_errors,
             form_values,
             selected_list_items,
             event,
@@ -405,6 +420,7 @@ fn render_list(
     list: &UiListNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     selected_list_items: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
@@ -445,7 +461,11 @@ fn render_list(
                 });
             }
             None => {
-                ui.label(ui_data_not_loaded_message("list"));
+                if let Some(error) = list_errors.get(&key) {
+                    render_load_failed(ui, "list", error);
+                } else {
+                    ui.label(ui_data_not_loaded_message("list"));
+                }
             }
         }
     });
@@ -706,6 +726,7 @@ fn render_activity(
     activity: &UiActivityNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -731,7 +752,11 @@ fn render_activity(
                 });
             }
             None => {
-                ui.label(ui_data_not_loaded_message("activity"));
+                if let Some(error) = list_errors.get(&key) {
+                    render_load_failed(ui, "activity", error);
+                } else {
+                    ui.label(ui_data_not_loaded_message("activity"));
+                }
             }
         }
     });
@@ -743,6 +768,7 @@ fn render_detail(
     detail: &UiDetailNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
@@ -772,7 +798,11 @@ fn render_detail(
                 });
             }
             None => {
-                ui.label(ui_data_not_loaded_message("detail"));
+                if let Some(error) = list_errors.get(&key) {
+                    render_load_failed(ui, "detail", error);
+                } else {
+                    ui.label(ui_data_not_loaded_message("detail"));
+                }
             }
         }
     });
@@ -787,6 +817,14 @@ fn render_unsupported_source(ui: &mut egui::Ui, surface: &str, source: &str) {
         cast::Alert::new(format!("Unsupported {surface} source"))
             .body(unsupported_source_message(surface, source))
             .intent(cast::Intent::Warning),
+    );
+}
+
+fn render_load_failed(ui: &mut egui::Ui, surface: &str, error: &str) {
+    ui.add(
+        cast::Alert::new(format!("Failed to load {surface} data"))
+            .body(ui_data_load_failed_message(surface, error))
+            .intent(cast::Intent::Danger),
     );
 }
 
@@ -939,6 +977,7 @@ fn render_report(
     report: &UiReportNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::ReportSection::new(node_title_with_badge(
@@ -973,7 +1012,11 @@ fn render_report(
                 });
             }
             None => {
-                ui.label(ui_data_not_loaded_message("report"));
+                if let Some(error) = list_errors.get(&key) {
+                    render_load_failed(ui, "report", error);
+                } else {
+                    ui.label(ui_data_not_loaded_message("report"));
+                }
             }
         }
     });
@@ -985,6 +1028,7 @@ fn render_chart(
     chart: &UiChartNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
 ) {
     let source = chart
         .render_as
@@ -1028,7 +1072,11 @@ fn render_chart(
                 });
             }
             None => {
-                ui.label(ui_data_not_loaded_message("chart"));
+                if let Some(error) = list_errors.get(&key) {
+                    render_load_failed(ui, "chart", error);
+                } else {
+                    ui.label(ui_data_not_loaded_message("chart"));
+                }
             }
         }
     });

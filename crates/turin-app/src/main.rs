@@ -221,6 +221,7 @@ struct TurinDesktopApp {
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
     requested_ui_lists: BTreeSet<String>,
+    ui_list_errors: BTreeMap<String, String>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
     latest_harness_action_failure: Option<HarnessActionFailure>,
     _runtime: Arc<Runtime>,
@@ -344,6 +345,7 @@ impl TurinDesktopApp {
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
             requested_ui_lists: BTreeSet::new(),
+            ui_list_errors: BTreeMap::new(),
             latest_harness_action_result: None,
             latest_harness_action_failure: None,
             _runtime: runtime,
@@ -365,7 +367,16 @@ impl TurinDesktopApp {
             self.ui_list_requests
                 .insert(key.clone(), request.as_ref().clone());
             self.requested_ui_lists.remove(&key);
+            self.ui_list_errors.remove(&key);
             self.ui_lists.insert(key, items.as_ref().clone());
+        }
+        if let UiUpdate::UiListFailed { request, message } = &update {
+            let key = request.cache_key();
+            self.ui_list_requests
+                .insert(key.clone(), request.as_ref().clone());
+            self.requested_ui_lists.remove(&key);
+            self.ui_lists.remove(&key);
+            self.ui_list_errors.insert(key, message.clone());
         }
         if let UiUpdate::HarnessActionCompleted(result) = &update {
             self.latest_harness_action_result = Some(result.as_ref().clone());
@@ -465,7 +476,11 @@ impl TurinDesktopApp {
         if force {
             self.ui_lists.remove(&key);
             self.requested_ui_lists.remove(&key);
-        } else if self.ui_lists.contains_key(&key) || self.requested_ui_lists.contains(&key) {
+            self.ui_list_errors.remove(&key);
+        } else if self.ui_lists.contains_key(&key)
+            || self.requested_ui_lists.contains(&key)
+            || self.ui_list_errors.contains_key(&key)
+        {
             return;
         }
         self.requested_ui_lists.insert(key);
@@ -494,6 +509,7 @@ impl TurinDesktopApp {
             let key = request.cache_key();
             self.ui_lists.remove(&key);
             self.requested_ui_lists.remove(&key);
+            self.ui_list_errors.remove(&key);
         }
 
         let count = requests.len();
@@ -2204,6 +2220,7 @@ impl TurinDesktopApp {
                     &mut screen_index,
                     &self.ui_lists,
                     &self.requested_ui_lists,
+                    &self.ui_list_errors,
                     &mut self.ui_form_values,
                     &mut self.ui_selected_list_items,
                 );
@@ -2302,6 +2319,7 @@ impl TurinDesktopApp {
                 &pane,
                 &self.ui_lists,
                 &self.requested_ui_lists,
+                &self.ui_list_errors,
                 &mut self.ui_form_values,
                 &mut self.ui_selected_list_items,
             );

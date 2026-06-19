@@ -33,7 +33,8 @@ worklist/default-screen/node-target derivation belong outside this crate.
    confirmation modals, and form drafts remain app-local state.
 4. Visible harness screens and panes are projected into `UiListRequest` values.
 5. `OperatorCommand::LoadUiList` loads semantic worklist-backed data through the
-   shared controller path.
+   shared controller path. Request-scoped list failures clear local loading
+   state and render explicit retryable fallback copy.
 6. Harness actions and forms emit local `HarnessUiEvent` values, then run
    through `OperatorCommand::RunHarnessAction`.
 7. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
@@ -53,6 +54,8 @@ worklist/default-screen/node-target derivation belong outside this crate.
   do not mutate the contract to fit desktop layout.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
+- Failed list/activity/detail/report/chart loads should remain visible with
+  explicit local error copy rather than staying in a loading state.
 - Worklist item actions are ordinary harness actions from the client point of
   view and should stay behind confirmation when launched from item detail.
 - Form drafts are local until submit. Submitted values become action params
@@ -109,6 +112,7 @@ handling, dynamic badges, and lightweight worklist-backed activity, detail,
 report, and chart surfaces with explicit no-data copy and grouping hints. Form
 field defaults and typed scalar coercion come from stateless `turin-ui-core`
 helpers, default-screen, node-target, badge-text, and action-feedback
-app-scoping lookup also come from `turin-ui-core`, and drafts and controls
-remain app-local. It should remain replaceable at the presentation layer while
-preserving the semantic client contract.
+app-scoping lookup also come from `turin-ui-core`, request-scoped list load
+failures are rendered through app-local cache/error state, and drafts and
+controls remain app-local. It should remain replaceable at the presentation
+layer while preserving the semantic client contract.

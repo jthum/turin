@@ -35,9 +35,29 @@ pub fn ui_data_not_loaded_message(surface: &str) -> String {
     )
 }
 
+pub fn ui_data_load_failed_message(surface: &str, error: &str) -> String {
+    let surface = surface.trim();
+    let surface = if surface.is_empty() {
+        "surface"
+    } else {
+        surface
+    };
+    let error = error.trim();
+    if error.is_empty() {
+        return format!(
+            "This {surface} is visible, but its backing data failed to load. Refresh the view to retry."
+        );
+    }
+    format!(
+        "This {surface} is visible, but its backing data failed to load: {error}. Refresh the view to retry."
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ui_data_not_loaded_message, unsupported_ui_source_message};
+    use super::{
+        ui_data_load_failed_message, ui_data_not_loaded_message, unsupported_ui_source_message,
+    };
 
     #[test]
     fn unsupported_source_message_names_surface_source_and_client() {
@@ -74,5 +94,24 @@ mod tests {
         let message = ui_data_not_loaded_message(" ");
 
         assert!(message.contains("This surface is visible"));
+    }
+
+    #[test]
+    fn data_load_failed_message_names_surface_error_and_retry() {
+        let message = ui_data_load_failed_message("list", "worklist 'release' was not found");
+
+        assert!(message.contains("This list is visible"));
+        assert!(message.contains("backing data failed to load"));
+        assert!(message.contains("worklist 'release' was not found"));
+        assert!(message.contains("Refresh the view to retry"));
+    }
+
+    #[test]
+    fn data_load_failed_message_handles_missing_surface_and_error() {
+        let message = ui_data_load_failed_message(" ", " ");
+
+        assert!(message.contains("This surface is visible"));
+        assert!(message.contains("failed to load"));
+        assert!(message.contains("Refresh the view to retry"));
     }
 }

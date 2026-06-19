@@ -15,10 +15,10 @@ use turin_ui_core::{
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, collect_ui_list_requests as collect_shared_list_requests,
     is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
-    ui_badge_text as badge_text, ui_data_not_loaded_message, ui_worklist_request,
-    unsupported_ui_source_message, work_item_field_label, worklist_chart_group_field,
-    worklist_chart_group_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
+    ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
+    worklist_chart_group_field, worklist_chart_group_label, worklist_group_counts,
+    worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
@@ -352,6 +352,7 @@ pub fn render_harness_screen(
     screen_indices: &BTreeMap<String, usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     selected_work_item_id: Option<&str>,
 ) {
     let Some(app) = app else {
@@ -393,6 +394,7 @@ pub fn render_harness_screen(
         &screen.nodes,
         lists,
         requested_lists,
+        list_errors,
         &mut lines,
         0,
         max_width,
@@ -412,6 +414,7 @@ pub fn render_harness_pane(
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
 ) {
     let Some(app) = app else {
         return;
@@ -431,6 +434,7 @@ pub fn render_harness_pane(
             selected_action_index,
             lists,
             requested_lists,
+            list_errors,
             area.width,
         ),
         area,
@@ -444,6 +448,7 @@ fn pane_panel(
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     width: u16,
 ) -> Paragraph<'static> {
     panel(
@@ -455,6 +460,7 @@ fn pane_panel(
             selected_action_index,
             lists,
             requested_lists,
+            list_errors,
             width,
         ),
     )
@@ -467,6 +473,7 @@ fn pane_lines(
     selected_action_index: Option<usize>,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -496,6 +503,7 @@ fn pane_lines(
             &pane.nodes,
             lists,
             requested_lists,
+            list_errors,
             &mut lines,
             0,
             max_width,
@@ -525,6 +533,7 @@ fn render_nodes(
     nodes: &[UiNode],
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
     max_width: usize,
@@ -549,6 +558,7 @@ fn render_nodes(
                     &section.nodes,
                     lists,
                     requested_lists,
+                    list_errors,
                     lines,
                     depth + 1,
                     max_width,
@@ -587,6 +597,7 @@ fn render_nodes(
                 list,
                 lists,
                 requested_lists,
+                list_errors,
                 lines,
                 depth,
                 max_width,
@@ -597,16 +608,42 @@ fn render_nodes(
                 *action_index += 1;
                 render_form(app, form, lines, depth, selected)
             }
-            UiNode::Activity(activity) => {
-                render_activity(app, activity, lists, requested_lists, lines, depth)
-            }
-            UiNode::Detail(detail) => {
-                render_detail(app, detail, lists, requested_lists, lines, depth)
-            }
-            UiNode::Report(report) => {
-                render_report(app, report, lists, requested_lists, lines, depth)
-            }
-            UiNode::Chart(chart) => render_chart(app, chart, lists, requested_lists, lines, depth),
+            UiNode::Activity(activity) => render_activity(
+                app,
+                activity,
+                lists,
+                requested_lists,
+                list_errors,
+                lines,
+                depth,
+            ),
+            UiNode::Detail(detail) => render_detail(
+                app,
+                detail,
+                lists,
+                requested_lists,
+                list_errors,
+                lines,
+                depth,
+            ),
+            UiNode::Report(report) => render_report(
+                app,
+                report,
+                lists,
+                requested_lists,
+                list_errors,
+                lines,
+                depth,
+            ),
+            UiNode::Chart(chart) => render_chart(
+                app,
+                chart,
+                lists,
+                requested_lists,
+                list_errors,
+                lines,
+                depth,
+            ),
         }
     }
 }
@@ -616,6 +653,7 @@ fn render_list(
     list: &UiListNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
     max_width: usize,
@@ -682,11 +720,21 @@ fn render_list(
             "Loading list data...".to_string(),
             theme::muted(),
         )),
-        None => lines.push(indent_line(
-            depth + 1,
-            ui_data_not_loaded_message("list"),
-            theme::muted(),
-        )),
+        None => {
+            if let Some(error) = list_errors.get(&key) {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_load_failed_message("list", error),
+                    theme::danger(),
+                ));
+            } else {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_not_loaded_message("list"),
+                    theme::muted(),
+                ));
+            }
+        }
     }
     lines.push(Line::from(""));
 }
@@ -858,6 +906,7 @@ fn render_activity(
     activity: &UiActivityNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
 ) {
@@ -889,11 +938,21 @@ fn render_activity(
             "Loading activity data...".to_string(),
             theme::muted(),
         )),
-        None => lines.push(indent_line(
-            depth + 1,
-            ui_data_not_loaded_message("activity"),
-            theme::muted(),
-        )),
+        None => {
+            if let Some(error) = list_errors.get(&key) {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_load_failed_message("activity", error),
+                    theme::danger(),
+                ));
+            } else {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_not_loaded_message("activity"),
+                    theme::muted(),
+                ));
+            }
+        }
     }
     lines.push(Line::from(""));
 }
@@ -903,6 +962,7 @@ fn render_detail(
     detail: &UiDetailNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
 ) {
@@ -939,11 +999,21 @@ fn render_detail(
             "Loading detail data...".to_string(),
             theme::muted(),
         )),
-        None => lines.push(indent_line(
-            depth + 1,
-            ui_data_not_loaded_message("detail"),
-            theme::muted(),
-        )),
+        None => {
+            if let Some(error) = list_errors.get(&key) {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_load_failed_message("detail", error),
+                    theme::danger(),
+                ));
+            } else {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_not_loaded_message("detail"),
+                    theme::muted(),
+                ));
+            }
+        }
     }
     lines.push(Line::from(""));
 }
@@ -1125,6 +1195,7 @@ fn render_report(
     report: &UiReportNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
 ) {
@@ -1163,11 +1234,21 @@ fn render_report(
             "Loading report data...".to_string(),
             theme::muted(),
         )),
-        None => lines.push(indent_line(
-            depth + 1,
-            ui_data_not_loaded_message("report"),
-            theme::muted(),
-        )),
+        None => {
+            if let Some(error) = list_errors.get(&key) {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_load_failed_message("report", error),
+                    theme::danger(),
+                ));
+            } else {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_not_loaded_message("report"),
+                    theme::muted(),
+                ));
+            }
+        }
     }
     lines.push(Line::from(""));
 }
@@ -1177,6 +1258,7 @@ fn render_chart(
     chart: &UiChartNode,
     lists: &BTreeMap<String, WorkItemList>,
     requested_lists: &BTreeSet<String>,
+    list_errors: &BTreeMap<String, String>,
     lines: &mut Vec<Line<'static>>,
     depth: usize,
 ) {
@@ -1217,11 +1299,21 @@ fn render_chart(
             "Loading chart data...".to_string(),
             theme::muted(),
         )),
-        None => lines.push(indent_line(
-            depth + 1,
-            ui_data_not_loaded_message("chart"),
-            theme::muted(),
-        )),
+        None => {
+            if let Some(error) = list_errors.get(&key) {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_load_failed_message("chart", error),
+                    theme::danger(),
+                ));
+            } else {
+                lines.push(indent_line(
+                    depth + 1,
+                    ui_data_not_loaded_message("chart"),
+                    theme::muted(),
+                ));
+            }
+        }
     }
     lines.push(Line::from(""));
 }
@@ -1689,6 +1781,31 @@ mod tests {
     }
 
     #[test]
+    fn failed_worklist_source_renders_error_not_loading_or_unloaded() {
+        let app = release_app();
+        let home_index = screen_index_for_target(&app, "home").expect("home screen");
+        let request = UiListRequest {
+            source: "worklists.release".to_string(),
+            filter: Map::new(),
+            limit: Some(8),
+        };
+        let text = rendered_screen_text_with_errors(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), home_index)]),
+            BTreeMap::from([(
+                request.cache_key(),
+                "worklist 'release' was not found".to_string(),
+            )]),
+        );
+
+        assert!(text.contains("backing data failed to load"));
+        assert!(text.contains("worklist 'release' was not found"));
+        assert!(text.contains("Refresh the view to retry"));
+        assert!(!text.contains("Loading list data"));
+        assert!(!text.contains("backing data has not loaded yet"));
+    }
+
+    #[test]
     fn list_metadata_parts_name_filters_and_sort() {
         let mut filter = Map::new();
         filter.insert("kind".to_string(), json!("approval"));
@@ -1824,6 +1941,7 @@ mod tests {
             BTreeMap::from([("release".to_string(), home_index)]),
             BTreeMap::from([(key, items)]),
             BTreeSet::new(),
+            BTreeMap::new(),
             Some("REL-1"),
         );
 
@@ -2232,6 +2350,7 @@ mod tests {
             &chart,
             &BTreeMap::new(),
             &BTreeSet::new(),
+            &BTreeMap::new(),
             &mut lines,
             0,
         );
@@ -2420,6 +2539,7 @@ mod tests {
             &nodes,
             &lists,
             &BTreeSet::new(),
+            &BTreeMap::new(),
             &mut lines,
             0,
             88,
@@ -2481,6 +2601,7 @@ mod tests {
             None,
             &lists,
             &BTreeSet::new(),
+            &BTreeMap::new(),
             88,
         ));
 
@@ -2526,6 +2647,7 @@ mod tests {
             Some(1),
             &BTreeMap::new(),
             &BTreeSet::new(),
+            &BTreeMap::new(),
             88,
         ));
 
@@ -2576,6 +2698,7 @@ mod tests {
             None,
             &lists,
             &BTreeSet::new(),
+            &BTreeMap::new(),
             88,
         ));
 
@@ -2676,6 +2799,7 @@ mod tests {
             None,
             &BTreeMap::new(),
             &BTreeSet::new(),
+            &BTreeMap::new(),
             88,
         ));
 
@@ -2994,7 +3118,29 @@ mod tests {
         lists: BTreeMap<String, WorkItemList>,
         requested_lists: BTreeSet<String>,
     ) -> String {
-        rendered_screen_text_with_selection(app, screen_indices, lists, requested_lists, None)
+        rendered_screen_text_with_selection(
+            app,
+            screen_indices,
+            lists,
+            requested_lists,
+            BTreeMap::new(),
+            None,
+        )
+    }
+
+    fn rendered_screen_text_with_errors(
+        app: Option<&UiAppRecord>,
+        screen_indices: BTreeMap<String, usize>,
+        list_errors: BTreeMap<String, String>,
+    ) -> String {
+        rendered_screen_text_with_selection(
+            app,
+            screen_indices,
+            BTreeMap::new(),
+            BTreeSet::new(),
+            list_errors,
+            None,
+        )
     }
 
     fn rendered_screen_text_with_selection(
@@ -3002,6 +3148,7 @@ mod tests {
         screen_indices: BTreeMap<String, usize>,
         lists: BTreeMap<String, WorkItemList>,
         requested_lists: BTreeSet<String>,
+        list_errors: BTreeMap<String, String>,
         selected_work_item_id: Option<&str>,
     ) -> String {
         let backend = TestBackend::new(96, 32);
@@ -3015,6 +3162,7 @@ mod tests {
                     &screen_indices,
                     &lists,
                     &requested_lists,
+                    &list_errors,
                     selected_work_item_id,
                 );
             })
@@ -3043,6 +3191,7 @@ mod tests {
                     selected_action_index,
                     &lists,
                     &requested_lists,
+                    &BTreeMap::new(),
                 );
             })
             .expect("draw harness pane");

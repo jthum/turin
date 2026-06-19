@@ -66,7 +66,8 @@ runtime-owned UI session store, or a second daemon implementation.
    intents.
 8. `OperatorCommand::LoadUiList` resolves semantic `UiListRequest` values. Today
    only `worklists.<name>` sources load, through typed control-client worklist
-   helpers.
+   helpers. Failures emit request-scoped `UiListFailed` updates so clients can
+   clear local loading state and render retryable fallback copy.
 9. Clients can reuse stateless helpers to discover visible worklist-backed data
    requests from their own active screen/pane nodes without sharing active view
    state.
@@ -98,6 +99,9 @@ runtime-owned UI session store, or a second daemon implementation.
   `turin-control-client`.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
+- UI list load failures should stay request-scoped. The shared controller can
+  identify the failed semantic request, but retry state, visible error copy, and
+  cache invalidation remain client-owned.
 - Worklist source validation, request-discovery, default-screen target lookup,
   node target matching, show-target classification, refresh request selection,
   badge text derivation, and display helpers must stay stateless and

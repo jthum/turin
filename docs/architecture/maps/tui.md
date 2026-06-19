@@ -46,6 +46,8 @@ shared operator commands, and stateless target lookup belong in
    request path for any pane nodes, and can select pane-local work items or run
    pane-local actions/forms through the same harness action path as screens.
 12. `ui.refresh(...)` and `harness.action_ran` invalidate visible list caches.
+13. Request-scoped list load failures clear local loading state and render
+    explicit retryable fallback copy in the affected terminal surface.
 
 ## Invariants
 
@@ -64,6 +66,8 @@ shared operator commands, and stateless target lookup belong in
   `ui.focus` changes only local TUI selection/focus state, and applying
   `ui.show` to a pane changes only local overlay state.
 - Rendering functions should not perform daemon requests directly.
+- Failed list/activity/detail/report/chart loads should render as explicit
+  local terminal error states rather than indefinite loading or blank panels.
 - Harness UI rendering must degrade semantically instead of assuming desktop
   widgets exist.
 - Worklist-backed `list` nodes render as compact terminal tables with

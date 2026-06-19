@@ -236,6 +236,7 @@ impl DashboardState {
             UiUpdate::ChannelAccess { .. } => {}
             UiUpdate::SearchResults { .. } => {}
             UiUpdate::UiListLoaded { .. } => {}
+            UiUpdate::UiListFailed { message, .. } => self.record_error(message),
             UiUpdate::HarnessActionCompleted(result) => {
                 self.ui.apply_messages(result.ui_intents.clone());
                 self.record_info(harness_action_completed_message(&result))
@@ -516,7 +517,7 @@ mod tests {
     };
     use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 
-    use crate::{HarnessActionFailure, UiUpdate};
+    use crate::{HarnessActionFailure, UiListRequest, UiUpdate};
 
     fn empty_dashboard() -> DashboardState {
         DashboardState {
@@ -687,6 +688,29 @@ mod tests {
         assert!(error.contains("release.fail_diagnostic"));
         assert!(error.contains("default"));
         assert!(error.contains("Release Operator diagnostic failure"));
+        assert_eq!(
+            dashboard.recent_notices.last().map(|notice| notice.level),
+            Some(DashboardNoticeLevel::Error)
+        );
+    }
+
+    #[test]
+    fn ui_list_failure_records_operator_error() {
+        let mut dashboard = empty_dashboard();
+
+        dashboard.apply_update(UiUpdate::UiListFailed {
+            request: Box::new(UiListRequest {
+                source: "worklists.release".to_string(),
+                filter: Default::default(),
+                limit: Some(8),
+            }),
+            message: "worklist 'release' was not found".to_string(),
+        });
+
+        assert_eq!(
+            dashboard.last_error.as_deref(),
+            Some("worklist 'release' was not found")
+        );
         assert_eq!(
             dashboard.recent_notices.last().map(|notice| notice.level),
             Some(DashboardNoticeLevel::Error)

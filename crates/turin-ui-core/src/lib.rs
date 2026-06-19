@@ -31,7 +31,9 @@ pub use form_values::{
 pub use intents::{DEFAULT_MAX_UI_NOTICES, UiAppRecord, UiRegistry};
 pub use ui_actions::{ui_harness_action_failure_matches_app, ui_harness_action_result_matches_app};
 pub use ui_badges::ui_badge_text;
-pub use ui_copy::{ui_data_not_loaded_message, unsupported_ui_source_message};
+pub use ui_copy::{
+    ui_data_load_failed_message, ui_data_not_loaded_message, unsupported_ui_source_message,
+};
 pub use ui_data::{
     DEFAULT_UI_ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT, DEFAULT_UI_DETAIL_LIMIT,
     DEFAULT_UI_REPORT_LIMIT, UiWorklistSourceError, collect_ui_list_requests,
