@@ -668,9 +668,6 @@ fn render_list(
         meta.push(format!("as={render_as}"));
     }
     meta.extend(list_metadata_parts(list));
-    if let Some(limit) = list.limit {
-        meta.push(format!("limit={limit}"));
-    }
     lines.push(indent_line(
         depth,
         format!(
@@ -1520,6 +1517,9 @@ fn list_metadata_parts(list: &UiListNode) -> Vec<String> {
             ui_list_sort_fields(&list.sort).join(",")
         ));
     }
+    if let Some(limit) = list.limit {
+        meta.push(format!("limit={limit}"));
+    }
     meta
 }
 
@@ -1811,7 +1811,7 @@ mod tests {
 
         assert_eq!(
             list_metadata_parts(&list),
-            vec!["where=kind,status", "sort=priority"]
+            vec!["where=kind,status", "sort=priority", "limit=25"]
         );
     }
 
