@@ -1859,6 +1859,52 @@ mod tests {
     }
 
     #[test]
+    fn terminal_golden_release_home_loaded_list_stays_stable() {
+        let app = release_app();
+        let home_index = screen_index_for_target(&app, "home").expect("home screen");
+        let request = UiListRequest {
+            source: "worklists.release".to_string(),
+            filter: Map::new(),
+            limit: Some(8),
+        };
+        let mut approval = test_work_item(1, "REL-1", "Approve release");
+        approval.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: Some(json!({ "worklist": "release" })),
+        });
+        let mut qa = test_work_item(2, "REL-2", "Run QA signoff");
+        qa.kind = "qa".to_string();
+        qa.status = "done".to_string();
+        qa.priority = 4;
+        let items = WorkItemList {
+            worklist_id: "release".to_string(),
+            items: vec![approval, qa],
+        };
+        let key = request.cache_key();
+        let text = rendered_screen_text_with_selection(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), home_index)]),
+            BTreeMap::from([(key, items)]),
+            BTreeSet::new(),
+            Some("REL-1"),
+        );
+
+        assert_eq!(
+            terminal_compact_content_lines(&text),
+            vec![
+                "Release Desk home",
+                "Ready",
+                "→ Seed Demo Work",
+                "Recent Release Work worklists.release intent=tasks as=table limit=8",
+                "Rows 1-2 of 2 · selected 1",
+                "# | Title | Status | Kind | Priority | action",
+                "●1 | Approve release | pending | approval | 10 | review",
+                "2 | Run QA signoff | done | qa | 4 | -",
+            ]
+        );
+    }
+
+    #[test]
     fn default_screen_uses_declared_opens_with() {
         let app = release_app();
         let default = default_screen_index(&app);
@@ -2787,6 +2833,16 @@ mod tests {
         lists: BTreeMap<String, WorkItemList>,
         requested_lists: BTreeSet<String>,
     ) -> String {
+        rendered_screen_text_with_selection(app, screen_indices, lists, requested_lists, None)
+    }
+
+    fn rendered_screen_text_with_selection(
+        app: Option<&UiAppRecord>,
+        screen_indices: BTreeMap<String, usize>,
+        lists: BTreeMap<String, WorkItemList>,
+        requested_lists: BTreeSet<String>,
+        selected_work_item_id: Option<&str>,
+    ) -> String {
         let backend = TestBackend::new(96, 32);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
@@ -2798,7 +2854,7 @@ mod tests {
                     &screen_indices,
                     &lists,
                     &requested_lists,
-                    None,
+                    selected_work_item_id,
                 );
             })
             .expect("draw harness screen");
@@ -2821,6 +2877,13 @@ mod tests {
                     Some(line.to_string())
                 }
             })
+            .collect()
+    }
+
+    fn terminal_compact_content_lines(text: &str) -> Vec<String> {
+        terminal_content_lines(text)
+            .into_iter()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect()
     }
 
