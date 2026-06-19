@@ -1831,6 +1831,34 @@ mod tests {
     }
 
     #[test]
+    fn terminal_golden_release_home_surface_stays_stable() {
+        let app = release_app();
+        let home_index = screen_index_for_target(&app, "home").expect("home screen");
+        let request = UiListRequest {
+            source: "worklists.release".to_string(),
+            filter: Map::new(),
+            limit: Some(8),
+        };
+        let text = rendered_screen_text_with_lists(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), home_index)]),
+            BTreeMap::new(),
+            BTreeSet::from([request.cache_key()]),
+        );
+
+        assert_eq!(
+            terminal_content_lines(&text),
+            vec![
+                "Release Desk  home",
+                "Ready",
+                "→ Seed Demo Work",
+                "Recent Release Work  worklists.release  intent=tasks  as=table  limit=8",
+                "  Loading list data...",
+            ]
+        );
+    }
+
+    #[test]
     fn default_screen_uses_declared_opens_with() {
         let app = release_app();
         let default = default_screen_index(&app);
@@ -2750,6 +2778,15 @@ mod tests {
         app: Option<&UiAppRecord>,
         screen_indices: BTreeMap<String, usize>,
     ) -> String {
+        rendered_screen_text_with_lists(app, screen_indices, BTreeMap::new(), BTreeSet::new())
+    }
+
+    fn rendered_screen_text_with_lists(
+        app: Option<&UiAppRecord>,
+        screen_indices: BTreeMap<String, usize>,
+        lists: BTreeMap<String, WorkItemList>,
+        requested_lists: BTreeSet<String>,
+    ) -> String {
         let backend = TestBackend::new(96, 32);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
@@ -2759,13 +2796,32 @@ mod tests {
                     frame.area(),
                     app,
                     &screen_indices,
-                    &BTreeMap::new(),
-                    &BTreeSet::new(),
+                    &lists,
+                    &requested_lists,
                     None,
                 );
             })
             .expect("draw harness screen");
         buffer_text(terminal.backend().buffer())
+    }
+
+    fn terminal_content_lines(text: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| {
+                if line.contains('─') {
+                    return None;
+                }
+                let line = line.trim_end();
+                let line = line.strip_prefix('│').unwrap_or(line);
+                let line = line.strip_suffix('│').unwrap_or(line);
+                let line = line.trim_end();
+                if line.trim().is_empty() {
+                    None
+                } else {
+                    Some(line.to_string())
+                }
+            })
+            .collect()
     }
 
     fn buffer_text(buffer: &Buffer) -> String {
