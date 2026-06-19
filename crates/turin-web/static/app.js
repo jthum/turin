@@ -1250,17 +1250,23 @@ function renderBars(counts) {
     return wrapper;
   }
   const max = Math.max(...entries.map(([, count]) => count), 1);
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
   for (const [label, count] of entries) {
     const row = document.createElement("div");
     row.className = "chart-row";
     row.innerHTML = `
       <span>${escapeHtml(label)}</span>
       <div><i style="width: ${(count / max) * 100}%"></i></div>
-      <strong>${escapeHtml(count)}</strong>
+      <strong>${escapeHtml(count)} (${escapeHtml(percentLabel(count, total))})</strong>
     `;
     wrapper.append(row);
   }
   return wrapper;
+}
+
+function percentLabel(count, total) {
+  if (!total) return "0%";
+  return `${Math.round((count * 100) / total)}%`;
 }
 
 function renderReportHighlight(item, app) {

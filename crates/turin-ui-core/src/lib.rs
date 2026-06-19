@@ -49,5 +49,6 @@ pub use ui_navigation::{
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_index_by_key, work_item_key,
     work_item_matches_key, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    worklist_count_percent_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };

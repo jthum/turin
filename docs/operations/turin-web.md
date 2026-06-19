@@ -357,7 +357,7 @@ The current browser shell is intentionally small:
   `where` constraints match no rows
 - lightweight worklist-backed report summaries with no-data copy,
   nonstandard-status buckets when present, and next pending item highlights,
-  plus chart breakdowns
+  plus chart breakdowns with count and percentage labels
 - SSE invalidation for runtime/action events plus binding-level `ui.refresh`
   invalidation for cached list requests
 - split browser-local connection feedback for HTTP refresh health and SSE

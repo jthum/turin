@@ -17,7 +17,8 @@ use turin_ui_core::{
     ui_list_filter_fields, ui_list_sort_fields, ui_sorted_field_label as sorted_field_label,
     ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
     work_item_index_by_key, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    worklist_count_percent_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -1157,6 +1158,7 @@ fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkIte
         return;
     }
 
+    let total = items.items.len();
     let data = counts
         .iter()
         .map(|(label, count)| {
@@ -1172,9 +1174,12 @@ fn render_worklist_chart(ui: &mut egui::Ui, chart: &UiChartNode, items: &WorkIte
     ui.horizontal_wrapped(|ui| {
         for (label, count) in counts {
             ui.add(
-                cast::Badge::new(format!("{label}: {count}"))
-                    .intent(chart_bar_intent(field, &label))
-                    .variant(cast::Variant::Subtle),
+                cast::Badge::new(format!(
+                    "{label}: {count} ({})",
+                    worklist_count_percent_label(count, total)
+                ))
+                .intent(chart_bar_intent(field, &label))
+                .variant(cast::Variant::Subtle),
             );
         }
     });

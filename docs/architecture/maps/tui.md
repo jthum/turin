@@ -95,9 +95,10 @@ shared operator commands, and stateless target lookup belong in
   views over existing control-plane data.
 - Worklist-backed `report` and `chart` nodes render lightweight terminal
   summaries from bounded cached worklist data using stateless worklist
-  derivation helpers from `turin-ui-core`. This is still a client adapter, not a
-  shared analytics/query semantics layer. Empty report/chart data should remain
-  visible with explicit no-data copy.
+  derivation helpers from `turin-ui-core`, including chart count and percentage
+  labels. This is still a client adapter, not a shared analytics/query
+  semantics layer. Empty report/chart data should remain visible with explicit
+  no-data copy.
 - Form nodes render as editable terminal modals. Textarea/markdown fields can
   accept `Ctrl+J` newlines but still display as compact previews.
   Password-like fields keep terminal input local and mask preview text.

@@ -436,6 +436,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("if (node.intent === \"kind_breakdown\") return \"kind\""));
     assert!(js.contains("if (node.intent === \"priority_breakdown\") return \"priority\""));
     assert!(js.contains("return \"status\""));
+    assert!(js.contains("function percentLabel(count, total)"));
+    assert!(js.contains("Math.round((count * 100) / total)"));
     assert!(js.contains("const label = fieldValue(item, field) || \"unknown\""));
     assert!(js.contains("No report data yet"));
     assert!(js.contains("This report will populate when the backing worklist has rows."));

@@ -19,7 +19,8 @@ use turin_ui_core::{
     ui_list_filter_fields, ui_list_sort_fields, ui_sorted_field_label as sorted_field_label,
     ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
     work_item_index_by_key, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    worklist_count_percent_label, worklist_group_counts, worklist_highest_priority_pending_item,
+    worklist_status_counts,
 };
 pub use turin_ui_core::{
     ui_default_screen_index as default_screen_index, ui_form_default_value as default_form_value,
@@ -1395,11 +1396,18 @@ fn render_worklist_chart(
         return;
     }
     let max = counts.values().copied().max().unwrap_or(1);
+    let total = items.items.len();
     for (label, count) in counts {
         let width = ((count * 18) / max).max(1);
         lines.push(indent_line(
             depth,
-            format!("{:<12} {:<18} {}", label, "█".repeat(width), count),
+            format!(
+                "{:<12} {:<18} {} ({})",
+                label,
+                "█".repeat(width),
+                count,
+                worklist_count_percent_label(count, total)
+            ),
             theme::base(),
         ));
     }
@@ -2020,9 +2028,9 @@ mod tests {
                 "updated: 2026-06-18T00:00:00Z",
                 "metadata: {\"release\":\"2026.06\"}",
                 "Chart: Approval Flow worklists.release as bar intent=kind_breakdown grouped_by=Kind",
-                "approval ██████████████████ 1",
-                "ops ██████████████████ 1",
-                "qa ██████████████████ 1",
+                "approval ██████████████████ 1 (33%)",
+                "ops ██████████████████ 1 (33%)",
+                "qa ██████████████████ 1 (33%)",
             ]
         );
     }

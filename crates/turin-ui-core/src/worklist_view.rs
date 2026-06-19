@@ -70,6 +70,13 @@ pub fn worklist_group_counts(items: &WorkItemList, field: &str) -> BTreeMap<Stri
     counts
 }
 
+pub fn worklist_count_percent_label(count: usize, total: usize) -> String {
+    if total == 0 {
+        return "0%".to_string();
+    }
+    format!("{}%", (count.saturating_mul(100) + (total / 2)) / total)
+}
+
 pub fn work_item_field_label(item: &WorkItemDetail, field: &str) -> String {
     match field {
         "id" | "public_id" => work_item_key(item),
@@ -197,6 +204,8 @@ mod tests {
             worklist_chart_group_label(Some("priority_breakdown")),
             "Priority"
         );
+        assert_eq!(worklist_count_percent_label(2, 3), "67%");
+        assert_eq!(worklist_count_percent_label(0, 0), "0%");
     }
 
     #[test]

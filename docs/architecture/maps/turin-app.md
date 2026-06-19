@@ -114,9 +114,10 @@ forms with masked password-like fields, confirmation modals, latest action
 result feedback, shown panes,
 dynamic UI navigation/focus/refresh
 handling, dynamic badges, and lightweight worklist-backed activity, detail,
-report, and chart surfaces with explicit no-data copy and grouping hints. Form
-field defaults and typed scalar coercion come from stateless `turin-ui-core`
-helpers, default-screen, node-target, badge-text, and action-feedback
+report, and chart surfaces with explicit no-data copy, grouping hints, and
+percentage labels. Form field defaults and typed scalar coercion come from
+stateless `turin-ui-core` helpers, default-screen, node-target, badge-text, and
+action-feedback
 app-scoping lookup also come from `turin-ui-core`, request-scoped list load
 failures are rendered through app-local cache/error state, and drafts and
 controls remain app-local. It should remain replaceable at the presentation

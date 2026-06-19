@@ -110,7 +110,8 @@ session state, invent renderer-specific harness APIs, or bypass
 - Browser list-load error states should offer a local per-request retry path so
   a failed cache entry does not require a full page reload.
 - Browser report/chart surfaces should remain visible with explicit no-data
-  copy when the backing worklist has no rows.
+  copy when the backing worklist has no rows, and chart breakdowns should show
+  count plus percentage labels without requiring shared query state.
 - Non-loopback binds require explicit opt-in.
 
 ## Common Changes
