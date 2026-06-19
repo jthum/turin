@@ -39,8 +39,8 @@ pub use ui_data::{
     ui_worklist_request,
 };
 pub use ui_navigation::{
-    ui_default_screen_index, ui_node_id_matches, ui_node_matches_target, ui_nodes_contain_target,
-    ui_screen_index_for_target,
+    UiShowTarget, ui_default_screen_index, ui_node_id_matches, ui_node_matches_target,
+    ui_nodes_contain_target, ui_screen_index_for_target, ui_show_target_for,
 };
 pub use worklist_view::{
     WorklistStatusCounts, work_item_field_label, work_item_key, worklist_chart_group_field,

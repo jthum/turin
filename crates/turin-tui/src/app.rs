@@ -14,10 +14,10 @@ use turin_daemon_protocol::{
 };
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, DefaultOperatorConsoleSummary,
-    HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiUpdate,
+    HarnessActionFailure, OperatorCommand, UiController, UiListRequest, UiShowTarget, UiUpdate,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
-    ui_refresh_requests_for_binding,
+    ui_refresh_requests_for_binding, ui_show_target_for,
 };
 
 use crate::{harness_ui, theme};
@@ -1364,27 +1364,31 @@ impl TuiApp {
         let Some(app) = self.select_ui_app_by_id(app_id) else {
             return;
         };
-        if harness_ui::screen_index_for_target(&app, target).is_some() {
-            self.apply_ui_open_request(app_id, target, "show");
-            return;
-        }
-        if app.panes.contains_key(target) {
-            self.tab = TabKind::Harness;
-            self.active_pane_id = Some(target.to_string());
-            self.ui_pane_focus = PaneFocus::Items;
-            self.ui_pane_item_index = 0;
-            self.ui_pane_action_index = 0;
-            self.selected_ui_pane_item_key = None;
-            if let Err(err) = self.request_current_harness_lists(false) {
+        match ui_show_target_for(&app, target) {
+            Some(UiShowTarget::Screen { screen_index }) => {
+                self.open_harness_screen(&app, screen_index, HarnessFocus::Navigation, 0);
                 self.dashboard
-                    .record_error(format!("Failed to load harness UI pane lists: {err}"));
+                    .record_info(format!("Opened '{target}' from ui.show"));
             }
-            self.dashboard
-                .record_info(format!("Opened pane '{target}' from ui.show"));
-        } else {
-            self.dashboard.record_error(format!(
-                "UI show target '{target}' is not a screen or pane in '{app_id}'"
-            ));
+            Some(UiShowTarget::Pane { pane_id }) => {
+                self.tab = TabKind::Harness;
+                self.active_pane_id = Some(pane_id.to_string());
+                self.ui_pane_focus = PaneFocus::Items;
+                self.ui_pane_item_index = 0;
+                self.ui_pane_action_index = 0;
+                self.selected_ui_pane_item_key = None;
+                if let Err(err) = self.request_current_harness_lists(false) {
+                    self.dashboard
+                        .record_error(format!("Failed to load harness UI pane lists: {err}"));
+                }
+                self.dashboard
+                    .record_info(format!("Opened pane '{target}' from ui.show"));
+            }
+            None => {
+                self.dashboard.record_error(format!(
+                    "UI show target '{target}' is not a screen or pane in '{app_id}'"
+                ));
+            }
         }
     }
 

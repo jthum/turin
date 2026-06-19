@@ -18,12 +18,12 @@ use turin_ui_core::{
     ConnectionProfileActivityBook, ConnectionProfileCatalog, ConnectionProfileDraft,
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftValidation,
     ConnectionProfileKind, ConnectionProfileSummary, DashboardState, DefaultOperatorConsoleSummary,
-    HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiUpdate,
-    collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
+    HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiShowTarget,
+    UiUpdate, collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
     preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
-    ui_refresh_requests_for_binding,
+    ui_refresh_requests_for_binding, ui_show_target_for,
 };
 
 mod harness_ui;
@@ -534,20 +534,24 @@ impl TurinDesktopApp {
         let Some(app) = self.select_ui_app_by_id(app_id) else {
             return;
         };
-        if harness_ui::screen_index_for_target(&app, target).is_some() {
-            self.apply_ui_open_request(app_id, target, "show");
-            return;
-        }
-        if app.panes.contains_key(target) {
-            self.tab = TabKind::UiApps;
-            self.ui_active_pane = Some(target.to_string());
-            self.request_selected_ui_lists(false);
-            self.dashboard
-                .record_info(format!("Opened pane '{target}' from ui.show"));
-        } else {
-            self.dashboard.record_error(format!(
-                "UI show target '{target}' is not a screen or pane in '{app_id}'"
-            ));
+        match ui_show_target_for(&app, target) {
+            Some(UiShowTarget::Screen { screen_index }) => {
+                self.open_harness_screen(&app, screen_index);
+                self.dashboard
+                    .record_info(format!("Opened '{target}' from ui.show"));
+            }
+            Some(UiShowTarget::Pane { pane_id }) => {
+                self.tab = TabKind::UiApps;
+                self.ui_active_pane = Some(pane_id.to_string());
+                self.request_selected_ui_lists(false);
+                self.dashboard
+                    .record_info(format!("Opened pane '{target}' from ui.show"));
+            }
+            None => {
+                self.dashboard.record_error(format!(
+                    "UI show target '{target}' is not a screen or pane in '{app_id}'"
+                ));
+            }
         }
     }
 

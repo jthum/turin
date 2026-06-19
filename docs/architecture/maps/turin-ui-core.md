@@ -99,8 +99,8 @@ runtime-owned UI session store, or a second daemon implementation.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
 - Worklist source, request-discovery, default-screen target lookup, node target
-  matching, refresh request selection, badge text derivation, and display
-  helpers must stay stateless and renderer-neutral.
+  matching, show-target classification, refresh request selection, badge text
+  derivation, and display helpers must stay stateless and renderer-neutral.
 - Form value helpers may parse/default individual field values, but form drafts,
   field focus, validation display, submission timing, and modal state remain in
   each client.
@@ -165,7 +165,8 @@ new UI clients: connection/profile UX, dashboard refresh and event plumbing,
 semantic harness UI indexing, declared-surface replacement on status refresh,
 bounded notices/events, UI list loading for worklists, stateless default-screen
 lookup, stateless node target matching, stateless badge text derivation,
-stateless action feedback app-scoping, stateless visible-node request derivation,
+stateless show-target classification, stateless action feedback app-scoping,
+stateless visible-node request derivation,
 stateless refresh request selection for matching semantic list bindings,
 shared fallback/not-loaded copy, harness action command dispatch with returned
 UI intent application, stateless form value coercion, and small

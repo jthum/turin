@@ -2,11 +2,27 @@ use turin_daemon_protocol::{UiNode, UiScreenIntent};
 
 use crate::UiAppRecord;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiShowTarget<'a> {
+    Screen { screen_index: usize },
+    Pane { pane_id: &'a str },
+}
+
 pub fn ui_default_screen_index(app: &UiAppRecord) -> usize {
     app.opens_with
         .as_deref()
         .and_then(|target| ui_screen_index_for_target(app, target))
         .unwrap_or_default()
+}
+
+pub fn ui_show_target_for<'a>(app: &'a UiAppRecord, target: &'a str) -> Option<UiShowTarget<'a>> {
+    if let Some(screen_index) = ui_screen_index_for_target(app, target) {
+        return Some(UiShowTarget::Screen { screen_index });
+    }
+    if app.panes.contains_key(target) {
+        return Some(UiShowTarget::Pane { pane_id: target });
+    }
+    None
 }
 
 pub fn ui_screen_index_for_target(app: &UiAppRecord, target: &str) -> Option<usize> {
@@ -60,13 +76,13 @@ mod tests {
 
     use serde_json::{Map, Value};
     use turin_daemon_protocol::{
-        UiActionNode, UiFormNode, UiIntentSource, UiListNode, UiNode, UiScreenIntent,
+        UiActionNode, UiFormNode, UiIntentSource, UiListNode, UiNode, UiPaneIntent, UiScreenIntent,
         UiSectionNode, UiTextNode,
     };
 
     use crate::{
-        UiAppRecord, ui_default_screen_index, ui_node_matches_target, ui_nodes_contain_target,
-        ui_screen_index_for_target,
+        UiAppRecord, UiShowTarget, ui_default_screen_index, ui_node_matches_target,
+        ui_nodes_contain_target, ui_screen_index_for_target, ui_show_target_for,
     };
 
     fn test_app(opens_with: Option<&str>) -> UiAppRecord {
@@ -124,6 +140,33 @@ mod tests {
         assert_eq!(ui_screen_index_for_target(&app, "home"), Some(1));
         assert_eq!(ui_screen_index_for_target(&app, "Approvals"), Some(0));
         assert_eq!(ui_screen_index_for_target(&app, "missing"), None);
+    }
+
+    #[test]
+    fn show_target_classifies_screens_panes_and_missing_targets() {
+        let mut app = test_app(None);
+        app.panes.insert(
+            "release-notes".to_string(),
+            UiPaneIntent {
+                app_id: "release".to_string(),
+                id: "release-notes".to_string(),
+                title: "Release Notes".to_string(),
+                presentation: Some("sheet".to_string()),
+                nodes: Vec::new(),
+            },
+        );
+
+        assert_eq!(
+            ui_show_target_for(&app, "Release Desk"),
+            Some(UiShowTarget::Screen { screen_index: 1 })
+        );
+        assert_eq!(
+            ui_show_target_for(&app, "release-notes"),
+            Some(UiShowTarget::Pane {
+                pane_id: "release-notes"
+            })
+        );
+        assert_eq!(ui_show_target_for(&app, "missing"), None);
     }
 
     #[test]
