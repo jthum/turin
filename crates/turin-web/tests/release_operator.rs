@@ -349,9 +349,19 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(
         js.contains("return screenIdForTarget(app, app?.opens_with) || Object.keys(app?.screens ?? {})[0] || null")
     );
+    assert!(js.contains("function applyUiShow(appId, target)"));
+    assert!(js.contains(
+        "if (screenIdForTarget(app, target)) return applyUiOpen(appId, target, \"show\")"
+    ));
+    assert!(js.contains("if (app.panes?.[target])"));
+    assert!(js.contains("state.activePaneId = target"));
+    assert!(js.contains("state.pendingAction = null"));
+    assert!(js.contains("Target '${target}' is not a screen or pane in '${appId}'."));
     assert!(js.contains("focusScreenIdForTarget"));
     assert!(js.contains("if (app?.screens?.[target]) return target"));
     assert!(js.contains("screen.title === target"));
+    assert!(js.contains("const screenId = screenIdForTarget(app, target)"));
+    assert!(js.contains("for (const screen of Object.values(app?.screens ?? {}))"));
     assert!(js.contains("if (node?.id === target) return true"));
     assert!(js.contains("child => nodeContainsTarget(child, target)"));
     assert!(js.contains("return node.action === target || node.label === target"));
