@@ -1653,7 +1653,11 @@ function dataRequestForNode(node) {
 }
 
 function isWorklistSource(source) {
-  return typeof source === "string" && source.startsWith("worklists.");
+  return (
+    typeof source === "string" &&
+    source.startsWith("worklists.") &&
+    source.slice("worklists.".length).trim().length > 0
+  );
 }
 
 function listKey(request) {

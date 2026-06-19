@@ -10,7 +10,7 @@ use turin_daemon_protocol::{
 use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
-    UiListRequest, is_worklist_ui_source, parse_ui_form_value as parse_form_value,
+    UiListRequest, is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
     ui_badge_text as badge_text, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_value_string as form_value_string, ui_worklist_request, unsupported_ui_source_message,
@@ -425,7 +425,7 @@ fn render_list(
         });
         ui.add_space(8.0);
 
-        if !is_worklist_ui_source(&list.source) {
+        if !is_named_worklist_ui_source(&list.source) {
             render_unsupported_source(ui, "list", &list.source);
             return;
         }

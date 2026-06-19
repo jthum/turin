@@ -417,6 +417,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("field === \"id\" || field === \"public_id\""));
     assert!(js.contains("unsupportedSourceMessage"));
     assert!(js.contains("const normalizedSource = String(source || \"\").trim()"));
+    assert!(js.contains("source.slice(\"worklists.\".length).trim().length > 0"));
     assert!(js.contains("This ${surface} is declared and visible, but no source was provided."));
     assert!(js.contains("errorMessageFromEnvelope"));
     assert!(js.contains("details?.guidance"));
