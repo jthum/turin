@@ -42,6 +42,15 @@ Core rule:
 | `report` | Cast report section with lightweight worklist-backed status summary, nonstandard-status bucket when present, explicit no-data copy, and next pending item highlight; unsupported adapters show metadata. | Lightweight worklist-backed status summary, nonstandard-status bucket when present, explicit no-data copy, and next pending item highlight; unsupported adapters show metadata. | Lightweight worklist-backed status summary, nonstandard-status bucket when present, explicit no-data copy, and next pending item highlight; unsupported adapters show metadata. | App/TUI share stateless worklist derivation helpers; richer query semantics remain future work. |
 | `chart` | Cast report/chart section with lightweight worklist-backed bar breakdown and grouping hint; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown and grouping hint; unsupported adapters show metadata. | Lightweight worklist-backed bar breakdown and grouping hint; unsupported adapters show metadata. | App/TUI share stateless grouping semantics; `intent` and `as` remain advisory. |
 
+## Data Loading States
+
+| State | `turin-app` | `turin-tui` | `turin-web` | Notes |
+| --- | --- | --- | --- | --- |
+| not loaded yet | Explicit copy explains that the client will request current data. | Explicit terminal copy explains that the client will request current data. | Explicit browser copy explains that the client will request current data. | The surface remains visible instead of becoming blank. |
+| loading | Cast loading affordance. | Terminal loading copy. | Browser loading state. | Loading state is local to the client request cache. |
+| failed load | Request-scoped error copy clears stale loading state and points to refresh/retry. | Request-scoped error copy clears stale loading state and points to refresh/retry. | Cached request-scoped error copy includes a local "Retry data load" action. | Failures identify the semantic request but do not become runtime-owned UI state. |
+| unsupported source | Explicit unsupported-adapter copy names the source and current client. | Explicit unsupported-adapter copy names the source and current client. | Explicit unsupported-adapter copy names the source and browser. | Only named `worklists.<name>` sources load today. |
+
 ## Dynamic UI Intent
 
 | Intent | `turin-app` | `turin-tui` | `turin-web` | Notes |
@@ -104,6 +113,9 @@ browser shell that consumes those routes.
   and points authors toward `worklists.<name>` or a deliberate client adapter.
 - Visible worklist-backed surfaces whose data has not loaded yet remain visible
   with explicit not-yet-loaded copy instead of rendering blank panels.
+- Failed worklist-backed loads remain visible as request-scoped error states;
+  the app/TUI clear stale loading state and the browser offers per-request
+  retry from its local cache.
 - App has helper-level checks for default no-harness console copy,
   runtime/work/UI metric grouping, visible screen/pane data requests, and
   confirmed work-item action event construction. App/TUI refresh invalidation
