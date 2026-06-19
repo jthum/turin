@@ -108,6 +108,8 @@ and governable.
 
 - `docs/concepts/what-can-you-do.md` — concrete use-cases and examples
 - `docs/concepts/scenarios.md` — practical workflow blueprints
+- `docs/concepts/harness-apps-and-ui-clients.md` — how custom harness UI fits
+  with the default app, TUI, and web clients
 - `docs/getting-started/index.md` — first steps
 - `docs/concepts/turin.md` — deeper technical framing
 - `docs/operations/ui-clients.md` — current terminal, app, and web client shape

@@ -8,6 +8,7 @@ This section covers Turin’s core framing and longer-lived conceptual material.
 - `docs/concepts/what-is-turin.md` — plain-language product explanation for new readers
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for evaluating Turin
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
+- `docs/concepts/harness-apps-and-ui-clients.md` — product framing for default consoles, harness apps, and local UI client state
 - `docs/concepts/architecture.md` — current runtime architecture and module layout
 - `docs/concepts/capability-charter.md` — runtime capability promises and refactor guardrails
 - `docs/concepts/governance.md` — governance profiles, capabilities, and grants

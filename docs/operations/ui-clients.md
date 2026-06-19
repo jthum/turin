@@ -7,7 +7,9 @@ client owns its own selected tab, screen, focus, modal, cache, and
 scroll/selection state.
 
 For the current per-client semantic UI support matrix, see
-`docs/operations/ui-client-parity.md`.
+`docs/operations/ui-client-parity.md`. For the product framing behind default
+consoles and app-like harness UI, see
+`docs/concepts/harness-apps-and-ui-clients.md`.
 
 Current layering:
 
