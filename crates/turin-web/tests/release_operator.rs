@@ -399,6 +399,12 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(js.contains("aria-selected"));
     assert!(js.contains("fieldHeaderLabel(field, node)"));
     assert!(js.contains("function fieldHeaderLabel(field, node)"));
+    assert!(js.contains(
+        "const headers = [...fields.map(field => fieldHeaderLabel(field, node)), \"Action\"]"
+    ));
+    assert!(js.contains("workItemActionMarker(item)"));
+    assert!(js.contains("function workItemActionMarker(item)"));
+    assert!(js.contains("return item.action?.name ? \"action\" : \"-\";"));
     assert!(js.contains("[sort ${index + 1}]"));
     assert!(js.contains("function sortFieldIndex(field, sort)"));
     assert!(js.contains("function sortEntryField(entry)"));

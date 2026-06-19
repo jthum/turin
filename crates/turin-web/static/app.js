@@ -973,7 +973,8 @@ function renderList(node, app) {
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
   const table = document.createElement("table");
-  table.innerHTML = `<thead><tr>${fields.map(field => `<th>${escapeHtml(fieldHeaderLabel(field, node))}</th>`).join("")}</tr></thead>`;
+  const headers = [...fields.map(field => fieldHeaderLabel(field, node)), "Action"];
+  table.innerHTML = `<thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>`;
   const body = document.createElement("tbody");
   for (const item of items) {
     const row = document.createElement("tr");
@@ -983,9 +984,11 @@ function renderList(node, app) {
     row.dataset.listKey = key;
     row.dataset.itemKey = itemKey(item);
     row.setAttribute("aria-selected", selected ? "true" : "false");
-    row.innerHTML = fields
-      .map(field => `<td>${escapeHtml(fieldValue(item, field))}</td>`)
-      .join("");
+    const cells = [
+      ...fields.map(field => fieldValue(item, field)),
+      workItemActionMarker(item),
+    ];
+    row.innerHTML = cells.map(value => `<td>${escapeHtml(value)}</td>`).join("");
     const select = () => {
       selectListItem(key, item);
     };
@@ -1024,6 +1027,10 @@ function renderList(node, app) {
     panel.append(detail);
   }
   return panel;
+}
+
+function workItemActionMarker(item) {
+  return item.action?.name ? "action" : "-";
 }
 
 function renderActivity(node, app) {

@@ -500,6 +500,7 @@ fn render_work_items(
         .collect::<Vec<_>>();
     let mut columns = columns;
     columns.insert(0, String::new());
+    columns.push("action".to_string());
     let selected_index = selected_work_item_index(items, selected_list_items.get(list_key));
     if let Some(item) = items.items.get(selected_index) {
         selected_list_items.insert(list_key.to_string(), work_item_key(item));
@@ -551,6 +552,17 @@ fn render_work_items(
                     row.text(truncate_for_list(&work_item_field_label(item, field), 80));
                 }
             }
+            row.cell(|ui| {
+                if item.action.is_some() {
+                    ui.add(
+                        cast::Badge::new(work_item_action_marker(item))
+                            .intent(cast::Intent::Warning)
+                            .variant(cast::Variant::Subtle),
+                    );
+                } else {
+                    ui.label(RichText::new(work_item_action_marker(item)).weak());
+                }
+            });
         });
 
     if let Some(item) = items.items.get(selected_index) {
@@ -1239,6 +1251,10 @@ fn work_item_action_event(item: &WorkItemDetail) -> Option<HarnessUiEvent> {
     })
 }
 
+fn work_item_action_marker(item: &WorkItemDetail) -> &'static str {
+    if item.action.is_some() { "action" } else { "-" }
+}
+
 fn unsupported_source_message(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the desktop app")
 }
@@ -1606,6 +1622,18 @@ mod tests {
                 confirm: true,
             })
         );
+    }
+
+    #[test]
+    fn work_item_action_marker_names_action_availability() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        assert_eq!(work_item_action_marker(&item), "-");
+
+        item.action = Some(ScheduleActionParams {
+            name: "release.approve_next".to_string(),
+            params: None,
+        });
+        assert_eq!(work_item_action_marker(&item), "action");
     }
 
     #[test]
