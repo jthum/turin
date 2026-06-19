@@ -126,26 +126,26 @@ tools/footprint-report \
 ```
 
 Recent local release-backed sample from
-`.workspace/perf-reports/footprint-1781853930-1881158.md`:
+`.workspace/perf-reports/footprint-1781856843-1915216.md`:
 
 | area | code lines |
 | --- | ---: |
-| `crates/turin-app` | 4,723 |
-| `crates/turin-tui` | 4,005 |
-| `crates/turin-ui-core` | 3,566 |
-| `crates/turin-web` | 676 |
+| `crates/turin-app` | 4,822 |
+| `crates/turin-tui` | 4,136 |
+| `crates/turin-ui-core` | 3,596 |
+| `crates/turin-web` | 687 |
 
 | static asset | bytes | lines |
 | --- | ---: | ---: |
-| `crates/turin-web/static/app.css` | 14,082 | 795 |
-| `crates/turin-web/static/app.js` | 64,771 | 2,031 |
+| `crates/turin-web/static/app.css` | 14,169 | 800 |
+| `crates/turin-web/static/app.js` | 65,785 | 2,062 |
 | `crates/turin-web/static/index.html` | 1,600 | 52 |
 
 | release binary | bytes |
 | --- | ---: |
-| `target/release/turin-tui` | 5,558,048 |
-| `target/release/turin-app` | 14,084,568 |
-| `target/release/turin-web` | 5,135,112 |
+| `target/release/turin-tui` | 5,565,984 |
+| `target/release/turin-app` | 14,098,520 |
+| `target/release/turin-web` | 5,134,664 |
 
 Use the release and idle-memory baseline below when a UI change may affect
 startup or resident memory.
@@ -169,13 +169,13 @@ when `target/release/turin-tui`, `target/release/turin-app`, or
 only want binary sizes.
 
 Recent no-build release checkpoint from
-`.workspace/perf-reports/ui-client-baseline-1781830998.md`:
+`.workspace/perf-reports/ui-client-baseline-1781856844-1915341.md`:
 
 | client | path | bytes | help max RSS KB |
 | --- | --- | ---: | ---: |
-| `turin-tui` | `target/release/turin-tui` | 5,558,048 | 5,524 |
-| `turin-app` | `target/release/turin-app` | 14,084,568 | 6,704 |
-| `turin-web` | `target/release/turin-web` | 5,135,112 | 5,032 |
+| `turin-tui` | `target/release/turin-tui` | 5,565,984 | 5,104 |
+| `turin-app` | `target/release/turin-app` | 14,098,520 | 6,476 |
+| `turin-web` | `target/release/turin-web` | 5,134,664 | 5,304 |
 
 This is a local release-artifact checkpoint for `--help` startup only. For true
 idle memory, run the client against a daemon and sample the live process with
