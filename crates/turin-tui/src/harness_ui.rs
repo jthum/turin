@@ -1655,6 +1655,40 @@ mod tests {
     }
 
     #[test]
+    fn malformed_worklist_source_renders_as_unsupported_not_unloaded() {
+        let mut app = release_app();
+        app.screens.insert(
+            "broken".to_string(),
+            UiScreenIntent {
+                app_id: "release".to_string(),
+                id: "broken".to_string(),
+                title: "Malformed Data".to_string(),
+                presentation: None,
+                nodes: vec![UiNode::List(UiListNode {
+                    id: Some("broken-list".to_string()),
+                    title: "Broken Source".to_string(),
+                    source: "worklists.".to_string(),
+                    filter: Map::new(),
+                    fields: Vec::new(),
+                    sort: Vec::new(),
+                    limit: Some(5),
+                    intent: None,
+                    render_as: None,
+                })],
+            },
+        );
+        let broken_index = screen_index_for_target(&app, "broken").expect("broken screen");
+        let text = rendered_screen_text(
+            Some(&app),
+            BTreeMap::from([("release".to_string(), broken_index)]),
+        );
+
+        assert!(text.contains("Broken Source"));
+        assert!(text.contains("source 'worklists.' cannot load in the terminal yet"));
+        assert!(!text.contains("backing data has not loaded yet"));
+    }
+
+    #[test]
     fn list_metadata_parts_name_filters_and_sort() {
         let mut filter = Map::new();
         filter.insert("kind".to_string(), json!("approval"));

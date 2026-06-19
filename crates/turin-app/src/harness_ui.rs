@@ -1427,6 +1427,13 @@ mod tests {
     }
 
     #[test]
+    fn worklist_request_rejects_missing_worklist_name() {
+        assert!(worklist_request("worklists.release", 25).is_some());
+        assert!(worklist_request("worklists.", 25).is_none());
+        assert!(worklist_request("worklists. ", 25).is_none());
+    }
+
+    #[test]
     fn selected_work_item_index_preserves_selected_item_after_reorder() {
         let selected = "REL-2".to_string();
         let items = WorkItemList {
