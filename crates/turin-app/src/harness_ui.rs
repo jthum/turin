@@ -46,6 +46,20 @@ pub(super) enum HarnessFocusTarget {
     Node { screen_index: usize },
 }
 
+pub(super) struct HarnessRenderState<'a> {
+    pub(super) lists: &'a BTreeMap<String, WorkItemList>,
+    pub(super) requested_lists: &'a BTreeSet<String>,
+    pub(super) list_errors: &'a BTreeMap<String, String>,
+    pub(super) form_values: &'a mut BTreeMap<String, String>,
+    pub(super) selected_list_items: &'a mut BTreeMap<String, String>,
+}
+
+struct HarnessRenderContext<'a, 'state> {
+    app: &'a UiAppRecord,
+    state: &'a mut HarnessRenderState<'state>,
+    event: &'a mut Option<HarnessUiEvent>,
+}
+
 pub(super) fn find_focus_target(app: &UiAppRecord, target: &str) -> Option<HarnessFocusTarget> {
     if let Some(screen_index) = screen_index_for_target(app, target) {
         return Some(HarnessFocusTarget::Screen { screen_index });
@@ -63,11 +77,7 @@ pub(super) fn render_harness_app(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     screen_index: &mut usize,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    form_values: &mut BTreeMap<String, String>,
-    selected_list_items: &mut BTreeMap<String, String>,
+    state: &mut HarnessRenderState<'_>,
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     let screens = app.screens.values().collect::<Vec<_>>();
@@ -109,17 +119,12 @@ pub(super) fn render_harness_app(
                 }
             });
             ui.add_space(8.0);
-            render_nodes(
-                ui,
+            let mut context = HarnessRenderContext {
                 app,
-                &screen.nodes,
-                lists,
-                requested_lists,
-                list_errors,
-                form_values,
-                selected_list_items,
-                &mut event,
-            );
+                state,
+                event: &mut event,
+            };
+            render_nodes(ui, &screen.nodes, &mut context);
         } else {
             ui.label("This app has no declared screens yet.");
         }
@@ -132,11 +137,7 @@ pub(super) fn render_harness_pane(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     pane: &UiPaneIntent,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    form_values: &mut BTreeMap<String, String>,
-    selected_list_items: &mut BTreeMap<String, String>,
+    state: &mut HarnessRenderState<'_>,
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     ui.horizontal_wrapped(|ui| {
@@ -154,17 +155,12 @@ pub(super) fn render_harness_pane(
     if pane.nodes.is_empty() {
         ui.label("This pane has no content nodes.");
     } else {
-        render_nodes(
-            ui,
+        let mut context = HarnessRenderContext {
             app,
-            &pane.nodes,
-            lists,
-            requested_lists,
-            list_errors,
-            form_values,
-            selected_list_items,
-            &mut event,
-        );
+            state,
+            event: &mut event,
+        };
+        render_nodes(ui, &pane.nodes, &mut context);
     }
     event
 }
@@ -262,17 +258,7 @@ fn badge_intent(badge: Option<&UiBadgeIntent>) -> cast::Intent {
     }
 }
 
-fn render_nodes(
-    ui: &mut egui::Ui,
-    app: &UiAppRecord,
-    nodes: &[UiNode],
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    form_values: &mut BTreeMap<String, String>,
-    selected_list_items: &mut BTreeMap<String, String>,
-    event: &mut Option<HarnessUiEvent>,
-) {
+fn render_nodes(ui: &mut egui::Ui, nodes: &[UiNode], context: &mut HarnessRenderContext<'_, '_>) {
     if nodes.is_empty() {
         ui.label("This screen has no content nodes.");
         return;
@@ -280,42 +266,25 @@ fn render_nodes(
 
     for node in nodes {
         match node {
-            UiNode::Section(section) => render_section(
-                ui,
-                app,
-                section,
-                lists,
-                requested_lists,
-                list_errors,
-                form_values,
-                selected_list_items,
-                event,
-            ),
+            UiNode::Section(section) => render_section(ui, section, context),
             UiNode::Text(text) => render_text(ui, text),
-            UiNode::Action(action) => render_action(ui, app, action, event),
-            UiNode::List(list) => render_list(
-                ui,
-                app,
-                list,
-                lists,
-                requested_lists,
-                list_errors,
-                selected_list_items,
-                event,
-            ),
-            UiNode::Activity(activity) => {
-                render_activity(ui, app, activity, lists, requested_lists, list_errors)
-            }
+            UiNode::Action(action) => render_action(ui, context.app, action, context.event),
+            UiNode::List(list) => render_list(ui, list, context),
+            UiNode::Activity(activity) => render_activity(ui, context.app, activity, context.state),
             UiNode::Detail(detail) => {
-                render_detail(ui, app, detail, lists, requested_lists, list_errors, event)
+                render_detail(ui, context.app, detail, context.state, context.event)
             }
-            UiNode::Form(form) => render_form(ui, app, form, form_values, event),
+            UiNode::Form(form) => render_form(
+                ui,
+                context.app,
+                form,
+                context.state.form_values,
+                context.event,
+            ),
             UiNode::Report(report) => {
-                render_report(ui, app, report, lists, requested_lists, list_errors, event)
+                render_report(ui, context.app, report, context.state, context.event)
             }
-            UiNode::Chart(chart) => {
-                render_chart(ui, app, chart, lists, requested_lists, list_errors)
-            }
+            UiNode::Chart(chart) => render_chart(ui, context.app, chart, context.state),
         }
         ui.add_space(10.0);
     }
@@ -323,32 +292,16 @@ fn render_nodes(
 
 fn render_section(
     ui: &mut egui::Ui,
-    app: &UiAppRecord,
     section: &UiSectionNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    form_values: &mut BTreeMap<String, String>,
-    selected_list_items: &mut BTreeMap<String, String>,
-    event: &mut Option<HarnessUiEvent>,
+    context: &mut HarnessRenderContext<'_, '_>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.heading(section.title.clone());
-            render_node_badge(ui, app, section.id.as_deref());
+            render_node_badge(ui, context.app, section.id.as_deref());
         });
         ui.add_space(8.0);
-        render_nodes(
-            ui,
-            app,
-            &section.nodes,
-            lists,
-            requested_lists,
-            list_errors,
-            form_values,
-            selected_list_items,
-            event,
-        );
+        render_nodes(ui, &section.nodes, context);
     });
 }
 
@@ -417,20 +370,11 @@ fn node_title_with_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) 
         .unwrap_or_else(|| title.to_string())
 }
 
-fn render_list(
-    ui: &mut egui::Ui,
-    app: &UiAppRecord,
-    list: &UiListNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    selected_list_items: &mut BTreeMap<String, String>,
-    event: &mut Option<HarnessUiEvent>,
-) {
+fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRenderContext<'_, '_>) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(list.title.clone()).strong());
-            render_node_badge(ui, app, list.id.as_deref());
+            render_node_badge(ui, context.app, list.id.as_deref());
             ui.add(cast::Badge::new(list.source.clone()).variant(cast::Variant::Outline));
             if let Some(intent) = &list.intent {
                 ui.add(cast::Badge::new(intent.clone()).intent(cast::Intent::Info));
@@ -455,16 +399,23 @@ fn render_list(
             limit: list.limit,
         };
         let key = request.cache_key();
-        match lists.get(&key) {
-            Some(items) => render_work_items(ui, list, items, &key, selected_list_items, event),
-            None if requested_lists.contains(&key) => {
+        match context.state.lists.get(&key) {
+            Some(items) => render_work_items(
+                ui,
+                list,
+                items,
+                &key,
+                context.state.selected_list_items,
+                context.event,
+            ),
+            None if context.state.requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
                     ui.label("Loading list data...");
                 });
             }
             None => {
-                if let Some(error) = list_errors.get(&key) {
+                if let Some(error) = context.state.list_errors.get(&key) {
                     render_load_failed(ui, "list", error);
                 } else {
                     ui.label(ui_data_not_loaded_message("list"));
@@ -747,9 +698,7 @@ fn render_activity(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     activity: &UiActivityNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -766,16 +715,16 @@ fn render_activity(
         };
 
         let key = request.cache_key();
-        match lists.get(&key) {
+        match state.lists.get(&key) {
             Some(items) => render_worklist_activity(ui, items),
-            None if requested_lists.contains(&key) => {
+            None if state.requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
                     ui.label("Loading activity data...");
                 });
             }
             None => {
-                if let Some(error) = list_errors.get(&key) {
+                if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "activity", error);
                 } else {
                     ui.label(ui_data_not_loaded_message("activity"));
@@ -789,9 +738,7 @@ fn render_detail(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     detail: &UiDetailNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::Panel::new().show(ui, |ui| {
@@ -812,16 +759,16 @@ fn render_detail(
         };
 
         let key = request.cache_key();
-        match lists.get(&key) {
+        match state.lists.get(&key) {
             Some(items) => render_worklist_detail(ui, detail, items, event),
-            None if requested_lists.contains(&key) => {
+            None if state.requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
                     ui.label("Loading detail data...");
                 });
             }
             None => {
-                if let Some(error) = list_errors.get(&key) {
+                if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "detail", error);
                 } else {
                     ui.label(ui_data_not_loaded_message("detail"));
@@ -999,9 +946,7 @@ fn render_report(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     report: &UiReportNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::ReportSection::new(node_title_with_badge(
@@ -1027,16 +972,16 @@ fn render_report(
         };
 
         let key = request.cache_key();
-        match lists.get(&key) {
+        match state.lists.get(&key) {
             Some(items) => render_worklist_report(ui, items, event),
-            None if requested_lists.contains(&key) => {
+            None if state.requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
                     ui.label("Loading report data...");
                 });
             }
             None => {
-                if let Some(error) = list_errors.get(&key) {
+                if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "report", error);
                 } else {
                     ui.label(ui_data_not_loaded_message("report"));
@@ -1050,9 +995,7 @@ fn render_chart(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     chart: &UiChartNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
 ) {
     let source = chart
         .render_as
@@ -1087,16 +1030,16 @@ fn render_chart(
         };
 
         let key = request.cache_key();
-        match lists.get(&key) {
+        match state.lists.get(&key) {
             Some(items) => render_worklist_chart(ui, chart, items),
-            None if requested_lists.contains(&key) => {
+            None if state.requested_lists.contains(&key) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.add(cast::Loader::new().size(cast::Size::Small));
                     ui.label("Loading chart data...");
                 });
             }
             None => {
-                if let Some(error) = list_errors.get(&key) {
+                if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "chart", error);
                 } else {
                     ui.label(ui_data_not_loaded_message("chart"));

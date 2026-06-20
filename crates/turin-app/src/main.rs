@@ -2214,16 +2214,15 @@ impl TurinDesktopApp {
                     .get(&app.id)
                     .copied()
                     .unwrap_or_else(|| harness_ui::default_screen_index(&app));
-                let event = harness_ui::render_harness_app(
-                    ui,
-                    &app,
-                    &mut screen_index,
-                    &self.ui_lists,
-                    &self.requested_ui_lists,
-                    &self.ui_list_errors,
-                    &mut self.ui_form_values,
-                    &mut self.ui_selected_list_items,
-                );
+                let mut render_state = harness_ui::HarnessRenderState {
+                    lists: &self.ui_lists,
+                    requested_lists: &self.requested_ui_lists,
+                    list_errors: &self.ui_list_errors,
+                    form_values: &mut self.ui_form_values,
+                    selected_list_items: &mut self.ui_selected_list_items,
+                };
+                let event =
+                    harness_ui::render_harness_app(ui, &app, &mut screen_index, &mut render_state);
                 self.ui_screen_indices.insert(app.id.clone(), screen_index);
                 if let Some(event) = event {
                     self.handle_harness_ui_event(&app, event);
@@ -2313,16 +2312,14 @@ impl TurinDesktopApp {
         )))
         .show(ui.ctx(), |ui| {
             ui.set_min_width(560.0);
-            pane_event = harness_ui::render_harness_pane(
-                ui,
-                app,
-                &pane,
-                &self.ui_lists,
-                &self.requested_ui_lists,
-                &self.ui_list_errors,
-                &mut self.ui_form_values,
-                &mut self.ui_selected_list_items,
-            );
+            let mut render_state = harness_ui::HarnessRenderState {
+                lists: &self.ui_lists,
+                requested_lists: &self.requested_ui_lists,
+                list_errors: &self.ui_list_errors,
+                form_values: &mut self.ui_form_values,
+                selected_list_items: &mut self.ui_selected_list_items,
+            };
+            pane_event = harness_ui::render_harness_pane(ui, app, &pane, &mut render_state);
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
