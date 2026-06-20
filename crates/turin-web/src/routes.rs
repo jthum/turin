@@ -170,10 +170,10 @@ async fn route_request(
     let method = req.method().clone();
     let path = normalized_path(req.uri().path());
 
-    if method == Method::GET {
-        if let Some(app_id) = path.strip_prefix("/api/apps/") {
-            return handle_app(&state, app_id).await;
-        }
+    if method == Method::GET
+        && let Some(app_id) = path.strip_prefix("/api/apps/")
+    {
+        return handle_app(&state, app_id).await;
     }
 
     match (method, path.as_str()) {
