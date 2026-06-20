@@ -1686,15 +1686,19 @@ impl TuiApp {
             ])
             .split(area);
         self.render_harness_nav(frame, columns[0]);
+        let render_state = harness_ui::HarnessRenderState {
+            screen_indices: &self.ui_screen_indices,
+            lists: &self.ui_lists,
+            requested_lists: &self.requested_ui_lists,
+            list_errors: &self.ui_list_errors,
+            selected_work_item_id: selected_item_id,
+            selected_action_index: None,
+        };
         harness_ui::render_harness_screen(
             frame,
             columns[1],
             self.selected_ui_app().as_ref(),
-            &self.ui_screen_indices,
-            &self.ui_lists,
-            &self.requested_ui_lists,
-            &self.ui_list_errors,
-            selected_item_id,
+            &render_state,
         );
         self.render_harness_inspector(frame, columns[2]);
     }
@@ -1706,16 +1710,20 @@ impl TuiApp {
             .map(|selection| selection.item.public_id.as_str());
         let selected_action_index =
             (self.ui_pane_focus == PaneFocus::Actions).then_some(self.ui_pane_action_index);
+        let render_state = harness_ui::HarnessRenderState {
+            screen_indices: &self.ui_screen_indices,
+            lists: &self.ui_lists,
+            requested_lists: &self.requested_ui_lists,
+            list_errors: &self.ui_list_errors,
+            selected_work_item_id: selected_item_id,
+            selected_action_index,
+        };
         harness_ui::render_harness_pane(
             frame,
             area,
             self.selected_ui_app().as_ref(),
             self.active_pane_id.as_deref(),
-            selected_item_id,
-            selected_action_index,
-            &self.ui_lists,
-            &self.requested_ui_lists,
-            &self.ui_list_errors,
+            &render_state,
         );
     }
 

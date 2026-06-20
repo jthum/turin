@@ -69,6 +69,23 @@ pub enum HarnessFocusTarget {
     },
 }
 
+pub struct HarnessRenderState<'a> {
+    pub screen_indices: &'a BTreeMap<String, usize>,
+    pub lists: &'a BTreeMap<String, WorkItemList>,
+    pub requested_lists: &'a BTreeSet<String>,
+    pub list_errors: &'a BTreeMap<String, String>,
+    pub selected_work_item_id: Option<&'a str>,
+    pub selected_action_index: Option<usize>,
+}
+
+struct NodeRenderContext<'a, 'state> {
+    app: &'a UiAppRecord,
+    state: &'a HarnessRenderState<'state>,
+    lines: &'a mut Vec<Line<'static>>,
+    max_width: usize,
+    action_index: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessNavItem {
     pub label: String,
@@ -352,11 +369,7 @@ pub fn render_harness_screen(
     frame: &mut Frame<'_>,
     area: Rect,
     app: Option<&UiAppRecord>,
-    screen_indices: &BTreeMap<String, usize>,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    selected_work_item_id: Option<&str>,
+    state: &HarnessRenderState<'_>,
 ) {
     let Some(app) = app else {
         frame.render_widget(
@@ -368,7 +381,8 @@ pub fn render_harness_screen(
         );
         return;
     };
-    let screen_index = screen_indices
+    let screen_index = state
+        .screen_indices
         .get(&app.id)
         .copied()
         .unwrap_or_else(|| default_screen_index(app));
@@ -391,20 +405,14 @@ pub fn render_harness_screen(
         Line::from(""),
     ];
     let max_width = area.width.saturating_sub(4) as usize;
-    let mut action_index = 0;
-    render_nodes(
+    let mut context = NodeRenderContext {
         app,
-        &screen.nodes,
-        lists,
-        requested_lists,
-        list_errors,
-        &mut lines,
-        0,
+        state,
+        lines: &mut lines,
         max_width,
-        selected_work_item_id,
-        None,
-        &mut action_index,
-    );
+        action_index: 0,
+    };
+    render_nodes(&screen.nodes, 0, &mut context);
     frame.render_widget(panel("Screen", lines), area);
 }
 
@@ -413,11 +421,7 @@ pub fn render_harness_pane(
     area: Rect,
     app: Option<&UiAppRecord>,
     pane_id: Option<&str>,
-    selected_work_item_id: Option<&str>,
-    selected_action_index: Option<usize>,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
 ) {
     let Some(app) = app else {
         return;
@@ -429,54 +433,22 @@ pub fn render_harness_pane(
         return;
     };
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        pane_panel(
-            app,
-            pane,
-            selected_work_item_id,
-            selected_action_index,
-            lists,
-            requested_lists,
-            list_errors,
-            area.width,
-        ),
-        area,
-    );
+    frame.render_widget(pane_panel(app, pane, state, area.width), area);
 }
 
 fn pane_panel(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
-    selected_work_item_id: Option<&str>,
-    selected_action_index: Option<usize>,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
     width: u16,
 ) -> Paragraph<'static> {
-    panel(
-        "Pane",
-        pane_lines(
-            app,
-            pane,
-            selected_work_item_id,
-            selected_action_index,
-            lists,
-            requested_lists,
-            list_errors,
-            width,
-        ),
-    )
+    panel("Pane", pane_lines(app, pane, state, width))
 }
 
 fn pane_lines(
     app: &UiAppRecord,
     pane: &UiPaneIntent,
-    selected_work_item_id: Option<&str>,
-    selected_action_index: Option<usize>,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
+    state: &HarnessRenderState<'_>,
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -500,24 +472,18 @@ fn pane_lines(
             theme::muted(),
         )));
     } else {
-        let mut action_index = 0;
-        render_nodes(
+        let mut context = NodeRenderContext {
             app,
-            &pane.nodes,
-            lists,
-            requested_lists,
-            list_errors,
-            &mut lines,
-            0,
+            state,
+            lines: &mut lines,
             max_width,
-            selected_work_item_id,
-            selected_action_index,
-            &mut action_index,
-        );
+            action_index: 0,
+        };
+        render_nodes(&pane.nodes, 0, &mut context);
     }
     lines.push(Line::from(""));
     let action_count = collect_actions(app, &pane.nodes).len();
-    let item_count = collect_work_item_selections(&pane.nodes, lists).len();
+    let item_count = collect_work_item_selections(&pane.nodes, state.lists).len();
     let hint = if item_count > 0 && action_count > 0 {
         "f switches items/actions  j/k moves  Enter selects/runs  Esc/q closes pane"
     } else if item_count > 0 {
@@ -531,48 +497,26 @@ fn pane_lines(
     lines
 }
 
-fn render_nodes(
-    app: &UiAppRecord,
-    nodes: &[UiNode],
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
-    depth: usize,
-    max_width: usize,
-    selected_work_item_id: Option<&str>,
-    selected_action_index: Option<usize>,
-    action_index: &mut usize,
-) {
+fn render_nodes(nodes: &[UiNode], depth: usize, context: &mut NodeRenderContext<'_, '_>) {
     for node in nodes {
         match node {
             UiNode::Text(text) => {
-                lines.push(indent_line(depth, text.text.clone(), theme::base()));
-                lines.push(Line::from(""));
+                context
+                    .lines
+                    .push(indent_line(depth, text.text.clone(), theme::base()));
+                context.lines.push(Line::from(""));
             }
             UiNode::Section(section) => {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth,
-                    title_with_node_badge(app, section.id.as_deref(), &section.title),
+                    title_with_node_badge(context.app, section.id.as_deref(), &section.title),
                     theme::accent(),
                 ));
-                render_nodes(
-                    app,
-                    &section.nodes,
-                    lists,
-                    requested_lists,
-                    list_errors,
-                    lines,
-                    depth + 1,
-                    max_width,
-                    selected_work_item_id,
-                    selected_action_index,
-                    action_index,
-                );
+                render_nodes(&section.nodes, depth + 1, context);
             }
             UiNode::Action(action) => {
-                let selected = selected_action_index == Some(*action_index);
-                *action_index += 1;
+                let selected = context.state.selected_action_index == Some(context.action_index);
+                context.action_index += 1;
                 let marker = if selected {
                     "●"
                 } else if action.confirm {
@@ -580,11 +524,11 @@ fn render_nodes(
                 } else {
                     "→"
                 };
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth,
                     format!(
                         "{marker} {}",
-                        title_with_node_badge(app, action.id.as_deref(), &action.label)
+                        title_with_node_badge(context.app, action.id.as_deref(), &action.label)
                     ),
                     if selected {
                         theme::selected()
@@ -595,73 +539,21 @@ fn render_nodes(
                     },
                 ));
             }
-            UiNode::List(list) => render_list(
-                app,
-                list,
-                lists,
-                requested_lists,
-                list_errors,
-                lines,
-                depth,
-                max_width,
-                selected_work_item_id,
-            ),
+            UiNode::List(list) => render_list(list, depth, context),
             UiNode::Form(form) => {
-                let selected = selected_action_index == Some(*action_index);
-                *action_index += 1;
-                render_form(app, form, lines, depth, selected)
+                let selected = context.state.selected_action_index == Some(context.action_index);
+                context.action_index += 1;
+                render_form(context.app, form, context.lines, depth, selected)
             }
-            UiNode::Activity(activity) => render_activity(
-                app,
-                activity,
-                lists,
-                requested_lists,
-                list_errors,
-                lines,
-                depth,
-            ),
-            UiNode::Detail(detail) => render_detail(
-                app,
-                detail,
-                lists,
-                requested_lists,
-                list_errors,
-                lines,
-                depth,
-            ),
-            UiNode::Report(report) => render_report(
-                app,
-                report,
-                lists,
-                requested_lists,
-                list_errors,
-                lines,
-                depth,
-            ),
-            UiNode::Chart(chart) => render_chart(
-                app,
-                chart,
-                lists,
-                requested_lists,
-                list_errors,
-                lines,
-                depth,
-            ),
+            UiNode::Activity(activity) => render_activity(activity, depth, context),
+            UiNode::Detail(detail) => render_detail(detail, depth, context),
+            UiNode::Report(report) => render_report(report, depth, context),
+            UiNode::Chart(chart) => render_chart(chart, depth, context),
         }
     }
 }
 
-fn render_list(
-    app: &UiAppRecord,
-    list: &UiListNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
-    depth: usize,
-    max_width: usize,
-    selected_work_item_id: Option<&str>,
-) {
+fn render_list(list: &UiListNode, depth: usize, context: &mut NodeRenderContext<'_, '_>) {
     let mut meta = vec![list.source.clone()];
     if let Some(intent) = &list.intent {
         meta.push(format!("intent={intent}"));
@@ -670,11 +562,11 @@ fn render_list(
         meta.push(format!("as={render_as}"));
     }
     meta.extend(list_metadata_parts(list));
-    lines.push(indent_line(
+    context.lines.push(indent_line(
         depth,
         format!(
             "{}  {}",
-            title_with_node_badge(app, list.id.as_deref(), &list.title),
+            title_with_node_badge(context.app, list.id.as_deref(), &list.title),
             meta.join("  ")
         ),
         theme::accent(),
@@ -684,19 +576,19 @@ fn render_list(
         .as_deref()
         .is_some_and(|render_as| render_as != "table")
     {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             "Terminal fallback: rendering this list as a compact table".to_string(),
             theme::muted(),
         ));
     }
     if !is_named_worklist_ui_source(&list.source) {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             unsupported_source_line("list", &list.source),
             theme::muted(),
         ));
-        lines.push(Line::from(""));
+        context.lines.push(Line::from(""));
         return;
     }
 
@@ -706,29 +598,29 @@ fn render_list(
         limit: list.limit,
     };
     let key = request.cache_key();
-    match lists.get(&key) {
+    match context.state.lists.get(&key) {
         Some(items) => render_work_items(
             list,
             items,
-            lines,
+            context.lines,
             depth + 1,
-            max_width,
-            selected_work_item_id,
+            context.max_width,
+            context.state.selected_work_item_id,
         ),
-        None if requested_lists.contains(&key) => lines.push(indent_line(
+        None if context.state.requested_lists.contains(&key) => context.lines.push(indent_line(
             depth + 1,
             "Loading list data...".to_string(),
             theme::muted(),
         )),
         None => {
-            if let Some(error) = list_errors.get(&key) {
-                lines.push(indent_line(
+            if let Some(error) = context.state.list_errors.get(&key) {
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_load_failed_message("list", error),
                     theme::danger(),
                 ));
             } else {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_not_loaded_message("list"),
                     theme::muted(),
@@ -736,7 +628,7 @@ fn render_list(
             }
         }
     }
-    lines.push(Line::from(""));
+    context.lines.push(Line::from(""));
 }
 
 fn render_work_items(
@@ -891,51 +783,47 @@ fn work_item_table_widths(fields: &[String], max_width: usize) -> Vec<usize> {
 }
 
 fn render_activity(
-    app: &UiAppRecord,
     activity: &UiActivityNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
     depth: usize,
+    context: &mut NodeRenderContext<'_, '_>,
 ) {
-    lines.push(indent_line(
+    context.lines.push(indent_line(
         depth,
         format!(
             "Activity: {}  {}",
-            title_with_node_badge(app, activity.id.as_deref(), &activity.title),
+            title_with_node_badge(context.app, activity.id.as_deref(), &activity.title),
             activity.source
         ),
         theme::accent(),
     ));
 
     let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             unsupported_source_line("activity", &activity.source),
             theme::muted(),
         ));
-        lines.push(Line::from(""));
+        context.lines.push(Line::from(""));
         return;
     };
 
     let key = request.cache_key();
-    match lists.get(&key) {
-        Some(items) => render_worklist_activity(items, lines, depth + 1),
-        None if requested_lists.contains(&key) => lines.push(indent_line(
+    match context.state.lists.get(&key) {
+        Some(items) => render_worklist_activity(items, context.lines, depth + 1),
+        None if context.state.requested_lists.contains(&key) => context.lines.push(indent_line(
             depth + 1,
             "Loading activity data...".to_string(),
             theme::muted(),
         )),
         None => {
-            if let Some(error) = list_errors.get(&key) {
-                lines.push(indent_line(
+            if let Some(error) = context.state.list_errors.get(&key) {
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_load_failed_message("activity", error),
                     theme::danger(),
                 ));
             } else {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_not_loaded_message("activity"),
                     theme::muted(),
@@ -943,60 +831,52 @@ fn render_activity(
             }
         }
     }
-    lines.push(Line::from(""));
+    context.lines.push(Line::from(""));
 }
 
-fn render_detail(
-    app: &UiAppRecord,
-    detail: &UiDetailNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
-    depth: usize,
-) {
+fn render_detail(detail: &UiDetailNode, depth: usize, context: &mut NodeRenderContext<'_, '_>) {
     let source = detail
         .item_id
         .as_ref()
         .map(|item_id| format!("{} / {}", detail.source, item_id))
         .unwrap_or_else(|| detail.source.clone());
-    lines.push(indent_line(
+    context.lines.push(indent_line(
         depth,
         format!(
             "Detail: {}  {}",
-            title_with_node_badge(app, detail.id.as_deref(), &detail.title),
+            title_with_node_badge(context.app, detail.id.as_deref(), &detail.title),
             source
         ),
         theme::accent(),
     ));
 
     let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             unsupported_source_line("detail", &detail.source),
             theme::muted(),
         ));
-        lines.push(Line::from(""));
+        context.lines.push(Line::from(""));
         return;
     };
 
     let key = request.cache_key();
-    match lists.get(&key) {
-        Some(items) => render_worklist_detail(detail, items, lines, depth + 1),
-        None if requested_lists.contains(&key) => lines.push(indent_line(
+    match context.state.lists.get(&key) {
+        Some(items) => render_worklist_detail(detail, items, context.lines, depth + 1),
+        None if context.state.requested_lists.contains(&key) => context.lines.push(indent_line(
             depth + 1,
             "Loading detail data...".to_string(),
             theme::muted(),
         )),
         None => {
-            if let Some(error) = list_errors.get(&key) {
-                lines.push(indent_line(
+            if let Some(error) = context.state.list_errors.get(&key) {
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_load_failed_message("detail", error),
                     theme::danger(),
                 ));
             } else {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_not_loaded_message("detail"),
                     theme::muted(),
@@ -1004,7 +884,7 @@ fn render_detail(
             }
         }
     }
-    lines.push(Line::from(""));
+    context.lines.push(Line::from(""));
 }
 
 fn render_worklist_activity(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
@@ -1203,26 +1083,18 @@ fn render_work_item_detail(item: &WorkItemDetail, lines: &mut Vec<Line<'static>>
     }
 }
 
-fn render_report(
-    app: &UiAppRecord,
-    report: &UiReportNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
-    depth: usize,
-) {
-    lines.push(indent_line(
+fn render_report(report: &UiReportNode, depth: usize, context: &mut NodeRenderContext<'_, '_>) {
+    context.lines.push(indent_line(
         depth,
         format!(
             "Report: {}  {}",
-            title_with_node_badge(app, report.id.as_deref(), &report.title),
+            title_with_node_badge(context.app, report.id.as_deref(), &report.title),
             report.source
         ),
         theme::accent(),
     ));
     if let Some(prompt) = report.prompt.as_ref() {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             format!("prompt: {}", truncate(prompt, 72)),
             theme::muted(),
@@ -1230,32 +1102,32 @@ fn render_report(
     }
 
     let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             unsupported_source_line("report", &report.source),
             theme::muted(),
         ));
-        lines.push(Line::from(""));
+        context.lines.push(Line::from(""));
         return;
     };
 
     let key = request.cache_key();
-    match lists.get(&key) {
-        Some(items) => render_worklist_report(items, lines, depth + 1),
-        None if requested_lists.contains(&key) => lines.push(indent_line(
+    match context.state.lists.get(&key) {
+        Some(items) => render_worklist_report(items, context.lines, depth + 1),
+        None if context.state.requested_lists.contains(&key) => context.lines.push(indent_line(
             depth + 1,
             "Loading report data...".to_string(),
             theme::muted(),
         )),
         None => {
-            if let Some(error) = list_errors.get(&key) {
-                lines.push(indent_line(
+            if let Some(error) = context.state.list_errors.get(&key) {
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_load_failed_message("report", error),
                     theme::danger(),
                 ));
             } else {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_not_loaded_message("report"),
                     theme::muted(),
@@ -1263,18 +1135,10 @@ fn render_report(
             }
         }
     }
-    lines.push(Line::from(""));
+    context.lines.push(Line::from(""));
 }
 
-fn render_chart(
-    app: &UiAppRecord,
-    chart: &UiChartNode,
-    lists: &BTreeMap<String, WorkItemList>,
-    requested_lists: &BTreeSet<String>,
-    list_errors: &BTreeMap<String, String>,
-    lines: &mut Vec<Line<'static>>,
-    depth: usize,
-) {
+fn render_chart(chart: &UiChartNode, depth: usize, context: &mut NodeRenderContext<'_, '_>) {
     let label = chart
         .render_as
         .as_ref()
@@ -1282,11 +1146,11 @@ fn render_chart(
         .unwrap_or_else(|| chart.source.clone());
     let intent = chart.intent.as_deref().unwrap_or("breakdown");
     let group = worklist_chart_group_label(chart.intent.as_deref());
-    lines.push(indent_line(
+    context.lines.push(indent_line(
         depth,
         format!(
             "Chart: {}  {}  intent={}  grouped_by={}",
-            title_with_node_badge(app, chart.id.as_deref(), &chart.title),
+            title_with_node_badge(context.app, chart.id.as_deref(), &chart.title),
             label,
             intent,
             group
@@ -1295,32 +1159,32 @@ fn render_chart(
     ));
 
     let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
-        lines.push(indent_line(
+        context.lines.push(indent_line(
             depth + 1,
             unsupported_source_line("chart", &chart.source),
             theme::muted(),
         ));
-        lines.push(Line::from(""));
+        context.lines.push(Line::from(""));
         return;
     };
 
     let key = request.cache_key();
-    match lists.get(&key) {
-        Some(items) => render_worklist_chart(chart, items, lines, depth + 1),
-        None if requested_lists.contains(&key) => lines.push(indent_line(
+    match context.state.lists.get(&key) {
+        Some(items) => render_worklist_chart(chart, items, context.lines, depth + 1),
+        None if context.state.requested_lists.contains(&key) => context.lines.push(indent_line(
             depth + 1,
             "Loading chart data...".to_string(),
             theme::muted(),
         )),
         None => {
-            if let Some(error) = list_errors.get(&key) {
-                lines.push(indent_line(
+            if let Some(error) = context.state.list_errors.get(&key) {
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_load_failed_message("chart", error),
                     theme::danger(),
                 ));
             } else {
-                lines.push(indent_line(
+                context.lines.push(indent_line(
                     depth + 1,
                     ui_data_not_loaded_message("chart"),
                     theme::muted(),
@@ -1328,7 +1192,7 @@ fn render_chart(
             }
         }
     }
-    lines.push(Line::from(""));
+    context.lines.push(Line::from(""));
 }
 
 fn render_worklist_report(items: &WorkItemList, lines: &mut Vec<Line<'static>>, depth: usize) {
@@ -2352,15 +2216,28 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_chart(
-            &release_app(),
-            &chart,
-            &BTreeMap::new(),
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            &mut lines,
-            0,
-        );
+        let app = release_app();
+        let screen_indices = BTreeMap::new();
+        let lists = BTreeMap::new();
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &screen_indices,
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: None,
+            selected_action_index: None,
+        };
+        let mut context = NodeRenderContext {
+            app: &app,
+            state: &state,
+            lines: &mut lines,
+            max_width: 88,
+            action_index: 0,
+        };
+
+        render_chart(&chart, 0, &mut context);
         let text = line_text(&lines);
 
         assert!(text.contains("intent=priority_breakdown"));
@@ -2540,20 +2417,24 @@ mod tests {
         );
 
         let mut lines = Vec::new();
-        let mut action_index = 0;
-        render_nodes(
-            &app,
-            &nodes,
-            &lists,
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            &mut lines,
-            0,
-            88,
-            Some("REL-1"),
-            None,
-            &mut action_index,
-        );
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &BTreeMap::new(),
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: Some("REL-1"),
+            selected_action_index: None,
+        };
+        let mut context = NodeRenderContext {
+            app: &app,
+            state: &state,
+            lines: &mut lines,
+            max_width: 88,
+            action_index: 0,
+        };
+        render_nodes(&nodes, 0, &mut context);
         let text = line_text(&lines);
 
         assert!(text.contains("Pending Approvals  [hot 2]"));
@@ -2601,16 +2482,18 @@ mod tests {
             },
         )]);
 
-        let text = line_text(&pane_lines(
-            &app,
-            &pane,
-            Some("REL-1"),
-            None,
-            &lists,
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            88,
-        ));
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &BTreeMap::new(),
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: Some("REL-1"),
+            selected_action_index: None,
+        };
+
+        let text = line_text(&pane_lines(&app, &pane, &state, 88));
 
         assert!(text.contains("Release Notes  release-notes"));
         assert!(text.contains("presentation=sheet"));
@@ -2647,16 +2530,19 @@ mod tests {
             ],
         };
 
-        let text = line_text(&pane_lines(
-            &app,
-            &pane,
-            None,
-            Some(1),
-            &BTreeMap::new(),
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            88,
-        ));
+        let lists = BTreeMap::new();
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &BTreeMap::new(),
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: None,
+            selected_action_index: Some(1),
+        };
+
+        let text = line_text(&pane_lines(&app, &pane, &state, 88));
 
         assert!(text.contains("! Approve now"));
         assert!(text.contains("● Form: Defer release"));
@@ -2698,16 +2584,18 @@ mod tests {
             },
         )]);
 
-        let text = line_text(&pane_lines(
-            &app,
-            &pane,
-            Some("REL-1"),
-            None,
-            &lists,
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            88,
-        ));
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &BTreeMap::new(),
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: Some("REL-1"),
+            selected_action_index: None,
+        };
+
+        let text = line_text(&pane_lines(&app, &pane, &state, 88));
 
         assert!(text.contains("Pane List"));
         assert!(text.contains("Approve release"));
@@ -2799,16 +2687,19 @@ mod tests {
             nodes: Vec::new(),
         };
 
-        let text = line_text(&pane_lines(
-            &app,
-            &pane,
-            None,
-            None,
-            &BTreeMap::new(),
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-            88,
-        ));
+        let lists = BTreeMap::new();
+        let requested_lists = BTreeSet::new();
+        let list_errors = BTreeMap::new();
+        let state = HarnessRenderState {
+            screen_indices: &BTreeMap::new(),
+            lists: &lists,
+            requested_lists: &requested_lists,
+            list_errors: &list_errors,
+            selected_work_item_id: None,
+            selected_action_index: None,
+        };
+
+        let text = line_text(&pane_lines(&app, &pane, &state, 88));
 
         assert!(text.contains("Empty Pane  empty-pane"));
         assert!(text.contains("This pane has no content nodes."));
@@ -3162,16 +3053,15 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
             .draw(|frame| {
-                render_harness_screen(
-                    frame,
-                    frame.area(),
-                    app,
-                    &screen_indices,
-                    &lists,
-                    &requested_lists,
-                    &list_errors,
+                let render_state = HarnessRenderState {
+                    screen_indices: &screen_indices,
+                    lists: &lists,
+                    requested_lists: &requested_lists,
+                    list_errors: &list_errors,
                     selected_work_item_id,
-                );
+                    selected_action_index: None,
+                };
+                render_harness_screen(frame, frame.area(), app, &render_state);
             })
             .expect("draw harness screen");
         buffer_text(terminal.backend().buffer())
@@ -3189,17 +3079,17 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
             .draw(|frame| {
-                render_harness_pane(
-                    frame,
-                    frame.area(),
-                    Some(app),
-                    Some(pane_id),
+                let list_errors = BTreeMap::new();
+                let screen_indices = BTreeMap::new();
+                let render_state = HarnessRenderState {
+                    screen_indices: &screen_indices,
+                    lists: &lists,
+                    requested_lists: &requested_lists,
+                    list_errors: &list_errors,
                     selected_work_item_id,
                     selected_action_index,
-                    &lists,
-                    &requested_lists,
-                    &BTreeMap::new(),
-                );
+                };
+                render_harness_pane(frame, frame.area(), Some(app), Some(pane_id), &render_state);
             })
             .expect("draw harness pane");
         buffer_text(terminal.backend().buffer())

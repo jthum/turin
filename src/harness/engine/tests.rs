@@ -268,50 +268,43 @@ fn test_ui_release_operator_example_loads() {
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(&dir).unwrap();
 
-    fn observe_nodes(
-        nodes: &[turin_daemon_protocol::UiNode],
-        confirmed_action_seen: &mut bool,
-        list_seen: &mut bool,
-        activity_seen: &mut bool,
-        detail_seen: &mut bool,
-        report_seen: &mut bool,
-        chart_seen: &mut bool,
-        form_seen: &mut bool,
-    ) {
+    #[derive(Default)]
+    struct ObservedNodes {
+        confirmed_action: bool,
+        list: bool,
+        activity: bool,
+        detail: bool,
+        report: bool,
+        chart: bool,
+        form: bool,
+    }
+
+    fn observe_nodes(nodes: &[turin_daemon_protocol::UiNode], observed: &mut ObservedNodes) {
         for node in nodes {
             match node {
                 turin_daemon_protocol::UiNode::Action(action) => {
-                    *confirmed_action_seen |= action.confirm;
+                    observed.confirmed_action |= action.confirm;
                 }
                 turin_daemon_protocol::UiNode::List(_) => {
-                    *list_seen = true;
+                    observed.list = true;
                 }
                 turin_daemon_protocol::UiNode::Activity(_) => {
-                    *activity_seen = true;
+                    observed.activity = true;
                 }
                 turin_daemon_protocol::UiNode::Detail(_) => {
-                    *detail_seen = true;
+                    observed.detail = true;
                 }
                 turin_daemon_protocol::UiNode::Report(_) => {
-                    *report_seen = true;
+                    observed.report = true;
                 }
                 turin_daemon_protocol::UiNode::Chart(_) => {
-                    *chart_seen = true;
+                    observed.chart = true;
                 }
                 turin_daemon_protocol::UiNode::Form(_) => {
-                    *form_seen = true;
+                    observed.form = true;
                 }
                 turin_daemon_protocol::UiNode::Section(section) => {
-                    observe_nodes(
-                        &section.nodes,
-                        confirmed_action_seen,
-                        list_seen,
-                        activity_seen,
-                        detail_seen,
-                        report_seen,
-                        chart_seen,
-                        form_seen,
-                    );
+                    observe_nodes(&section.nodes, observed);
                 }
                 _ => {}
             }
@@ -321,13 +314,7 @@ fn test_ui_release_operator_example_loads() {
     let intents = engine.ui_intents().unwrap();
     let mut app_seen = false;
     let mut screen_count = 0;
-    let mut confirmed_action_seen = false;
-    let mut list_seen = false;
-    let mut activity_seen = false;
-    let mut detail_seen = false;
-    let mut report_seen = false;
-    let mut chart_seen = false;
-    let mut form_seen = false;
+    let mut observed = ObservedNodes::default();
     let mut pane_seen = false;
     let mut badge_seen = false;
     let mut nested_menu_seen = false;
@@ -339,16 +326,7 @@ fn test_ui_release_operator_example_loads() {
             }
             turin_daemon_protocol::UiIntent::Screen(screen) => {
                 screen_count += 1;
-                observe_nodes(
-                    &screen.nodes,
-                    &mut confirmed_action_seen,
-                    &mut list_seen,
-                    &mut activity_seen,
-                    &mut detail_seen,
-                    &mut report_seen,
-                    &mut chart_seen,
-                    &mut form_seen,
-                );
+                observe_nodes(&screen.nodes, &mut observed);
             }
             turin_daemon_protocol::UiIntent::Pane(pane) => {
                 pane_seen = pane.id == "release-notes";
@@ -365,13 +343,13 @@ fn test_ui_release_operator_example_loads() {
 
     assert!(app_seen);
     assert!(screen_count >= 4);
-    assert!(confirmed_action_seen);
-    assert!(list_seen);
-    assert!(activity_seen);
-    assert!(detail_seen);
-    assert!(report_seen);
-    assert!(chart_seen);
-    assert!(form_seen);
+    assert!(observed.confirmed_action);
+    assert!(observed.list);
+    assert!(observed.activity);
+    assert!(observed.detail);
+    assert!(observed.report);
+    assert!(observed.chart);
+    assert!(observed.form);
     assert!(pane_seen);
     assert!(badge_seen);
     assert!(nested_menu_seen);
