@@ -238,6 +238,9 @@ struct TurinDesktopApp {
     ui_list_errors: BTreeMap<String, String>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
     latest_harness_action_failure: Option<HarnessActionFailure>,
+    latest_harness_action_label: Option<(String, String, String)>,
+    harness_feedback_revision: u64,
+    dismissed_operator_feedback: BTreeSet<String>,
     theme_seed: cast::ThemeSeed,
     follows_system_theme: bool,
     sidebar_settings_open: bool,
@@ -373,6 +376,9 @@ impl TurinDesktopApp {
             ui_list_errors: BTreeMap::new(),
             latest_harness_action_result: None,
             latest_harness_action_failure: None,
+            latest_harness_action_label: None,
+            harness_feedback_revision: 0,
+            dismissed_operator_feedback: BTreeSet::new(),
             theme_seed,
             follows_system_theme: true,
             sidebar_settings_open: false,
@@ -410,10 +416,12 @@ impl TurinDesktopApp {
         if let UiUpdate::HarnessActionCompleted(result) = &update {
             self.latest_harness_action_result = Some(result.as_ref().clone());
             self.latest_harness_action_failure = None;
+            self.harness_feedback_revision = self.harness_feedback_revision.wrapping_add(1);
         }
         if let UiUpdate::HarnessActionFailed(failure) = &update {
             self.latest_harness_action_failure = Some(failure.as_ref().clone());
             self.latest_harness_action_result = None;
+            self.harness_feedback_revision = self.harness_feedback_revision.wrapping_add(1);
         }
         self.dashboard.apply_update(update);
         self.apply_ui_navigation_intents();
@@ -728,6 +736,11 @@ impl TurinDesktopApp {
         self.dashboard.record_info(format!(
             "Running harness UI action '{}' ({})",
             action.label, action.action
+        ));
+        self.latest_harness_action_label = Some((
+            action.app_id.clone(),
+            action.action.clone(),
+            action.label.clone(),
         ));
         self.send_command(OperatorCommand::RunHarnessAction {
             agent_id: action.agent_id,
@@ -1660,8 +1673,7 @@ impl TurinDesktopApp {
     }
 
     fn render_operator_stage(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
-        self.render_operator_notices(ui, app);
-        self.render_operator_feedback(ui);
+        self.render_operator_feedback(ui, app);
 
         let mut screen_index = self
             .ui_screen_indices
@@ -1687,8 +1699,6 @@ impl TurinDesktopApp {
         }
 
         self.render_pending_harness_ui_action(ui, &app.id);
-        self.render_latest_harness_action_result(ui, app);
-        self.render_latest_harness_action_failure(ui, app);
         self.render_active_harness_pane(ui, app);
 
         if self.runtime_tools_open {
@@ -1775,38 +1785,96 @@ impl TurinDesktopApp {
         });
     }
 
-    fn render_operator_feedback(&self, ui: &mut egui::Ui) {
+    fn render_operator_feedback(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let mut feedback = Vec::new();
+
         if let Some(error) = &self.dashboard.last_error {
-            ui.add(
-                cast::Alert::new("Runtime attention needed")
+            feedback.push((
+                format!("runtime-error:{error}"),
+                cast::Toast::new("Something went wrong")
                     .body(error.clone())
                     .intent(cast::Intent::Danger),
-            );
-            ui.add_space(8.0);
+            ));
+        }
+
+        if let Some(result) = self
+            .latest_harness_action_result
+            .as_ref()
+            .filter(|result| harness_action_result_matches_app(result, app))
+        {
+            let label = self.harness_action_label(&app.id, &result.action);
+            feedback.push((
+                format!("action-success:{}", self.harness_feedback_revision),
+                cast::Toast::new(format!("{label} completed"))
+                    .body("The workflow has been updated.")
+                    .intent(cast::Intent::Success),
+            ));
+        } else if let Some(failure) = self
+            .latest_harness_action_failure
+            .as_ref()
+            .filter(|failure| harness_action_failure_matches_app(failure, app))
+        {
+            let label = self.harness_action_label(&app.id, &failure.action);
+            feedback.push((
+                format!("action-failure:{}", self.harness_feedback_revision),
+                cast::Toast::new(format!("{label} failed"))
+                    .body("The action could not be completed. Runtime Tools contains the technical details.")
+                    .intent(cast::Intent::Danger),
+            ));
+        }
+
+        feedback.extend(
+            self.dashboard
+                .ui
+                .notices()
+                .iter()
+                .rev()
+                .filter(|notice| notice.app_id == app.id)
+                .take(3)
+                .map(|notice| {
+                    let body = notice.body.clone().unwrap_or_default();
+                    (
+                        format!("notice:{}:{}:{body}", notice.app_id, notice.title),
+                        cast::Toast::new(notice.title.clone())
+                            .body(body)
+                            .intent(ui_notice_intent(notice.level)),
+                    )
+                }),
+        );
+
+        feedback.retain(|(key, _)| !self.dismissed_operator_feedback.contains(key));
+        if feedback.is_empty() {
+            return;
+        }
+
+        let keys = feedback
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let toasts = feedback
+            .into_iter()
+            .map(|(_, toast)| toast)
+            .collect::<Vec<_>>();
+        if let Some(response) = cast::ToastStack::new("operator_feedback", &toasts)
+            .width(340.0)
+            .show(ui.ctx())
+        {
+            for index in response.inner.dismissed_indices {
+                if let Some(key) = keys.get(index) {
+                    self.dismissed_operator_feedback.insert(key.clone());
+                }
+            }
         }
     }
 
-    fn render_operator_notices(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
-        let notices = self
-            .dashboard
-            .ui
-            .notices()
-            .iter()
-            .rev()
-            .filter(|notice| notice.app_id == app.id)
-            .take(3)
-            .collect::<Vec<_>>();
-        if notices.is_empty() {
-            return;
-        }
-        for notice in notices {
-            ui.add(
-                cast::Alert::new(notice.title.clone())
-                    .body(notice.body.clone().unwrap_or_default())
-                    .intent(ui_notice_intent(notice.level)),
-            );
-            ui.add_space(8.0);
-        }
+    fn harness_action_label(&self, app_id: &str, action: &str) -> String {
+        self.latest_harness_action_label
+            .as_ref()
+            .filter(|(candidate_app, candidate_action, _)| {
+                candidate_app == app_id && candidate_action == action
+            })
+            .map(|(_, _, label)| label.clone())
+            .unwrap_or_else(|| "Action".to_string())
     }
 
     fn render_runtime_tools_panel(&mut self, ui: &mut egui::Ui) {
@@ -2858,82 +2926,32 @@ impl TurinDesktopApp {
         };
 
         let label = pending.label.clone();
-        let action = pending.action.clone();
-        let agent_id = pending.agent_id.clone();
-        let harness_id = pending.harness_id.clone();
-        let params = pending.params.clone();
-        let mut run = false;
-        let mut cancel = false;
+        let title = if label.ends_with(['?', '!', '.']) {
+            label.clone()
+        } else {
+            format!("{label}?")
+        };
+        let mut open = true;
+        let response = cast::ConfirmDialog::new(&mut open, "harness_ui_action_confirmation")
+            .title(title)
+            .description("This will update workflow data. Continue with this action?")
+            .confirm_label(label)
+            .cancel_label("Cancel")
+            .intent(cast::Intent::Primary)
+            .width(440.0)
+            .show(ui.ctx());
 
-        let response = egui::Modal::new(egui::Id::new("harness_ui_action_confirmation")).show(
-            ui.ctx(),
-            |ui| {
-                ui.set_min_width(420.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(
-                        cast::Badge::new("Confirmation required")
-                            .intent(cast::Intent::Warning)
-                            .variant(cast::Variant::Subtle),
-                    );
-                    ui.label(RichText::new(label.clone()).strong());
-                });
-                ui.add_space(6.0);
-                ui.label("Run this harness UI action?");
-                ui.separator();
-                ui.label(format!("Action: {action}"));
-                ui.horizontal_wrapped(|ui| {
-                    if let Some(harness_id) = harness_id.as_ref() {
-                        ui.add(
-                            cast::Badge::new(format!("Harness: {harness_id}"))
-                                .variant(cast::Variant::Outline),
-                        );
-                    }
-                    if let Some(agent_id) = agent_id.as_ref() {
-                        ui.add(
-                            cast::Badge::new(format!("Agent: {agent_id}"))
-                                .variant(cast::Variant::Outline),
-                        );
-                    }
-                });
-                if !params.is_null() {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(format!("Params: {params}")).monospace());
-                }
-                ui.add_space(12.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add(
-                            cast::Button::new("Confirm and Run")
-                                .size(cast::Size::Small)
-                                .intent(cast::Intent::Warning)
-                                .variant(cast::Variant::Solid),
-                        )
-                        .clicked()
-                    {
-                        run = true;
-                    }
-                    if ui
-                        .add(
-                            cast::Button::new("Cancel")
-                                .size(cast::Size::Small)
-                                .variant(cast::Variant::Ghost),
-                        )
-                        .clicked()
-                    {
-                        cancel = true;
-                    }
-                });
-            },
-        );
-
-        if response.should_close() {
-            cancel = true;
-        }
-
-        if run {
-            self.confirm_pending_harness_ui_action();
-        } else if cancel {
-            self.cancel_pending_harness_ui_action();
+        match response {
+            Some(cast::ConfirmDialogResponse::Confirmed) => {
+                self.confirm_pending_harness_ui_action();
+            }
+            Some(cast::ConfirmDialogResponse::Cancelled) => {
+                self.cancel_pending_harness_ui_action();
+            }
+            None if !open => {
+                self.cancel_pending_harness_ui_action();
+            }
+            None => {}
         }
     }
 
