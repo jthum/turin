@@ -240,6 +240,7 @@ struct TurinDesktopApp {
     latest_harness_action_failure: Option<HarnessActionFailure>,
     theme_seed: cast::ThemeSeed,
     follows_system_theme: bool,
+    sidebar_settings_open: bool,
     runtime_tools_open: bool,
     _runtime: Arc<Runtime>,
 }
@@ -374,6 +375,7 @@ impl TurinDesktopApp {
             latest_harness_action_failure: None,
             theme_seed,
             follows_system_theme: true,
+            sidebar_settings_open: false,
             runtime_tools_open: false,
             _runtime: runtime,
         }
@@ -1503,16 +1505,33 @@ impl TurinDesktopApp {
             return;
         };
 
+        let theme = cast::theme_for_ui(ui);
         egui::Panel::left("operator_shell_nav")
             .resizable(false)
-            .exact_size(292.0)
+            .exact_size(252.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.colors.surface)
+                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(16, 18)),
+            )
             .show_inside(ui, |ui| {
                 self.render_operator_sidebar(ui, &apps, &app);
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                self.render_operator_stage(ui, &app);
+                ui.add_space(24.0);
+                let content_width = (ui.available_width() - 48.0).clamp(640.0, 1120.0);
+                let inset = ((ui.available_width() - content_width) / 2.0).max(24.0);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(inset);
+                    ui.vertical(|ui| {
+                        ui.set_width(content_width);
+                        self.render_operator_stage(ui, &app);
+                    });
+                });
+                ui.add_space(32.0);
             });
         });
     }
@@ -1523,17 +1542,17 @@ impl TurinDesktopApp {
         apps: &[UiAppRecord],
         app: &UiAppRecord,
     ) {
-        ui.add_space(10.0);
-        themed_heading(ui, "Turin", 28.0);
-        themed_muted(ui, "Operator Console");
-        ui.add_space(12.0);
-        self.render_connection_status_compact(ui);
-        ui.add_space(16.0);
-        self.render_theme_controls(ui);
-        ui.add_space(16.0);
+        themed_heading(ui, ui_app_title(app), 24.0);
+        if let Some(definition) = &app.definition
+            && let Some(about) = &definition.about
+        {
+            ui.add_space(3.0);
+            themed_muted(ui, about.clone());
+        }
+        ui.add_space(20.0);
 
         if apps.len() > 1 {
-            themed_strong(ui, "Apps");
+            themed_muted(ui, "Switch app");
             ui.add_space(6.0);
             for (index, candidate) in apps.iter().enumerate() {
                 let selected = candidate.id == app.id;
@@ -1559,8 +1578,6 @@ impl TurinDesktopApp {
             ui.add_space(16.0);
         }
 
-        themed_strong(ui, "Navigation");
-        ui.add_space(6.0);
         let current_screen_id = self.active_ui_screen_id(app);
         if app.menus.is_empty() {
             for (index, screen) in app.screens.values().enumerate() {
@@ -1581,10 +1598,16 @@ impl TurinDesktopApp {
                 }
             }
         } else {
+            let show_menu_titles = app.menus.len() > 1
+                || app
+                    .menus
+                    .first()
+                    .is_some_and(|menu| !menu.title.eq_ignore_ascii_case("main"));
             for menu in &app.menus {
-                ui.add_space(6.0);
-                themed_strong(ui, menu.title.clone());
-                ui.add_space(4.0);
+                if show_menu_titles {
+                    themed_muted(ui, menu.title.clone());
+                    ui.add_space(5.0);
+                }
                 self.render_operator_menu_items(
                     ui,
                     app,
@@ -1592,36 +1615,13 @@ impl TurinDesktopApp {
                     current_screen_id.as_deref(),
                     0,
                 );
+                ui.add_space(8.0);
             }
         }
 
-        ui.add_space(18.0);
-        if ui
-            .add(
-                cast::Button::new("Refresh Data")
-                    .size(cast::Size::Small)
-                    .variant(cast::Variant::Outline),
-            )
-            .clicked()
-        {
-            self.request_selected_ui_lists(true);
-        }
-
-        ui.add_space(10.0);
-        if ui
-            .add(
-                cast::Button::new(if self.runtime_tools_open {
-                    "Hide Tools"
-                } else {
-                    "Runtime Tools"
-                })
-                .size(cast::Size::Small)
-                .variant(cast::Variant::Ghost),
-            )
-            .clicked()
-        {
-            self.runtime_tools_open = !self.runtime_tools_open;
-        }
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.vertical(|ui| self.render_operator_settings(ui));
+        });
     }
 
     fn render_operator_menu_items(
@@ -1660,11 +1660,8 @@ impl TurinDesktopApp {
     }
 
     fn render_operator_stage(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
-        self.render_operator_topline(ui, app);
-        ui.add_space(14.0);
         self.render_operator_notices(ui, app);
         self.render_operator_feedback(ui);
-        ui.add_space(8.0);
 
         let mut screen_index = self
             .ui_screen_indices
@@ -1700,47 +1697,56 @@ impl TurinDesktopApp {
         }
     }
 
-    fn render_operator_topline(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
-        ui.horizontal_wrapped(|ui| {
-            themed_heading(ui, ui_app_title(app), 36.0);
-            ui.add_space(8.0);
-            ui.add(
-                cast::Badge::new(freshness_label(self.dashboard.snapshot_freshness()))
-                    .intent(freshness_intent(self.dashboard.snapshot_freshness()))
-                    .status_dot(),
-            );
-        });
-        if let Some(definition) = &app.definition
-            && let Some(about) = &definition.about
-        {
-            ui.add_space(6.0);
-            themed_muted(ui, about.clone());
-        }
-    }
-
-    fn render_connection_status_compact(&self, ui: &mut egui::Ui) {
+    fn operator_connection_summary(&self) -> (&'static str, cast::Intent) {
         let ready = self
             .dashboard
             .health
             .as_ref()
             .is_some_and(|health| health.ready);
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                cast::Badge::new(if ready { "Connected" } else { "Degraded" })
-                    .intent(if ready {
-                        cast::Intent::Success
-                    } else {
-                        cast::Intent::Warning
-                    })
-                    .status_dot(),
-            );
-            ui.add(cast::Badge::new(match self.dashboard.connection_kind {
-                ConnectionKind::Local => "Local",
-                ConnectionKind::Remote => "Remote",
-            }));
-        });
-        ui.add_space(4.0);
-        themed_muted(ui, self.dashboard.connection_target.clone());
+        match (ready, self.dashboard.connection_kind) {
+            (true, ConnectionKind::Local) => ("Connected locally", cast::Intent::Success),
+            (true, ConnectionKind::Remote) => ("Connected remotely", cast::Intent::Success),
+            (false, _) => ("Connection degraded", cast::Intent::Warning),
+        }
+    }
+
+    fn render_operator_settings(&mut self, ui: &mut egui::Ui) {
+        ui.add(cast::Separator::new());
+        ui.add_space(8.0);
+        let (connection, intent) = self.operator_connection_summary();
+        let mut open = self.sidebar_settings_open;
+        cast::Disclosure::new(&mut open, "Settings")
+            .trailing_status_dot(connection, intent)
+            .size(cast::Size::Small)
+            .show(ui, |ui| {
+                self.render_theme_controls(ui);
+                ui.add_space(6.0);
+                if ui
+                    .add(
+                        cast::Button::new("Refresh data")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+                {
+                    self.request_selected_ui_lists(true);
+                }
+                if ui
+                    .add(
+                        cast::Button::new(if self.runtime_tools_open {
+                            "Close runtime tools"
+                        } else {
+                            "Open runtime tools"
+                        })
+                        .size(cast::Size::Small)
+                        .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+                {
+                    self.runtime_tools_open = !self.runtime_tools_open;
+                }
+            });
+        self.sidebar_settings_open = open;
     }
 
     fn render_theme_controls(&mut self, ui: &mut egui::Ui) {
