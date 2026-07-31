@@ -140,18 +140,17 @@ pub(super) fn render_harness_screen_content(
     };
 
     if let Some(screen) = screens.get(*screen_index) {
-        cast::Panel::new().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                themed_heading(ui, screen.title.clone(), 24.0);
-            });
-            ui.add_space(12.0);
-            let mut context = HarnessRenderContext {
-                app,
-                state,
-                event: &mut event,
-            };
-            render_nodes(ui, &screen.nodes, &mut context);
+        ui.horizontal_wrapped(|ui| {
+            themed_heading(ui, screen.title.clone(), 28.0);
+            render_node_badge(ui, app, Some(&screen.id));
         });
+        ui.add_space(12.0);
+        let mut context = HarnessRenderContext {
+            app,
+            state,
+            event: &mut event,
+        };
+        render_nodes(ui, &screen.nodes, &mut context);
     } else {
         cast::EmptyState::new("No screens declared")
             .body("This harness app exists, but it has not declared any screens yet.")
@@ -317,7 +316,11 @@ fn render_section(
             render_node_badge(ui, context.app, section.id.as_deref());
         });
         ui.add_space(8.0);
-        render_nodes(ui, &section.nodes, context);
+        if let Some(actions) = action_group_nodes(&section.nodes) {
+            render_action_group(ui, context.app, &actions, context.event);
+        } else {
+            render_nodes(ui, &section.nodes, context);
+        }
     });
 }
 
@@ -332,29 +335,64 @@ fn render_action(
     event: &mut Option<HarnessUiEvent>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        let response = ui.add(
-            cast::Button::new(action.label.clone())
-                .intent(if action.confirm {
-                    cast::Intent::Warning
-                } else {
-                    cast::Intent::Primary
-                })
-                .variant(if action.confirm {
-                    cast::Variant::Outline
-                } else {
-                    cast::Variant::Solid
-                }),
-        );
-        render_node_badge(ui, app, action.id.as_deref());
-        if response.clicked() {
-            *event = Some(HarnessUiEvent::RunAction {
-                label: action.label.clone(),
-                action: action.action.clone(),
-                params: action.params.clone(),
-                confirm: action.confirm,
-            });
+        render_action_button(ui, app, action, event);
+    });
+}
+
+fn render_action_group(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    actions: &[&UiActionNode],
+    event: &mut Option<HarnessUiEvent>,
+) {
+    cast::ControlGroup::new().show(ui, |ui| {
+        for action in actions {
+            render_action_button(ui, app, action, event);
         }
     });
+}
+
+fn render_action_button(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    action: &UiActionNode,
+    event: &mut Option<HarnessUiEvent>,
+) {
+    let response = ui.add(
+        cast::Button::new(action.label.clone())
+            .intent(if action.confirm {
+                cast::Intent::Warning
+            } else {
+                cast::Intent::Primary
+            })
+            .variant(if action.confirm {
+                cast::Variant::Outline
+            } else {
+                cast::Variant::Solid
+            }),
+    );
+    render_node_badge(ui, app, action.id.as_deref());
+    if response.clicked() {
+        *event = Some(HarnessUiEvent::RunAction {
+            label: action.label.clone(),
+            action: action.action.clone(),
+            params: action.params.clone(),
+            confirm: action.confirm,
+        });
+    }
+}
+
+fn action_group_nodes(nodes: &[UiNode]) -> Option<Vec<&UiActionNode>> {
+    if nodes.is_empty() {
+        return None;
+    }
+    nodes
+        .iter()
+        .map(|node| match node {
+            UiNode::Action(action) => Some(action),
+            _ => None,
+        })
+        .collect()
 }
 
 fn render_node_badge(ui: &mut egui::Ui, app: &UiAppRecord, node_id: Option<&str>) {
