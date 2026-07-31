@@ -106,13 +106,6 @@ pub(super) fn render_harness_app(
         if let Some(screen) = screens.get(*screen_index) {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(screen.title.clone());
-                if let Some(presentation) = &screen.presentation {
-                    ui.add(
-                        cast::Badge::new(presentation.clone())
-                            .intent(cast::Intent::Info)
-                            .variant(cast::Variant::Outline),
-                    );
-                }
             });
             ui.add_space(8.0);
             let mut context = HarnessRenderContext {
@@ -147,13 +140,6 @@ pub(super) fn render_harness_screen_content(
         cast::Panel::new().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(screen.title.clone());
-                if let Some(presentation) = &screen.presentation {
-                    ui.add(
-                        cast::Badge::new(presentation.clone())
-                            .intent(cast::Intent::Info)
-                            .variant(cast::Variant::Subtle),
-                    );
-                }
             });
             ui.add_space(12.0);
             let mut context = HarnessRenderContext {
@@ -182,14 +168,6 @@ pub(super) fn render_harness_pane(
     let mut event = None;
     ui.horizontal_wrapped(|ui| {
         ui.heading(pane.title.clone());
-        ui.add(cast::Badge::new(pane.id.clone()).variant(cast::Variant::Outline));
-        if let Some(presentation) = &pane.presentation {
-            ui.add(
-                cast::Badge::new(presentation.clone())
-                    .intent(cast::Intent::Info)
-                    .variant(cast::Variant::Outline),
-            );
-        }
     });
     ui.add_space(8.0);
     if pane.nodes.is_empty() {
@@ -410,13 +388,6 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(list.title.clone()).strong());
             render_node_badge(ui, context.app, list.id.as_deref());
-            if let Some(intent) = &list.intent {
-                ui.add(
-                    cast::Badge::new(intent.clone())
-                        .intent(cast::Intent::Info)
-                        .variant(cast::Variant::Subtle),
-                );
-            }
         });
         ui.add_space(8.0);
 
@@ -657,7 +628,6 @@ fn render_work_item_detail(
     event: &mut Option<HarnessUiEvent>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
         ui.add(
             cast::Badge::new(item.status.clone())
                 .intent(status_intent(&item.status))
@@ -665,24 +635,9 @@ fn render_work_item_detail(
         );
         ui.add(cast::Badge::new(item.kind.clone()));
         ui.add(cast::Badge::new(format!("priority {}", item.priority)));
-        for label in work_item_context_badges(item) {
-            let badge = cast::Badge::new(label.clone());
-            let badge = if label == "paused" {
-                badge.intent(cast::Intent::Warning)
-            } else {
-                badge.variant(cast::Variant::Outline)
-            };
-            ui.add(badge);
-        }
     });
     ui.add_space(6.0);
-    ui.label(RichText::new(item.title.clone()).strong());
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        for (label, value) in work_item_timeline_labels(item) {
-            ui.label(RichText::new(format!("{label}: {value}")).weak());
-        }
-    });
+    ui.label(RichText::new(item.title.clone()).size(18.0).strong());
     if let Some(reason) = item.pause_reason.as_ref() {
         ui.add_space(6.0);
         ui.label(RichText::new(format!("Pause reason: {reason}")).weak());
@@ -691,14 +646,13 @@ fn render_work_item_detail(
         ui.add_space(6.0);
         ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
     }
-    if let Some(action) = item.action.as_ref() {
+    if item.action.is_some() {
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("Action: {}", action.name)).monospace());
-            ui.label(RichText::new("Requires confirmation before running.").weak());
+            ui.label(RichText::new("Requires confirmation.").weak());
             if ui
                 .add(
-                    cast::Button::new("Queue for Confirmation")
+                    cast::Button::new("Review Action")
                         .size(cast::Size::Small)
                         .intent(cast::Intent::Warning)
                         .variant(cast::Variant::Outline),
@@ -714,16 +668,37 @@ fn render_work_item_detail(
         ui.add_space(6.0);
         ui.label(RichText::new(reason.clone()).color(egui::Color32::from_rgb(255, 171, 145)));
     }
-    if let Some(metadata) = item.metadata.as_ref() {
-        ui.add_space(6.0);
-        ui.add(
-            cast::CodeOutputPanel::new(
-                "Metadata",
-                serde_json::to_string_pretty(metadata).unwrap_or_else(|_| metadata.to_string()),
-            )
-            .height(120.0),
-        );
-    }
+    ui.add_space(6.0);
+    ui.collapsing("Details", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
+            for label in work_item_context_badges(item) {
+                let badge = cast::Badge::new(label.clone());
+                let badge = if label == "paused" {
+                    badge.intent(cast::Intent::Warning)
+                } else {
+                    badge.variant(cast::Variant::Outline)
+                };
+                ui.add(badge);
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for (label, value) in work_item_timeline_labels(item) {
+                ui.label(RichText::new(format!("{label}: {value}")).weak());
+            }
+        });
+        if let Some(metadata) = item.metadata.as_ref() {
+            ui.add_space(6.0);
+            ui.add(
+                cast::CodeOutputPanel::new(
+                    "Metadata",
+                    serde_json::to_string_pretty(metadata).unwrap_or_else(|_| metadata.to_string()),
+                )
+                .height(120.0),
+            );
+        }
+    });
 }
 
 fn render_activity(
@@ -1011,7 +986,6 @@ fn render_chart(
     chart: &UiChartNode,
     state: &HarnessRenderState<'_>,
 ) {
-    let intent = chart.intent.as_deref().unwrap_or("status_breakdown");
     cast::ReportSection::new(node_title_with_badge(
         app,
         chart.id.as_deref(),
@@ -1022,11 +996,6 @@ fn render_chart(
         worklist_chart_group_label(chart.intent.as_deref())
     ))
     .show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.add(cast::Badge::new(intent.to_string()).intent(cast::Intent::Info));
-        });
-        ui.add_space(8.0);
-
         let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
             render_unsupported_source(ui, "chart", &chart.source);
             return;

@@ -11,7 +11,9 @@ use turin_control_client::{
     AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
     SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiMenuItem, WorkItemList};
+use turin_daemon_protocol::{
+    EventEnvelope, HarnessActionRunResult, UiMenuItem, UiNoticeLevel, WorkItemList,
+};
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
@@ -121,7 +123,7 @@ fn main() -> Result<()> {
         "Turin App",
         native_options,
         Box::new(move |cc| {
-            configure_cast_theme(&cc.egui_ctx);
+            let theme_seed = configure_cast_theme(&cc.egui_ctx);
             Ok(Box::new(TurinDesktopApp::new(
                 dashboard,
                 controller,
@@ -129,6 +131,7 @@ fn main() -> Result<()> {
                 connection_options,
                 profile_catalog,
                 active_profile,
+                theme_seed,
             )))
         }),
     )
@@ -168,13 +171,24 @@ fn visible_ui_list_requests(
     requests
 }
 
-fn configure_cast_theme(ctx: &egui::Context) {
+fn configure_cast_theme(ctx: &egui::Context) -> cast::ThemeSeed {
     cast::install_cast_fonts(ctx);
-    let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Light)
+    let seed = app_theme_seed(system_theme_mode(ctx));
+    cast::set_theme(ctx, seed.clone().resolve());
+    seed
+}
+
+fn system_theme_mode(ctx: &egui::Context) -> cast::ThemeMode {
+    match ctx.system_theme() {
+        Some(egui::Theme::Dark) => cast::ThemeMode::Dark,
+        _ => cast::ThemeMode::Light,
+    }
+}
+
+fn app_theme_seed(mode: cast::ThemeMode) -> cast::ThemeSeed {
+    cast::ThemeSeed::for_mode(mode)
         .with_primary(Color32::from_rgb(22, 126, 118))
         .with_density(30.0, 8.0)
-        .resolve();
-    cast::set_theme(ctx, theme);
 }
 
 struct TurinDesktopApp {
@@ -224,6 +238,9 @@ struct TurinDesktopApp {
     ui_list_errors: BTreeMap<String, String>,
     latest_harness_action_result: Option<HarnessActionRunResult>,
     latest_harness_action_failure: Option<HarnessActionFailure>,
+    theme_seed: cast::ThemeSeed,
+    follows_system_theme: bool,
+    runtime_tools_open: bool,
     _runtime: Arc<Runtime>,
 }
 
@@ -246,11 +263,12 @@ struct PendingHarnessUiAction {
     params: serde_json::Value,
 }
 
-const DEFAULT_OPERATOR_EMPTY_TITLE: &str = "Default operator console is active";
-const DEFAULT_OPERATOR_EMPTY_BODY: &str = "Overview, Tasks, and Events work without custom harness UI. Declare ui.app(...) only when a harness needs workflow-specific screens here.";
-const DEFAULT_OPERATOR_INTRO: &str = "Turin remains useful without harness-defined UI. Use the built-in runtime tabs for health, agents, sessions, tasks, channels, events, and connection profiles.";
-const DEFAULT_OPERATOR_GUIDANCE_TITLE: &str = "When to add harness UI";
-const DEFAULT_OPERATOR_GUIDANCE_BODY: &str = "Keep the default console for simple agents. Add ui.app(...) when a harness needs workflow-specific screens, lists, forms, reports, panes, badges, or action buttons.";
+const DEFAULT_OPERATOR_EMPTY_TITLE: &str = "Turin is ready";
+const DEFAULT_OPERATOR_EMPTY_BODY: &str = "No custom app surface is loaded. Use the standard console for agents, sessions, tasks, and events.";
+const DEFAULT_OPERATOR_INTRO: &str =
+    "The standard console keeps the runtime usable without requiring a harness-defined app.";
+const DEFAULT_OPERATOR_GUIDANCE_TITLE: &str = "Custom Apps";
+const DEFAULT_OPERATOR_GUIDANCE_BODY: &str = "A harness can add focused screens when a workflow needs dedicated lists, forms, reports, panes, badges, or action buttons.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DefaultOperatorMetricGroup {
@@ -297,6 +315,7 @@ impl TurinDesktopApp {
         connection_options: ConnectionOptions,
         profile_catalog: Option<ConnectionProfileCatalog>,
         active_profile: Option<String>,
+        theme_seed: cast::ThemeSeed,
     ) -> Self {
         let profile_draft = connection_options
             .current_profile_draft()
@@ -353,6 +372,9 @@ impl TurinDesktopApp {
             ui_list_errors: BTreeMap::new(),
             latest_harness_action_result: None,
             latest_harness_action_failure: None,
+            theme_seed,
+            follows_system_theme: true,
+            runtime_tools_open: false,
             _runtime: runtime,
         }
     }
@@ -526,7 +548,7 @@ impl TurinDesktopApp {
 
     fn apply_ui_navigation_intents(&mut self) {
         for open in self.dashboard.ui.take_opens() {
-            self.apply_ui_open_request(&open.app_id, &open.target, "open");
+            self.apply_ui_open_request(&open.app_id, &open.target);
         }
         for show in self.dashboard.ui.take_shows() {
             self.apply_ui_show_request(&show.app_id, &show.target);
@@ -536,19 +558,18 @@ impl TurinDesktopApp {
         }
     }
 
-    fn apply_ui_open_request(&mut self, app_id: &str, target: &str, label: &str) {
+    fn apply_ui_open_request(&mut self, app_id: &str, target: &str) {
         let Some(app) = self.select_ui_app_by_id(app_id) else {
             return;
         };
         let Some(screen_index) = harness_ui::screen_index_for_target(&app, target) else {
             self.dashboard.record_error(format!(
-                "UI {label} target '{target}' is not a screen in '{app_id}'"
+                "The requested screen could not be opened in {}.",
+                ui_app_title(&app)
             ));
             return;
         };
         self.open_harness_screen(&app, screen_index);
-        self.dashboard
-            .record_info(format!("Opened '{target}' from ui.{label}"));
     }
 
     fn apply_ui_show_request(&mut self, app_id: &str, target: &str) {
@@ -558,19 +579,16 @@ impl TurinDesktopApp {
         match ui_show_target_for(&app, target) {
             Some(UiShowTarget::Screen { screen_index }) => {
                 self.open_harness_screen(&app, screen_index);
-                self.dashboard
-                    .record_info(format!("Opened '{target}' from ui.show"));
             }
             Some(UiShowTarget::Pane { pane_id }) => {
                 self.tab = TabKind::UiApps;
                 self.ui_active_pane = Some(pane_id.to_string());
                 self.request_selected_ui_lists(false);
-                self.dashboard
-                    .record_info(format!("Opened pane '{target}' from ui.show"));
             }
             None => {
                 self.dashboard.record_error(format!(
-                    "UI show target '{target}' is not a screen or pane in '{app_id}'"
+                    "The requested view could not be shown in {}.",
+                    ui_app_title(&app)
                 ));
             }
         }
@@ -582,7 +600,8 @@ impl TurinDesktopApp {
         };
         let Some(target) = harness_ui::find_focus_target(&app, target) else {
             self.dashboard.record_error(format!(
-                "UI focus target '{target}' was not found in '{app_id}'"
+                "The requested focus target was not found in {}.",
+                ui_app_title(&app)
             ));
             return;
         };
@@ -1339,6 +1358,43 @@ impl TurinDesktopApp {
         }
     }
 
+    fn sync_theme(&mut self, ctx: &egui::Context) {
+        if self.follows_system_theme {
+            let system_mode = system_theme_mode(ctx);
+            if system_mode != self.theme_seed.mode {
+                self.theme_seed = app_theme_seed(system_mode);
+                self.apply_theme(ctx);
+            }
+        }
+    }
+
+    fn apply_theme(&self, ctx: &egui::Context) {
+        cast::set_theme(ctx, self.theme_seed.clone().resolve());
+    }
+
+    fn toggle_theme(&mut self, ctx: &egui::Context) {
+        let mode = match self.theme_seed.mode {
+            cast::ThemeMode::Light => cast::ThemeMode::Dark,
+            cast::ThemeMode::Dark => cast::ThemeMode::Light,
+        };
+        self.theme_seed = app_theme_seed(mode);
+        self.follows_system_theme = false;
+        self.apply_theme(ctx);
+    }
+
+    fn follow_system_theme(&mut self, ctx: &egui::Context) {
+        self.theme_seed = app_theme_seed(system_theme_mode(ctx));
+        self.follows_system_theme = true;
+        self.apply_theme(ctx);
+    }
+
+    fn theme_toggle_label(&self) -> &'static str {
+        match self.theme_seed.mode {
+            cast::ThemeMode::Light => "Dark Mode",
+            cast::ThemeMode::Dark => "Light Mode",
+        }
+    }
+
     fn current_detail_session_id(&self) -> Option<String> {
         match self.tab {
             TabKind::LiveSessions => self
@@ -1368,60 +1424,74 @@ impl TurinDesktopApp {
         self.send_command(OperatorCommand::LoadSessionDetail { session_id });
     }
 
-    fn render_runtime_overview(&self, ui: &mut egui::Ui) {
-        cast::Panel::new().show(ui, |ui| {
+    fn render_default_shell(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("default_shell_top").show_inside(ui, |ui| {
+            ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                ui.heading("Runtime");
-                ui.add_space(8.0);
-                ui.add(cast::Badge::new(match self.dashboard.connection_kind {
-                    ConnectionKind::Local => "Local",
-                    ConnectionKind::Remote => "Remote",
-                }));
+                ui.label(RichText::new("Turin").size(26.0).strong());
+                ui.add_space(10.0);
+                self.render_connection_status_inline(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.render_theme_controls(ui);
+                    if ui
+                        .add(
+                            cast::Button::new(if self.runtime_tools_open {
+                                "Hide Tools"
+                            } else {
+                                "Runtime Tools"
+                            })
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Outline),
+                        )
+                        .clicked()
+                    {
+                        self.runtime_tools_open = !self.runtime_tools_open;
+                    }
+                    if ui
+                        .add(
+                            cast::Button::new("Refresh")
+                                .size(cast::Size::Small)
+                                .variant(cast::Variant::Ghost),
+                        )
+                        .clicked()
+                    {
+                        self.send_command(OperatorCommand::Refresh);
+                    }
+                });
             });
             ui.add_space(8.0);
-            if let Some(health) = self.dashboard.health.as_ref() {
-                metric_row(
-                    ui,
-                    "Agents",
-                    health.agent_count,
-                    "Harnesses",
-                    health.harness_count,
-                    "Channels",
-                    health.channel_count,
-                );
-                metric_row(
-                    ui,
-                    "Running",
-                    health.running_agent_count,
-                    "Active",
-                    health.active_task_count,
-                    "Queued",
-                    health.queued_task_count,
-                );
-                metric_row(
-                    ui,
-                    "Awaiting",
-                    health.awaiting_result_count,
-                    "Issues",
-                    health.issue_count,
-                    "Failed Channels",
-                    health.failed_channel_count,
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Version {} / protocol {} / {} / {}",
-                        health.version,
-                        health.protocol_version,
-                        health.transport,
-                        health.wire_format
-                    ))
-                    .color(Color32::from_rgb(173, 167, 159)),
-                );
-            } else {
-                ui.label("Loading runtime health...");
-            }
         });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ScrollArea::vertical().show(ui, |ui| {
+                self.render_default_operator_console(ui);
+                if self.runtime_tools_open {
+                    ui.add_space(14.0);
+                    self.render_runtime_tools_panel(ui);
+                }
+            });
+        });
+    }
+
+    fn render_connection_status_inline(&self, ui: &mut egui::Ui) {
+        let ready = self
+            .dashboard
+            .health
+            .as_ref()
+            .is_some_and(|health| health.ready);
+        ui.add(
+            cast::Badge::new(if ready { "Connected" } else { "Degraded" })
+                .intent(if ready {
+                    cast::Intent::Success
+                } else {
+                    cast::Intent::Warning
+                })
+                .status_dot(),
+        );
+        ui.add(cast::Badge::new(match self.dashboard.connection_kind {
+            ConnectionKind::Local => "Local",
+            ConnectionKind::Remote => "Remote",
+        }));
     }
 
     fn render_operator_shell(&mut self, ui: &mut egui::Ui) {
@@ -1458,6 +1528,8 @@ impl TurinDesktopApp {
         ui.label(RichText::new("Operator Console").weak());
         ui.add_space(12.0);
         self.render_connection_status_compact(ui);
+        ui.add_space(16.0);
+        self.render_theme_controls(ui);
         ui.add_space(16.0);
 
         if apps.len() > 1 {
@@ -1536,19 +1608,20 @@ impl TurinDesktopApp {
         }
 
         ui.add_space(10.0);
-        ui.collapsing("Runtime Tools", |ui| {
-            ui.label(RichText::new("Diagnostics are hidden from the operator path.").weak());
-            ui.add_space(6.0);
-            if let Some(health) = self.dashboard.health.as_ref() {
-                detail_kv(ui, "Agents", health.agent_count);
-                detail_kv(
-                    ui,
-                    "Tasks",
-                    health.active_task_count + health.queued_task_count,
-                );
-                detail_kv(ui, "Issues", health.issue_count);
-            }
-        });
+        if ui
+            .add(
+                cast::Button::new(if self.runtime_tools_open {
+                    "Hide Tools"
+                } else {
+                    "Runtime Tools"
+                })
+                .size(cast::Size::Small)
+                .variant(cast::Variant::Ghost),
+            )
+            .clicked()
+        {
+            self.runtime_tools_open = !self.runtime_tools_open;
+        }
     }
 
     fn render_operator_menu_items(
@@ -1589,6 +1662,7 @@ impl TurinDesktopApp {
     fn render_operator_stage(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
         self.render_operator_topline(ui, app);
         ui.add_space(14.0);
+        self.render_operator_notices(ui, app);
         self.render_operator_feedback(ui);
         ui.add_space(8.0);
 
@@ -1619,6 +1693,11 @@ impl TurinDesktopApp {
         self.render_latest_harness_action_result(ui, app);
         self.render_latest_harness_action_failure(ui, app);
         self.render_active_harness_pane(ui, app);
+
+        if self.runtime_tools_open {
+            ui.add_space(14.0);
+            self.render_runtime_tools_panel(ui);
+        }
     }
 
     fn render_operator_topline(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
@@ -1664,6 +1743,32 @@ impl TurinDesktopApp {
         ui.label(RichText::new(self.dashboard.connection_target.clone()).weak());
     }
 
+    fn render_theme_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add(
+                    cast::Button::new(self.theme_toggle_label())
+                        .size(cast::Size::Small)
+                        .variant(cast::Variant::Outline),
+                )
+                .clicked()
+            {
+                self.toggle_theme(ui.ctx());
+            }
+            if !self.follows_system_theme
+                && ui
+                    .add(
+                        cast::Button::new("Use System")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+            {
+                self.follow_system_theme(ui.ctx());
+            }
+        });
+    }
+
     fn render_operator_feedback(&self, ui: &mut egui::Ui) {
         if let Some(error) = &self.dashboard.last_error {
             ui.add(
@@ -1673,14 +1778,52 @@ impl TurinDesktopApp {
             );
             ui.add_space(8.0);
         }
-        if let Some(info) = &self.dashboard.last_info {
+    }
+
+    fn render_operator_notices(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let notices = self
+            .dashboard
+            .ui
+            .notices()
+            .iter()
+            .rev()
+            .filter(|notice| notice.app_id == app.id)
+            .take(3)
+            .collect::<Vec<_>>();
+        if notices.is_empty() {
+            return;
+        }
+        for notice in notices {
             ui.add(
-                cast::Alert::new("Recent update")
-                    .body(info.clone())
-                    .intent(cast::Intent::Info),
+                cast::Alert::new(notice.title.clone())
+                    .body(notice.body.clone().unwrap_or_default())
+                    .intent(ui_notice_intent(notice.level)),
             );
             ui.add_space(8.0);
         }
+    }
+
+    fn render_runtime_tools_panel(&mut self, ui: &mut egui::Ui) {
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading("Runtime Tools");
+                ui.add_space(8.0);
+                if ui
+                    .add(
+                        cast::Button::new("Close")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+                {
+                    self.runtime_tools_open = false;
+                }
+            });
+            ui.add_space(8.0);
+            self.render_tab_bar(ui);
+            ui.add_space(10.0);
+            self.render_active_tab(ui);
+        });
     }
 
     fn active_ui_screen_id(&self, app: &UiAppRecord) -> Option<String> {
@@ -2528,46 +2671,56 @@ impl TurinDesktopApp {
         });
     }
 
-    fn render_default_operator_console(&self, ui: &mut egui::Ui) {
+    fn render_default_operator_console(&mut self, ui: &mut egui::Ui) {
         let summary = DefaultOperatorConsoleSummary::from_dashboard(&self.dashboard);
 
         cast::Panel::new().show(ui, |ui| {
+            ui.label(
+                RichText::new(DEFAULT_OPERATOR_EMPTY_TITLE)
+                    .size(34.0)
+                    .strong(),
+            );
+            ui.add_space(8.0);
+            ui.label(DEFAULT_OPERATOR_EMPTY_BODY);
+            ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Default Operator Console").strong());
                 ui.add(
                     cast::Badge::new(summary.freshness.clone())
                         .intent(freshness_intent(self.dashboard.snapshot_freshness()))
                         .status_dot(),
                 );
-                ui.add(
-                    cast::Badge::new(format!("{} connection", summary.connection))
-                        .variant(cast::Variant::Outline),
-                );
+                ui.label(RichText::new(summary.target.clone()).weak());
             });
-            ui.add_space(8.0);
-            ui.label(DEFAULT_OPERATOR_INTRO);
-            ui.add_space(8.0);
-            detail_kv(ui, "Target", &summary.target);
         });
 
-        ui.add_space(10.0);
-        let groups = default_operator_metric_groups(&summary, self.dashboard.ui.apps().count());
-        ui.columns(3, |columns| {
+        ui.add_space(12.0);
+        let groups = default_operator_metric_groups(&summary);
+        ui.columns(groups.len(), |columns| {
             for (column, group) in columns.iter_mut().zip(groups) {
                 cast::Panel::new().show(column, |ui| {
-                    ui.label(RichText::new(group.title).strong());
+                    ui.label(RichText::new(group.title).size(20.0).strong());
+                    ui.add_space(6.0);
                     for (label, value) in group.metrics {
-                        detail_kv(ui, label, value);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(value.to_string()).size(24.0).strong());
+                            ui.label(RichText::new(label).weak());
+                        });
                     }
                 });
             }
         });
 
-        ui.add_space(10.0);
+        ui.add_space(12.0);
         cast::Panel::new().show(ui, |ui| {
-            ui.label(RichText::new(DEFAULT_OPERATOR_GUIDANCE_TITLE).strong());
+            ui.label(
+                RichText::new(DEFAULT_OPERATOR_GUIDANCE_TITLE)
+                    .size(20.0)
+                    .strong(),
+            );
             ui.add_space(6.0);
             ui.label(DEFAULT_OPERATOR_GUIDANCE_BODY);
+            ui.add_space(8.0);
+            ui.label(RichText::new(DEFAULT_OPERATOR_INTRO).weak());
         });
     }
 
@@ -3601,127 +3754,17 @@ impl eframe::App for TurinDesktopApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.sync_theme(ui.ctx());
         if self.dashboard.ui.apps().next().is_some() {
             self.render_operator_shell(ui);
-            return;
+        } else {
+            self.render_default_shell(ui);
         }
-
-        let ready = self
-            .dashboard
-            .health
-            .as_ref()
-            .is_some_and(|health| health.ready);
-        let connection_kind = match self.dashboard.connection_kind {
-            ConnectionKind::Local => "Local",
-            ConnectionKind::Remote => "Remote",
-        };
-
-        egui::Panel::top("top_banner").show_inside(ui, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Turin App").size(26.0).strong());
-                ui.add_space(12.0);
-                ui.add(
-                    cast::Badge::new(if ready { "Connected" } else { "Degraded" })
-                        .intent(if ready {
-                            cast::Intent::Success
-                        } else {
-                            cast::Intent::Warning
-                        })
-                        .status_dot(),
-                );
-                ui.add_space(12.0);
-                ui.add(cast::Badge::new(format!("{connection_kind} target")));
-                ui.label(self.dashboard.connection_target.clone());
-                ui.add_space(12.0);
-                ui.add(
-                    cast::Badge::new(format!("Source {}", self.active_connection_label()))
-                        .intent(cast::Intent::Info)
-                        .variant(cast::Variant::Outline),
-                );
-                ui.add_space(12.0);
-                ui.add(
-                    cast::Badge::new(format!(
-                        "Sync {}",
-                        freshness_label(self.dashboard.snapshot_freshness())
-                    ))
-                    .intent(freshness_intent(self.dashboard.snapshot_freshness()))
-                    .status_dot(),
-                );
-                ui.label(format!(
-                    "{} / {} / {}",
-                    self.dashboard.snapshot_age_label(),
-                    self.dashboard.last_refresh_status_label(),
-                    self.dashboard.last_refresh_latency_label()
-                ));
-                ui.add_space(12.0);
-                if ui
-                    .add(
-                        cast::Button::new("Refresh")
-                            .size(cast::Size::Small)
-                            .variant(cast::Variant::Outline),
-                    )
-                    .clicked()
-                {
-                    self.send_command(OperatorCommand::Refresh);
-                }
-            });
-            ui.add_space(6.0);
-        });
-
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            self.render_runtime_overview(ui);
-            ui.add_space(12.0);
-
-            if let Some(error) = &self.dashboard.last_error {
-                cast::Panel::new().show(ui, |ui| {
-                    ui.add(
-                        cast::Badge::new("Error")
-                            .intent(cast::Intent::Danger)
-                            .status_dot(),
-                    );
-                    ui.label(
-                        RichText::new(error)
-                            .color(Color32::from_rgb(255, 171, 145))
-                            .strong(),
-                    );
-                });
-                ui.add_space(8.0);
-            }
-
-            if let Some(info) = &self.dashboard.last_info {
-                cast::Panel::new().show(ui, |ui| {
-                    ui.add(
-                        cast::Badge::new("Info")
-                            .intent(cast::Intent::Info)
-                            .status_dot(),
-                    );
-                    ui.label(
-                        RichText::new(info)
-                            .color(Color32::from_rgb(151, 214, 255))
-                            .strong(),
-                    );
-                });
-                ui.add_space(8.0);
-            }
-
-            self.render_tab_bar(ui);
-            ui.add_space(10.0);
-            self.render_active_tab(ui);
-
-            ui.add_space(12.0);
-            ui.collapsing("Diagnostics", |ui| {
-                ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                    ui.code(self.dashboard.status_pretty_json());
-                });
-            });
-        });
     }
 }
 
 fn default_operator_metric_groups(
     summary: &DefaultOperatorConsoleSummary,
-    harness_apps: usize,
 ) -> Vec<DefaultOperatorMetricGroup> {
     vec![
         DefaultOperatorMetricGroup {
@@ -3740,15 +3783,16 @@ fn default_operator_metric_groups(
                 ("Tasks", summary.tasks),
             ],
         },
-        DefaultOperatorMetricGroup {
-            title: "UI Signals",
-            metrics: vec![
-                ("Harness Apps", harness_apps),
-                ("Notices", summary.ui_notices),
-                ("Requests", summary.ui_requests),
-            ],
-        },
     ]
+}
+
+fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
+    match level {
+        Some(UiNoticeLevel::Success) => cast::Intent::Success,
+        Some(UiNoticeLevel::Warning) => cast::Intent::Warning,
+        Some(UiNoticeLevel::Error) => cast::Intent::Danger,
+        Some(UiNoticeLevel::Info) | None => cast::Intent::Info,
+    }
 }
 
 #[cfg(test)]
@@ -3837,16 +3881,12 @@ mod tests {
 
     #[test]
     fn default_operator_console_copy_explains_no_harness_path() {
-        assert_eq!(
-            DEFAULT_OPERATOR_EMPTY_TITLE,
-            "Default operator console is active"
-        );
-        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("Overview, Tasks, and Events"));
-        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("Declare ui.app(...)"));
-        assert!(DEFAULT_OPERATOR_INTRO.contains("without harness-defined UI"));
-        assert!(DEFAULT_OPERATOR_INTRO.contains("runtime tabs"));
-        assert_eq!(DEFAULT_OPERATOR_GUIDANCE_TITLE, "When to add harness UI");
-        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("Keep the default console"));
+        assert_eq!(DEFAULT_OPERATOR_EMPTY_TITLE, "Turin is ready");
+        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("No custom app surface"));
+        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("standard console"));
+        assert!(DEFAULT_OPERATOR_INTRO.contains("standard console"));
+        assert_eq!(DEFAULT_OPERATOR_GUIDANCE_TITLE, "Custom Apps");
+        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("focused screens"));
         assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("lists, forms, reports"));
     }
 
@@ -3866,7 +3906,7 @@ mod tests {
             ui_requests: 9,
         };
 
-        let groups = default_operator_metric_groups(&summary, 10);
+        let groups = default_operator_metric_groups(&summary);
 
         assert_eq!(
             groups,
@@ -3878,10 +3918,6 @@ mod tests {
                 DefaultOperatorMetricGroup {
                     title: "Work",
                     metrics: vec![("Live Sessions", 5), ("Stored Sessions", 6), ("Tasks", 7)],
-                },
-                DefaultOperatorMetricGroup {
-                    title: "UI Signals",
-                    metrics: vec![("Harness Apps", 10), ("Notices", 8), ("Requests", 9)],
                 },
             ]
         );

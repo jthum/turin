@@ -69,31 +69,6 @@ pub(super) fn tool_status_from_verdict(verdict: &str) -> cast::ToolCallStatus {
     }
 }
 
-pub(super) fn metric_row(
-    ui: &mut egui::Ui,
-    left_label: &str,
-    left_value: usize,
-    middle_label: &str,
-    middle_value: usize,
-    right_label: &str,
-    right_value: usize,
-) {
-    ui.horizontal(|ui| {
-        metric_chip(ui, left_label, left_value);
-        metric_chip(ui, middle_label, middle_value);
-        metric_chip(ui, right_label, right_value);
-    });
-}
-
-fn metric_chip(ui: &mut egui::Ui, label: &str, value: usize) {
-    ui.add(
-        cast::Badge::new(format!("{label}: {value}"))
-            .intent(cast::Intent::Neutral)
-            .variant(cast::Variant::Subtle),
-    );
-    ui.add_space(12.0);
-}
-
 pub(super) fn truncate_for_list(value: &str, max_chars: usize) -> String {
     let char_count = value.chars().count();
     if char_count <= max_chars {
