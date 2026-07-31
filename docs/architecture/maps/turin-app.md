@@ -62,6 +62,10 @@ worklist/default-screen/node-target derivation belong outside this crate.
   durable conversation state remains in the runtime.
 - Cast widgets are renderer details. Do not leak Cast or egui concepts into the
   harness/Lua/protocol APIs.
+- The desktop theme uses Cast's font preset, control density, spacing, and
+  semantic colors as one system. Avoid app-local typography families or global
+  density overrides that make otherwise polished Cast components feel like a
+  different interface when composed in Turin.
 - Harness UI intent is semantic. Render, degrade, or ignore by capability, but
   do not mutate the contract to fit desktop layout.
 - Semantic sections establish hierarchy but do not automatically become nested
@@ -70,6 +74,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - Internal source names, report prompts, public ids, and query mechanics are
   not ordinary application copy. Keep them out of default surfaces and expose
   them only through deliberate technical detail or Runtime Tools.
+- Runtime Tools is one secondary sheet in both the default and harness app
+  paths. It must not render inline beneath application content or repeat its
+  title inside another diagnostic panel.
 - The harness app shell must remain usable below desktop-sidebar width. Compact
   mode replaces the permanent sidebar with app selection and scrollable screen
   tabs while preserving client-local navigation state.
@@ -146,13 +153,15 @@ layer while preserving the semantic client contract.
 
 The harness renderer uses a responsive shell: wide windows receive a compact
 sidebar, while narrower windows receive app selection and screen tabs above the
-content stage. Top-level semantic sections remain lightweight; lists and detail
-use Cast cards, forms and reports use their dedicated Cast compositions, and
-loading uses skeletons. Narrow lists degrade from tables to selectable Cast
-list rows with the declared fields summarized beneath each title. Default list
-columns favor application content (`title`, `status`, `kind`, `priority`) rather
-than exposing public ids, and report prompts remain execution metadata rather
-than rendered prose.
+content stage. Shell width, breakpoint, and content margins follow the same
+248/900/28/16 rhythm as Cast's app-shell pattern, and nested egui frames do not
+add a second layer of panel chrome. Top-level semantic sections remain
+lightweight; lists and detail use Cast cards, forms and reports use their
+dedicated Cast compositions, and loading uses skeletons. Narrow lists degrade
+from tables to selectable Cast list rows with the declared fields summarized
+beneath each title. Default list columns favor application content (`title`,
+`status`, `kind`, `priority`) rather than exposing public ids, and report
+prompts remain execution metadata rather than rendered prose.
 
 When no harness declares an app surface, the desktop client renders a focused
 conversation workspace built from Cast. It provides agent selection when
@@ -163,4 +172,7 @@ prompt. Connection details, sessions, tasks, channels, events, and custom-app
 inspection remain available through Runtime Tools without competing with the
 primary workflow. The shell keeps its own selection and pending-command state
 and uses focused session events to invalidate session detail; it does not
-create runtime-owned view state.
+create runtime-owned view state. Conversation content and its composer share a
+readable 880-pixel maximum measure independently of wider table/report screens;
+routine local-ready status is quiet, while active work and degraded or remote
+connections remain visible.

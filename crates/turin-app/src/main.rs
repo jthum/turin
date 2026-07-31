@@ -193,7 +193,7 @@ fn system_theme_mode(ctx: &egui::Context) -> cast::ThemeMode {
 fn app_theme_seed(mode: cast::ThemeMode) -> cast::ThemeSeed {
     cast::ThemeSeed::for_mode(mode)
         .with_primary(Color32::from_rgb(22, 126, 118))
-        .with_density(30.0, 8.0)
+        .with_typography(cast::TypographyTokens::cast())
 }
 
 struct TurinDesktopApp {
@@ -1541,8 +1541,8 @@ impl TurinDesktopApp {
 
     fn theme_toggle_label(&self) -> &'static str {
         match self.theme_seed.mode {
-            cast::ThemeMode::Light => "Dark Mode",
-            cast::ThemeMode::Dark => "Light Mode",
+            cast::ThemeMode::Light => "Dark",
+            cast::ThemeMode::Dark => "Light",
         }
     }
 
@@ -1591,63 +1591,74 @@ impl TurinDesktopApp {
         self.live_session_index = clamp_index(self.live_session_index, live_sessions.len());
         let selected = live_sessions.get(self.live_session_index).cloned();
 
-        egui::Panel::top("default_shell_top").show_inside(ui, |ui| {
+        let top_frame = {
             let theme = cast::theme_for_ui(ui);
             egui::Frame::new()
                 .fill(theme.colors.surface)
                 .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-                .inner_margin(egui::Margin::symmetric(18, 11))
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        themed_heading(ui, "Turin", 24.0);
-                        ui.add_space(8.0);
-                        self.render_connection_status_inline(ui);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.render_theme_controls(ui);
-                            if ui
+                .inner_margin(egui::Margin::symmetric(20, 11))
+        };
+        egui::Panel::top("default_shell_top")
+            .exact_size(56.0)
+            .frame(top_frame)
+            .show_inside(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    themed_heading(ui, "Turin", 20.0);
+                    self.render_connection_status_inline(ui);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.render_theme_controls(ui);
+                        if ui
+                            .add(
+                                cast::Button::new("Runtime Tools")
+                                    .size(cast::Size::Small)
+                                    .variant(cast::Variant::Ghost),
+                            )
+                            .clicked()
+                        {
+                            self.runtime_tools_open = true;
+                        }
+                        if compact
+                            && ui
                                 .add(
-                                    cast::Button::new("Runtime Tools")
+                                    cast::Button::new("New conversation")
                                         .size(cast::Size::Small)
-                                        .variant(cast::Variant::Ghost),
+                                        .intent(cast::Intent::Primary)
+                                        .enabled(
+                                            self.pending_conversation.is_none()
+                                                && self.pending_resume_session_id.is_none(),
+                                        ),
                                 )
                                 .clicked()
-                            {
-                                self.runtime_tools_open = true;
-                            }
-                            if compact
-                                && ui
-                                    .add(
-                                        cast::Button::new("New conversation")
-                                            .size(cast::Size::Small)
-                                            .intent(cast::Intent::Primary)
-                                            .enabled(
-                                                self.pending_conversation.is_none()
-                                                    && self.pending_resume_session_id.is_none(),
-                                            ),
-                                    )
-                                    .clicked()
-                            {
-                                self.start_default_conversation(None);
-                            }
-                        });
+                        {
+                            self.start_default_conversation(None);
+                        }
                     });
                 });
-        });
+            });
 
         if compact {
-            egui::Panel::top("default_session_nav_compact").show_inside(ui, |ui| {
-                self.render_default_session_nav(ui, &live_sessions, &recent_sessions, true);
-            });
+            let compact_nav_frame = {
+                let theme = cast::theme_for_ui(ui);
+                egui::Frame::new()
+                    .fill(theme.colors.surface)
+                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+            };
+            egui::Panel::top("default_session_nav_compact")
+                .frame(compact_nav_frame)
+                .show_inside(ui, |ui| {
+                    self.render_default_session_nav(ui, &live_sessions, &recent_sessions, true);
+                });
         } else {
             let theme = cast::theme_for_ui(ui);
             egui::Panel::left("default_session_nav")
                 .resizable(false)
-                .exact_size(236.0)
+                .exact_size(OPERATOR_SIDEBAR_WIDTH)
                 .frame(
                     egui::Frame::new()
                         .fill(theme.colors.surface)
                         .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-                        .inner_margin(egui::Margin::symmetric(14, 16)),
+                        .inner_margin(egui::Margin::symmetric(16, 16)),
                 )
                 .show_inside(ui, |ui| {
                     self.render_default_session_nav(ui, &live_sessions, &recent_sessions, false);
@@ -1655,17 +1666,30 @@ impl TurinDesktopApp {
         }
 
         if let Some(session) = selected.as_ref() {
-            egui::Panel::bottom("default_conversation_composer").show_inside(ui, |ui| {
-                self.render_default_composer(ui, session);
-            });
+            let composer_frame = {
+                let theme = cast::theme_for_ui(ui);
+                egui::Frame::new()
+                    .fill(theme.colors.surface)
+                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(20, 12))
+            };
+            egui::Panel::bottom("default_conversation_composer")
+                .frame(composer_frame)
+                .show_inside(ui, |ui| {
+                    self.render_default_composer(ui, session);
+                });
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                let outer_margin = if compact { 16.0 } else { 24.0 };
+                let outer_margin = if compact {
+                    OPERATOR_COMPACT_CONTENT_MARGIN
+                } else {
+                    OPERATOR_CONTENT_MARGIN
+                };
                 ui.add_space(outer_margin);
                 let (content_width, inset) =
-                    operator_content_geometry(ui.available_width(), outer_margin);
+                    default_conversation_geometry(ui.available_width(), outer_margin);
                 ui.horizontal_top(|ui| {
                     ui.add_space(inset);
                     ui.vertical(|ui| {
@@ -1729,7 +1753,7 @@ impl TurinDesktopApp {
                 if agents.len() > 1 {
                     let agent_labels = agents
                         .iter()
-                        .map(|agent| agent.id.clone())
+                        .map(|agent| default_agent_label(&agent.id))
                         .collect::<Vec<_>>();
                     ui.add(cast::Select::new(&mut self.agent_index, agent_labels).width(180.0));
                 }
@@ -1742,7 +1766,7 @@ impl TurinDesktopApp {
         if agents.len() > 1 {
             let agent_labels = agents
                 .iter()
-                .map(|agent| agent.id.clone())
+                .map(|agent| default_agent_label(&agent.id))
                 .collect::<Vec<_>>();
             ui.add(
                 cast::Select::new(&mut self.agent_index, agent_labels).width(ui.available_width()),
@@ -1777,7 +1801,7 @@ impl TurinDesktopApp {
                     .selected(index == self.live_session_index)
                     .size(cast::Size::Small);
                 if agents.len() > 1 {
-                    row = row.subtitle(session.agent_id.clone());
+                    row = row.subtitle(default_agent_label(&session.agent_id));
                 }
                 if session.active_tasks > 0 {
                     row = row.trailing("Working");
@@ -1801,7 +1825,7 @@ impl TurinDesktopApp {
                     .enabled(!pending)
                     .size(cast::Size::Small);
                 if agents.len() > 1 {
-                    row = row.subtitle(session.agent_id.clone());
+                    row = row.subtitle(default_agent_label(&session.agent_id));
                 }
                 if pending {
                     row = row.trailing("Opening...");
@@ -1826,19 +1850,13 @@ impl TurinDesktopApp {
             default_conversation_title(session, self.live_session_index, &self.dashboard.sessions);
         ui.horizontal_wrapped(|ui| {
             themed_heading(ui, title, 28.0);
-            ui.add(
-                cast::Badge::new(if session.active_tasks > 0 {
-                    "Working"
-                } else {
-                    "Ready"
-                })
-                .intent(if session.active_tasks > 0 {
-                    cast::Intent::Info
-                } else {
-                    cast::Intent::Success
-                })
-                .status_dot(),
-            );
+            if session.active_tasks > 0 {
+                ui.add(
+                    cast::Badge::new("Working")
+                        .intent(cast::Intent::Info)
+                        .status_dot(),
+                );
+            }
         });
         ui.add_space(14.0);
 
@@ -1865,7 +1883,7 @@ impl TurinDesktopApp {
                     }
                     let title = match message.role.as_str() {
                         "user" => "You".to_string(),
-                        "assistant" => session.agent_id.clone(),
+                        "assistant" => default_agent_label(&session.agent_id),
                         "system" => "System".to_string(),
                         _ => "Tool".to_string(),
                     };
@@ -1904,53 +1922,45 @@ impl TurinDesktopApp {
     }
 
     fn render_default_composer(&mut self, ui: &mut egui::Ui, session: &LiveSession) {
-        let theme = cast::theme_for_ui(ui);
-        egui::Frame::new()
-            .fill(theme.colors.background)
-            .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-            .inner_margin(egui::Margin::symmetric(18, 12))
-            .show(ui, |ui| {
-                let (content_width, inset) = operator_content_geometry(ui.available_width(), 16.0);
-                ui.horizontal_top(|ui| {
-                    ui.add_space(inset);
-                    ui.vertical(|ui| {
-                        ui.set_width(content_width);
-                        let response = cast::AgentComposer::new(&mut self.prompt_input)
-                            .placeholder(
-                                "Ask Turin to investigate, build, explain, or coordinate...",
-                            )
-                            .send_label("Send")
-                            .stop_label("Stop")
-                            .rows(3)
-                            .enabled(session.running)
-                            .loading(session.active_tasks > 0)
-                            .width(content_width)
-                            .show(ui)
-                            .inner;
-                        if response.submitted && !self.prompt_input.trim().is_empty() {
-                            let prompt = mem::take(&mut self.prompt_input);
-                            self.requested_session_detail = None;
-                            if self.default_session_needs_title(&session.session_id)
-                                && let Some(title) = default_conversation_title_from_prompt(&prompt)
-                            {
-                                self.send_command(OperatorCommand::SetSessionTitle {
-                                    session_id: session.session_id.clone(),
-                                    title: Some(title),
-                                });
-                            }
-                            self.send_command(OperatorCommand::SubmitPrompt {
-                                session_id: session.session_id.clone(),
-                                prompt,
-                            });
-                        }
-                        if response.stopped {
-                            self.send_command(OperatorCommand::CancelSession {
-                                session_id: session.session_id.clone(),
-                            });
-                        }
+        let (content_width, inset) =
+            default_conversation_geometry(ui.available_width(), OPERATOR_COMPACT_CONTENT_MARGIN);
+        ui.horizontal_top(|ui| {
+            ui.add_space(inset);
+            ui.vertical(|ui| {
+                ui.set_width(content_width);
+                let response = cast::AgentComposer::new(&mut self.prompt_input)
+                    .placeholder("Ask Turin to investigate, build, explain, or coordinate...")
+                    .send_label("Send")
+                    .stop_label("Stop")
+                    .rows(3)
+                    .enabled(session.running)
+                    .loading(session.active_tasks > 0)
+                    .width(content_width)
+                    .show(ui)
+                    .inner;
+                if response.submitted && !self.prompt_input.trim().is_empty() {
+                    let prompt = mem::take(&mut self.prompt_input);
+                    self.requested_session_detail = None;
+                    if self.default_session_needs_title(&session.session_id)
+                        && let Some(title) = default_conversation_title_from_prompt(&prompt)
+                    {
+                        self.send_command(OperatorCommand::SetSessionTitle {
+                            session_id: session.session_id.clone(),
+                            title: Some(title),
+                        });
+                    }
+                    self.send_command(OperatorCommand::SubmitPrompt {
+                        session_id: session.session_id.clone(),
+                        prompt,
                     });
-                });
+                }
+                if response.stopped {
+                    self.send_command(OperatorCommand::CancelSession {
+                        session_id: session.session_id.clone(),
+                    });
+                }
             });
+        });
     }
 
     fn render_default_welcome(&mut self, ui: &mut egui::Ui) {
@@ -1970,7 +1980,7 @@ impl TurinDesktopApp {
         self.agent_index = clamp_index(self.agent_index, agents.len());
         ui.add_space(28.0);
         ui.vertical_centered(|ui| {
-            themed_heading(ui, "What should Turin do?", 34.0);
+            themed_heading(ui, "What should Turin do?", 30.0);
             ui.add_space(6.0);
             themed_muted(
                 ui,
@@ -1981,7 +1991,7 @@ impl TurinDesktopApp {
         if agents.len() > 1 {
             let labels = agents
                 .iter()
-                .map(|agent| agent.id.clone())
+                .map(|agent| default_agent_label(&agent.id))
                 .collect::<Vec<_>>();
             ui.horizontal(|ui| {
                 ui.add_space((ui.available_width() - 260.0).max(0.0) / 2.0);
@@ -2014,7 +2024,7 @@ impl TurinDesktopApp {
             .width(680.0)
             .show(ui.ctx(), |ui, _sheet| {
                 ScrollArea::vertical().show(ui, |ui| {
-                    self.render_runtime_tools_panel(ui);
+                    self.render_runtime_tools_content(ui);
                 });
             });
         if !open {
@@ -2023,6 +2033,14 @@ impl TurinDesktopApp {
     }
 
     fn render_connection_status_inline(&self, ui: &mut egui::Ui) {
+        let ready = self
+            .dashboard
+            .health
+            .as_ref()
+            .is_some_and(|health| health.ready);
+        if ready && self.dashboard.connection_kind == ConnectionKind::Local {
+            return;
+        }
         let (connection, intent) = self.operator_connection_summary();
         ui.add(cast::Badge::new(connection).intent(intent).status_dot());
     }
@@ -2038,19 +2056,28 @@ impl TurinDesktopApp {
 
         let compact = operator_shell_is_compact(ui.available_width());
         if compact {
-            egui::Panel::top("operator_shell_compact_nav").show_inside(ui, |ui| {
-                self.render_compact_operator_nav(ui, &apps, &app);
-            });
+            let compact_nav_frame = {
+                let theme = cast::theme_for_ui(ui);
+                egui::Frame::new()
+                    .fill(theme.colors.surface)
+                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(16, 12))
+            };
+            egui::Panel::top("operator_shell_compact_nav")
+                .frame(compact_nav_frame)
+                .show_inside(ui, |ui| {
+                    self.render_compact_operator_nav(ui, &apps, &app);
+                });
         } else {
             let theme = cast::theme_for_ui(ui);
             egui::Panel::left("operator_shell_nav")
                 .resizable(false)
-                .exact_size(236.0)
+                .exact_size(OPERATOR_SIDEBAR_WIDTH)
                 .frame(
                     egui::Frame::new()
                         .fill(theme.colors.surface)
                         .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-                        .inner_margin(egui::Margin::symmetric(14, 16)),
+                        .inner_margin(egui::Margin::symmetric(16, 16)),
                 )
                 .show_inside(ui, |ui| {
                     self.render_operator_sidebar(ui, &apps, &app);
@@ -2059,7 +2086,11 @@ impl TurinDesktopApp {
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                let outer_margin = if compact { 16.0 } else { 24.0 };
+                let outer_margin = if compact {
+                    OPERATOR_COMPACT_CONTENT_MARGIN
+                } else {
+                    OPERATOR_CONTENT_MARGIN
+                };
                 ui.add_space(outer_margin);
                 let (content_width, inset) =
                     operator_content_geometry(ui.available_width(), outer_margin);
@@ -2073,6 +2104,8 @@ impl TurinDesktopApp {
                 ui.add_space(32.0);
             });
         });
+
+        self.render_runtime_tools_sheet(ui);
     }
 
     fn render_operator_sidebar(
@@ -2154,54 +2187,47 @@ impl TurinDesktopApp {
         apps: &[UiAppRecord],
         app: &UiAppRecord,
     ) {
-        let theme = cast::theme_for_ui(ui);
-        egui::Frame::new()
-            .fill(theme.colors.surface)
-            .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-            .inner_margin(egui::Margin::symmetric(16, 12))
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    themed_heading(ui, ui_app_title(app), 20.0);
-                    if apps.len() > 1 {
-                        let previous = self.ui_app_index;
-                        let labels = apps.iter().map(ui_app_title).collect::<Vec<_>>();
-                        ui.add(cast::Select::new(&mut self.ui_app_index, labels).width(220.0));
-                        if self.ui_app_index != previous
-                            && let Some(candidate) = apps.get(self.ui_app_index)
-                        {
-                            self.open_harness_screen(
-                                candidate,
-                                harness_ui::default_screen_index(candidate),
-                            );
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        self.render_theme_controls(ui);
-                    });
-                });
-
-                if !app.screens.is_empty() {
-                    ui.add_space(8.0);
-                    let mut screen_index = self
-                        .ui_screen_indices
-                        .get(&app.id)
-                        .copied()
-                        .unwrap_or_else(|| harness_ui::default_screen_index(app));
-                    screen_index = screen_index.min(app.screens.len() - 1);
-                    let previous = screen_index;
-                    let labels = app
-                        .screens
-                        .values()
-                        .map(|screen| screen.title.clone())
-                        .collect::<Vec<_>>();
-                    ScrollArea::horizontal().show(ui, |ui| {
-                        ui.add(cast::Tabs::new(&mut screen_index, labels).size(cast::Size::Small));
-                    });
-                    if screen_index != previous {
-                        self.open_harness_screen(app, screen_index);
-                    }
+        ui.horizontal_wrapped(|ui| {
+            themed_heading(ui, ui_app_title(app), 20.0);
+            if apps.len() > 1 {
+                let previous = self.ui_app_index;
+                let labels = apps.iter().map(ui_app_title).collect::<Vec<_>>();
+                ui.add(cast::Select::new(&mut self.ui_app_index, labels).width(220.0));
+                if self.ui_app_index != previous
+                    && let Some(candidate) = apps.get(self.ui_app_index)
+                {
+                    self.open_harness_screen(
+                        candidate,
+                        harness_ui::default_screen_index(candidate),
+                    );
                 }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.render_theme_controls(ui);
             });
+        });
+
+        if !app.screens.is_empty() {
+            ui.add_space(8.0);
+            let mut screen_index = self
+                .ui_screen_indices
+                .get(&app.id)
+                .copied()
+                .unwrap_or_else(|| harness_ui::default_screen_index(app));
+            screen_index = screen_index.min(app.screens.len() - 1);
+            let previous = screen_index;
+            let labels = app
+                .screens
+                .values()
+                .map(|screen| screen.title.clone())
+                .collect::<Vec<_>>();
+            ScrollArea::horizontal().show(ui, |ui| {
+                ui.add(cast::Tabs::new(&mut screen_index, labels).size(cast::Size::Small));
+            });
+            if screen_index != previous {
+                self.open_harness_screen(app, screen_index);
+            }
+        }
     }
 
     fn render_operator_menu_items(
@@ -2269,11 +2295,6 @@ impl TurinDesktopApp {
 
         self.render_pending_harness_ui_action(ui, &app.id);
         self.render_active_harness_pane(ui, app);
-
-        if self.runtime_tools_open {
-            ui.add_space(14.0);
-            self.render_runtime_tools_panel(ui);
-        }
     }
 
     fn operator_connection_summary(&self) -> (&'static str, cast::Intent) {
@@ -2343,7 +2364,7 @@ impl TurinDesktopApp {
             if !self.follows_system_theme
                 && ui
                     .add(
-                        cast::Button::new("Use System")
+                        cast::Button::new("System")
                             .size(cast::Size::Small)
                             .variant(cast::Variant::Ghost),
                     )
@@ -2446,27 +2467,10 @@ impl TurinDesktopApp {
             .unwrap_or_else(|| "Action".to_string())
     }
 
-    fn render_runtime_tools_panel(&mut self, ui: &mut egui::Ui) {
-        cast::Panel::new().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                themed_heading(ui, "Runtime Tools", 24.0);
-                ui.add_space(8.0);
-                if ui
-                    .add(
-                        cast::Button::new("Close")
-                            .size(cast::Size::Small)
-                            .variant(cast::Variant::Ghost),
-                    )
-                    .clicked()
-                {
-                    self.runtime_tools_open = false;
-                }
-            });
-            ui.add_space(8.0);
-            self.render_tab_bar(ui);
-            ui.add_space(10.0);
-            self.render_active_tab(ui);
-        });
+    fn render_runtime_tools_content(&mut self, ui: &mut egui::Ui) {
+        self.render_tab_bar(ui);
+        ui.add_space(cast::theme_for_ui(ui).spacing.md);
+        self.render_active_tab(ui);
     }
 
     fn active_ui_screen_id(&self, app: &UiAppRecord) -> Option<String> {
@@ -4303,7 +4307,12 @@ fn paint_app_canvas(ui: &mut egui::Ui) {
     );
 }
 
-const OPERATOR_COMPACT_BREAKPOINT: f32 = 920.0;
+const OPERATOR_COMPACT_BREAKPOINT: f32 = 900.0;
+const OPERATOR_SIDEBAR_WIDTH: f32 = 248.0;
+const OPERATOR_CONTENT_MARGIN: f32 = 28.0;
+const OPERATOR_COMPACT_CONTENT_MARGIN: f32 = 16.0;
+const OPERATOR_MAX_CONTENT_WIDTH: f32 = 1120.0;
+const DEFAULT_MAX_CONVERSATION_WIDTH: f32 = 880.0;
 const DEFAULT_RECENT_CONVERSATION_LIMIT: usize = 10;
 
 fn operator_shell_is_compact(available_width: f32) -> bool {
@@ -4311,8 +4320,20 @@ fn operator_shell_is_compact(available_width: f32) -> bool {
 }
 
 fn operator_content_geometry(available_width: f32, outer_margin: f32) -> (f32, f32) {
+    content_geometry(available_width, outer_margin, OPERATOR_MAX_CONTENT_WIDTH)
+}
+
+fn default_conversation_geometry(available_width: f32, outer_margin: f32) -> (f32, f32) {
+    content_geometry(
+        available_width,
+        outer_margin,
+        DEFAULT_MAX_CONVERSATION_WIDTH,
+    )
+}
+
+fn content_geometry(available_width: f32, outer_margin: f32, max_content_width: f32) -> (f32, f32) {
     let usable = (available_width - outer_margin * 2.0).max(0.0);
-    let content_width = usable.min(1120.0);
+    let content_width = usable.min(max_content_width);
     let inset = ((available_width - content_width) / 2.0).max(outer_margin);
     (content_width, inset)
 }
@@ -4326,6 +4347,14 @@ fn default_conversation_labels(
         .enumerate()
         .map(|(index, session)| default_conversation_title(session, index, stored_sessions))
         .collect()
+}
+
+fn default_agent_label(agent_id: &str) -> String {
+    if agent_id.eq_ignore_ascii_case("default") {
+        "Turin".to_string()
+    } else {
+        agent_id.to_string()
+    }
 }
 
 fn recent_default_conversations(
@@ -4531,6 +4560,33 @@ mod tests {
         assert_eq!(operator_content_geometry(1400.0, 24.0), (1120.0, 140.0));
         assert_eq!(operator_content_geometry(800.0, 16.0), (768.0, 16.0));
         assert_eq!(operator_content_geometry(300.0, 16.0), (268.0, 16.0));
+        assert_eq!(
+            default_conversation_geometry(1400.0, OPERATOR_CONTENT_MARGIN),
+            (880.0, 260.0)
+        );
+        assert_eq!(
+            default_conversation_geometry(800.0, OPERATOR_COMPACT_CONTENT_MARGIN),
+            (768.0, 16.0)
+        );
+    }
+
+    #[test]
+    fn app_theme_uses_cast_typography_and_default_spacing() {
+        let seed = app_theme_seed(cast::ThemeMode::Light);
+        let cast_typography = cast::TypographyTokens::cast();
+
+        assert_eq!(
+            seed.typography.heading.family,
+            cast_typography.heading.family
+        );
+        assert_eq!(seed.controls.min_height, 32.0);
+        assert_eq!(seed.spacing.md, 12.0);
+    }
+
+    #[test]
+    fn default_agent_label_keeps_the_standard_workspace_product_facing() {
+        assert_eq!(default_agent_label("default"), "Turin");
+        assert_eq!(default_agent_label("release-agent"), "release-agent");
     }
 
     #[test]

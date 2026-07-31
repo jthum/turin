@@ -29,10 +29,19 @@ pub(super) fn themed_heading_text(
     text: impl Into<String>,
     size: f32,
 ) -> RichText {
+    let theme = cast::theme_for_ui(ui);
+    let mut font = if size >= theme.typography.heading_lg.size {
+        theme.typography.heading_lg.clone()
+    } else if size >= theme.typography.heading.size {
+        theme.typography.heading.clone()
+    } else {
+        theme.typography.heading_sm.clone()
+    };
+    font.size = size;
     RichText::new(text.into())
-        .size(size)
+        .font(font)
         .strong()
-        .color(cast::theme_for_ui(ui).colors.text)
+        .color(theme.colors.text)
 }
 
 pub(super) fn themed_strong(ui: &mut egui::Ui, text: impl Into<String>) {
@@ -41,9 +50,11 @@ pub(super) fn themed_strong(ui: &mut egui::Ui, text: impl Into<String>) {
 }
 
 pub(super) fn themed_strong_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
+    let theme = cast::theme_for_ui(ui);
     RichText::new(text.into())
+        .font(theme.typography.strong.clone())
         .strong()
-        .color(cast::theme_for_ui(ui).colors.text)
+        .color(theme.colors.text)
 }
 
 pub(super) fn themed_muted(ui: &mut egui::Ui, text: impl Into<String>) {
@@ -52,20 +63,29 @@ pub(super) fn themed_muted(ui: &mut egui::Ui, text: impl Into<String>) {
 }
 
 pub(super) fn themed_overline(ui: &mut egui::Ui, text: impl Into<String>) {
+    let theme = cast::theme_for_ui(ui);
+    let mut font = theme.typography.caption.clone();
+    font.size = 10.0;
     ui.label(
         RichText::new(text.into().to_ascii_uppercase())
-            .size(10.0)
+            .font(font)
             .strong()
-            .color(cast::theme_for_ui(ui).colors.text_muted),
+            .color(theme.colors.text_muted),
     );
 }
 
 pub(super) fn themed_muted_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
-    RichText::new(text.into()).color(cast::theme_for_ui(ui).colors.text_muted)
+    let theme = cast::theme_for_ui(ui);
+    RichText::new(text.into())
+        .font(theme.typography.body.clone())
+        .color(theme.colors.text_muted)
 }
 
 pub(super) fn themed_danger_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
-    RichText::new(text.into()).color(cast::theme_for_ui(ui).colors.danger_family.emphasis)
+    let theme = cast::theme_for_ui(ui);
+    RichText::new(text.into())
+        .font(theme.typography.body.clone())
+        .color(theme.colors.danger_family.emphasis)
 }
 
 pub(super) fn ui_app_title(app: &UiAppRecord) -> String {
