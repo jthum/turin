@@ -26,8 +26,8 @@ pub(super) use turin_ui_core::{
 };
 
 use crate::presentation::{
-    status_intent, themed_danger_text, themed_heading, themed_muted, themed_muted_text,
-    themed_strong, truncate_for_list, ui_app_title,
+    status_intent, themed_danger_text, themed_heading, themed_muted, themed_strong,
+    truncate_for_list, ui_app_title,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +52,7 @@ pub(super) struct HarnessRenderState<'a> {
     pub(super) lists: &'a BTreeMap<String, WorkItemList>,
     pub(super) requested_lists: &'a BTreeSet<String>,
     pub(super) list_errors: &'a BTreeMap<String, String>,
+    pub(super) open_disclosures: &'a mut BTreeMap<String, bool>,
     pub(super) form_values: &'a mut BTreeMap<String, String>,
     pub(super) selected_list_items: &'a mut BTreeMap<String, String>,
 }
@@ -168,10 +169,6 @@ pub(super) fn render_harness_pane(
     state: &mut HarnessRenderState<'_>,
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
-    ui.horizontal_wrapped(|ui| {
-        themed_heading(ui, pane.title.clone(), 24.0);
-    });
-    ui.add_space(8.0);
     if pane.nodes.is_empty() {
         ui.label("This pane has no content nodes.");
     } else {
@@ -249,7 +246,7 @@ fn render_menu_items(
     }
 }
 
-fn menu_item_label(app: &UiAppRecord, item: &UiMenuItem) -> String {
+pub(super) fn menu_item_label(app: &UiAppRecord, item: &UiMenuItem) -> String {
     let mut parts = vec![item.label.clone()];
     if let Some(badge) = badge_text(app.badges.get(&item.opens), item.badge.as_deref()) {
         parts.push(badge);
@@ -310,17 +307,23 @@ fn render_section(
     section: &UiSectionNode,
     context: &mut HarnessRenderContext<'_, '_>,
 ) {
+    if let Some(actions) = action_group_nodes(&section.nodes) {
+        ui.horizontal_wrapped(|ui| {
+            themed_strong(ui, section.title.clone());
+            render_node_badge(ui, context.app, section.id.as_deref());
+        });
+        ui.add_space(7.0);
+        render_action_group(ui, context.app, &actions, context.event);
+        return;
+    }
+
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             themed_heading(ui, section.title.clone(), 22.0);
             render_node_badge(ui, context.app, section.id.as_deref());
         });
         ui.add_space(8.0);
-        if let Some(actions) = action_group_nodes(&section.nodes) {
-            render_action_group(ui, context.app, &actions, context.event);
-        } else {
-            render_nodes(ui, &section.nodes, context);
-        }
+        render_nodes(ui, &section.nodes, context);
     });
 }
 
@@ -335,7 +338,7 @@ fn render_action(
     event: &mut Option<HarnessUiEvent>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        render_action_button(ui, app, action, event);
+        render_action_button(ui, app, action, true, event);
     });
 }
 
@@ -346,8 +349,8 @@ fn render_action_group(
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::ControlGroup::new().show(ui, |ui| {
-        for action in actions {
-            render_action_button(ui, app, action, event);
+        for (index, action) in actions.iter().enumerate() {
+            render_action_button(ui, app, action, index == 0, event);
         }
     });
 }
@@ -356,19 +359,20 @@ fn render_action_button(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     action: &UiActionNode,
+    prominent: bool,
     event: &mut Option<HarnessUiEvent>,
 ) {
     let response = ui.add(
         cast::Button::new(action.label.clone())
-            .intent(if action.confirm {
-                cast::Intent::Warning
-            } else {
+            .intent(if prominent {
                 cast::Intent::Primary
-            })
-            .variant(if action.confirm {
-                cast::Variant::Outline
             } else {
+                cast::Intent::Neutral
+            })
+            .variant(if prominent {
                 cast::Variant::Solid
+            } else {
+                cast::Variant::Outline
             }),
     );
     render_node_badge(ui, app, action.id.as_deref());
@@ -428,6 +432,19 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             themed_strong(ui, list.title.clone());
+            if is_named_worklist_ui_source(&list.source) {
+                let request = UiListRequest {
+                    source: list.source.clone(),
+                    filter: list.filter.clone(),
+                    limit: list.limit,
+                };
+                if let Some(items) = context.state.lists.get(&request.cache_key()) {
+                    ui.add(
+                        cast::Badge::new(items.items.len().to_string())
+                            .variant(cast::Variant::Subtle),
+                    );
+                }
+            }
             render_node_badge(ui, context.app, list.id.as_deref());
         });
         ui.add_space(8.0);
@@ -492,72 +509,109 @@ fn render_work_items(
     } else {
         list.fields.clone()
     };
-    let columns = fields
+    let has_title_column = fields.iter().any(|field| field == "title");
+    let mut columns = fields
         .iter()
         .map(|field| sorted_field_label(field, &list.sort))
         .collect::<Vec<_>>();
-    let mut columns = columns;
-    columns.insert(0, "Open".to_string());
+    if !has_title_column {
+        columns.insert(0, "Item".to_string());
+    }
+    let column_weights = columns
+        .iter()
+        .map(|column| {
+            if column == "Item" || column.starts_with("Title") {
+                2.6
+            } else {
+                1.0
+            }
+        })
+        .collect::<Vec<_>>();
     let selected_index =
-        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
-            .unwrap_or(0);
-    if let Some(item) = items.items.get(selected_index) {
-        selected_list_items.insert(list_key.to_string(), work_item_key(item));
+        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str));
+    if selected_index.is_none() {
+        selected_list_items.remove(list_key);
     }
 
-    let selection_summary = themed_muted_text(
-        ui,
-        work_item_selection_summary(items.items.len(), selected_index),
-    );
-    ui.label(selection_summary);
-    ui.add_space(4.0);
-
     cast::Table::new(columns)
+        .column_weights(column_weights)
         .size(cast::Size::Small)
-        .selected_rows([selected_index])
-        .show(ui, items.items.len(), |row, index| {
-            let item = &items.items[index];
-            row.centered_cell(|ui| {
-                let selected = index == selected_index;
-                let label = if selected { "Viewing" } else { "View" };
-                if ui
-                    .add(
-                        cast::Button::new(label)
-                            .size(cast::Size::Small)
-                            .intent(if selected {
-                                cast::Intent::Info
-                            } else {
-                                cast::Intent::Neutral
-                            })
-                            .variant(cast::Variant::Ghost),
-                    )
-                    .clicked()
-                {
-                    selected_list_items.insert(list_key.to_string(), work_item_key(item));
-                }
-            });
-            for field in &fields {
-                if field == "status" {
+        .selected_rows(selected_index)
+        .expanded_rows(selected_index)
+        .expanded_row_height(218.0)
+        .show_with_details(
+            ui,
+            items.items.len(),
+            |row, index| {
+                let item = &items.items[index];
+                if !has_title_column {
                     row.cell(|ui| {
-                        ui.add(
-                            cast::Badge::new(item.status.clone())
-                                .intent(status_intent(&item.status))
-                                .status_dot(),
+                        render_work_item_title_button(
+                            ui,
+                            item,
+                            Some(index) == selected_index,
+                            list_key,
+                            selected_list_items,
                         );
                     });
-                } else {
-                    row.text(truncate_for_list(&work_item_field_label(item, field), 80));
                 }
-            }
-        });
+                for field in &fields {
+                    if field == "title" {
+                        row.cell(|ui| {
+                            render_work_item_title_button(
+                                ui,
+                                item,
+                                Some(index) == selected_index,
+                                list_key,
+                                selected_list_items,
+                            );
+                        });
+                    } else if field == "status" {
+                        row.cell(|ui| {
+                            ui.add(
+                                cast::Badge::new(item.status.clone())
+                                    .intent(status_intent(&item.status))
+                                    .status_dot(),
+                            );
+                        });
+                    } else {
+                        row.text(truncate_for_list(&work_item_field_label(item, field), 80));
+                    }
+                }
+            },
+            |detail, index| {
+                detail.show(|ui| {
+                    ui.vertical(|ui| {
+                        if let Some(item) = items.items.get(index) {
+                            render_work_item_detail(ui, item, event);
+                        }
+                    });
+                });
+            },
+        );
+}
 
-    if let Some(item) = items.items.get(selected_index) {
-        ui.add_space(10.0);
-        cast::Panel::new().show(ui, |ui| {
-            themed_strong(ui, "Selected item");
-            ui.add_space(6.0);
-            render_work_item_detail(ui, item, event);
-        });
+fn render_work_item_title_button(
+    ui: &mut egui::Ui,
+    item: &WorkItemDetail,
+    selected: bool,
+    list_key: &str,
+    selected_list_items: &mut BTreeMap<String, String>,
+) {
+    if ui
+        .add(
+            cast::Button::new(truncate_for_list(&item.title, 48))
+                .size(cast::Size::Small)
+                .intent(if selected {
+                    cast::Intent::Primary
+                } else {
+                    cast::Intent::Neutral
+                })
+                .variant(cast::Variant::Ghost),
+        )
+        .clicked()
+    {
+        selected_list_items.insert(list_key.to_string(), work_item_key(item));
     }
 }
 
@@ -575,16 +629,13 @@ fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
     recent.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
 
     for item in recent.into_iter().take(8) {
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                cast::Badge::new(item.status.clone())
-                    .intent(status_intent(&item.status))
-                    .status_dot(),
-            );
-            themed_strong(ui, item.title.clone());
-            ui.add(cast::Badge::new(item.kind.clone()).variant(cast::Variant::Outline));
-            themed_muted(ui, format!("updated {}", item.updated_at));
-        });
+        ui.add(
+            cast::ListRow::new(item.title.clone())
+                .subtitle(format!("{} · updated {}", item.kind, item.updated_at))
+                .leading("•")
+                .trailing(item.status.clone())
+                .size(cast::Size::Small),
+        );
     }
 }
 
@@ -675,21 +726,18 @@ fn render_work_item_detail(
     }
     if item.action.is_some() {
         ui.add_space(6.0);
-        ui.horizontal_wrapped(|ui| {
-            themed_muted(ui, "Requires confirmation.");
-            if ui
-                .add(
-                    cast::Button::new("Review Action")
-                        .size(cast::Size::Small)
-                        .intent(cast::Intent::Warning)
-                        .variant(cast::Variant::Outline),
-                )
-                .clicked()
-                && let Some(action_event) = work_item_action_event(item)
-            {
-                *event = Some(action_event);
-            }
-        });
+        if ui
+            .add(
+                cast::Button::new("Take action")
+                    .size(cast::Size::Small)
+                    .intent(cast::Intent::Primary)
+                    .variant(cast::Variant::Outline),
+            )
+            .clicked()
+            && let Some(action_event) = work_item_action_event(item)
+        {
+            *event = Some(action_event);
+        }
     }
     if let Some(reason) = item.failure_reason.as_ref() {
         ui.add_space(6.0);
@@ -697,56 +745,79 @@ fn render_work_item_detail(
         ui.label(text);
     }
     ui.add_space(6.0);
-    ui.collapsing("Details", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
-            for label in work_item_context_badges(item) {
-                let badge = cast::Badge::new(label.clone());
-                let badge = if label == "paused" {
-                    badge.intent(cast::Intent::Warning)
-                } else {
-                    badge.variant(cast::Variant::Outline)
-                };
-                ui.add(badge);
+    let details_id = ui.make_persistent_id(("work_item_details", item.id));
+    let mut details_open = ui
+        .data(|data| data.get_temp::<bool>(details_id))
+        .unwrap_or(false);
+    cast::Disclosure::new(&mut details_open, "Technical details")
+        .size(cast::Size::Small)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.add(cast::Badge::new(item.public_id.clone()).variant(cast::Variant::Outline));
+                for label in work_item_context_badges(item) {
+                    let badge = cast::Badge::new(label.clone());
+                    let badge = if label == "paused" {
+                        badge.intent(cast::Intent::Warning)
+                    } else {
+                        badge.variant(cast::Variant::Outline)
+                    };
+                    ui.add(badge);
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for (label, value) in work_item_timeline_labels(item) {
+                    themed_muted(ui, format!("{label}: {value}"));
+                }
+            });
+            if let Some(metadata) = item.metadata.as_ref() {
+                ui.add_space(6.0);
+                ui.add(
+                    cast::CodeOutputPanel::new(
+                        "Metadata",
+                        serde_json::to_string_pretty(metadata)
+                            .unwrap_or_else(|_| metadata.to_string()),
+                    )
+                    .height(120.0),
+                );
             }
         });
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            for (label, value) in work_item_timeline_labels(item) {
-                themed_muted(ui, format!("{label}: {value}"));
-            }
-        });
-        if let Some(metadata) = item.metadata.as_ref() {
-            ui.add_space(6.0);
-            ui.add(
-                cast::CodeOutputPanel::new(
-                    "Metadata",
-                    serde_json::to_string_pretty(metadata).unwrap_or_else(|_| metadata.to_string()),
-                )
-                .height(120.0),
-            );
-        }
-    });
+    ui.data_mut(|data| data.insert_temp(details_id, details_open));
 }
 
 fn render_activity(
     ui: &mut egui::Ui,
     app: &UiAppRecord,
     activity: &UiActivityNode,
-    state: &HarnessRenderState<'_>,
+    state: &mut HarnessRenderState<'_>,
 ) {
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            themed_strong(ui, activity.title.clone());
-            render_node_badge(ui, app, activity.id.as_deref());
-        });
-        ui.add_space(8.0);
-
-        let Some(request) = worklist_request(&activity.source, ACTIVITY_LIMIT) else {
+    let disclosure_key = format!(
+        "{}:activity:{}",
+        app.id,
+        activity.id.as_deref().unwrap_or(&activity.title)
+    );
+    let mut open = state
+        .open_disclosures
+        .get(&disclosure_key)
+        .copied()
+        .unwrap_or(false);
+    let request = worklist_request(&activity.source, ACTIVITY_LIMIT);
+    let trailing = request
+        .as_ref()
+        .and_then(|request| state.lists.get(&request.cache_key()))
+        .map(|items| format!("{} updates", items.items.len()));
+    let mut disclosure = cast::Disclosure::new(&mut open, activity.title.clone())
+        .subtitle("Recent workflow activity")
+        .size(cast::Size::Small);
+    if let Some(trailing) = trailing {
+        disclosure = disclosure.trailing(trailing);
+    }
+    disclosure.show(ui, |ui| {
+        render_node_badge(ui, app, activity.id.as_deref());
+        let Some(request) = request else {
             render_unsupported_source(ui, "activity", &activity.source);
             return;
         };
-
         let key = request.cache_key();
         match state.lists.get(&key) {
             Some(items) => render_worklist_activity(ui, items),
@@ -765,6 +836,7 @@ fn render_activity(
             }
         }
     });
+    state.open_disclosures.insert(disclosure_key, open);
 }
 
 fn render_detail(
@@ -833,38 +905,36 @@ fn render_form(
     form_values: &mut BTreeMap<String, String>,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            themed_strong(ui, form.title.clone());
-            render_node_badge(ui, app, form.id.as_deref());
-        });
-        ui.add_space(8.0);
-        for field in &form.fields {
-            render_form_field(ui, app, form, field, form_values);
-            ui.add_space(6.0);
-        }
-        ui.add_space(8.0);
-        if ui
-            .add(
-                cast::Button::new("Submit")
-                    .variant(cast::Variant::Solid)
-                    .intent(cast::Intent::Primary),
-            )
-            .clicked()
-        {
-            match form_params(app, form, form_values) {
-                Ok(params) => {
-                    *event = Some(HarnessUiEvent::RunAction {
-                        label: form.title.clone(),
-                        action: form.action.clone(),
-                        params,
-                        confirm: false,
-                    });
-                }
-                Err(message) => *event = Some(HarnessUiEvent::FormError(message)),
+    cast::FormSection::new(node_title_with_badge(app, form.id.as_deref(), &form.title))
+        .width(ui.available_width().min(680.0))
+        .show(ui, |ui| {
+            for field in &form.fields {
+                render_form_field(ui, app, form, field, form_values);
+                ui.add_space(10.0);
             }
-        }
-    });
+            cast::FormActions::new().show(ui, |ui| {
+                if ui
+                    .add(
+                        cast::Button::new("Submit")
+                            .variant(cast::Variant::Solid)
+                            .intent(cast::Intent::Primary),
+                    )
+                    .clicked()
+                {
+                    match form_params(app, form, form_values) {
+                        Ok(params) => {
+                            *event = Some(HarnessUiEvent::RunAction {
+                                label: form.title.clone(),
+                                action: form.action.clone(),
+                                params,
+                                confirm: false,
+                            });
+                        }
+                        Err(message) => *event = Some(HarnessUiEvent::FormError(message)),
+                    }
+                }
+            });
+        });
 }
 
 fn render_form_field(
@@ -879,42 +949,46 @@ fn render_form_field(
         .entry(key.clone())
         .or_insert_with(|| default_form_value(form, field));
 
-    let kind = normalized_field_kind(field);
-    ui.horizontal_wrapped(|ui| {
-        themed_strong(ui, field.label.clone());
-        if field.required.unwrap_or(false) {
-            ui.add(cast::Badge::new("required").intent(cast::Intent::Warning));
-        }
-    });
+    cast::FormField::new(field.label.clone())
+        .required(field.required.unwrap_or(false))
+        .show(ui, |ui| render_form_control(ui, field, form_values, &key));
+}
 
+fn render_form_control(
+    ui: &mut egui::Ui,
+    field: &turin_daemon_protocol::UiFormField,
+    form_values: &mut BTreeMap<String, String>,
+    key: &str,
+) {
+    let kind = normalized_field_kind(field);
     if !field.options.is_empty() {
         let labels = field
             .options
             .iter()
             .map(form_value_string)
             .collect::<Vec<_>>();
-        let current = form_values.get(&key).cloned().unwrap_or_default();
+        let current = form_values.get(key).cloned().unwrap_or_default();
         let mut selected = labels
             .iter()
             .position(|label| *label == current)
             .unwrap_or_default();
         ui.add(cast::Select::new(&mut selected, labels.clone()).width(240.0));
         if let Some(label) = labels.get(selected) {
-            form_values.insert(key, label.clone());
+            form_values.insert(key.to_string(), label.clone());
         }
         return;
     }
 
     if matches!(kind.as_str(), "bool" | "boolean" | "checkbox" | "switch") {
         let mut checked = form_values
-            .get(&key)
+            .get(key)
             .is_some_and(|value| matches!(value.as_str(), "true" | "1" | "yes" | "on"));
         ui.add(cast::Checkbox::new(&mut checked, ""));
-        form_values.insert(key, checked.to_string());
+        form_values.insert(key.to_string(), checked.to_string());
         return;
     }
 
-    let value = form_values.get_mut(&key).expect("form value initialized");
+    let value = form_values.get_mut(key).expect("form value initialized");
     if kind == "textarea" || kind == "markdown" {
         ui.add(
             cast::TextArea::new(value)
@@ -1136,14 +1210,6 @@ fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
     } else {
         cast::Intent::Info
     }
-}
-
-fn work_item_selection_summary(item_count: usize, selected_index: usize) -> String {
-    if item_count == 0 {
-        return "Rows 0-0 of 0".to_string();
-    }
-    let selected = selected_index.saturating_add(1).min(item_count);
-    format!("Rows 1-{item_count} of {item_count} · selected {selected}")
 }
 
 fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
@@ -1611,15 +1677,6 @@ mod tests {
                 if screen_id_at(&app, screen_index) == Some("intake")
         ));
         assert_eq!(find_focus_target(&app, "unknown"), None);
-    }
-
-    #[test]
-    fn work_item_selection_summary_names_rows_and_selection() {
-        assert_eq!(
-            work_item_selection_summary(12, 4),
-            "Rows 1-12 of 12 · selected 5"
-        );
-        assert_eq!(work_item_selection_summary(0, 4), "Rows 0-0 of 0");
     }
 
     #[test]

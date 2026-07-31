@@ -230,6 +230,7 @@ struct TurinDesktopApp {
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
     ui_active_pane: Option<String>,
+    ui_open_disclosures: BTreeMap<String, bool>,
     ui_form_values: BTreeMap<String, String>,
     ui_selected_list_items: BTreeMap<String, String>,
     ui_list_requests: BTreeMap<String, UiListRequest>,
@@ -368,6 +369,7 @@ impl TurinDesktopApp {
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
             ui_active_pane: None,
+            ui_open_disclosures: BTreeMap::new(),
             ui_form_values: BTreeMap::new(),
             ui_selected_list_items: BTreeMap::new(),
             ui_list_requests: BTreeMap::new(),
@@ -1646,12 +1648,13 @@ impl TurinDesktopApp {
         depth: usize,
     ) {
         for item in items {
-            let selected = Some(item.opens.as_str()) == current_screen_id;
+            let descendant_selected = menu_descendant_opens(item, current_screen_id);
+            let selected = Some(item.opens.as_str()) == current_screen_id && !descendant_selected;
             ui.horizontal(|ui| {
                 ui.add_space(depth as f32 * 14.0);
                 if ui
                     .add(
-                        cast::MenuItem::new(item.label.clone())
+                        cast::MenuItem::new(harness_ui::menu_item_label(app, item))
                             .selected(selected)
                             .intent(if selected {
                                 cast::Intent::Primary
@@ -1684,6 +1687,7 @@ impl TurinDesktopApp {
             lists: &self.ui_lists,
             requested_lists: &self.requested_ui_lists,
             list_errors: &self.ui_list_errors,
+            open_disclosures: &mut self.ui_open_disclosures,
             form_values: &mut self.ui_form_values,
             selected_list_items: &mut self.ui_selected_list_items,
         };
@@ -2711,6 +2715,7 @@ impl TurinDesktopApp {
                     lists: &self.ui_lists,
                     requested_lists: &self.requested_ui_lists,
                     list_errors: &self.ui_list_errors,
+                    open_disclosures: &mut self.ui_open_disclosures,
                     form_values: &mut self.ui_form_values,
                     selected_list_items: &mut self.ui_selected_list_items,
                 };
@@ -2799,44 +2804,29 @@ impl TurinDesktopApp {
             return;
         };
 
-        let mut close = false;
         let mut pane_event = None;
-        let response = egui::Modal::new(egui::Id::new(format!(
-            "harness_ui_pane:{}:{}",
-            app.id, pane.id
-        )))
-        .show(ui.ctx(), |ui| {
-            ui.set_min_width(560.0);
-            let mut render_state = harness_ui::HarnessRenderState {
-                lists: &self.ui_lists,
-                requested_lists: &self.requested_ui_lists,
-                list_errors: &self.ui_list_errors,
-                form_values: &mut self.ui_form_values,
-                selected_list_items: &mut self.ui_selected_list_items,
-            };
-            pane_event = harness_ui::render_harness_pane(ui, app, &pane, &mut render_state);
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            if ui
-                .add(
-                    cast::Button::new("Close Pane")
-                        .size(cast::Size::Small)
-                        .variant(cast::Variant::Ghost),
-                )
-                .clicked()
-            {
-                close = true;
-            }
-        });
+        let mut open = true;
+        cast::Sheet::new(&mut open, format!("harness_ui_pane:{}:{}", app.id, pane.id))
+            .title(pane.title.clone())
+            .width(520.0)
+            .show(ui.ctx(), |ui, _sheet| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    let mut render_state = harness_ui::HarnessRenderState {
+                        lists: &self.ui_lists,
+                        requested_lists: &self.requested_ui_lists,
+                        list_errors: &self.ui_list_errors,
+                        open_disclosures: &mut self.ui_open_disclosures,
+                        form_values: &mut self.ui_form_values,
+                        selected_list_items: &mut self.ui_selected_list_items,
+                    };
+                    pane_event = harness_ui::render_harness_pane(ui, app, &pane, &mut render_state);
+                });
+            });
 
-        if response.should_close() {
-            close = true;
-        }
         if let Some(event) = pane_event {
             self.handle_harness_ui_event(app, event);
         }
-        if close {
+        if !open {
             self.ui_active_pane = None;
         }
     }
@@ -3790,6 +3780,15 @@ fn paint_app_canvas(ui: &mut egui::Ui) {
     );
 }
 
+fn menu_descendant_opens(item: &UiMenuItem, current_screen_id: Option<&str>) -> bool {
+    let Some(current_screen_id) = current_screen_id else {
+        return false;
+    };
+    item.items.iter().any(|child| {
+        child.opens == current_screen_id || menu_descendant_opens(child, Some(current_screen_id))
+    })
+}
+
 fn default_operator_metric_groups(
     summary: &DefaultOperatorConsoleSummary,
 ) -> Vec<DefaultOperatorMetricGroup> {
@@ -3915,6 +3914,28 @@ mod tests {
         assert_eq!(DEFAULT_OPERATOR_GUIDANCE_TITLE, "Custom Apps");
         assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("focused screens"));
         assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("lists, forms, reports"));
+    }
+
+    #[test]
+    fn nested_menu_prefers_the_matching_child() {
+        let item = UiMenuItem {
+            label: "Work".to_string(),
+            opens: "approvals".to_string(),
+            id: None,
+            icon: None,
+            badge: None,
+            items: vec![UiMenuItem {
+                label: "Approvals".to_string(),
+                opens: "approvals".to_string(),
+                id: None,
+                icon: None,
+                badge: None,
+                items: Vec::new(),
+            }],
+        };
+
+        assert!(menu_descendant_opens(&item, Some("approvals")));
+        assert!(!menu_descendant_opens(&item, Some("overview")));
     }
 
     #[test]
