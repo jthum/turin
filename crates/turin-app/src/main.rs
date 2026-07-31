@@ -1428,7 +1428,7 @@ impl TurinDesktopApp {
         egui::Panel::top("default_shell_top").show_inside(ui, |ui| {
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Turin").size(26.0).strong());
+                themed_heading(ui, "Turin", 26.0);
                 ui.add_space(10.0);
                 self.render_connection_status_inline(ui);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1524,8 +1524,8 @@ impl TurinDesktopApp {
         app: &UiAppRecord,
     ) {
         ui.add_space(10.0);
-        ui.label(RichText::new("Turin").size(28.0).strong());
-        ui.label(RichText::new("Operator Console").weak());
+        themed_heading(ui, "Turin", 28.0);
+        themed_muted(ui, "Operator Console");
         ui.add_space(12.0);
         self.render_connection_status_compact(ui);
         ui.add_space(16.0);
@@ -1533,7 +1533,7 @@ impl TurinDesktopApp {
         ui.add_space(16.0);
 
         if apps.len() > 1 {
-            ui.label(RichText::new("Apps").strong());
+            themed_strong(ui, "Apps");
             ui.add_space(6.0);
             for (index, candidate) in apps.iter().enumerate() {
                 let selected = candidate.id == app.id;
@@ -1559,7 +1559,7 @@ impl TurinDesktopApp {
             ui.add_space(16.0);
         }
 
-        ui.label(RichText::new("Navigation").strong());
+        themed_strong(ui, "Navigation");
         ui.add_space(6.0);
         let current_screen_id = self.active_ui_screen_id(app);
         if app.menus.is_empty() {
@@ -1583,7 +1583,7 @@ impl TurinDesktopApp {
         } else {
             for menu in &app.menus {
                 ui.add_space(6.0);
-                ui.label(RichText::new(menu.title.clone()).weak().strong());
+                themed_strong(ui, menu.title.clone());
                 ui.add_space(4.0);
                 self.render_operator_menu_items(
                     ui,
@@ -1702,7 +1702,7 @@ impl TurinDesktopApp {
 
     fn render_operator_topline(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(ui_app_title(app)).size(36.0).strong());
+            themed_heading(ui, ui_app_title(app), 36.0);
             ui.add_space(8.0);
             ui.add(
                 cast::Badge::new(freshness_label(self.dashboard.snapshot_freshness()))
@@ -1714,7 +1714,7 @@ impl TurinDesktopApp {
             && let Some(about) = &definition.about
         {
             ui.add_space(6.0);
-            ui.label(RichText::new(about.clone()).weak());
+            themed_muted(ui, about.clone());
         }
     }
 
@@ -1740,7 +1740,7 @@ impl TurinDesktopApp {
             }));
         });
         ui.add_space(4.0);
-        ui.label(RichText::new(self.dashboard.connection_target.clone()).weak());
+        themed_muted(ui, self.dashboard.connection_target.clone());
     }
 
     fn render_theme_controls(&mut self, ui: &mut egui::Ui) {
@@ -1806,7 +1806,7 @@ impl TurinDesktopApp {
     fn render_runtime_tools_panel(&mut self, ui: &mut egui::Ui) {
         cast::Panel::new().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading("Runtime Tools");
+                themed_heading(ui, "Runtime Tools", 24.0);
                 ui.add_space(8.0);
                 if ui
                     .add(
@@ -2675,11 +2675,7 @@ impl TurinDesktopApp {
         let summary = DefaultOperatorConsoleSummary::from_dashboard(&self.dashboard);
 
         cast::Panel::new().show(ui, |ui| {
-            ui.label(
-                RichText::new(DEFAULT_OPERATOR_EMPTY_TITLE)
-                    .size(34.0)
-                    .strong(),
-            );
+            themed_heading(ui, DEFAULT_OPERATOR_EMPTY_TITLE, 34.0);
             ui.add_space(8.0);
             ui.label(DEFAULT_OPERATOR_EMPTY_BODY);
             ui.add_space(12.0);
@@ -2689,7 +2685,7 @@ impl TurinDesktopApp {
                         .intent(freshness_intent(self.dashboard.snapshot_freshness()))
                         .status_dot(),
                 );
-                ui.label(RichText::new(summary.target.clone()).weak());
+                themed_muted(ui, summary.target.clone());
             });
         });
 
@@ -2698,12 +2694,12 @@ impl TurinDesktopApp {
         ui.columns(groups.len(), |columns| {
             for (column, group) in columns.iter_mut().zip(groups) {
                 cast::Panel::new().show(column, |ui| {
-                    ui.label(RichText::new(group.title).size(20.0).strong());
+                    themed_heading(ui, group.title, 20.0);
                     ui.add_space(6.0);
                     for (label, value) in group.metrics {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(value.to_string()).size(24.0).strong());
-                            ui.label(RichText::new(label).weak());
+                            themed_heading(ui, value.to_string(), 24.0);
+                            themed_muted(ui, label);
                         });
                     }
                 });
@@ -2712,15 +2708,11 @@ impl TurinDesktopApp {
 
         ui.add_space(12.0);
         cast::Panel::new().show(ui, |ui| {
-            ui.label(
-                RichText::new(DEFAULT_OPERATOR_GUIDANCE_TITLE)
-                    .size(20.0)
-                    .strong(),
-            );
+            themed_heading(ui, DEFAULT_OPERATOR_GUIDANCE_TITLE, 20.0);
             ui.add_space(6.0);
             ui.label(DEFAULT_OPERATOR_GUIDANCE_BODY);
             ui.add_space(8.0);
-            ui.label(RichText::new(DEFAULT_OPERATOR_INTRO).weak());
+            themed_muted(ui, DEFAULT_OPERATOR_INTRO);
         });
     }
 
@@ -3755,12 +3747,23 @@ impl eframe::App for TurinDesktopApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.sync_theme(ui.ctx());
+        paint_app_canvas(ui);
         if self.dashboard.ui.apps().next().is_some() {
             self.render_operator_shell(ui);
         } else {
             self.render_default_shell(ui);
         }
     }
+}
+
+fn paint_app_canvas(ui: &mut egui::Ui) {
+    let theme = cast::theme_for_ui(ui);
+    ui.visuals_mut().override_text_color = Some(theme.colors.text);
+    ui.painter().rect_filled(
+        ui.max_rect(),
+        egui::CornerRadius::ZERO,
+        theme.colors.background,
+    );
 }
 
 fn default_operator_metric_groups(

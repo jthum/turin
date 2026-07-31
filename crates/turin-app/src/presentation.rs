@@ -14,9 +14,49 @@ pub(super) fn clamp_index(current: usize, len: usize) -> usize {
 
 pub(super) fn detail_kv(ui: &mut egui::Ui, key: &str, value: impl ToString) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(key).strong());
+        themed_strong(ui, key);
         ui.label(value.to_string());
     });
+}
+
+pub(super) fn themed_heading(ui: &mut egui::Ui, text: impl Into<String>, size: f32) {
+    let text = themed_heading_text(ui, text, size);
+    ui.label(text);
+}
+
+pub(super) fn themed_heading_text(
+    ui: &mut egui::Ui,
+    text: impl Into<String>,
+    size: f32,
+) -> RichText {
+    RichText::new(text.into())
+        .size(size)
+        .strong()
+        .color(cast::theme_for_ui(ui).colors.text)
+}
+
+pub(super) fn themed_strong(ui: &mut egui::Ui, text: impl Into<String>) {
+    let text = themed_strong_text(ui, text);
+    ui.label(text);
+}
+
+pub(super) fn themed_strong_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
+    RichText::new(text.into())
+        .strong()
+        .color(cast::theme_for_ui(ui).colors.text)
+}
+
+pub(super) fn themed_muted(ui: &mut egui::Ui, text: impl Into<String>) {
+    let text = themed_muted_text(ui, text);
+    ui.label(text);
+}
+
+pub(super) fn themed_muted_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
+    RichText::new(text.into()).color(cast::theme_for_ui(ui).colors.text_muted)
+}
+
+pub(super) fn themed_danger_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
+    RichText::new(text.into()).color(cast::theme_for_ui(ui).colors.danger_family.emphasis)
 }
 
 pub(super) fn ui_app_title(app: &UiAppRecord) -> String {

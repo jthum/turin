@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use eframe::egui::{self, RichText};
+use eframe::egui;
 use serde_json::{Map, Value};
 use turin_daemon_protocol::{
     UiActionNode, UiActivityNode, UiBadgeIntent, UiChartNode, UiDetailNode, UiFormNode, UiListNode,
@@ -25,7 +25,10 @@ pub(super) use turin_ui_core::{
     ui_screen_index_for_target as screen_index_for_target,
 };
 
-use crate::presentation::{status_intent, truncate_for_list, ui_app_title};
+use crate::presentation::{
+    status_intent, themed_danger_text, themed_heading, themed_muted, themed_muted_text,
+    themed_strong, truncate_for_list, ui_app_title,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum HarnessUiEvent {
@@ -88,7 +91,7 @@ pub(super) fn render_harness_app(
 
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(ui_app_title(app));
+            themed_heading(ui, ui_app_title(app), 28.0);
             ui.add_space(8.0);
         });
 
@@ -105,7 +108,7 @@ pub(super) fn render_harness_app(
 
         if let Some(screen) = screens.get(*screen_index) {
             ui.horizontal_wrapped(|ui| {
-                ui.heading(screen.title.clone());
+                themed_heading(ui, screen.title.clone(), 24.0);
             });
             ui.add_space(8.0);
             let mut context = HarnessRenderContext {
@@ -139,7 +142,7 @@ pub(super) fn render_harness_screen_content(
     if let Some(screen) = screens.get(*screen_index) {
         cast::Panel::new().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.heading(screen.title.clone());
+                themed_heading(ui, screen.title.clone(), 24.0);
             });
             ui.add_space(12.0);
             let mut context = HarnessRenderContext {
@@ -167,7 +170,7 @@ pub(super) fn render_harness_pane(
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     ui.horizontal_wrapped(|ui| {
-        ui.heading(pane.title.clone());
+        themed_heading(ui, pane.title.clone(), 24.0);
     });
     ui.add_space(8.0);
     if pane.nodes.is_empty() {
@@ -206,7 +209,7 @@ fn render_screen_nav(
     let current_screen_id = screens.get(*screen_index).map(|screen| screen.id.as_str());
     for menu in &app.menus {
         cast::Panel::new().show(ui, |ui| {
-            ui.label(RichText::new(menu.title.clone()).strong());
+            themed_strong(ui, menu.title.clone());
             ui.add_space(6.0);
             render_menu_items(ui, app, &menu.items, current_screen_id, 0, event);
         });
@@ -310,7 +313,7 @@ fn render_section(
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(section.title.clone());
+            themed_heading(ui, section.title.clone(), 22.0);
             render_node_badge(ui, context.app, section.id.as_deref());
         });
         ui.add_space(8.0);
@@ -386,7 +389,7 @@ fn node_title_with_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) 
 fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRenderContext<'_, '_>) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(list.title.clone()).strong());
+            themed_strong(ui, list.title.clone());
             render_node_badge(ui, context.app, list.id.as_deref());
         });
         ui.add_space(8.0);
@@ -456,8 +459,7 @@ fn render_work_items(
         .map(|field| sorted_field_label(field, &list.sort))
         .collect::<Vec<_>>();
     let mut columns = columns;
-    columns.insert(0, String::new());
-    columns.push("action".to_string());
+    columns.insert(0, "Open".to_string());
     let selected_index =
         work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
             .unwrap_or(0);
@@ -465,13 +467,11 @@ fn render_work_items(
         selected_list_items.insert(list_key.to_string(), work_item_key(item));
     }
 
-    ui.label(
-        RichText::new(work_item_selection_summary(
-            items.items.len(),
-            selected_index,
-        ))
-        .weak(),
+    let selection_summary = themed_muted_text(
+        ui,
+        work_item_selection_summary(items.items.len(), selected_index),
     );
+    ui.label(selection_summary);
     ui.add_space(4.0);
 
     cast::Table::new(columns)
@@ -511,23 +511,12 @@ fn render_work_items(
                     row.text(truncate_for_list(&work_item_field_label(item, field), 80));
                 }
             }
-            row.cell(|ui| {
-                if item.action.is_some() {
-                    ui.add(
-                        cast::Badge::new(work_item_action_marker(item))
-                            .intent(cast::Intent::Warning)
-                            .variant(cast::Variant::Subtle),
-                    );
-                } else {
-                    ui.label(RichText::new(work_item_action_marker(item)).weak());
-                }
-            });
         });
 
     if let Some(item) = items.items.get(selected_index) {
         ui.add_space(10.0);
         cast::Panel::new().show(ui, |ui| {
-            ui.label(RichText::new("Selected item").strong());
+            themed_strong(ui, "Selected item");
             ui.add_space(6.0);
             render_work_item_detail(ui, item, event);
         });
@@ -554,9 +543,9 @@ fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
                     .intent(status_intent(&item.status))
                     .status_dot(),
             );
-            ui.label(RichText::new(item.title.clone()).strong());
+            themed_strong(ui, item.title.clone());
             ui.add(cast::Badge::new(item.kind.clone()).variant(cast::Variant::Outline));
-            ui.label(RichText::new(format!("updated {}", item.updated_at)).weak());
+            themed_muted(ui, format!("updated {}", item.updated_at));
         });
     }
 }
@@ -617,7 +606,7 @@ fn render_worklist_snapshot(
 
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(8.0);
-        ui.label(RichText::new("Highest priority pending item").strong());
+        themed_strong(ui, "Highest priority pending item");
         render_work_item_detail(ui, next, event);
     }
 }
@@ -637,10 +626,10 @@ fn render_work_item_detail(
         ui.add(cast::Badge::new(format!("priority {}", item.priority)));
     });
     ui.add_space(6.0);
-    ui.label(RichText::new(item.title.clone()).size(18.0).strong());
+    themed_heading(ui, item.title.clone(), 18.0);
     if let Some(reason) = item.pause_reason.as_ref() {
         ui.add_space(6.0);
-        ui.label(RichText::new(format!("Pause reason: {reason}")).weak());
+        themed_muted(ui, format!("Pause reason: {reason}"));
     }
     if let Some(prompt) = item.prompt.as_ref() {
         ui.add_space(6.0);
@@ -649,7 +638,7 @@ fn render_work_item_detail(
     if item.action.is_some() {
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Requires confirmation.").weak());
+            themed_muted(ui, "Requires confirmation.");
             if ui
                 .add(
                     cast::Button::new("Review Action")
@@ -666,7 +655,8 @@ fn render_work_item_detail(
     }
     if let Some(reason) = item.failure_reason.as_ref() {
         ui.add_space(6.0);
-        ui.label(RichText::new(reason.clone()).color(egui::Color32::from_rgb(255, 171, 145)));
+        let text = themed_danger_text(ui, reason.clone());
+        ui.label(text);
     }
     ui.add_space(6.0);
     ui.collapsing("Details", |ui| {
@@ -685,7 +675,7 @@ fn render_work_item_detail(
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             for (label, value) in work_item_timeline_labels(item) {
-                ui.label(RichText::new(format!("{label}: {value}")).weak());
+                themed_muted(ui, format!("{label}: {value}"));
             }
         });
         if let Some(metadata) = item.metadata.as_ref() {
@@ -709,7 +699,7 @@ fn render_activity(
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(activity.title.clone()).strong());
+            themed_strong(ui, activity.title.clone());
             render_node_badge(ui, app, activity.id.as_deref());
         });
         ui.add_space(8.0);
@@ -748,7 +738,7 @@ fn render_detail(
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(detail.title.clone()).strong());
+            themed_strong(ui, detail.title.clone());
             render_node_badge(ui, app, detail.id.as_deref());
         });
         ui.add_space(8.0);
@@ -807,7 +797,7 @@ fn render_form(
 ) {
     cast::Panel::new().show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(form.title.clone()).strong());
+            themed_strong(ui, form.title.clone());
             render_node_badge(ui, app, form.id.as_deref());
         });
         ui.add_space(8.0);
@@ -853,7 +843,7 @@ fn render_form_field(
 
     let kind = normalized_field_kind(field);
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(field.label.clone()).strong());
+        themed_strong(ui, field.label.clone());
         if field.required.unwrap_or(false) {
             ui.add(cast::Badge::new("required").intent(cast::Intent::Warning));
         }
@@ -1056,7 +1046,7 @@ fn render_worklist_report(
 
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(10.0);
-        ui.label(RichText::new("Next highest-priority pending item").strong());
+        themed_strong(ui, "Next highest-priority pending item");
         render_work_item_detail(ui, next, event);
     }
 }
@@ -1133,10 +1123,6 @@ fn work_item_action_event(item: &WorkItemDetail) -> Option<HarnessUiEvent> {
         params: action.params.clone().unwrap_or(Value::Null),
         confirm: true,
     })
-}
-
-fn work_item_action_marker(item: &WorkItemDetail) -> &'static str {
-    if item.action.is_some() { "action" } else { "-" }
 }
 
 fn unsupported_source_message(surface: &str, source: &str) -> String {
@@ -1530,18 +1516,6 @@ mod tests {
                 confirm: true,
             })
         );
-    }
-
-    #[test]
-    fn work_item_action_marker_names_action_availability() {
-        let mut item = test_work_item(1, "REL-1", "Approve release");
-        assert_eq!(work_item_action_marker(&item), "-");
-
-        item.action = Some(ScheduleActionParams {
-            name: "release.approve_next".to_string(),
-            params: None,
-        });
-        assert_eq!(work_item_action_marker(&item), "action");
     }
 
     #[test]
