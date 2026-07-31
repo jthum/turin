@@ -11,7 +11,7 @@ use turin_control_client::{
     AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
     SessionDetail, SessionSummary, TaskStatus,
 };
-use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, WorkItemList};
+use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiMenuItem, WorkItemList};
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
@@ -170,8 +170,8 @@ fn visible_ui_list_requests(
 
 fn configure_cast_theme(ctx: &egui::Context) {
     cast::install_cast_fonts(ctx);
-    let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Dark)
-        .with_primary(Color32::from_rgb(38, 166, 194))
+    let theme = cast::ThemeSeed::for_mode(cast::ThemeMode::Light)
+        .with_primary(Color32::from_rgb(22, 126, 118))
         .with_density(30.0, 8.0)
         .resolve();
     cast::set_theme(ctx, theme);
@@ -301,13 +301,18 @@ impl TurinDesktopApp {
         let profile_draft = connection_options
             .current_profile_draft()
             .unwrap_or_else(|_| ConnectionProfileDraft::default());
+        let tab = if dashboard.ui.apps().next().is_some() {
+            TabKind::UiApps
+        } else {
+            TabKind::Connections
+        };
         Self {
             dashboard,
             controller,
             connection_options,
             profile_catalog,
             active_profile,
-            tab: TabKind::Connections,
+            tab,
             profile_index: 0,
             recent_draft_index: 0,
             ui_app_index: 0,
@@ -1417,6 +1422,277 @@ impl TurinDesktopApp {
                 ui.label("Loading runtime health...");
             }
         });
+    }
+
+    fn render_operator_shell(&mut self, ui: &mut egui::Ui) {
+        self.request_selected_ui_lists(false);
+        let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
+        self.ui_app_index = clamp_index(self.ui_app_index, apps.len());
+        let Some(app) = apps.get(self.ui_app_index).cloned() else {
+            self.render_default_operator_console(ui);
+            return;
+        };
+
+        egui::Panel::left("operator_shell_nav")
+            .resizable(false)
+            .exact_size(292.0)
+            .show_inside(ui, |ui| {
+                self.render_operator_sidebar(ui, &apps, &app);
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ScrollArea::vertical().show(ui, |ui| {
+                self.render_operator_stage(ui, &app);
+            });
+        });
+    }
+
+    fn render_operator_sidebar(
+        &mut self,
+        ui: &mut egui::Ui,
+        apps: &[UiAppRecord],
+        app: &UiAppRecord,
+    ) {
+        ui.add_space(10.0);
+        ui.label(RichText::new("Turin").size(28.0).strong());
+        ui.label(RichText::new("Operator Console").weak());
+        ui.add_space(12.0);
+        self.render_connection_status_compact(ui);
+        ui.add_space(16.0);
+
+        if apps.len() > 1 {
+            ui.label(RichText::new("Apps").strong());
+            ui.add_space(6.0);
+            for (index, candidate) in apps.iter().enumerate() {
+                let selected = candidate.id == app.id;
+                if ui
+                    .add(
+                        cast::MenuItem::new(ui_app_title(candidate))
+                            .selected(selected)
+                            .intent(if selected {
+                                cast::Intent::Primary
+                            } else {
+                                cast::Intent::Neutral
+                            }),
+                    )
+                    .clicked()
+                {
+                    self.ui_app_index = index;
+                    self.open_harness_screen(
+                        candidate,
+                        harness_ui::default_screen_index(candidate),
+                    );
+                }
+            }
+            ui.add_space(16.0);
+        }
+
+        ui.label(RichText::new("Navigation").strong());
+        ui.add_space(6.0);
+        let current_screen_id = self.active_ui_screen_id(app);
+        if app.menus.is_empty() {
+            for (index, screen) in app.screens.values().enumerate() {
+                let selected = Some(screen.id.as_str()) == current_screen_id.as_deref();
+                if ui
+                    .add(
+                        cast::MenuItem::new(screen.title.clone())
+                            .selected(selected)
+                            .intent(if selected {
+                                cast::Intent::Primary
+                            } else {
+                                cast::Intent::Neutral
+                            }),
+                    )
+                    .clicked()
+                {
+                    self.open_harness_screen(app, index);
+                }
+            }
+        } else {
+            for menu in &app.menus {
+                ui.add_space(6.0);
+                ui.label(RichText::new(menu.title.clone()).weak().strong());
+                ui.add_space(4.0);
+                self.render_operator_menu_items(
+                    ui,
+                    app,
+                    &menu.items,
+                    current_screen_id.as_deref(),
+                    0,
+                );
+            }
+        }
+
+        ui.add_space(18.0);
+        if ui
+            .add(
+                cast::Button::new("Refresh Data")
+                    .size(cast::Size::Small)
+                    .variant(cast::Variant::Outline),
+            )
+            .clicked()
+        {
+            self.request_selected_ui_lists(true);
+        }
+
+        ui.add_space(10.0);
+        ui.collapsing("Runtime Tools", |ui| {
+            ui.label(RichText::new("Diagnostics are hidden from the operator path.").weak());
+            ui.add_space(6.0);
+            if let Some(health) = self.dashboard.health.as_ref() {
+                detail_kv(ui, "Agents", health.agent_count);
+                detail_kv(
+                    ui,
+                    "Tasks",
+                    health.active_task_count + health.queued_task_count,
+                );
+                detail_kv(ui, "Issues", health.issue_count);
+            }
+        });
+    }
+
+    fn render_operator_menu_items(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &UiAppRecord,
+        items: &[UiMenuItem],
+        current_screen_id: Option<&str>,
+        depth: usize,
+    ) {
+        for item in items {
+            let selected = Some(item.opens.as_str()) == current_screen_id;
+            ui.horizontal(|ui| {
+                ui.add_space(depth as f32 * 14.0);
+                if ui
+                    .add(
+                        cast::MenuItem::new(item.label.clone())
+                            .selected(selected)
+                            .intent(if selected {
+                                cast::Intent::Primary
+                            } else {
+                                cast::Intent::Neutral
+                            }),
+                    )
+                    .clicked()
+                    && let Some(screen_index) =
+                        harness_ui::screen_index_for_target(app, &item.opens)
+                {
+                    self.open_harness_screen(app, screen_index);
+                }
+            });
+            if !item.items.is_empty() {
+                self.render_operator_menu_items(ui, app, &item.items, current_screen_id, depth + 1);
+            }
+        }
+    }
+
+    fn render_operator_stage(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        self.render_operator_topline(ui, app);
+        ui.add_space(14.0);
+        self.render_operator_feedback(ui);
+        ui.add_space(8.0);
+
+        let mut screen_index = self
+            .ui_screen_indices
+            .get(&app.id)
+            .copied()
+            .unwrap_or_else(|| harness_ui::default_screen_index(app));
+        let mut render_state = harness_ui::HarnessRenderState {
+            lists: &self.ui_lists,
+            requested_lists: &self.requested_ui_lists,
+            list_errors: &self.ui_list_errors,
+            form_values: &mut self.ui_form_values,
+            selected_list_items: &mut self.ui_selected_list_items,
+        };
+        let event = harness_ui::render_harness_screen_content(
+            ui,
+            app,
+            &mut screen_index,
+            &mut render_state,
+        );
+        self.ui_screen_indices.insert(app.id.clone(), screen_index);
+        if let Some(event) = event {
+            self.handle_harness_ui_event(app, event);
+        }
+
+        self.render_pending_harness_ui_action(ui, &app.id);
+        self.render_latest_harness_action_result(ui, app);
+        self.render_latest_harness_action_failure(ui, app);
+        self.render_active_harness_pane(ui, app);
+    }
+
+    fn render_operator_topline(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(ui_app_title(app)).size(36.0).strong());
+            ui.add_space(8.0);
+            ui.add(
+                cast::Badge::new(freshness_label(self.dashboard.snapshot_freshness()))
+                    .intent(freshness_intent(self.dashboard.snapshot_freshness()))
+                    .status_dot(),
+            );
+        });
+        if let Some(definition) = &app.definition
+            && let Some(about) = &definition.about
+        {
+            ui.add_space(6.0);
+            ui.label(RichText::new(about.clone()).weak());
+        }
+    }
+
+    fn render_connection_status_compact(&self, ui: &mut egui::Ui) {
+        let ready = self
+            .dashboard
+            .health
+            .as_ref()
+            .is_some_and(|health| health.ready);
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                cast::Badge::new(if ready { "Connected" } else { "Degraded" })
+                    .intent(if ready {
+                        cast::Intent::Success
+                    } else {
+                        cast::Intent::Warning
+                    })
+                    .status_dot(),
+            );
+            ui.add(cast::Badge::new(match self.dashboard.connection_kind {
+                ConnectionKind::Local => "Local",
+                ConnectionKind::Remote => "Remote",
+            }));
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new(self.dashboard.connection_target.clone()).weak());
+    }
+
+    fn render_operator_feedback(&self, ui: &mut egui::Ui) {
+        if let Some(error) = &self.dashboard.last_error {
+            ui.add(
+                cast::Alert::new("Runtime attention needed")
+                    .body(error.clone())
+                    .intent(cast::Intent::Danger),
+            );
+            ui.add_space(8.0);
+        }
+        if let Some(info) = &self.dashboard.last_info {
+            ui.add(
+                cast::Alert::new("Recent update")
+                    .body(info.clone())
+                    .intent(cast::Intent::Info),
+            );
+            ui.add_space(8.0);
+        }
+    }
+
+    fn active_ui_screen_id(&self, app: &UiAppRecord) -> Option<String> {
+        let screen_index = self
+            .ui_screen_indices
+            .get(&app.id)
+            .copied()
+            .unwrap_or_else(|| harness_ui::default_screen_index(app));
+        app.screens
+            .values()
+            .nth(screen_index)
+            .map(|screen| screen.id.clone())
     }
 
     fn render_tab_bar(&mut self, ui: &mut egui::Ui) {
@@ -3325,6 +3601,11 @@ impl eframe::App for TurinDesktopApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.dashboard.ui.apps().next().is_some() {
+            self.render_operator_shell(ui);
+            return;
+        }
+
         let ready = self
             .dashboard
             .health

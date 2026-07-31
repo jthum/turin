@@ -14,11 +14,10 @@ use turin_ui_core::{
     ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
-    ui_list_filter_fields, ui_list_sort_fields, ui_sorted_field_label as sorted_field_label,
-    ui_worklist_request, unsupported_ui_source_message, work_item_field_label,
-    work_item_index_by_key, work_item_key, worklist_chart_group_field, worklist_chart_group_label,
-    worklist_count_percent_label, worklist_group_counts, worklist_highest_priority_pending_item,
-    worklist_status_counts,
+    ui_sorted_field_label as sorted_field_label, ui_worklist_request,
+    unsupported_ui_source_message, work_item_field_label, work_item_index_by_key, work_item_key,
+    worklist_chart_group_field, worklist_chart_group_label, worklist_count_percent_label,
+    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -91,9 +90,6 @@ pub(super) fn render_harness_app(
         ui.horizontal_wrapped(|ui| {
             ui.heading(ui_app_title(app));
             ui.add_space(8.0);
-            ui.add(cast::Badge::new(app.id.clone()).variant(cast::Variant::Outline));
-            ui.add(cast::Badge::new(format!("{} screens", screens.len())));
-            ui.add(cast::Badge::new(format!("{} menus", app.menus.len())));
         });
 
         if let Some(definition) = &app.definition
@@ -129,6 +125,50 @@ pub(super) fn render_harness_app(
             ui.label("This app has no declared screens yet.");
         }
     });
+
+    event
+}
+
+pub(super) fn render_harness_screen_content(
+    ui: &mut egui::Ui,
+    app: &UiAppRecord,
+    screen_index: &mut usize,
+    state: &mut HarnessRenderState<'_>,
+) -> Option<HarnessUiEvent> {
+    let mut event = None;
+    let screens = app.screens.values().collect::<Vec<_>>();
+    *screen_index = if screens.is_empty() {
+        0
+    } else {
+        (*screen_index).min(screens.len() - 1)
+    };
+
+    if let Some(screen) = screens.get(*screen_index) {
+        cast::Panel::new().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(screen.title.clone());
+                if let Some(presentation) = &screen.presentation {
+                    ui.add(
+                        cast::Badge::new(presentation.clone())
+                            .intent(cast::Intent::Info)
+                            .variant(cast::Variant::Subtle),
+                    );
+                }
+            });
+            ui.add_space(12.0);
+            let mut context = HarnessRenderContext {
+                app,
+                state,
+                event: &mut event,
+            };
+            render_nodes(ui, &screen.nodes, &mut context);
+        });
+    } else {
+        cast::EmptyState::new("No screens declared")
+            .body("This harness app exists, but it has not declared any screens yet.")
+            .intent(cast::Intent::Info)
+            .show(ui, |_| {});
+    }
 
     event
 }
@@ -233,11 +273,6 @@ fn menu_item_label(app: &UiAppRecord, item: &UiMenuItem) -> String {
     let mut parts = vec![item.label.clone()];
     if let Some(badge) = badge_text(app.badges.get(&item.opens), item.badge.as_deref()) {
         parts.push(badge);
-    }
-    if !item.items.is_empty() {
-        let count = item.items.len();
-        let label = if count == 1 { "subitem" } else { "subitems" };
-        parts.push(format!("{count} {label}"));
     }
     parts.join(" · ")
 }
@@ -375,15 +410,12 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(list.title.clone()).strong());
             render_node_badge(ui, context.app, list.id.as_deref());
-            ui.add(cast::Badge::new(list.source.clone()).variant(cast::Variant::Outline));
             if let Some(intent) = &list.intent {
-                ui.add(cast::Badge::new(intent.clone()).intent(cast::Intent::Info));
-            }
-            if let Some(render_as) = &list.render_as {
-                ui.add(cast::Badge::new(format!("as {render_as}")));
-            }
-            for meta in list_metadata_badges(list) {
-                ui.add(cast::Badge::new(meta).variant(cast::Variant::Outline));
+                ui.add(
+                    cast::Badge::new(intent.clone())
+                        .intent(cast::Intent::Info)
+                        .variant(cast::Variant::Subtle),
+                );
             }
         });
         ui.add_space(8.0);
@@ -704,8 +736,6 @@ fn render_activity(
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(activity.title.clone()).strong());
             render_node_badge(ui, app, activity.id.as_deref());
-            ui.add(cast::Badge::new("activity").variant(cast::Variant::Outline));
-            ui.add(cast::Badge::new(activity.source.clone()).variant(cast::Variant::Outline));
         });
         ui.add_space(8.0);
 
@@ -745,11 +775,6 @@ fn render_detail(
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(detail.title.clone()).strong());
             render_node_badge(ui, app, detail.id.as_deref());
-            ui.add(cast::Badge::new("detail").variant(cast::Variant::Outline));
-            ui.add(cast::Badge::new(detail.source.clone()).variant(cast::Variant::Outline));
-            if let Some(item_id) = detail.item_id.as_ref() {
-                ui.add(cast::Badge::new(format!("item {item_id}")));
-            }
         });
         ui.add_space(8.0);
 
@@ -809,7 +834,6 @@ fn render_form(
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(form.title.clone()).strong());
             render_node_badge(ui, app, form.id.as_deref());
-            ui.add(cast::Badge::new("form").variant(cast::Variant::Outline));
         });
         ui.add_space(8.0);
         for field in &form.fields {
@@ -819,8 +843,8 @@ fn render_form(
         ui.add_space(8.0);
         if ui
             .add(
-                cast::Button::new(format!("Run {}", form.action))
-                    .variant(cast::Variant::Outline)
+                cast::Button::new("Submit")
+                    .variant(cast::Variant::Solid)
                     .intent(cast::Intent::Primary),
             )
             .clicked()
@@ -855,8 +879,6 @@ fn render_form_field(
     let kind = normalized_field_kind(field);
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(field.label.clone()).strong());
-        ui.add(cast::Badge::new(field.name.clone()));
-        ui.add(cast::Badge::new(kind.clone()).variant(cast::Variant::Outline));
         if field.required.unwrap_or(false) {
             ui.add(cast::Badge::new("required").intent(cast::Intent::Warning));
         }
@@ -954,16 +976,8 @@ fn render_report(
         report.id.as_deref(),
         &report.title,
     ))
-    .description(format!("Report data from {}", report.source))
+    .description(report.prompt.clone().unwrap_or_default())
     .show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.add(cast::Badge::new("report").variant(cast::Variant::Outline));
-            ui.add(cast::Badge::new(report.source.clone()).variant(cast::Variant::Outline));
-        });
-        if let Some(prompt) = &report.prompt {
-            ui.add_space(8.0);
-            ui.add(cast::Markdown::new(prompt.clone()).selectable(true));
-        }
         ui.add_space(8.0);
 
         let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
@@ -997,30 +1011,19 @@ fn render_chart(
     chart: &UiChartNode,
     state: &HarnessRenderState<'_>,
 ) {
-    let source = chart
-        .render_as
-        .as_ref()
-        .map(|render_as| format!("{} as {}", chart.source, render_as))
-        .unwrap_or_else(|| chart.source.clone());
     let intent = chart.intent.as_deref().unwrap_or("status_breakdown");
     cast::ReportSection::new(node_title_with_badge(
         app,
         chart.id.as_deref(),
         &chart.title,
     ))
-    .description(format!("Chart data from {source}; intent {intent}"))
+    .description(format!(
+        "Grouped by {}",
+        worklist_chart_group_label(chart.intent.as_deref())
+    ))
     .show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.add(cast::Badge::new("chart").variant(cast::Variant::Outline));
             ui.add(cast::Badge::new(intent.to_string()).intent(cast::Intent::Info));
-            ui.add(
-                cast::Badge::new(format!(
-                    "grouped by {}",
-                    worklist_chart_group_label(chart.intent.as_deref())
-                ))
-                .variant(cast::Variant::Subtle),
-            );
-            ui.add(cast::Badge::new(source.clone()).variant(cast::Variant::Outline));
         });
         ui.add_space(8.0);
 
@@ -1171,18 +1174,19 @@ fn unsupported_source_message(surface: &str, source: &str) -> String {
     unsupported_ui_source_message(surface, source, "the desktop app")
 }
 
+#[cfg(test)]
 fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
     let mut meta = Vec::new();
     if !list.filter.is_empty() {
         meta.push(format!(
             "where {}",
-            ui_list_filter_fields(&list.filter).join(",")
+            turin_ui_core::ui_list_filter_fields(&list.filter).join(",")
         ));
     }
     if !list.sort.is_empty() {
         meta.push(format!(
             "sort {}",
-            ui_list_sort_fields(&list.sort).join(",")
+            turin_ui_core::ui_list_sort_fields(&list.sort).join(",")
         ));
     }
     if let Some(limit) = list.limit {
@@ -1320,7 +1324,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_item_label_includes_badges_and_child_count() {
+    fn menu_item_label_includes_badges_without_child_count() {
         let mut app = test_app();
         app.badges = BTreeMap::from([(
             "approvals".to_string(),
@@ -1349,7 +1353,7 @@ mod tests {
             }],
         };
 
-        assert_eq!(menu_item_label(&app, &item), "Work · ready 3 · 1 subitem");
+        assert_eq!(menu_item_label(&app, &item), "Work · ready 3");
     }
 
     #[test]
