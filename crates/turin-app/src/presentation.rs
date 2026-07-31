@@ -51,6 +51,15 @@ pub(super) fn themed_muted(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.label(text);
 }
 
+pub(super) fn themed_overline(ui: &mut egui::Ui, text: impl Into<String>) {
+    ui.label(
+        RichText::new(text.into().to_ascii_uppercase())
+            .size(10.0)
+            .strong()
+            .color(cast::theme_for_ui(ui).colors.text_muted),
+    );
+}
+
 pub(super) fn themed_muted_text(ui: &mut egui::Ui, text: impl Into<String>) -> RichText {
     RichText::new(text.into()).color(cast::theme_for_ui(ui).colors.text_muted)
 }

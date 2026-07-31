@@ -252,6 +252,7 @@ struct TurinDesktopApp {
     sidebar_settings_open: bool,
     runtime_tools_open: bool,
     pending_conversation: Option<PendingConversation>,
+    pending_resume_session_id: Option<String>,
     _runtime: Arc<Runtime>,
 }
 
@@ -386,6 +387,7 @@ impl TurinDesktopApp {
             sidebar_settings_open: false,
             runtime_tools_open: false,
             pending_conversation: None,
+            pending_resume_session_id: None,
             _runtime: runtime,
         }
     }
@@ -432,10 +434,12 @@ impl TurinDesktopApp {
         self.dashboard.apply_update(update);
         if command_failed {
             self.pending_conversation = None;
+            self.pending_resume_session_id = None;
         }
         if snapshot_updated {
             self.requested_session_detail = None;
             self.complete_pending_conversation();
+            self.complete_pending_conversation_resume();
         }
         self.apply_ui_navigation_intents();
         let refreshed = self.apply_ui_refresh_intents();
@@ -1302,6 +1306,7 @@ impl TurinDesktopApp {
             prompt,
             existing_session_ids,
         });
+        self.pending_resume_session_id = None;
         self.live_session_index = usize::MAX;
         self.send_command(OperatorCommand::OpenSession { agent_id });
     }
@@ -1327,11 +1332,75 @@ impl TurinDesktopApp {
             session_id: Some(session.session_id.clone()),
         });
         if let Some(prompt) = prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            if let Some(title) = default_conversation_title_from_prompt(&prompt) {
+                self.send_command(OperatorCommand::SetSessionTitle {
+                    session_id: session.session_id.clone(),
+                    title: Some(title),
+                });
+            }
             self.send_command(OperatorCommand::SubmitPrompt {
                 session_id: session.session_id,
                 prompt,
             });
         }
+    }
+
+    fn resume_default_conversation(&mut self, session_id: String) {
+        if let Some(index) = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .position(|session| session.session_id == session_id)
+        {
+            self.live_session_index = index;
+            let live_sessions = self.dashboard.live_sessions.clone();
+            self.focus_default_session(&live_sessions);
+            return;
+        }
+        if self.pending_resume_session_id.as_deref() == Some(session_id.as_str()) {
+            return;
+        }
+        self.pending_conversation = None;
+        self.pending_resume_session_id = Some(session_id.clone());
+        self.send_command(OperatorCommand::ResumeSession { session_id });
+    }
+
+    fn complete_pending_conversation_resume(&mut self) {
+        let Some(session_id) = self.pending_resume_session_id.as_deref() else {
+            return;
+        };
+        let Some(index) = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .position(|session| session.session_id == session_id)
+        else {
+            return;
+        };
+        let session_id = self
+            .pending_resume_session_id
+            .take()
+            .expect("pending resume id was checked above");
+        self.live_session_index = index;
+        self.requested_session_detail = None;
+        self.send_command(OperatorCommand::FocusSessionStream {
+            session_id: Some(session_id),
+        });
+    }
+
+    fn default_session_needs_title(&self, session_id: &str) -> bool {
+        let already_titled = self
+            .dashboard
+            .sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .and_then(session_summary_title)
+            .is_some();
+        !already_titled
+            && self
+                .dashboard
+                .session_detail(session_id)
+                .is_some_and(|detail| detail.messages.is_empty())
     }
 
     fn selected_session(&self) -> Option<SessionSummary> {
@@ -1514,6 +1583,11 @@ impl TurinDesktopApp {
     fn render_default_shell(&mut self, ui: &mut egui::Ui) {
         let compact = operator_shell_is_compact(ui.available_width());
         let live_sessions = self.dashboard.live_sessions.clone();
+        let recent_sessions = recent_default_conversations(
+            &live_sessions,
+            &self.dashboard.sessions,
+            DEFAULT_RECENT_CONVERSATION_LIMIT,
+        );
         self.live_session_index = clamp_index(self.live_session_index, live_sessions.len());
         let selected = live_sessions.get(self.live_session_index).cloned();
 
@@ -1546,7 +1620,10 @@ impl TurinDesktopApp {
                                         cast::Button::new("New conversation")
                                             .size(cast::Size::Small)
                                             .intent(cast::Intent::Primary)
-                                            .enabled(self.pending_conversation.is_none()),
+                                            .enabled(
+                                                self.pending_conversation.is_none()
+                                                    && self.pending_resume_session_id.is_none(),
+                                            ),
                                     )
                                     .clicked()
                             {
@@ -1559,7 +1636,7 @@ impl TurinDesktopApp {
 
         if compact {
             egui::Panel::top("default_session_nav_compact").show_inside(ui, |ui| {
-                self.render_default_session_nav(ui, &live_sessions, true);
+                self.render_default_session_nav(ui, &live_sessions, &recent_sessions, true);
             });
         } else {
             let theme = cast::theme_for_ui(ui);
@@ -1573,7 +1650,7 @@ impl TurinDesktopApp {
                         .inner_margin(egui::Margin::symmetric(14, 16)),
                 )
                 .show_inside(ui, |ui| {
-                    self.render_default_session_nav(ui, &live_sessions, false);
+                    self.render_default_session_nav(ui, &live_sessions, &recent_sessions, false);
                 });
         }
 
@@ -1611,19 +1688,42 @@ impl TurinDesktopApp {
         &mut self,
         ui: &mut egui::Ui,
         live_sessions: &[LiveSession],
+        recent_sessions: &[SessionSummary],
         compact: bool,
     ) {
         let agents = self.dashboard.agents().to_vec();
         self.agent_index = clamp_index(self.agent_index, agents.len());
 
         if compact {
-            let labels = default_conversation_labels(live_sessions, &self.dashboard.sessions);
             ui.horizontal_wrapped(|ui| {
-                if !labels.is_empty() {
-                    let previous = self.live_session_index;
-                    ui.add(cast::Select::new(&mut self.live_session_index, labels).width(260.0));
-                    if self.live_session_index != previous {
-                        self.focus_default_session(live_sessions);
+                if !live_sessions.is_empty() || !recent_sessions.is_empty() {
+                    let mut labels = vec!["Choose a conversation".to_string()];
+                    labels.extend(default_conversation_labels(
+                        live_sessions,
+                        &self.dashboard.sessions,
+                    ));
+                    labels.extend(
+                        recent_sessions
+                            .iter()
+                            .enumerate()
+                            .map(|(index, session)| stored_conversation_title(session, index)),
+                    );
+                    let current = live_sessions
+                        .get(self.live_session_index)
+                        .map(|_| self.live_session_index + 1)
+                        .unwrap_or_default();
+                    let mut selected = current;
+                    ui.add(cast::Select::new(&mut selected, labels).width(280.0));
+                    if selected != current && selected > 0 {
+                        let target = selected - 1;
+                        if target < live_sessions.len() {
+                            self.live_session_index = target;
+                            self.focus_default_session(live_sessions);
+                        } else if let Some(session) =
+                            recent_sessions.get(target - live_sessions.len())
+                        {
+                            self.resume_default_conversation(session.session_id.clone());
+                        }
                     }
                 }
                 if agents.len() > 1 {
@@ -1654,7 +1754,10 @@ impl TurinDesktopApp {
                 egui::vec2(ui.available_width(), 32.0),
                 cast::Button::new("New conversation")
                     .intent(cast::Intent::Primary)
-                    .enabled(self.pending_conversation.is_none()),
+                    .enabled(
+                        self.pending_conversation.is_none()
+                            && self.pending_resume_session_id.is_none(),
+                    ),
             )
             .clicked()
         {
@@ -1662,28 +1765,49 @@ impl TurinDesktopApp {
         }
         ui.add_space(12.0);
 
-        if live_sessions.is_empty() {
-            themed_muted(ui, "Your active conversations will appear here.");
-        } else {
+        if live_sessions.is_empty() && recent_sessions.is_empty() {
+            themed_muted(ui, "Your conversations will appear here.");
+        }
+        if !live_sessions.is_empty() {
+            themed_overline(ui, "Active");
+            ui.add_space(4.0);
             let labels = default_conversation_labels(live_sessions, &self.dashboard.sessions);
             for (index, (session, label)) in live_sessions.iter().zip(labels).enumerate() {
-                if ui
-                    .add(
-                        cast::ListRow::new(label)
-                            .subtitle(session.agent_id.clone())
-                            .trailing(if session.active_tasks > 0 {
-                                "Working"
-                            } else {
-                                "Ready"
-                            })
-                            .selected(index == self.live_session_index)
-                            .size(cast::Size::Small),
-                    )
-                    .clicked()
-                    && index != self.live_session_index
-                {
+                let mut row = cast::ListRow::new(label)
+                    .selected(index == self.live_session_index)
+                    .size(cast::Size::Small);
+                if agents.len() > 1 {
+                    row = row.subtitle(session.agent_id.clone());
+                }
+                if session.active_tasks > 0 {
+                    row = row.trailing("Working");
+                }
+                if ui.add(row).clicked() && index != self.live_session_index {
                     self.live_session_index = index;
                     self.focus_default_session(live_sessions);
+                }
+            }
+        }
+        if !recent_sessions.is_empty() {
+            if !live_sessions.is_empty() {
+                ui.add_space(14.0);
+            }
+            themed_overline(ui, "Recent");
+            ui.add_space(4.0);
+            for (index, session) in recent_sessions.iter().enumerate() {
+                let pending =
+                    self.pending_resume_session_id.as_deref() == Some(session.session_id.as_str());
+                let mut row = cast::ListRow::new(stored_conversation_title(session, index))
+                    .enabled(!pending)
+                    .size(cast::Size::Small);
+                if agents.len() > 1 {
+                    row = row.subtitle(session.agent_id.clone());
+                }
+                if pending {
+                    row = row.trailing("Opening...");
+                }
+                if ui.add(row).clicked() {
+                    self.resume_default_conversation(session.session_id.clone());
                 }
             }
         }
@@ -1806,6 +1930,14 @@ impl TurinDesktopApp {
                         if response.submitted && !self.prompt_input.trim().is_empty() {
                             let prompt = mem::take(&mut self.prompt_input);
                             self.requested_session_detail = None;
+                            if self.default_session_needs_title(&session.session_id)
+                                && let Some(title) = default_conversation_title_from_prompt(&prompt)
+                            {
+                                self.send_command(OperatorCommand::SetSessionTitle {
+                                    session_id: session.session_id.clone(),
+                                    title: Some(title),
+                                });
+                            }
                             self.send_command(OperatorCommand::SubmitPrompt {
                                 session_id: session.session_id.clone(),
                                 prompt,
@@ -1822,6 +1954,17 @@ impl TurinDesktopApp {
     }
 
     fn render_default_welcome(&mut self, ui: &mut egui::Ui) {
+        if self.pending_resume_session_id.is_some() {
+            ui.add_space(48.0);
+            ui.vertical_centered(|ui| {
+                themed_heading(ui, "Opening conversation", 28.0);
+                ui.add_space(6.0);
+                themed_muted(ui, "Restoring its context and messages...");
+            });
+            ui.add_space(24.0);
+            render_conversation_loading(ui);
+            return;
+        }
         let pending = self.pending_conversation.is_some();
         let agents = self.dashboard.agents().to_vec();
         self.agent_index = clamp_index(self.agent_index, agents.len());
@@ -4161,6 +4304,7 @@ fn paint_app_canvas(ui: &mut egui::Ui) {
 }
 
 const OPERATOR_COMPACT_BREAKPOINT: f32 = 920.0;
+const DEFAULT_RECENT_CONVERSATION_LIMIT: usize = 10;
 
 fn operator_shell_is_compact(available_width: f32) -> bool {
     available_width < OPERATOR_COMPACT_BREAKPOINT
@@ -4184,6 +4328,23 @@ fn default_conversation_labels(
         .collect()
 }
 
+fn recent_default_conversations(
+    live_sessions: &[LiveSession],
+    stored_sessions: &[SessionSummary],
+    limit: usize,
+) -> Vec<SessionSummary> {
+    let live_ids = live_sessions
+        .iter()
+        .map(|session| session.session_id.as_str())
+        .collect::<BTreeSet<_>>();
+    stored_sessions
+        .iter()
+        .filter(|session| !live_ids.contains(session.session_id.as_str()))
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
 fn pending_conversation_session_index(
     pending: &PendingConversation,
     live_sessions: &[LiveSession],
@@ -4202,12 +4363,28 @@ fn default_conversation_title(
     stored_sessions
         .iter()
         .find(|stored| stored.session_id == session.session_id)
-        .and_then(|stored| stored.metadata.as_ref())
+        .and_then(session_summary_title)
+        .unwrap_or_else(|| format!("Conversation {}", index + 1))
+}
+
+fn stored_conversation_title(session: &SessionSummary, index: usize) -> String {
+    session_summary_title(session).unwrap_or_else(|| format!("Conversation {}", index + 1))
+}
+
+fn session_summary_title(session: &SessionSummary) -> Option<String> {
+    session
+        .metadata
+        .as_ref()
         .and_then(|metadata| metadata.get("title"))
         .and_then(|title| title.as_str())
-        .filter(|title| !title.trim().is_empty())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| format!("Conversation {}", index + 1))
+}
+
+fn default_conversation_title_from_prompt(prompt: &str) -> Option<String> {
+    let title = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!title.is_empty()).then(|| truncate_for_list(&title, 56))
 }
 
 fn render_conversation_loading(ui: &mut egui::Ui) {
@@ -4388,6 +4565,56 @@ mod tests {
             "Plan the migration"
         );
         assert_eq!(default_conversation_title(&live, 1, &[]), "Conversation 2");
+    }
+
+    #[test]
+    fn recent_conversations_exclude_live_sessions_and_keep_snapshot_order() {
+        let live = LiveSession {
+            agent_id: "default".to_string(),
+            slot_id: "slot-live".to_string(),
+            session_id: "live".to_string(),
+            running: true,
+            active_tasks: 0,
+            queued_tasks: 0,
+            current_request_id: None,
+            execution: turin_control_client::LiveExecution {
+                execution_id: "execution-live".to_string(),
+                context_target: serde_json::Value::Null,
+                visibility: "client".to_string(),
+                durability: "durable".to_string(),
+                write_policy: "read_write".to_string(),
+            },
+            conflict_policy: "queue".to_string(),
+        };
+        let stored = ["live", "most-recent", "older"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, session_id)| SessionSummary {
+                internal_id: index as i64,
+                session_id: session_id.to_string(),
+                agent_id: "default".to_string(),
+                metadata: None,
+                created_at: "2026-07-31T00:00:00Z".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let recent = recent_default_conversations(&[live], &stored, 1);
+
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].session_id, "most-recent");
+    }
+
+    #[test]
+    fn first_prompt_becomes_a_compact_conversation_title() {
+        assert_eq!(
+            default_conversation_title_from_prompt("  Plan\n the next   Turin release  "),
+            Some("Plan the next Turin release".to_string())
+        );
+        assert_eq!(default_conversation_title_from_prompt(" \n\t "), None);
+        assert!(
+            default_conversation_title_from_prompt(&"a".repeat(100))
+                .is_some_and(|title| title.ends_with("..."))
+        );
     }
 
     #[test]
