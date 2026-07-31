@@ -172,6 +172,11 @@ fn visible_ui_list_requests(
 }
 
 fn configure_cast_theme(ctx: &egui::Context) -> cast::ThemeSeed {
+    #[cfg(debug_assertions)]
+    ctx.global_style_mut(|style| {
+        style.debug.show_unaligned = false;
+        style.debug.warn_if_rect_changes_id = false;
+    });
     cast::install_cast_fonts(ctx);
     let seed = app_theme_seed(system_theme_mode(ctx));
     cast::set_theme(ctx, seed.clone().resolve());

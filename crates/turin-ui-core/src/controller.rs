@@ -2109,7 +2109,7 @@ async fn load_ui_list(client: &ControlClient, request: &UiListRequest) -> Result
         })
         .await?;
     let Some(worklist) = worklists.first() else {
-        return Err(anyhow!("worklist '{}' was not found", worklist_name));
+        return Ok(empty_ui_worklist(worklist_name));
     };
 
     client
@@ -2125,6 +2125,13 @@ async fn load_ui_list(client: &ControlClient, request: &UiListRequest) -> Result
             limit: request.limit,
         })
         .await
+}
+
+fn empty_ui_worklist(worklist_name: &str) -> WorkItemList {
+    WorkItemList {
+        worklist_id: worklist_name.to_string(),
+        items: Vec::new(),
+    }
 }
 
 pub async fn execute_operator_command(

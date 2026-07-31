@@ -67,8 +67,9 @@ runtime-owned UI session store, or a second daemon implementation.
    intents.
 8. `OperatorCommand::LoadUiList` resolves semantic `UiListRequest` values. Today
    only `worklists.<name>` sources load, through typed control-client worklist
-   helpers. Failures emit request-scoped `UiListFailed` updates so clients can
-   clear local loading state and render retryable fallback copy.
+   helpers. A named worklist that has not been created yet reads as an empty
+   collection; transport and query failures emit request-scoped `UiListFailed`
+   updates so clients can clear local loading state and render retryable copy.
 9. Clients can reuse stateless helpers to discover visible worklist-backed data
    requests from their own active screen/pane nodes without sharing active view
    state.
@@ -103,6 +104,8 @@ runtime-owned UI session store, or a second daemon implementation.
 - UI list load failures should stay request-scoped. The shared controller can
   identify the failed semantic request, but retry state, visible error copy, and
   cache invalidation remain client-owned.
+- A missing named worklist is an empty dynamic collection, not a load failure.
+  This lets harness screens render before the first action creates their data.
 - Worklist source validation, request-discovery, selected item key matching,
   list filter/sort field derivation, field label/sort marker display,
   default-screen target lookup, node target matching, show-target

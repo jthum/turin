@@ -25,6 +25,14 @@ fn connection_options_default_to_local_config() {
 }
 
 #[test]
+fn missing_ui_worklists_start_as_empty_collections() {
+    let items = empty_ui_worklist("release");
+
+    assert_eq!(items.worklist_id, "release");
+    assert!(items.items.is_empty());
+}
+
+#[test]
 fn connection_options_require_remote_auth_material() {
     let options = ConnectionOptions {
         config_path: None,
