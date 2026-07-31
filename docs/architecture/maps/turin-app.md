@@ -78,6 +78,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - List rows stay compact in both wide and narrow layouts. Selected-item detail
   renders below the collection in normal document flow rather than inside a
   fixed-height table row that can clip richer content.
+- Wide work-item tables size to their content up to ten visible rows, then use
+  a bounded scrolling body. A short collection must never expand its card to
+  consume the remaining page height.
 - Loading, empty, unsupported, and failed states use ordinary Cast surfaces and
   application-level copy. Transport errors and unsupported source identifiers
   may remain available as secondary technical context, but not as primary page
@@ -94,6 +97,13 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - Wide nested navigation reveals the active branch instead of permanently
   expanding every submenu. This keeps simple apps sparse while allowing deeper
   screen hierarchies without turning the sidebar into an exhaustive site map.
+- Menu `badge` values identify dynamic badge targets; they are never rendered
+  as fallback labels. Screen presentation hints likewise remain semantic input,
+  not navigation copy.
+- Secondary application controls live in a Cast settings sheet rather than a
+  permanently expanded sidebar surface.
+- Forms use a bounded reading width, and their action row follows the fields in
+  document flow rather than drifting to the edge or bottom of the page.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with

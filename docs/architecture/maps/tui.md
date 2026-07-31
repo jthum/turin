@@ -62,6 +62,8 @@ shared operator commands, and stateless target lookup belong in
 - Harness menu items are semantic navigation targets. The TUI may flatten nested
   menus into terminal navigation, but it must not mutate the harness contract to
   fit terminal layout.
+- Menu `badge` values select dynamic badge targets and screen presentation hints
+  remain semantic; neither should be emitted as literal navigation labels.
 - Dynamic UI requests are suggestions to this client. Applying `ui.open` or
   `ui.focus` changes only local TUI selection/focus state, and applying
   `ui.show` to a pane changes only local overlay state.

@@ -84,6 +84,8 @@ session state, invent renderer-specific harness APIs, or bypass
   declared screen.
 - Browser-local dynamic badge overlays may survive status refreshes, but they
   still remain client memory state and must not be persisted by `turin-web`.
+- Menu `badge` values select dynamic badge targets. The browser must not expose
+  those identifiers, or screen presentation hints, as fallback navigation copy.
 - Local and remote control connections should stay behaviorally symmetric.
 - `GET /api/apps` and `GET /api/apps/{app_id}` should expose semantic UI
   surfaces, not renderer-specific widget state.

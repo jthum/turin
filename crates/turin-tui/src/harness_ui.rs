@@ -124,7 +124,7 @@ pub fn collect_nav_items(app: &UiAppRecord) -> Vec<HarnessNavItem> {
     let mut out = Vec::new();
 
     for (index, screen) in app.screens.values().enumerate() {
-        let (badge, badge_level) = nav_badge(app, &screen.id, screen.presentation.as_deref());
+        let (badge, badge_level) = nav_badge(app, &screen.id);
         out.push(HarnessNavItem {
             label: screen.title.clone(),
             group: "Screens".to_string(),
@@ -150,7 +150,8 @@ fn collect_menu_nav_items(
     out: &mut Vec<HarnessNavItem>,
 ) {
     for item in items {
-        let (badge, badge_level) = nav_badge(app, &item.opens, item.badge.as_deref());
+        let badge_target = item.badge.as_deref().unwrap_or(&item.opens);
+        let (badge, badge_level) = nav_badge(app, badge_target);
         out.push(HarnessNavItem {
             label: item.label.clone(),
             group: group.to_string(),
@@ -167,14 +168,10 @@ fn collect_menu_nav_items(
     }
 }
 
-fn nav_badge(
-    app: &UiAppRecord,
-    target: &str,
-    fallback: Option<&str>,
-) -> (Option<String>, Option<UiNoticeLevel>) {
+fn nav_badge(app: &UiAppRecord, target: &str) -> (Option<String>, Option<UiNoticeLevel>) {
     let dynamic = app.badges.get(target);
     (
-        badge_text(dynamic, fallback),
+        badge_text(dynamic, None),
         dynamic.and_then(|badge| badge.level),
     )
 }
@@ -1933,7 +1930,7 @@ mod tests {
             .find(|item| item.label == "Release Desk")
             .expect("home screen item");
         assert_eq!(home.group, "Screens");
-        assert_eq!(home.badge.as_deref(), Some("dashboard"));
+        assert_eq!(home.badge, None);
         assert!(matches!(
             home.target,
             HarnessNavTarget::Screen { index } if screen_at(&app, index).map(|screen| screen.id.as_str()) == Some("home")
@@ -1944,7 +1941,7 @@ mod tests {
             .find(|item| item.label == "Work")
             .expect("work menu item");
         assert_eq!(work.group, "Main");
-        assert_eq!(work.badge.as_deref(), Some("approvals 3"));
+        assert_eq!(work.badge.as_deref(), Some("3"));
         assert_eq!(work.badge_level, Some(UiNoticeLevel::Info));
         assert!(
             matches!(work.target, HarnessNavTarget::Menu { ref opens } if opens == "approvals")

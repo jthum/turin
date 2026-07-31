@@ -496,17 +496,17 @@ function renderScreens() {
 
   if (!(app.menus ?? []).length) {
     for (const screen of screens) {
-      renderScreenButton(app, screen.id, screen.title, 0, screen.presentation);
+      renderScreenButton(app, screen.id, screen.title, 0, null);
     }
   }
 }
 
 function renderMenuItem(app, item, depth) {
-  renderScreenButton(app, item.opens, item.label, depth, item.badge);
+  renderScreenButton(app, item.opens, item.label, depth, item.badge || item.opens);
   for (const child of item.items ?? []) renderMenuItem(app, child, depth + 1);
 }
 
-function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
+function renderScreenButton(app, screenId, label, depth, badgeTarget) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "nav-button";
@@ -515,7 +515,7 @@ function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
   const labelNode = document.createElement("span");
   labelNode.textContent = label;
   button.append(labelNode);
-  const badge = badgeForTarget(app, screenId, fallbackBadge);
+  const badge = badgeForTarget(app, badgeTarget || screenId);
   if (badge) {
     const badgeNode = document.createElement("span");
     badgeNode.className = "nav-badge";
@@ -532,9 +532,9 @@ function renderScreenButton(app, screenId, label, depth, fallbackBadge) {
   els.screenNav.append(button);
 }
 
-function badgeForTarget(app, target, fallback) {
+function badgeForTarget(app, target) {
   const dynamic = app?.badges?.[target];
-  const text = badgeText(dynamic, fallback);
+  const text = badgeText(dynamic);
   if (!text) return null;
   return {
     text,
@@ -542,8 +542,8 @@ function badgeForTarget(app, target, fallback) {
   };
 }
 
-function badgeText(badge, fallback) {
-  const label = badge?.label || fallback || null;
+function badgeText(badge) {
+  const label = badge?.label || null;
   const hasCount = badge?.count !== undefined && badge?.count !== null;
   if (label && hasCount) return `${label} ${badge.count}`;
   if (label) return label;
@@ -1451,7 +1451,7 @@ function appendNodeBadge(container, node, app) {
 function nodeBadge(app, node) {
   if (!node?.id) return null;
   const badge = app?.badges?.[node.id];
-  const text = badgeText(badge, null);
+  const text = badgeText(badge);
   if (!text) return null;
   return {
     text,

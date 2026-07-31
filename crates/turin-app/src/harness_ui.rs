@@ -30,6 +30,10 @@ use crate::presentation::{
     truncate_for_list, ui_app_title,
 };
 
+const WORK_ITEM_TABLE_HEADER_HEIGHT: f32 = 32.0;
+const WORK_ITEM_TABLE_ROW_HEIGHT: f32 = 32.0;
+const WORK_ITEM_TABLE_VISIBLE_ROWS: usize = 10;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum HarnessUiEvent {
     OpenScreen(String),
@@ -252,14 +256,15 @@ fn render_menu_items(
 
 pub(super) fn menu_item_label(app: &UiAppRecord, item: &UiMenuItem) -> String {
     let mut parts = vec![item.label.clone()];
-    if let Some(badge) = badge_text(app.badges.get(&item.opens), item.badge.as_deref()) {
+    let badge_target = item.badge.as_deref().unwrap_or(&item.opens);
+    if let Some(badge) = badge_text(app.badges.get(badge_target), None) {
         parts.push(badge);
     }
     parts.join(" · ")
 }
 
 fn screen_nav_label(app: &UiAppRecord, screen: &turin_daemon_protocol::UiScreenIntent) -> String {
-    badge_text(app.badges.get(&screen.id), screen.presentation.as_deref())
+    badge_text(app.badges.get(&screen.id), None)
         .map(|badge| format!("{} · {badge}", screen.title))
         .unwrap_or_else(|| screen.title.clone())
 }
@@ -444,7 +449,9 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
                         filter: list.filter.clone(),
                         limit: list.limit,
                     };
-                    if let Some(items) = context.state.lists.get(&request.cache_key()) {
+                    if let Some(items) = context.state.lists.get(&request.cache_key())
+                        && !items.items.is_empty()
+                    {
                         ui.add(
                             cast::Badge::new(items.items.len().to_string())
                                 .variant(cast::Variant::Subtle),
@@ -499,7 +506,7 @@ fn render_work_items(
     event: &mut Option<HarnessUiEvent>,
 ) {
     if items.items.is_empty() {
-        render_empty_state(ui, "No matching items", &empty_list_message(list));
+        render_empty_state(ui, empty_list_title(list), &empty_list_message(list));
         return;
     }
 
@@ -542,53 +549,66 @@ fn render_work_items(
         selected_list_items.remove(list_key);
     }
 
-    cast::Table::new(columns)
-        .column_weights(column_weights)
-        .size(cast::Size::Small)
-        .selected_rows(selected_index)
-        .show(ui, items.items.len(), |row, index| {
-            let item = &items.items[index];
-            if !has_title_column {
-                row.cell(|ui| {
-                    render_work_item_title_link(
-                        ui,
-                        item,
-                        Some(index) == selected_index,
-                        list_key,
-                        selected_list_items,
-                    );
+    let table_body_height = work_item_table_body_height(items.items.len());
+    let table_height = WORK_ITEM_TABLE_HEADER_HEIGHT + table_body_height;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), table_height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            cast::Table::new(columns)
+                .column_weights(column_weights)
+                .size(cast::Size::Small)
+                .selected_rows(selected_index)
+                .sticky_header(table_body_height)
+                .show(ui, items.items.len(), |row, index| {
+                    let item = &items.items[index];
+                    if !has_title_column {
+                        row.cell(|ui| {
+                            render_work_item_title_link(
+                                ui,
+                                item,
+                                Some(index) == selected_index,
+                                list_key,
+                                selected_list_items,
+                            );
+                        });
+                    }
+                    for field in &fields {
+                        if field == "title" {
+                            row.cell(|ui| {
+                                render_work_item_title_link(
+                                    ui,
+                                    item,
+                                    Some(index) == selected_index,
+                                    list_key,
+                                    selected_list_items,
+                                );
+                            });
+                        } else if field == "status" {
+                            row.cell(|ui| {
+                                ui.add(
+                                    cast::Badge::new(item.status.clone())
+                                        .intent(status_intent(&item.status))
+                                        .status_dot(),
+                                );
+                            });
+                        } else {
+                            row.text(truncate_for_list(&work_item_field_label(item, field), 80));
+                        }
+                    }
                 });
-            }
-            for field in &fields {
-                if field == "title" {
-                    row.cell(|ui| {
-                        render_work_item_title_link(
-                            ui,
-                            item,
-                            Some(index) == selected_index,
-                            list_key,
-                            selected_list_items,
-                        );
-                    });
-                } else if field == "status" {
-                    row.cell(|ui| {
-                        ui.add(
-                            cast::Badge::new(item.status.clone())
-                                .intent(status_intent(&item.status))
-                                .status_dot(),
-                        );
-                    });
-                } else {
-                    row.text(truncate_for_list(&work_item_field_label(item, field), 80));
-                }
-            }
-        });
+        },
+    );
 
     if let Some(index) =
         work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
     {
         render_selected_work_item(ui, &items.items[index], event);
     }
+}
+
+fn work_item_table_body_height(item_count: usize) -> f32 {
+    item_count.min(WORK_ITEM_TABLE_VISIBLE_ROWS) as f32 * WORK_ITEM_TABLE_ROW_HEIGHT
 }
 
 fn render_compact_work_items(
@@ -865,7 +885,9 @@ fn render_activity(
     let trailing = request
         .as_ref()
         .and_then(|request| state.lists.get(&request.cache_key()))
-        .map(|items| format!("{} updates", items.items.len()));
+        .and_then(|items| {
+            (!items.items.is_empty()).then(|| format!("{} updates", items.items.len()))
+        });
     let mut disclosure =
         cast::Disclosure::new(&mut open, activity.title.clone()).size(cast::Size::Small);
     if let Some(trailing) = trailing {
@@ -964,13 +986,13 @@ fn render_form(
     event: &mut Option<HarnessUiEvent>,
 ) {
     cast::FormSection::new(node_title_with_badge(app, form.id.as_deref(), &form.title))
-        .width(ui.available_width().min(680.0))
+        .width(ui.available_width().min(520.0))
         .show(ui, |ui| {
             for field in &form.fields {
                 render_form_field(ui, app, form, field, form_values);
                 ui.add_space(10.0);
             }
-            cast::FormActions::new().show(ui, |ui| {
+            cast::FormActions::new().align_end(false).show(ui, |ui| {
                 if ui
                     .add(
                         cast::Button::new("Submit")
@@ -1243,10 +1265,14 @@ fn chart_bar_intent(field: &str, label: &str) -> cast::Intent {
 }
 
 fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
-    cast::EmptyState::new(title)
-        .body(body)
-        .intent(cast::Intent::Neutral)
-        .show(ui, |_| {});
+    let theme = cast::theme_for_ui(ui);
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = theme.spacing.xs;
+        ui.add_space(theme.spacing.sm);
+        themed_strong(ui, title);
+        themed_muted(ui, body);
+        ui.add_space(theme.spacing.sm);
+    });
 }
 
 fn render_loading_state(ui: &mut egui::Ui) {
@@ -1364,6 +1390,14 @@ fn empty_list_message(list: &UiListNode) -> String {
         "Items will appear here when they are available.".to_string()
     } else {
         "No items match this view right now.".to_string()
+    }
+}
+
+fn empty_list_title(list: &UiListNode) -> &'static str {
+    if list.filter.is_empty() {
+        "No items yet"
+    } else {
+        "No matching items"
     }
 }
 
@@ -1485,13 +1519,13 @@ mod tests {
     }
 
     #[test]
-    fn menu_item_label_includes_badges_without_child_count() {
+    fn menu_item_label_resolves_declared_badge_targets() {
         let mut app = test_app();
         app.badges = BTreeMap::from([(
-            "approvals".to_string(),
+            "approval-count".to_string(),
             UiBadgeIntent {
                 app_id: "release".to_string(),
-                target: "approvals".to_string(),
+                target: "approval-count".to_string(),
                 count: Some(3),
                 label: Some("ready".to_string()),
                 level: Some(UiNoticeLevel::Info),
@@ -1503,7 +1537,7 @@ mod tests {
             opens: "approvals".to_string(),
             id: None,
             icon: None,
-            badge: None,
+            badge: Some("approval-count".to_string()),
             items: vec![UiMenuItem {
                 label: "Review".to_string(),
                 opens: "review".to_string(),
@@ -1515,10 +1549,13 @@ mod tests {
         };
 
         assert_eq!(menu_item_label(&app, &item), "Work · ready 3");
+
+        app.badges.clear();
+        assert_eq!(menu_item_label(&app, &item), "Work");
     }
 
     #[test]
-    fn screen_nav_label_uses_dynamic_badge_then_presentation_fallback() {
+    fn screen_nav_label_uses_dynamic_badges_without_exposing_presentation() {
         let mut app = test_app();
         let mut screen = UiScreenIntent {
             app_id: app.id.clone(),
@@ -1528,7 +1565,7 @@ mod tests {
             nodes: Vec::new(),
         };
 
-        assert_eq!(screen_nav_label(&app, &screen), "Approvals · workflow");
+        assert_eq!(screen_nav_label(&app, &screen), "Approvals");
 
         app.badges = BTreeMap::from([(
             "approvals".to_string(),
@@ -1635,6 +1672,7 @@ mod tests {
             empty_list_message(&list),
             "Items will appear here when they are available."
         );
+        assert_eq!(empty_list_title(&list), "No items yet");
 
         list.filter.insert("kind".to_string(), json!("approval"));
         list.filter.insert("status".to_string(), json!("pending"));
@@ -1643,6 +1681,7 @@ mod tests {
             empty_list_message(&list),
             "No items match this view right now."
         );
+        assert_eq!(empty_list_title(&list), "No matching items");
     }
 
     #[test]
@@ -1668,6 +1707,13 @@ mod tests {
             ),
             "Lane: ops  ·  Release: 2026.06  ·  Priority: 4"
         );
+    }
+
+    #[test]
+    fn work_item_table_height_is_content_sized_and_bounded() {
+        assert_eq!(work_item_table_body_height(1), 32.0);
+        assert_eq!(work_item_table_body_height(4), 128.0);
+        assert_eq!(work_item_table_body_height(25), 320.0);
     }
 
     #[test]
