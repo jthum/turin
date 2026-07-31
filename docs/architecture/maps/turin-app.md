@@ -57,6 +57,10 @@ worklist/default-screen/node-target derivation belong outside this crate.
   diagnostics dashboard. Diagnostics belong behind deliberate secondary
   navigation and ordinary surfaces should not expose socket paths, internal
   session ids, or raw protocol payloads.
+- The default conversation transcript presents user and agent interaction, not
+  the hidden system prompt. Tool-only turns remain visible through Cast tool
+  call surfaces, and active execution keeps an in-thread progress affordance
+  until the next agent response arrives.
 - Opening a conversation and attaching its first prompt is client orchestration
   over typed session commands. The pending selection is transient client state;
   durable conversation state remains in the runtime.

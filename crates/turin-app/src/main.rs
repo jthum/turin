@@ -1864,7 +1864,25 @@ impl TurinDesktopApp {
             render_conversation_loading(ui);
             return;
         };
-        if detail.messages.is_empty() {
+        let rendered_messages = detail
+            .messages
+            .iter()
+            .filter_map(|message| {
+                let body = session_message_text(&message.content);
+                let tools = detail
+                    .tool_executions
+                    .iter()
+                    .filter(|tool| tool.turn_index == message.turn_index)
+                    .collect::<Vec<_>>();
+                default_conversation_message_is_visible(
+                    &message.role,
+                    !body.is_empty(),
+                    !tools.is_empty(),
+                )
+                .then_some((message, body, tools))
+            })
+            .collect::<Vec<_>>();
+        if rendered_messages.is_empty() && session.active_tasks == 0 {
             cast::EmptyState::new("Ready when you are")
                 .body("Ask a question, delegate a task, or describe an outcome below.")
                 .icon("✦")
@@ -1876,24 +1894,24 @@ impl TurinDesktopApp {
         cast::MessageThread::new()
             .width(ui.available_width())
             .show(ui, |thread| {
-                for message in &detail.messages {
-                    let body = session_message_text(&message.content);
-                    if body.is_empty() {
-                        continue;
-                    }
-                    let title = match message.role.as_str() {
-                        "user" => "You".to_string(),
-                        "assistant" => default_agent_label(&session.agent_id),
-                        "system" => "System".to_string(),
-                        _ => "Tool".to_string(),
+                let last_message_is_assistant = rendered_messages
+                    .last()
+                    .is_some_and(|(message, _, _)| message.role.eq_ignore_ascii_case("assistant"));
+                let message_count = rendered_messages.len();
+                for (index, (message, body, tools)) in rendered_messages.into_iter().enumerate() {
+                    let is_assistant = message.role.eq_ignore_ascii_case("assistant");
+                    let title = if message.role.eq_ignore_ascii_case("user") {
+                        "You".to_string()
+                    } else if is_assistant {
+                        default_agent_label(&session.agent_id)
+                    } else {
+                        "Tool".to_string()
                     };
                     let chat = cast::ChatMessage::new(chat_role_from_label(&message.role), body)
-                        .title(title);
-                    let tools = detail
-                        .tool_executions
-                        .iter()
-                        .filter(|tool| tool.turn_index == message.turn_index)
-                        .collect::<Vec<_>>();
+                        .title(title)
+                        .streaming(
+                            session.active_tasks > 0 && is_assistant && index + 1 == message_count,
+                        );
                     if tools.is_empty() {
                         thread.message(chat);
                     } else {
@@ -1917,6 +1935,13 @@ impl TurinDesktopApp {
                             }
                         });
                     }
+                }
+                if session.active_tasks > 0 && !last_message_is_assistant {
+                    thread.message(
+                        cast::ChatMessage::assistant("")
+                            .title(default_agent_label(&session.agent_id))
+                            .streaming(true),
+                    );
                 }
             });
     }
@@ -2382,7 +2407,7 @@ impl TurinDesktopApp {
             feedback.push((
                 format!("runtime-error:{error}"),
                 cast::Toast::new("Something went wrong")
-                    .body(error.clone())
+                    .body("Open Runtime Tools for technical details.")
                     .intent(cast::Intent::Danger),
             ));
         }
@@ -4416,6 +4441,10 @@ fn default_conversation_title_from_prompt(prompt: &str) -> Option<String> {
     (!title.is_empty()).then(|| truncate_for_list(&title, 56))
 }
 
+fn default_conversation_message_is_visible(role: &str, has_body: bool, has_tools: bool) -> bool {
+    !role.eq_ignore_ascii_case("system") && (has_body || has_tools)
+}
+
 fn render_conversation_loading(ui: &mut egui::Ui) {
     let width = ui.available_width();
     for factor in [0.68, 0.92, 0.54] {
@@ -4671,6 +4700,24 @@ mod tests {
             default_conversation_title_from_prompt(&"a".repeat(100))
                 .is_some_and(|title| title.ends_with("..."))
         );
+    }
+
+    #[test]
+    fn default_conversation_hides_system_copy_but_keeps_tool_only_turns() {
+        assert!(!default_conversation_message_is_visible(
+            "system", true, false
+        ));
+        assert!(!default_conversation_message_is_visible(
+            "assistant",
+            false,
+            false
+        ));
+        assert!(default_conversation_message_is_visible(
+            "assistant",
+            false,
+            true
+        ));
+        assert!(default_conversation_message_is_visible("user", true, false));
     }
 
     #[test]
