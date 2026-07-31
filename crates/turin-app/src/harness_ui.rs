@@ -11,7 +11,7 @@ use turin_ui_core::{
     DEFAULT_UI_ACTIVITY_LIMIT as ACTIVITY_LIMIT, DEFAULT_UI_CHART_LIMIT as CHART_LIMIT,
     DEFAULT_UI_DETAIL_LIMIT as DETAIL_LIMIT, DEFAULT_UI_REPORT_LIMIT as REPORT_LIMIT, UiAppRecord,
     UiListRequest, is_named_worklist_ui_source, parse_ui_form_value as parse_form_value,
-    ui_badge_text as badge_text, ui_data_load_failed_message, ui_data_not_loaded_message,
+    ui_badge_text as badge_text, ui_data_load_failed_message,
     ui_form_default_value as default_form_value, ui_form_field_kind as normalized_field_kind,
     ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
     ui_sorted_field_label as sorted_field_label, ui_worklist_request,
@@ -351,7 +351,8 @@ fn render_action_group(
     actions: &[&UiActionNode],
     event: &mut Option<HarnessUiEvent>,
 ) {
-    cast::ControlGroup::new().show(ui, |ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = cast::theme_for_ui(ui).spacing.sm;
         for (index, action) in actions.iter().enumerate() {
             render_action_button(ui, app, action, index == 0, event);
         }
@@ -481,7 +482,7 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
                     if let Some(error) = context.state.list_errors.get(&key) {
                         render_load_failed(ui, "list", error);
                     } else {
-                        ui.label(ui_data_not_loaded_message("list"));
+                        render_loading_state(ui);
                     }
                 }
             }
@@ -545,16 +546,23 @@ fn render_work_items(
         .column_weights(column_weights)
         .size(cast::Size::Small)
         .selected_rows(selected_index)
-        .expanded_rows(selected_index)
-        .expanded_row_height(218.0)
-        .show_with_details(
-            ui,
-            items.items.len(),
-            |row, index| {
-                let item = &items.items[index];
-                if !has_title_column {
+        .show(ui, items.items.len(), |row, index| {
+            let item = &items.items[index];
+            if !has_title_column {
+                row.cell(|ui| {
+                    render_work_item_title_link(
+                        ui,
+                        item,
+                        Some(index) == selected_index,
+                        list_key,
+                        selected_list_items,
+                    );
+                });
+            }
+            for field in &fields {
+                if field == "title" {
                     row.cell(|ui| {
-                        render_work_item_title_button(
+                        render_work_item_title_link(
                             ui,
                             item,
                             Some(index) == selected_index,
@@ -562,41 +570,25 @@ fn render_work_items(
                             selected_list_items,
                         );
                     });
-                }
-                for field in &fields {
-                    if field == "title" {
-                        row.cell(|ui| {
-                            render_work_item_title_button(
-                                ui,
-                                item,
-                                Some(index) == selected_index,
-                                list_key,
-                                selected_list_items,
-                            );
-                        });
-                    } else if field == "status" {
-                        row.cell(|ui| {
-                            ui.add(
-                                cast::Badge::new(item.status.clone())
-                                    .intent(status_intent(&item.status))
-                                    .status_dot(),
-                            );
-                        });
-                    } else {
-                        row.text(truncate_for_list(&work_item_field_label(item, field), 80));
-                    }
-                }
-            },
-            |detail, index| {
-                detail.show(|ui| {
-                    ui.vertical(|ui| {
-                        if let Some(item) = items.items.get(index) {
-                            render_work_item_detail(ui, item, event);
-                        }
+                } else if field == "status" {
+                    row.cell(|ui| {
+                        ui.add(
+                            cast::Badge::new(item.status.clone())
+                                .intent(status_intent(&item.status))
+                                .status_dot(),
+                        );
                     });
-                });
-            },
-        );
+                } else {
+                    row.text(truncate_for_list(&work_item_field_label(item, field), 80));
+                }
+            }
+        });
+
+    if let Some(index) =
+        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
+    {
+        render_selected_work_item(ui, &items.items[index], event);
+    }
 }
 
 fn render_compact_work_items(
@@ -635,11 +627,20 @@ fn render_compact_work_items(
     if let Some(index) =
         work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
     {
-        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
-        ui.add(cast::Separator::new());
-        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
-        render_work_item_detail(ui, &items.items[index], event);
+        render_selected_work_item(ui, &items.items[index], event);
     }
+}
+
+fn render_selected_work_item(
+    ui: &mut egui::Ui,
+    item: &WorkItemDetail,
+    event: &mut Option<HarnessUiEvent>,
+) {
+    let spacing = cast::theme_for_ui(ui).spacing.md;
+    ui.add_space(spacing);
+    ui.add(cast::Separator::new());
+    ui.add_space(spacing);
+    render_work_item_detail(ui, item, event);
 }
 
 fn compact_item_subtitle(item: &WorkItemDetail, fields: &[String]) -> String {
@@ -663,7 +664,7 @@ fn compact_item_subtitle(item: &WorkItemDetail, fields: &[String]) -> String {
         .join("  ·  ")
 }
 
-fn render_work_item_title_button(
+fn render_work_item_title_link(
     ui: &mut egui::Ui,
     item: &WorkItemDetail,
     selected: bool,
@@ -671,19 +672,14 @@ fn render_work_item_title_button(
     selected_list_items: &mut BTreeMap<String, String>,
 ) {
     if ui
-        .add(
-            cast::Button::new(truncate_for_list(&item.title, 48))
-                .size(cast::Size::Small)
-                .intent(if selected {
-                    cast::Intent::Primary
-                } else {
-                    cast::Intent::Neutral
-                })
-                .variant(cast::Variant::Ghost),
-        )
+        .add(cast::Link::new(truncate_for_list(&item.title, 48)).size(cast::Size::Small))
         .clicked()
     {
-        selected_list_items.insert(list_key.to_string(), work_item_key(item));
+        if selected {
+            selected_list_items.remove(list_key);
+        } else {
+            selected_list_items.insert(list_key.to_string(), work_item_key(item));
+        }
     }
 }
 
@@ -703,7 +699,11 @@ fn render_worklist_activity(ui: &mut egui::Ui, items: &WorkItemList) {
     for item in recent.into_iter().take(8) {
         ui.add(
             cast::ListRow::new(item.title.clone())
-                .subtitle(format!("{} · updated {}", item.kind, item.updated_at))
+                .subtitle(format!(
+                    "{} · Updated {}",
+                    item.kind,
+                    compact_timestamp(&item.updated_at)
+                ))
                 .leading("•")
                 .trailing(item.status.clone())
                 .size(cast::Size::Small),
@@ -734,9 +734,11 @@ fn render_worklist_detail(
         {
             render_work_item_detail(ui, item, event);
         } else {
-            ui.label(format!(
-                "Work item '{item_id}' was not found in the loaded detail data."
-            ));
+            render_empty_state(
+                ui,
+                "Item not found",
+                "It may have moved or no longer match this view.",
+            );
         }
         return;
     }
@@ -749,21 +751,7 @@ fn render_worklist_snapshot(
     items: &WorkItemList,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    let counts = worklist_status_counts(items);
-
-    ui.horizontal_wrapped(|ui| {
-        ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
-        ui.add(cast::Badge::new(format!("{} pending", counts.pending)).intent(cast::Intent::Info));
-        ui.add(
-            cast::Badge::new(format!("{} claimed", counts.claimed)).intent(cast::Intent::Warning),
-        );
-        ui.add(cast::Badge::new(format!("{} done", counts.done)).intent(cast::Intent::Success));
-        if counts.failed > 0 {
-            ui.add(
-                cast::Badge::new(format!("{} failed", counts.failed)).intent(cast::Intent::Danger),
-            );
-        }
-    });
+    render_worklist_summary(ui, items, false);
 
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(8.0);
@@ -899,7 +887,7 @@ fn render_activity(
                 if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "activity", error);
                 } else {
-                    ui.label(ui_data_not_loaded_message("activity"));
+                    render_loading_state(ui);
                 }
             }
         }
@@ -938,7 +926,7 @@ fn render_detail(
                     if let Some(error) = state.list_errors.get(&key) {
                         render_load_failed(ui, "detail", error);
                     } else {
-                        ui.label(ui_data_not_loaded_message("detail"));
+                        render_loading_state(ui);
                     }
                 }
             }
@@ -952,18 +940,20 @@ fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
 
 fn render_unsupported_source(ui: &mut egui::Ui, surface: &str, source: &str) {
     ui.add(
-        cast::Alert::new(format!("Unsupported {surface} source"))
-            .body(unsupported_source_message(surface, source))
+        cast::Alert::new("This view is not available")
+            .body(format!("The desktop app cannot render this {surface} yet."))
             .intent(cast::Intent::Warning),
-    );
+    )
+    .on_hover_text(unsupported_source_message(surface, source));
 }
 
 fn render_load_failed(ui: &mut egui::Ui, surface: &str, error: &str) {
     ui.add(
-        cast::Alert::new(format!("Failed to load {surface} data"))
-            .body(ui_data_load_failed_message(surface, error))
+        cast::Alert::new("Could not load this view")
+            .body("Refresh the view to try again.")
             .intent(cast::Intent::Danger),
-    );
+    )
+    .on_hover_text(ui_data_load_failed_message(surface, error));
 }
 
 fn render_form(
@@ -1139,7 +1129,7 @@ fn render_report(
                 if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "report", error);
                 } else {
-                    ui.label(ui_data_not_loaded_message("report"));
+                    render_loading_state(ui);
                 }
             }
         }
@@ -1173,7 +1163,7 @@ fn render_chart(
                 if let Some(error) = state.list_errors.get(&key) {
                     render_load_failed(ui, "chart", error);
                 } else {
-                    ui.label(ui_data_not_loaded_message("chart"));
+                    render_loading_state(ui);
                 }
             }
         }
@@ -1185,26 +1175,7 @@ fn render_worklist_report(
     items: &WorkItemList,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    let counts = worklist_status_counts(items);
-    ui.horizontal_wrapped(|ui| {
-        ui.add(cast::Badge::new(format!("{} loaded", items.items.len())));
-        ui.add(cast::Badge::new(format!("{} pending", counts.pending)).intent(cast::Intent::Info));
-        ui.add(
-            cast::Badge::new(format!("{} claimed", counts.claimed)).intent(cast::Intent::Warning),
-        );
-        ui.add(cast::Badge::new(format!("{} done", counts.done)).intent(cast::Intent::Success));
-        if counts.failed > 0 {
-            ui.add(
-                cast::Badge::new(format!("{} failed", counts.failed)).intent(cast::Intent::Danger),
-            );
-        }
-        if counts.other > 0 {
-            ui.add(cast::Badge::new(format!("{} other", counts.other)));
-        }
-    });
-
     if items.items.is_empty() {
-        ui.add_space(8.0);
         render_empty_state(
             ui,
             "No report data yet",
@@ -1212,6 +1183,8 @@ fn render_worklist_report(
         );
         return;
     }
+
+    render_worklist_summary(ui, items, true);
 
     if let Some(next) = worklist_highest_priority_pending_item(items) {
         ui.add_space(10.0);
@@ -1291,6 +1264,64 @@ fn render_loading_state(ui: &mut egui::Ui) {
             .width(width * 0.58)
             .size(cast::Size::Small),
     );
+}
+
+fn render_worklist_summary(ui: &mut egui::Ui, items: &WorkItemList, include_other: bool) {
+    let counts = worklist_status_counts(items);
+    ui.horizontal_wrapped(|ui| {
+        let summary_badge = |label: String, intent: cast::Intent| {
+            cast::Badge::new(label)
+                .intent(intent)
+                .variant(cast::Variant::Subtle)
+        };
+        let noun = if items.items.len() == 1 {
+            "item"
+        } else {
+            "items"
+        };
+        ui.add(summary_badge(
+            format!("{} {noun}", items.items.len()),
+            cast::Intent::Neutral,
+        ));
+        if counts.pending > 0 {
+            ui.add(summary_badge(
+                format!("{} pending", counts.pending),
+                cast::Intent::Info,
+            ));
+        }
+        if counts.claimed > 0 {
+            ui.add(summary_badge(
+                format!("{} claimed", counts.claimed),
+                cast::Intent::Warning,
+            ));
+        }
+        if counts.done > 0 {
+            ui.add(summary_badge(
+                format!("{} done", counts.done),
+                cast::Intent::Success,
+            ));
+        }
+        if counts.failed > 0 {
+            ui.add(summary_badge(
+                format!("{} failed", counts.failed),
+                cast::Intent::Danger,
+            ));
+        }
+        if include_other && counts.other > 0 {
+            ui.add(summary_badge(
+                format!("{} other", counts.other),
+                cast::Intent::Neutral,
+            ));
+        }
+    });
+}
+
+fn compact_timestamp(value: &str) -> String {
+    let Some((date, time)) = value.split_once('T') else {
+        return value.to_string();
+    };
+    let time = time.get(..5).unwrap_or(time);
+    format!("{date} {time}")
 }
 
 fn work_item_action_event(item: &WorkItemDetail) -> Option<HarnessUiEvent> {
@@ -1637,6 +1668,16 @@ mod tests {
             ),
             "Lane: ops  ·  Release: 2026.06  ·  Priority: 4"
         );
+    }
+
+    #[test]
+    fn compact_timestamp_keeps_activity_dates_readable() {
+        assert_eq!(
+            compact_timestamp("2026-07-31T14:08:42.391Z"),
+            "2026-07-31 14:08"
+        );
+        assert_eq!(compact_timestamp("just now"), "just now");
+        assert_eq!(compact_timestamp("2026-07-31T9"), "2026-07-31 9");
     }
 
     #[test]

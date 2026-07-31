@@ -71,6 +71,13 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - Semantic sections establish hierarchy but do not automatically become nested
   panels. Use bounded Cast surfaces for data, forms, reports, and detail while
   keeping prose and action groups in the page flow.
+- List rows stay compact in both wide and narrow layouts. Selected-item detail
+  renders below the collection in normal document flow rather than inside a
+  fixed-height table row that can clip richer content.
+- Loading, empty, unsupported, and failed states use ordinary Cast surfaces and
+  application-level copy. Transport errors and unsupported source identifiers
+  may remain available as secondary technical context, but not as primary page
+  content.
 - Internal source names, report prompts, public ids, and query mechanics are
   not ordinary application copy. Keep them out of default surfaces and expose
   them only through deliberate technical detail or Runtime Tools.
@@ -159,9 +166,12 @@ add a second layer of panel chrome. Top-level semantic sections remain
 lightweight; lists and detail use Cast cards, forms and reports use their
 dedicated Cast compositions, and loading uses skeletons. Narrow lists degrade
 from tables to selectable Cast list rows with the declared fields summarized
-beneath each title. Default list columns favor application content (`title`,
+beneath each title. Wide tables use lightweight title links and place selected
+detail beneath the table at its natural height. Default list columns favor application content (`title`,
 `status`, `kind`, `priority`) rather than exposing public ids, and report
-prompts remain execution metadata rather than rendered prose.
+prompts remain execution metadata rather than rendered prose. Worklist summary
+badges omit zero-value states and use item language rather than loader language;
+routine loading and retry states remain visually quiet.
 
 When no harness declares an app surface, the desktop client renders a focused
 conversation workspace built from Cast. It provides agent selection when
