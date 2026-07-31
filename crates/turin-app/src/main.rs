@@ -2187,7 +2187,7 @@ impl TurinDesktopApp {
                     .is_some_and(|menu| !menu.title.eq_ignore_ascii_case("main"));
             for menu in &app.menus {
                 if show_menu_titles {
-                    themed_muted(ui, menu.title.clone());
+                    themed_overline(ui, menu.title.clone());
                     ui.add_space(5.0);
                 }
                 self.render_operator_menu_items(
@@ -2285,7 +2285,7 @@ impl TurinDesktopApp {
                     self.open_harness_screen(app, screen_index);
                 }
             });
-            if !item.items.is_empty() {
+            if !item.items.is_empty() && (selected || descendant_selected) {
                 self.render_operator_menu_items(ui, app, &item.items, current_screen_id, depth + 1);
             }
         }
@@ -2340,37 +2340,46 @@ impl TurinDesktopApp {
         ui.add_space(8.0);
         let (connection, intent) = self.operator_connection_summary();
         let mut open = self.sidebar_settings_open;
-        cast::Disclosure::new(&mut open, "Settings")
-            .trailing_status_dot(connection, intent)
-            .size(cast::Size::Small)
-            .show(ui, |ui| {
-                self.render_theme_controls(ui);
-                ui.add_space(6.0);
-                if ui
-                    .add(
-                        cast::Button::new("Refresh data")
-                            .size(cast::Size::Small)
-                            .variant(cast::Variant::Ghost),
-                    )
-                    .clicked()
-                {
-                    self.request_selected_ui_lists(true);
-                }
-                if ui
-                    .add(
-                        cast::Button::new(if self.runtime_tools_open {
-                            "Close runtime tools"
-                        } else {
-                            "Open runtime tools"
-                        })
+        let ready_local = self
+            .dashboard
+            .health
+            .as_ref()
+            .is_some_and(|health| health.ready)
+            && self.dashboard.connection_kind == ConnectionKind::Local;
+        let disclosure = cast::Disclosure::new(&mut open, "Settings").size(cast::Size::Small);
+        let disclosure = if ready_local {
+            disclosure
+        } else {
+            disclosure.trailing_status_dot(connection, intent)
+        };
+        disclosure.show(ui, |ui| {
+            self.render_theme_controls(ui);
+            ui.add_space(6.0);
+            if ui
+                .add(
+                    cast::Button::new("Refresh data")
                         .size(cast::Size::Small)
                         .variant(cast::Variant::Ghost),
-                    )
-                    .clicked()
-                {
-                    self.runtime_tools_open = !self.runtime_tools_open;
-                }
-            });
+                )
+                .clicked()
+            {
+                self.request_selected_ui_lists(true);
+            }
+            if ui
+                .add(
+                    cast::Button::new(if self.runtime_tools_open {
+                        "Close runtime tools"
+                    } else {
+                        "Open runtime tools"
+                    })
+                    .size(cast::Size::Small)
+                    .variant(cast::Variant::Ghost),
+                )
+                .clicked()
+            {
+                self.runtime_tools_open = !self.runtime_tools_open;
+            }
+        });
         self.sidebar_settings_open = open;
     }
 

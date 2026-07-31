@@ -91,6 +91,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - The harness app shell must remain usable below desktop-sidebar width. Compact
   mode replaces the permanent sidebar with app selection and scrollable screen
   tabs while preserving client-local navigation state.
+- Wide nested navigation reveals the active branch instead of permanently
+  expanding every submenu. This keeps simple apps sparse while allowing deeper
+  screen hierarchies without turning the sidebar into an exhaustive site map.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with
