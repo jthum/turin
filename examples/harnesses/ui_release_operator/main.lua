@@ -3,7 +3,7 @@ local RELEASE_BINDING = "worklists." .. RELEASE_WORKLIST
 
 local app = ui.app("Release Operator", {
   id = "release-operator",
-  about = "A UI contract fixture for release workflow clients.",
+  about = "Coordinate release approvals, intake, readiness, and notes from one focused operator console.",
   icon = "rocket",
 })
 
@@ -171,10 +171,10 @@ action.define("release.fail_diagnostic", function(_ctx, params)
 end)
 
 app:home("Release Desk", function(screen)
-  screen:text("Coordinate a release from a client-rendered harness UI. Seed demo work first, then approve or reject pending approvals.")
+  screen:text("Track release approvals, seed demo work, and review readiness without leaving the operator console.")
 
-  screen:section("Operator Actions", function(section)
-    section:action("Seed Demo Work", "release.seed_demo_work", {
+  screen:section("Release Commands", function(section)
+    section:action("Seed Approval Work", "release.seed_demo_work", {
       id = "seed-demo-work",
       params = {
         release = "2026.06",
@@ -182,31 +182,25 @@ app:home("Release Desk", function(screen)
         count = 4,
       },
     })
-    section:action("Approve Next Approval", "release.approve_next", {
+    section:action("Approve Next", "release.approve_next", {
       id = "approve-next",
       confirm = true,
       params = {
         release = "2026.06",
       },
     })
-    section:action("Reject Next Approval", "release.reject_next", {
+    section:action("Reject Next", "release.reject_next", {
       id = "reject-next",
       confirm = true,
       params = {
         release = "2026.06",
       },
     })
-    section:action("Show Release Notes", "release.show_notes", {
+    section:action("Open Release Notes", "release.show_notes", {
       id = "show-release-notes",
     })
     section:action("Open Intake Form", "release.open_intake", {
       id = "open-intake-form",
-    })
-    section:action("Run Failure Drill", "release.fail_diagnostic", {
-      id = "run-failure-drill",
-      params = {
-        reason = "Release Operator diagnostic failure",
-      },
     })
   end)
 

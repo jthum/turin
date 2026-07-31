@@ -340,7 +340,7 @@ fn assert_release_operator_static_ui_intents(intents: &[UiIntentMessage]) {
                 if app.id == "release-operator"
                     && app.title == "Release Operator"
                     && app.about.as_deref()
-                        == Some("A UI contract fixture for release workflow clients.")
+                        == Some("Coordinate release approvals, intake, readiness, and notes from one focused operator console.")
         )
     }));
     assert!(intents.iter().any(|message| {
@@ -380,7 +380,7 @@ fn assert_release_operator_static_ui_intents(intents: &[UiIntentMessage]) {
         matches!(
             node,
             UiNode::Text(text)
-                if text.text.contains("client-rendered harness UI")
+                if text.text.contains("review readiness without leaving the operator console")
         )
     }));
     assert!(home_nodes.iter().any(|node| {
