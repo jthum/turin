@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(Vec2::new(1260.0, 820.0))
-            .with_min_inner_size(Vec2::new(1040.0, 680.0)),
+            .with_min_inner_size(Vec2::new(760.0, 600.0)),
         ..Default::default()
     };
 
@@ -1525,25 +1525,33 @@ impl TurinDesktopApp {
             return;
         };
 
-        let theme = cast::theme_for_ui(ui);
-        egui::Panel::left("operator_shell_nav")
-            .resizable(false)
-            .exact_size(252.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(theme.colors.surface)
-                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
-                    .inner_margin(egui::Margin::symmetric(16, 18)),
-            )
-            .show_inside(ui, |ui| {
-                self.render_operator_sidebar(ui, &apps, &app);
+        let compact = operator_shell_is_compact(ui.available_width());
+        if compact {
+            egui::Panel::top("operator_shell_compact_nav").show_inside(ui, |ui| {
+                self.render_compact_operator_nav(ui, &apps, &app);
             });
+        } else {
+            let theme = cast::theme_for_ui(ui);
+            egui::Panel::left("operator_shell_nav")
+                .resizable(false)
+                .exact_size(236.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme.colors.surface)
+                        .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                        .inner_margin(egui::Margin::symmetric(14, 16)),
+                )
+                .show_inside(ui, |ui| {
+                    self.render_operator_sidebar(ui, &apps, &app);
+                });
+        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(24.0);
-                let content_width = (ui.available_width() - 48.0).clamp(640.0, 1120.0);
-                let inset = ((ui.available_width() - content_width) / 2.0).max(24.0);
+                let outer_margin = if compact { 16.0 } else { 24.0 };
+                ui.add_space(outer_margin);
+                let (content_width, inset) =
+                    operator_content_geometry(ui.available_width(), outer_margin);
                 ui.horizontal_top(|ui| {
                     ui.add_space(inset);
                     ui.vertical(|ui| {
@@ -1562,40 +1570,25 @@ impl TurinDesktopApp {
         apps: &[UiAppRecord],
         app: &UiAppRecord,
     ) {
-        themed_heading(ui, ui_app_title(app), 24.0);
+        let title_text = themed_heading_text(ui, ui_app_title(app), 22.0);
+        let title = ui.label(title_text);
         if let Some(definition) = &app.definition
             && let Some(about) = &definition.about
         {
-            ui.add_space(3.0);
-            themed_muted(ui, about.clone());
+            title.on_hover_text(about);
         }
-        ui.add_space(20.0);
+        ui.add_space(14.0);
 
         if apps.len() > 1 {
-            themed_muted(ui, "Switch app");
-            ui.add_space(6.0);
-            for (index, candidate) in apps.iter().enumerate() {
-                let selected = candidate.id == app.id;
-                if ui
-                    .add(
-                        cast::MenuItem::new(ui_app_title(candidate))
-                            .selected(selected)
-                            .intent(if selected {
-                                cast::Intent::Primary
-                            } else {
-                                cast::Intent::Neutral
-                            }),
-                    )
-                    .clicked()
-                {
-                    self.ui_app_index = index;
-                    self.open_harness_screen(
-                        candidate,
-                        harness_ui::default_screen_index(candidate),
-                    );
-                }
+            let previous = self.ui_app_index;
+            let labels = apps.iter().map(ui_app_title).collect::<Vec<_>>();
+            ui.add(cast::Select::new(&mut self.ui_app_index, labels).width(ui.available_width()));
+            if self.ui_app_index != previous
+                && let Some(candidate) = apps.get(self.ui_app_index)
+            {
+                self.open_harness_screen(candidate, harness_ui::default_screen_index(candidate));
             }
-            ui.add_space(16.0);
+            ui.add_space(14.0);
         }
 
         let current_screen_id = self.active_ui_screen_id(app);
@@ -1642,6 +1635,62 @@ impl TurinDesktopApp {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.vertical(|ui| self.render_operator_settings(ui));
         });
+    }
+
+    fn render_compact_operator_nav(
+        &mut self,
+        ui: &mut egui::Ui,
+        apps: &[UiAppRecord],
+        app: &UiAppRecord,
+    ) {
+        let theme = cast::theme_for_ui(ui);
+        egui::Frame::new()
+            .fill(theme.colors.surface)
+            .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    themed_heading(ui, ui_app_title(app), 20.0);
+                    if apps.len() > 1 {
+                        let previous = self.ui_app_index;
+                        let labels = apps.iter().map(ui_app_title).collect::<Vec<_>>();
+                        ui.add(cast::Select::new(&mut self.ui_app_index, labels).width(220.0));
+                        if self.ui_app_index != previous
+                            && let Some(candidate) = apps.get(self.ui_app_index)
+                        {
+                            self.open_harness_screen(
+                                candidate,
+                                harness_ui::default_screen_index(candidate),
+                            );
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.render_theme_controls(ui);
+                    });
+                });
+
+                if !app.screens.is_empty() {
+                    ui.add_space(8.0);
+                    let mut screen_index = self
+                        .ui_screen_indices
+                        .get(&app.id)
+                        .copied()
+                        .unwrap_or_else(|| harness_ui::default_screen_index(app));
+                    screen_index = screen_index.min(app.screens.len() - 1);
+                    let previous = screen_index;
+                    let labels = app
+                        .screens
+                        .values()
+                        .map(|screen| screen.title.clone())
+                        .collect::<Vec<_>>();
+                    ScrollArea::horizontal().show(ui, |ui| {
+                        ui.add(cast::Tabs::new(&mut screen_index, labels).size(cast::Size::Small));
+                    });
+                    if screen_index != previous {
+                        self.open_harness_screen(app, screen_index);
+                    }
+                }
+            });
     }
 
     fn render_operator_menu_items(
@@ -3785,6 +3834,19 @@ fn paint_app_canvas(ui: &mut egui::Ui) {
     );
 }
 
+const OPERATOR_COMPACT_BREAKPOINT: f32 = 920.0;
+
+fn operator_shell_is_compact(available_width: f32) -> bool {
+    available_width < OPERATOR_COMPACT_BREAKPOINT
+}
+
+fn operator_content_geometry(available_width: f32, outer_margin: f32) -> (f32, f32) {
+    let usable = (available_width - outer_margin * 2.0).max(0.0);
+    let content_width = usable.min(1120.0);
+    let inset = ((available_width - content_width) / 2.0).max(outer_margin);
+    (content_width, inset)
+}
+
 fn menu_descendant_opens(item: &UiMenuItem, current_screen_id: Option<&str>) -> bool {
     let Some(current_screen_id) = current_screen_id else {
         return false;
@@ -3974,6 +4036,20 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn operator_shell_compacts_before_content_becomes_cramped() {
+        assert!(!operator_shell_is_compact(1200.0));
+        assert!(!operator_shell_is_compact(OPERATOR_COMPACT_BREAKPOINT));
+        assert!(operator_shell_is_compact(OPERATOR_COMPACT_BREAKPOINT - 1.0));
+    }
+
+    #[test]
+    fn operator_content_geometry_centers_and_caps_content() {
+        assert_eq!(operator_content_geometry(1400.0, 24.0), (1120.0, 140.0));
+        assert_eq!(operator_content_geometry(800.0, 16.0), (768.0, 16.0));
+        assert_eq!(operator_content_geometry(300.0, 16.0), (268.0, 16.0));
     }
 
     #[test]

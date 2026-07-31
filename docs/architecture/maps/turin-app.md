@@ -52,6 +52,15 @@ worklist/default-screen/node-target derivation belong outside this crate.
   harness/Lua/protocol APIs.
 - Harness UI intent is semantic. Render, degrade, or ignore by capability, but
   do not mutate the contract to fit desktop layout.
+- Semantic sections establish hierarchy but do not automatically become nested
+  panels. Use bounded Cast surfaces for data, forms, reports, and detail while
+  keeping prose and action groups in the page flow.
+- Internal source names, report prompts, public ids, and query mechanics are
+  not ordinary application copy. Keep them out of default surfaces and expose
+  them only through deliberate technical detail or Runtime Tools.
+- The harness app shell must remain usable below desktop-sidebar width. Compact
+  mode replaces the permanent sidebar with app selection and scrollable screen
+  tabs while preserving client-local navigation state.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with
@@ -122,3 +131,13 @@ app-scoping lookup also come from `turin-ui-core`, request-scoped list load
 failures are rendered through app-local cache/error state, and drafts and
 controls remain app-local. It should remain replaceable at the presentation
 layer while preserving the semantic client contract.
+
+The harness renderer uses a responsive shell: wide windows receive a compact
+sidebar, while narrower windows receive app selection and screen tabs above the
+content stage. Top-level semantic sections remain lightweight; lists and detail
+use Cast cards, forms and reports use their dedicated Cast compositions, and
+loading uses skeletons. Narrow lists degrade from tables to selectable Cast
+list rows with the declared fields summarized beneath each title. Default list
+columns favor application content (`title`, `status`, `kind`, `priority`) rather
+than exposing public ids, and report prompts remain execution metadata rather
+than rendered prose.

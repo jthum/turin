@@ -16,8 +16,8 @@ use turin_ui_core::{
     ui_form_is_password_field as is_password_field, ui_form_value_string as form_value_string,
     ui_sorted_field_label as sorted_field_label, ui_worklist_request,
     unsupported_ui_source_message, work_item_field_label, work_item_index_by_key, work_item_key,
-    worklist_chart_group_field, worklist_chart_group_label, worklist_count_percent_label,
-    worklist_group_counts, worklist_highest_priority_pending_item, worklist_status_counts,
+    worklist_chart_group_field, worklist_count_percent_label, worklist_group_counts,
+    worklist_highest_priority_pending_item, worklist_status_counts,
 };
 pub(super) use turin_ui_core::{
     ui_default_screen_index as default_screen_index,
@@ -170,7 +170,11 @@ pub(super) fn render_harness_pane(
 ) -> Option<HarnessUiEvent> {
     let mut event = None;
     if pane.nodes.is_empty() {
-        ui.label("This pane has no content nodes.");
+        render_empty_state(
+            ui,
+            "Nothing here yet",
+            "This pane does not have any content to show.",
+        );
     } else {
         let mut context = HarnessRenderContext {
             app,
@@ -272,11 +276,15 @@ fn badge_intent(badge: Option<&UiBadgeIntent>) -> cast::Intent {
 
 fn render_nodes(ui: &mut egui::Ui, nodes: &[UiNode], context: &mut HarnessRenderContext<'_, '_>) {
     if nodes.is_empty() {
-        ui.label("This screen has no content nodes.");
+        render_empty_state(
+            ui,
+            "Nothing here yet",
+            "This screen does not have any content to show.",
+        );
         return;
     }
 
-    for node in nodes {
+    for (index, node) in nodes.iter().enumerate() {
         match node {
             UiNode::Section(section) => render_section(ui, section, context),
             UiNode::Text(text) => render_text(ui, text),
@@ -298,7 +306,9 @@ fn render_nodes(ui: &mut egui::Ui, nodes: &[UiNode], context: &mut HarnessRender
             }
             UiNode::Chart(chart) => render_chart(ui, context.app, chart, context.state),
         }
-        ui.add_space(10.0);
+        if index + 1 < nodes.len() {
+            ui.add_space(cast::theme_for_ui(ui).spacing.lg);
+        }
     }
 }
 
@@ -307,24 +317,17 @@ fn render_section(
     section: &UiSectionNode,
     context: &mut HarnessRenderContext<'_, '_>,
 ) {
-    if let Some(actions) = action_group_nodes(&section.nodes) {
-        ui.horizontal_wrapped(|ui| {
-            themed_strong(ui, section.title.clone());
-            render_node_badge(ui, context.app, section.id.as_deref());
-        });
-        ui.add_space(7.0);
-        render_action_group(ui, context.app, &actions, context.event);
-        return;
-    }
-
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            themed_heading(ui, section.title.clone(), 22.0);
-            render_node_badge(ui, context.app, section.id.as_deref());
-        });
-        ui.add_space(8.0);
-        render_nodes(ui, &section.nodes, context);
+    ui.horizontal_wrapped(|ui| {
+        themed_heading(ui, section.title.clone(), 18.0);
+        render_node_badge(ui, context.app, section.id.as_deref());
     });
+    ui.add_space(cast::theme_for_ui(ui).spacing.sm);
+
+    if let Some(actions) = action_group_nodes(&section.nodes) {
+        render_action_group(ui, context.app, &actions, context.event);
+    } else {
+        render_nodes(ui, &section.nodes, context);
+    }
 }
 
 fn render_text(ui: &mut egui::Ui, text: &UiTextNode) {
@@ -429,61 +432,61 @@ fn node_title_with_badge(app: &UiAppRecord, node_id: Option<&str>, title: &str) 
 }
 
 fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRenderContext<'_, '_>) {
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            themed_strong(ui, list.title.clone());
-            if is_named_worklist_ui_source(&list.source) {
-                let request = UiListRequest {
-                    source: list.source.clone(),
-                    filter: list.filter.clone(),
-                    limit: list.limit,
-                };
-                if let Some(items) = context.state.lists.get(&request.cache_key()) {
-                    ui.add(
-                        cast::Badge::new(items.items.len().to_string())
-                            .variant(cast::Variant::Subtle),
-                    );
+    cast::Card::new().show_with_header(
+        ui,
+        |ui| {
+            ui.horizontal_wrapped(|ui| {
+                themed_strong(ui, list.title.clone());
+                if is_named_worklist_ui_source(&list.source) {
+                    let request = UiListRequest {
+                        source: list.source.clone(),
+                        filter: list.filter.clone(),
+                        limit: list.limit,
+                    };
+                    if let Some(items) = context.state.lists.get(&request.cache_key()) {
+                        ui.add(
+                            cast::Badge::new(items.items.len().to_string())
+                                .variant(cast::Variant::Subtle),
+                        );
+                    }
+                }
+                render_node_badge(ui, context.app, list.id.as_deref());
+            });
+        },
+        |ui| {
+            if !is_named_worklist_ui_source(&list.source) {
+                render_unsupported_source(ui, "list", &list.source);
+                return;
+            }
+
+            let request = UiListRequest {
+                source: list.source.clone(),
+                filter: list.filter.clone(),
+                limit: list.limit,
+            };
+            let key = request.cache_key();
+            match context.state.lists.get(&key) {
+                Some(items) => render_work_items(
+                    ui,
+                    list,
+                    items,
+                    &key,
+                    context.state.selected_list_items,
+                    context.event,
+                ),
+                None if context.state.requested_lists.contains(&key) => {
+                    render_loading_state(ui);
+                }
+                None => {
+                    if let Some(error) = context.state.list_errors.get(&key) {
+                        render_load_failed(ui, "list", error);
+                    } else {
+                        ui.label(ui_data_not_loaded_message("list"));
+                    }
                 }
             }
-            render_node_badge(ui, context.app, list.id.as_deref());
-        });
-        ui.add_space(8.0);
-
-        if !is_named_worklist_ui_source(&list.source) {
-            render_unsupported_source(ui, "list", &list.source);
-            return;
-        }
-
-        let request = UiListRequest {
-            source: list.source.clone(),
-            filter: list.filter.clone(),
-            limit: list.limit,
-        };
-        let key = request.cache_key();
-        match context.state.lists.get(&key) {
-            Some(items) => render_work_items(
-                ui,
-                list,
-                items,
-                &key,
-                context.state.selected_list_items,
-                context.event,
-            ),
-            None if context.state.requested_lists.contains(&key) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Loader::new().size(cast::Size::Small));
-                    ui.label("Loading list data...");
-                });
-            }
-            None => {
-                if let Some(error) = context.state.list_errors.get(&key) {
-                    render_load_failed(ui, "list", error);
-                } else {
-                    ui.label(ui_data_not_loaded_message("list"));
-                }
-            }
-        }
-    });
+        },
+    );
 }
 
 fn render_work_items(
@@ -499,11 +502,16 @@ fn render_work_items(
         return;
     }
 
+    if ui.available_width() < 720.0 {
+        render_compact_work_items(ui, list, items, list_key, selected_list_items, event);
+        return;
+    }
+
     let fields = if list.fields.is_empty() {
         vec![
             "title".to_string(),
             "status".to_string(),
-            "public_id".to_string(),
+            "kind".to_string(),
             "priority".to_string(),
         ]
     } else {
@@ -589,6 +597,70 @@ fn render_work_items(
                 });
             },
         );
+}
+
+fn render_compact_work_items(
+    ui: &mut egui::Ui,
+    list: &UiListNode,
+    items: &WorkItemList,
+    list_key: &str,
+    selected_list_items: &mut BTreeMap<String, String>,
+    event: &mut Option<HarnessUiEvent>,
+) {
+    let selected_index =
+        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str));
+    if selected_index.is_none() {
+        selected_list_items.remove(list_key);
+    }
+
+    for (index, item) in items.items.iter().enumerate() {
+        let selected = Some(index) == selected_index;
+        let mut row = cast::ListRow::new(item.title.clone())
+            .trailing(item.status.clone())
+            .selected(selected)
+            .size(cast::Size::Small);
+        let subtitle = compact_item_subtitle(item, &list.fields);
+        if !subtitle.is_empty() {
+            row = row.subtitle(subtitle);
+        }
+        if ui.add(row).clicked() {
+            if selected {
+                selected_list_items.remove(list_key);
+            } else {
+                selected_list_items.insert(list_key.to_string(), work_item_key(item));
+            }
+        }
+    }
+
+    if let Some(index) =
+        work_item_index_by_key(items, selected_list_items.get(list_key).map(String::as_str))
+    {
+        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
+        ui.add(cast::Separator::new());
+        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
+        render_work_item_detail(ui, &items.items[index], event);
+    }
+}
+
+fn compact_item_subtitle(item: &WorkItemDetail, fields: &[String]) -> String {
+    let fields = if fields.is_empty() {
+        vec!["kind".to_string(), "priority".to_string()]
+    } else {
+        fields.to_vec()
+    };
+    fields
+        .iter()
+        .filter(|field| !matches!(field.as_str(), "title" | "status"))
+        .filter_map(|field| {
+            let value = work_item_field_label(item, field);
+            (!value.is_empty()).then(|| {
+                let label = sorted_field_label(field, &[]);
+                format!("{label}: {value}")
+            })
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("  ·  ")
 }
 
 fn render_work_item_title_button(
@@ -806,9 +878,8 @@ fn render_activity(
         .as_ref()
         .and_then(|request| state.lists.get(&request.cache_key()))
         .map(|items| format!("{} updates", items.items.len()));
-    let mut disclosure = cast::Disclosure::new(&mut open, activity.title.clone())
-        .subtitle("Recent workflow activity")
-        .size(cast::Size::Small);
+    let mut disclosure =
+        cast::Disclosure::new(&mut open, activity.title.clone()).size(cast::Size::Small);
     if let Some(trailing) = trailing {
         disclosure = disclosure.trailing(trailing);
     }
@@ -822,10 +893,7 @@ fn render_activity(
         match state.lists.get(&key) {
             Some(items) => render_worklist_activity(ui, items),
             None if state.requested_lists.contains(&key) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Loader::new().size(cast::Size::Small));
-                    ui.label("Loading activity data...");
-                });
+                render_loading_state(ui);
             }
             None => {
                 if let Some(error) = state.list_errors.get(&key) {
@@ -846,36 +914,36 @@ fn render_detail(
     state: &HarnessRenderState<'_>,
     event: &mut Option<HarnessUiEvent>,
 ) {
-    cast::Panel::new().show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            themed_strong(ui, detail.title.clone());
-            render_node_badge(ui, app, detail.id.as_deref());
-        });
-        ui.add_space(8.0);
+    cast::Card::new().show_with_header(
+        ui,
+        |ui| {
+            ui.horizontal_wrapped(|ui| {
+                themed_strong(ui, detail.title.clone());
+                render_node_badge(ui, app, detail.id.as_deref());
+            });
+        },
+        |ui| {
+            let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
+                render_unsupported_source(ui, "detail", &detail.source);
+                return;
+            };
 
-        let Some(request) = worklist_request(&detail.source, DETAIL_LIMIT) else {
-            render_unsupported_source(ui, "detail", &detail.source);
-            return;
-        };
-
-        let key = request.cache_key();
-        match state.lists.get(&key) {
-            Some(items) => render_worklist_detail(ui, detail, items, event),
-            None if state.requested_lists.contains(&key) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Loader::new().size(cast::Size::Small));
-                    ui.label("Loading detail data...");
-                });
-            }
-            None => {
-                if let Some(error) = state.list_errors.get(&key) {
-                    render_load_failed(ui, "detail", error);
-                } else {
-                    ui.label(ui_data_not_loaded_message("detail"));
+            let key = request.cache_key();
+            match state.lists.get(&key) {
+                Some(items) => render_worklist_detail(ui, detail, items, event),
+                None if state.requested_lists.contains(&key) => {
+                    render_loading_state(ui);
+                }
+                None => {
+                    if let Some(error) = state.list_errors.get(&key) {
+                        render_load_failed(ui, "detail", error);
+                    } else {
+                        ui.label(ui_data_not_loaded_message("detail"));
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 }
 
 fn worklist_request(source: &str, limit: u32) -> Option<UiListRequest> {
@@ -972,7 +1040,9 @@ fn render_form_control(
             .iter()
             .position(|label| *label == current)
             .unwrap_or_default();
-        ui.add(cast::Select::new(&mut selected, labels.clone()).width(240.0));
+        ui.add(
+            cast::Select::new(&mut selected, labels.clone()).width(ui.available_width().min(520.0)),
+        );
         if let Some(label) = labels.get(selected) {
             form_values.insert(key.to_string(), label.clone());
         }
@@ -1000,7 +1070,7 @@ fn render_form_control(
             cast::TextInput::new(value)
                 .hint_text(field.name.clone())
                 .password(is_password_field(field))
-                .width(260.0),
+                .width(ui.available_width().min(520.0)),
         );
     }
 }
@@ -1053,10 +1123,7 @@ fn render_report(
         report.id.as_deref(),
         &report.title,
     ))
-    .description(report.prompt.clone().unwrap_or_default())
     .show(ui, |ui| {
-        ui.add_space(8.0);
-
         let Some(request) = worklist_request(&report.source, REPORT_LIMIT) else {
             render_unsupported_source(ui, "report", &report.source);
             return;
@@ -1066,10 +1133,7 @@ fn render_report(
         match state.lists.get(&key) {
             Some(items) => render_worklist_report(ui, items, event),
             None if state.requested_lists.contains(&key) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Loader::new().size(cast::Size::Small));
-                    ui.label("Loading report data...");
-                });
+                render_loading_state(ui);
             }
             None => {
                 if let Some(error) = state.list_errors.get(&key) {
@@ -1093,10 +1157,6 @@ fn render_chart(
         chart.id.as_deref(),
         &chart.title,
     ))
-    .description(format!(
-        "Grouped by {}",
-        worklist_chart_group_label(chart.intent.as_deref())
-    ))
     .show(ui, |ui| {
         let Some(request) = worklist_request(&chart.source, CHART_LIMIT) else {
             render_unsupported_source(ui, "chart", &chart.source);
@@ -1107,10 +1167,7 @@ fn render_chart(
         match state.lists.get(&key) {
             Some(items) => render_worklist_chart(ui, chart, items),
             None if state.requested_lists.contains(&key) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(cast::Loader::new().size(cast::Size::Small));
-                    ui.label("Loading chart data...");
-                });
+                render_loading_state(ui);
             }
             None => {
                 if let Some(error) = state.list_errors.get(&key) {
@@ -1219,6 +1276,23 @@ fn render_empty_state(ui: &mut egui::Ui, title: &str, body: &str) {
         .show(ui, |_| {});
 }
 
+fn render_loading_state(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    ui.add(cast::Skeleton::new().width(width * 0.72));
+    ui.add_space(6.0);
+    ui.add(
+        cast::Skeleton::new()
+            .width(width * 0.9)
+            .size(cast::Size::Small),
+    );
+    ui.add_space(6.0);
+    ui.add(
+        cast::Skeleton::new()
+            .width(width * 0.58)
+            .size(cast::Size::Small),
+    );
+}
+
 fn work_item_action_event(item: &WorkItemDetail) -> Option<HarnessUiEvent> {
     let action = item.action.as_ref()?;
     Some(HarnessUiEvent::RunAction {
@@ -1256,12 +1330,9 @@ fn list_metadata_badges(list: &UiListNode) -> Vec<String> {
 
 fn empty_list_message(list: &UiListNode) -> String {
     if list.filter.is_empty() {
-        "This worklist query returned no rows.".to_string()
+        "Items will appear here when they are available.".to_string()
     } else {
-        format!(
-            "This worklist query returned no rows after applying {} declared filter(s).",
-            list.filter.len()
-        )
+        "No items match this view right now.".to_string()
     }
 }
 
@@ -1516,7 +1587,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_list_message_names_declared_filters() {
+    fn empty_list_message_uses_application_copy() {
         let mut list = UiListNode {
             id: None,
             title: "Approvals".to_string(),
@@ -1531,7 +1602,7 @@ mod tests {
 
         assert_eq!(
             empty_list_message(&list),
-            "This worklist query returned no rows."
+            "Items will appear here when they are available."
         );
 
         list.filter.insert("kind".to_string(), json!("approval"));
@@ -1539,7 +1610,32 @@ mod tests {
 
         assert_eq!(
             empty_list_message(&list),
-            "This worklist query returned no rows after applying 2 declared filter(s)."
+            "No items match this view right now."
+        );
+    }
+
+    #[test]
+    fn compact_item_subtitle_uses_declared_non_primary_fields() {
+        let mut item = test_work_item(1, "REL-1", "Approve release");
+        item.kind = "approval".to_string();
+        item.priority = 4;
+        item.metadata = Some(json!({
+            "lane": "ops",
+            "release": "2026.06",
+        }));
+
+        assert_eq!(
+            compact_item_subtitle(
+                &item,
+                &[
+                    "title".to_string(),
+                    "status".to_string(),
+                    "lane".to_string(),
+                    "release".to_string(),
+                    "priority".to_string(),
+                ]
+            ),
+            "Lane: ops  ·  Release: 2026.06  ·  Priority: 4"
         );
     }
 
