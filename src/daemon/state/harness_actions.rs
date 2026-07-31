@@ -16,7 +16,17 @@ impl DaemonState {
         let agent_id = self.resolve_harness_action_agent(&params)?;
         self.kernel.agent_config_for(&agent_id)?;
 
-        let runtime = self.kernel.runtime_for_agent(&agent_id);
+        let runtime = match params
+            .harness_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            Some(harness_id) => self
+                .kernel
+                .runtime_for_harness(harness_id)
+                .ok_or_else(|| anyhow!("Harness '{}' not found", harness_id))?,
+            None => self.kernel.runtime_for_agent(&agent_id),
+        };
         let instance = runtime.create_instance(self.kernel.harness_init_context())?;
         let ui_start = instance.ui_intent_count()?;
         let result =
@@ -67,10 +77,7 @@ impl DaemonState {
             .ok_or_else(|| anyhow!("Harness '{}' not found", harness_id))?;
         match snapshot.bound_agents.as_slice() {
             [agent_id] => Ok(agent_id.clone()),
-            [] => bail!(
-                "Harness '{}' has no bound agents; provide agent_id",
-                harness_id
-            ),
+            [] => Ok(self.kernel.config().agent.id.clone()),
             agents => bail!(
                 "Harness '{}' has multiple bound agents ({}); provide agent_id",
                 harness_id,

@@ -16,6 +16,8 @@ This subsystem should preserve three guarantees:
   - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, channel persistence/inference lookup, and live-session filtering.
 - `src/daemon/state/runtime_sessions.rs`
   - Persisted session list/search/detail/title, branch listing/sibling lookup/create/checkout, persisted-session target resolution, and live branch target guards.
+- `src/daemon/state/harness_actions.rs`
+  - Harness action runtime targeting, agent execution identity resolution, and action result collection.
 - `src/daemon/server/dispatch/task.rs`
   - Daemon task request handlers.
 - `src/daemon/server/dispatch/session.rs`
@@ -47,6 +49,13 @@ Live session open/resume:
 3. Agent-manager methods open or resume the runtime slot.
 4. The caller receives the agent-manager `LiveSessionSnapshot`.
 
+Harness action execution:
+
+1. An explicit `harness_id` selects that harness's Lua runtime rather than deriving a runtime from the execution agent.
+2. An explicit `agent_id` supplies execution and governance identity after binding validation.
+3. Without an explicit agent, Turin uses the sole bound agent or the primary agent identity for an unbound shared harness.
+4. Harnesses bound to multiple agents require the caller to choose an agent.
+
 Persisted session detail:
 
 1. `runtime_sessions.rs` resolves the session reference into store selector and public UUID.
@@ -67,6 +76,8 @@ Branch activation/checkout:
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
 - Channel-bound session open/resume should reuse channel persistence and inference overrides.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.
+- Explicit harness action targets must run in the named harness runtime; agent identity must not silently redirect them to another harness.
+- Unbound shared harness actions use the primary agent identity, while multi-agent harness actions remain explicit.
 - Branch activation/checkout must reject busy live sessions.
 - Branch activation/checkout must reject slot-agnostic requests when multiple runtime slots are attached.
 

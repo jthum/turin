@@ -11,8 +11,9 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::{
-    ContextPersistenceParams, PromoteTaskParams, ScheduleActionParams, SessionSearchScope,
-    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, StoreTargetParams,
+    ContextPersistenceParams, HarnessActionRunParams, PromoteTaskParams, ScheduleActionParams,
+    SessionSearchScope, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
+    StoreTargetParams,
 };
 use turin_types::{TaskInputContent, ToolSelectionConfig, ToolsConfig};
 
@@ -2837,6 +2838,70 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
         .harness_detail("shared")
         .expect("shared harness still visible");
     assert!(still_loaded.loaded_scripts.iter().all(|s| s != "broken"));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn unbound_shared_harness_action_runs_in_its_named_runtime() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let shared_harness = temp.path().join(".turin").join("harnesses").join("catalog");
+    std::fs::create_dir_all(&shared_harness)?;
+    std::fs::write(
+        shared_harness.join("main.lua"),
+        r#"
+            action.define("catalog.seed", function(_ctx, params)
+                local list = worklist("catalog")
+                list:add({
+                    title = params.title,
+                    kind = "approval",
+                    action = "catalog.approve",
+                })
+                return { status = "seeded" }
+            end)
+        "#,
+    )?;
+
+    let state = DaemonState::load(&config_path).await?;
+    let snapshot = state
+        .kernel
+        .harness_snapshot("catalog")
+        .expect("shared harness should be visible");
+    assert!(snapshot.bound_agents.is_empty());
+
+    let result = state.run_harness_action(HarnessActionRunParams {
+        action: "catalog.seed".to_string(),
+        agent_id: None,
+        harness_id: Some("catalog".to_string()),
+        params: json!({ "title": "Review catalog item" }),
+    })?;
+    assert_eq!(result.agent_id, "default");
+    assert_eq!(result.harness_id.as_deref(), Some("catalog"));
+    assert_eq!(result.result["status"], "seeded");
+
+    let worklist = state
+        .list_worklists(None, Some("catalog"), None)
+        .await?
+        .into_iter()
+        .next()
+        .expect("action should create its worklist");
+    let items = state
+        .worklist_items(WorklistItemsQuery {
+            public_id: &worklist.public_id,
+            persistence: None,
+            status: None,
+            parent_public_id: None,
+            where_filter: None,
+            claimed_only: false,
+            paused_only: false,
+            due_only: false,
+            limit: None,
+        })
+        .await?
+        .expect("created worklist should remain readable");
+    assert_eq!(items.items.len(), 1);
+    assert_eq!(items.items[0].title, "Review catalog item");
 
     Ok(())
 }
