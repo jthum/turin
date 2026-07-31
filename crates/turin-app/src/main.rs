@@ -19,9 +19,9 @@ use turin_ui_core::{
     ConnectionDraftHistory, ConnectionOptions, ConnectionPreflightReport,
     ConnectionProfileActivityBook, ConnectionProfileCatalog, ConnectionProfileDraft,
     ConnectionProfileDraftAuthMode, ConnectionProfileDraftDiff, ConnectionProfileDraftValidation,
-    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, DefaultOperatorConsoleSummary,
-    HarnessActionFailure, OperatorCommand, UiAppRecord, UiController, UiListRequest, UiShowTarget,
-    UiUpdate, collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
+    ConnectionProfileKind, ConnectionProfileSummary, DashboardState, HarnessActionFailure,
+    OperatorCommand, UiAppRecord, UiController, UiListRequest, UiShowTarget, UiUpdate,
+    collect_ui_list_requests, connect_dashboard, ensure_local_daemon_for_draft,
     preflight_connection_blocking, preflight_draft_blocking, spawn_controller,
     ui_harness_action_failure_matches_app as harness_action_failure_matches_app,
     ui_harness_action_result_matches_app as harness_action_result_matches_app,
@@ -251,6 +251,7 @@ struct TurinDesktopApp {
     follows_system_theme: bool,
     sidebar_settings_open: bool,
     runtime_tools_open: bool,
+    pending_conversation: Option<PendingConversation>,
     _runtime: Arc<Runtime>,
 }
 
@@ -273,17 +274,11 @@ struct PendingHarnessUiAction {
     params: serde_json::Value,
 }
 
-const DEFAULT_OPERATOR_EMPTY_TITLE: &str = "Turin is ready";
-const DEFAULT_OPERATOR_EMPTY_BODY: &str = "No custom app surface is loaded. Use the standard console for agents, sessions, tasks, and events.";
-const DEFAULT_OPERATOR_INTRO: &str =
-    "The standard console keeps the runtime usable without requiring a harness-defined app.";
-const DEFAULT_OPERATOR_GUIDANCE_TITLE: &str = "Custom Apps";
-const DEFAULT_OPERATOR_GUIDANCE_BODY: &str = "A harness can add focused screens when a workflow needs dedicated lists, forms, reports, panes, badges, or action buttons.";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DefaultOperatorMetricGroup {
-    title: &'static str,
-    metrics: Vec<(&'static str, usize)>,
+#[derive(Debug, Clone)]
+struct PendingConversation {
+    agent_id: String,
+    prompt: Option<String>,
+    existing_session_ids: BTreeSet<String>,
 }
 
 impl PendingHarnessUiAction {
@@ -390,17 +385,21 @@ impl TurinDesktopApp {
             follows_system_theme: true,
             sidebar_settings_open: false,
             runtime_tools_open: false,
+            pending_conversation: None,
             _runtime: runtime,
         }
     }
 
     fn apply_update(&mut self, update: UiUpdate) {
+        let snapshot_updated = matches!(&update, UiUpdate::Snapshot(_));
+        let command_failed = matches!(&update, UiUpdate::Error(_));
         let auto_follow_event = matches!(&update, UiUpdate::Event(_))
             && !self.events_paused
             && self.events_follow_latest;
         let harness_action_ran =
             matches!(&update, UiUpdate::Event(event) if event.event == "harness.action_ran");
         if matches!(&update, UiUpdate::SessionEvent(_)) {
+            self.requested_session_detail = None;
             self.clamp_selection_indices();
             return;
         }
@@ -431,6 +430,13 @@ impl TurinDesktopApp {
             self.harness_feedback_revision = self.harness_feedback_revision.wrapping_add(1);
         }
         self.dashboard.apply_update(update);
+        if command_failed {
+            self.pending_conversation = None;
+        }
+        if snapshot_updated {
+            self.requested_session_detail = None;
+            self.complete_pending_conversation();
+        }
         self.apply_ui_navigation_intents();
         let refreshed = self.apply_ui_refresh_intents();
         if harness_action_ran && refreshed == 0 {
@@ -1274,6 +1280,60 @@ impl TurinDesktopApp {
             .cloned()
     }
 
+    fn start_default_conversation(&mut self, prompt: Option<String>) {
+        let Some(agent_id) = self
+            .dashboard
+            .agents()
+            .get(self.agent_index)
+            .map(|agent| agent.id.clone())
+        else {
+            self.dashboard
+                .record_error("No enabled agent is available for a new conversation");
+            return;
+        };
+        let existing_session_ids = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .map(|session| session.session_id.clone())
+            .collect();
+        self.pending_conversation = Some(PendingConversation {
+            agent_id: agent_id.clone(),
+            prompt,
+            existing_session_ids,
+        });
+        self.live_session_index = usize::MAX;
+        self.send_command(OperatorCommand::OpenSession { agent_id });
+    }
+
+    fn complete_pending_conversation(&mut self) {
+        let Some(pending) = self.pending_conversation.as_ref() else {
+            return;
+        };
+        let Some(index) =
+            pending_conversation_session_index(pending, &self.dashboard.live_sessions)
+        else {
+            return;
+        };
+        let session = self.dashboard.live_sessions[index].clone();
+
+        let prompt = self
+            .pending_conversation
+            .take()
+            .and_then(|pending| pending.prompt);
+        self.live_session_index = index;
+        self.requested_session_detail = None;
+        self.send_command(OperatorCommand::FocusSessionStream {
+            session_id: Some(session.session_id.clone()),
+        });
+        if let Some(prompt) = prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            self.send_command(OperatorCommand::SubmitPrompt {
+                session_id: session.session_id,
+                prompt,
+            });
+        }
+    }
+
     fn selected_session(&self) -> Option<SessionSummary> {
         self.dashboard.sessions.get(self.session_index).cloned()
     }
@@ -1418,6 +1478,11 @@ impl TurinDesktopApp {
     }
 
     fn current_detail_session_id(&self) -> Option<String> {
+        if self.dashboard.ui.apps().next().is_none() {
+            return self
+                .selected_live_session()
+                .map(|session| session.session_id);
+        }
         match self.tab {
             TabKind::LiveSessions => self
                 .selected_live_session()
@@ -1447,73 +1512,376 @@ impl TurinDesktopApp {
     }
 
     fn render_default_shell(&mut self, ui: &mut egui::Ui) {
+        let compact = operator_shell_is_compact(ui.available_width());
+        let live_sessions = self.dashboard.live_sessions.clone();
+        self.live_session_index = clamp_index(self.live_session_index, live_sessions.len());
+        let selected = live_sessions.get(self.live_session_index).cloned();
+
         egui::Panel::top("default_shell_top").show_inside(ui, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                themed_heading(ui, "Turin", 26.0);
-                ui.add_space(10.0);
-                self.render_connection_status_inline(ui);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    self.render_theme_controls(ui);
-                    if ui
-                        .add(
-                            cast::Button::new(if self.runtime_tools_open {
-                                "Hide Tools"
-                            } else {
-                                "Runtime Tools"
-                            })
-                            .size(cast::Size::Small)
-                            .variant(cast::Variant::Outline),
-                        )
-                        .clicked()
-                    {
-                        self.runtime_tools_open = !self.runtime_tools_open;
-                    }
-                    if ui
-                        .add(
-                            cast::Button::new("Refresh")
-                                .size(cast::Size::Small)
-                                .variant(cast::Variant::Ghost),
-                        )
-                        .clicked()
-                    {
-                        self.send_command(OperatorCommand::Refresh);
-                    }
+            let theme = cast::theme_for_ui(ui);
+            egui::Frame::new()
+                .fill(theme.colors.surface)
+                .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                .inner_margin(egui::Margin::symmetric(18, 11))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        themed_heading(ui, "Turin", 24.0);
+                        ui.add_space(8.0);
+                        self.render_connection_status_inline(ui);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.render_theme_controls(ui);
+                            if ui
+                                .add(
+                                    cast::Button::new("Runtime Tools")
+                                        .size(cast::Size::Small)
+                                        .variant(cast::Variant::Ghost),
+                                )
+                                .clicked()
+                            {
+                                self.runtime_tools_open = true;
+                            }
+                            if compact
+                                && ui
+                                    .add(
+                                        cast::Button::new("New conversation")
+                                            .size(cast::Size::Small)
+                                            .intent(cast::Intent::Primary)
+                                            .enabled(self.pending_conversation.is_none()),
+                                    )
+                                    .clicked()
+                            {
+                                self.start_default_conversation(None);
+                            }
+                        });
+                    });
                 });
-            });
-            ui.add_space(8.0);
         });
+
+        if compact {
+            egui::Panel::top("default_session_nav_compact").show_inside(ui, |ui| {
+                self.render_default_session_nav(ui, &live_sessions, true);
+            });
+        } else {
+            let theme = cast::theme_for_ui(ui);
+            egui::Panel::left("default_session_nav")
+                .resizable(false)
+                .exact_size(236.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme.colors.surface)
+                        .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                        .inner_margin(egui::Margin::symmetric(14, 16)),
+                )
+                .show_inside(ui, |ui| {
+                    self.render_default_session_nav(ui, &live_sessions, false);
+                });
+        }
+
+        if let Some(session) = selected.as_ref() {
+            egui::Panel::bottom("default_conversation_composer").show_inside(ui, |ui| {
+                self.render_default_composer(ui, session);
+            });
+        }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                self.render_default_operator_console(ui);
-                if self.runtime_tools_open {
-                    ui.add_space(14.0);
-                    self.render_runtime_tools_panel(ui);
-                }
+                let outer_margin = if compact { 16.0 } else { 24.0 };
+                ui.add_space(outer_margin);
+                let (content_width, inset) =
+                    operator_content_geometry(ui.available_width(), outer_margin);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(inset);
+                    ui.vertical(|ui| {
+                        ui.set_width(content_width);
+                        if let Some(session) = selected.as_ref() {
+                            self.render_default_conversation(ui, session);
+                        } else {
+                            self.render_default_welcome(ui);
+                        }
+                    });
+                });
+                ui.add_space(outer_margin);
             });
         });
+
+        self.render_runtime_tools_sheet(ui);
+    }
+
+    fn render_default_session_nav(
+        &mut self,
+        ui: &mut egui::Ui,
+        live_sessions: &[LiveSession],
+        compact: bool,
+    ) {
+        let agents = self.dashboard.agents().to_vec();
+        self.agent_index = clamp_index(self.agent_index, agents.len());
+
+        if compact {
+            let labels = default_conversation_labels(live_sessions, &self.dashboard.sessions);
+            ui.horizontal_wrapped(|ui| {
+                if !labels.is_empty() {
+                    let previous = self.live_session_index;
+                    ui.add(cast::Select::new(&mut self.live_session_index, labels).width(260.0));
+                    if self.live_session_index != previous {
+                        self.focus_default_session(live_sessions);
+                    }
+                }
+                if agents.len() > 1 {
+                    let agent_labels = agents
+                        .iter()
+                        .map(|agent| agent.id.clone())
+                        .collect::<Vec<_>>();
+                    ui.add(cast::Select::new(&mut self.agent_index, agent_labels).width(180.0));
+                }
+            });
+            return;
+        }
+
+        themed_heading(ui, "Conversations", 18.0);
+        ui.add_space(10.0);
+        if agents.len() > 1 {
+            let agent_labels = agents
+                .iter()
+                .map(|agent| agent.id.clone())
+                .collect::<Vec<_>>();
+            ui.add(
+                cast::Select::new(&mut self.agent_index, agent_labels).width(ui.available_width()),
+            );
+            ui.add_space(10.0);
+        }
+        if ui
+            .add_sized(
+                egui::vec2(ui.available_width(), 32.0),
+                cast::Button::new("New conversation")
+                    .intent(cast::Intent::Primary)
+                    .enabled(self.pending_conversation.is_none()),
+            )
+            .clicked()
+        {
+            self.start_default_conversation(None);
+        }
+        ui.add_space(12.0);
+
+        if live_sessions.is_empty() {
+            themed_muted(ui, "Your active conversations will appear here.");
+        } else {
+            let labels = default_conversation_labels(live_sessions, &self.dashboard.sessions);
+            for (index, (session, label)) in live_sessions.iter().zip(labels).enumerate() {
+                if ui
+                    .add(
+                        cast::ListRow::new(label)
+                            .subtitle(session.agent_id.clone())
+                            .trailing(if session.active_tasks > 0 {
+                                "Working"
+                            } else {
+                                "Ready"
+                            })
+                            .selected(index == self.live_session_index)
+                            .size(cast::Size::Small),
+                    )
+                    .clicked()
+                    && index != self.live_session_index
+                {
+                    self.live_session_index = index;
+                    self.focus_default_session(live_sessions);
+                }
+            }
+        }
+    }
+
+    fn focus_default_session(&mut self, live_sessions: &[LiveSession]) {
+        let session_id = live_sessions
+            .get(self.live_session_index)
+            .map(|session| session.session_id.clone());
+        self.requested_session_detail = None;
+        self.send_command(OperatorCommand::FocusSessionStream { session_id });
+    }
+
+    fn render_default_conversation(&mut self, ui: &mut egui::Ui, session: &LiveSession) {
+        let title =
+            default_conversation_title(session, self.live_session_index, &self.dashboard.sessions);
+        ui.horizontal_wrapped(|ui| {
+            themed_heading(ui, title, 28.0);
+            ui.add(
+                cast::Badge::new(if session.active_tasks > 0 {
+                    "Working"
+                } else {
+                    "Ready"
+                })
+                .intent(if session.active_tasks > 0 {
+                    cast::Intent::Info
+                } else {
+                    cast::Intent::Success
+                })
+                .status_dot(),
+            );
+        });
+        ui.add_space(14.0);
+
+        let Some(detail) = self.dashboard.session_detail(&session.session_id) else {
+            render_conversation_loading(ui);
+            return;
+        };
+        if detail.messages.is_empty() {
+            cast::EmptyState::new("Ready when you are")
+                .body("Ask a question, delegate a task, or describe an outcome below.")
+                .icon("✦")
+                .intent(cast::Intent::Primary)
+                .show(ui, |_| {});
+            return;
+        }
+
+        cast::MessageThread::new()
+            .width(ui.available_width())
+            .show(ui, |thread| {
+                for message in &detail.messages {
+                    let body = session_message_text(&message.content);
+                    if body.is_empty() {
+                        continue;
+                    }
+                    let title = match message.role.as_str() {
+                        "user" => "You".to_string(),
+                        "assistant" => session.agent_id.clone(),
+                        "system" => "System".to_string(),
+                        _ => "Tool".to_string(),
+                    };
+                    let chat = cast::ChatMessage::new(chat_role_from_label(&message.role), body)
+                        .title(title);
+                    let tools = detail
+                        .tool_executions
+                        .iter()
+                        .filter(|tool| tool.turn_index == message.turn_index)
+                        .collect::<Vec<_>>();
+                    if tools.is_empty() {
+                        thread.message(chat);
+                    } else {
+                        thread.rich_message(chat, |ui| {
+                            for tool in tools {
+                                ui.add_space(6.0);
+                                let mut call = cast::ToolCall::new(tool.tool_name.clone())
+                                    .status(tool_status_from_verdict(&tool.verdict));
+                                if let Some(duration_ms) = tool.duration_ms {
+                                    call = call.metadata(format!("{duration_ms} ms"));
+                                }
+                                if tool.is_error
+                                    && let Some(output) = tool.output.as_ref()
+                                {
+                                    call = call.body(truncate_for_list(
+                                        &session_message_text(output),
+                                        240,
+                                    ));
+                                }
+                                ui.add(call.width(ui.available_width()));
+                            }
+                        });
+                    }
+                }
+            });
+    }
+
+    fn render_default_composer(&mut self, ui: &mut egui::Ui, session: &LiveSession) {
+        let theme = cast::theme_for_ui(ui);
+        egui::Frame::new()
+            .fill(theme.colors.background)
+            .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+            .inner_margin(egui::Margin::symmetric(18, 12))
+            .show(ui, |ui| {
+                let (content_width, inset) = operator_content_geometry(ui.available_width(), 16.0);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(inset);
+                    ui.vertical(|ui| {
+                        ui.set_width(content_width);
+                        let response = cast::AgentComposer::new(&mut self.prompt_input)
+                            .placeholder(
+                                "Ask Turin to investigate, build, explain, or coordinate...",
+                            )
+                            .send_label("Send")
+                            .stop_label("Stop")
+                            .rows(3)
+                            .enabled(session.running)
+                            .loading(session.active_tasks > 0)
+                            .width(content_width)
+                            .show(ui)
+                            .inner;
+                        if response.submitted && !self.prompt_input.trim().is_empty() {
+                            let prompt = mem::take(&mut self.prompt_input);
+                            self.requested_session_detail = None;
+                            self.send_command(OperatorCommand::SubmitPrompt {
+                                session_id: session.session_id.clone(),
+                                prompt,
+                            });
+                        }
+                        if response.stopped {
+                            self.send_command(OperatorCommand::CancelSession {
+                                session_id: session.session_id.clone(),
+                            });
+                        }
+                    });
+                });
+            });
+    }
+
+    fn render_default_welcome(&mut self, ui: &mut egui::Ui) {
+        let pending = self.pending_conversation.is_some();
+        let agents = self.dashboard.agents().to_vec();
+        self.agent_index = clamp_index(self.agent_index, agents.len());
+        ui.add_space(28.0);
+        ui.vertical_centered(|ui| {
+            themed_heading(ui, "What should Turin do?", 34.0);
+            ui.add_space(6.0);
+            themed_muted(
+                ui,
+                "Ask a question, delegate a task, or describe the outcome you want.",
+            );
+        });
+        ui.add_space(22.0);
+        if agents.len() > 1 {
+            let labels = agents
+                .iter()
+                .map(|agent| agent.id.clone())
+                .collect::<Vec<_>>();
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 260.0).max(0.0) / 2.0);
+                ui.add(cast::Select::new(&mut self.agent_index, labels).width(260.0));
+            });
+            ui.add_space(12.0);
+        }
+        let response = cast::AgentComposer::new(&mut self.prompt_input)
+            .placeholder("Ask Turin to investigate, build, explain, or coordinate...")
+            .send_label("Start")
+            .rows(4)
+            .enabled(!agents.is_empty() && !pending)
+            .loading(pending)
+            .width(ui.available_width())
+            .show(ui)
+            .inner;
+        if response.submitted && !self.prompt_input.trim().is_empty() {
+            let prompt = mem::take(&mut self.prompt_input);
+            self.start_default_conversation(Some(prompt));
+        }
+    }
+
+    fn render_runtime_tools_sheet(&mut self, ui: &mut egui::Ui) {
+        if !self.runtime_tools_open {
+            return;
+        }
+        let mut open = true;
+        cast::Sheet::new(&mut open, "default_runtime_tools")
+            .title("Runtime Tools")
+            .width(680.0)
+            .show(ui.ctx(), |ui, _sheet| {
+                ScrollArea::vertical().show(ui, |ui| {
+                    self.render_runtime_tools_panel(ui);
+                });
+            });
+        if !open {
+            self.runtime_tools_open = false;
+        }
     }
 
     fn render_connection_status_inline(&self, ui: &mut egui::Ui) {
-        let ready = self
-            .dashboard
-            .health
-            .as_ref()
-            .is_some_and(|health| health.ready);
-        ui.add(
-            cast::Badge::new(if ready { "Connected" } else { "Degraded" })
-                .intent(if ready {
-                    cast::Intent::Success
-                } else {
-                    cast::Intent::Warning
-                })
-                .status_dot(),
-        );
-        ui.add(cast::Badge::new(match self.dashboard.connection_kind {
-            ConnectionKind::Local => "Local",
-            ConnectionKind::Remote => "Remote",
-        }));
+        let (connection, intent) = self.operator_connection_summary();
+        ui.add(cast::Badge::new(connection).intent(intent).status_dot());
     }
 
     fn render_operator_shell(&mut self, ui: &mut egui::Ui) {
@@ -1521,7 +1889,7 @@ impl TurinDesktopApp {
         let apps = self.dashboard.ui.apps().cloned().collect::<Vec<_>>();
         self.ui_app_index = clamp_index(self.ui_app_index, apps.len());
         let Some(app) = apps.get(self.ui_app_index).cloned() else {
-            self.render_default_operator_console(ui);
+            self.render_default_shell(ui);
             return;
         };
 
@@ -2692,10 +3060,10 @@ impl TurinDesktopApp {
                 });
                 ui.add_space(8.0);
                 if apps.is_empty() {
-                    cast::EmptyState::new(DEFAULT_OPERATOR_EMPTY_TITLE)
-                        .body(DEFAULT_OPERATOR_EMPTY_BODY)
+                    cast::EmptyState::new("No custom apps")
+                        .body("Harness-defined app surfaces will appear here when available.")
                         .icon("UI")
-                        .intent(cast::Intent::Info)
+                        .intent(cast::Intent::Neutral)
                         .show(ui, |_| {});
                 } else {
                     let labels = apps
@@ -2756,7 +3124,10 @@ impl TurinDesktopApp {
 
             ScrollArea::vertical().show(&mut columns[1], |ui| {
                 let Some(app) = selected else {
-                    self.render_default_operator_console(ui);
+                    cast::EmptyState::new("Select an app")
+                        .body("Choose a harness-defined app to inspect its declared surfaces.")
+                        .intent(cast::Intent::Neutral)
+                        .show(ui, |_| {});
                     return;
                 };
 
@@ -2801,51 +3172,6 @@ impl TurinDesktopApp {
                     }
                 }
             });
-        });
-    }
-
-    fn render_default_operator_console(&mut self, ui: &mut egui::Ui) {
-        let summary = DefaultOperatorConsoleSummary::from_dashboard(&self.dashboard);
-
-        cast::Panel::new().show(ui, |ui| {
-            themed_heading(ui, DEFAULT_OPERATOR_EMPTY_TITLE, 34.0);
-            ui.add_space(8.0);
-            ui.label(DEFAULT_OPERATOR_EMPTY_BODY);
-            ui.add_space(12.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    cast::Badge::new(summary.freshness.clone())
-                        .intent(freshness_intent(self.dashboard.snapshot_freshness()))
-                        .status_dot(),
-                );
-                themed_muted(ui, summary.target.clone());
-            });
-        });
-
-        ui.add_space(12.0);
-        let groups = default_operator_metric_groups(&summary);
-        ui.columns(groups.len(), |columns| {
-            for (column, group) in columns.iter_mut().zip(groups) {
-                cast::Panel::new().show(column, |ui| {
-                    themed_heading(ui, group.title, 20.0);
-                    ui.add_space(6.0);
-                    for (label, value) in group.metrics {
-                        ui.horizontal_wrapped(|ui| {
-                            themed_heading(ui, value.to_string(), 24.0);
-                            themed_muted(ui, label);
-                        });
-                    }
-                });
-            }
-        });
-
-        ui.add_space(12.0);
-        cast::Panel::new().show(ui, |ui| {
-            themed_heading(ui, DEFAULT_OPERATOR_GUIDANCE_TITLE, 20.0);
-            ui.add_space(6.0);
-            ui.label(DEFAULT_OPERATOR_GUIDANCE_BODY);
-            ui.add_space(8.0);
-            themed_muted(ui, DEFAULT_OPERATOR_INTRO);
         });
     }
 
@@ -3847,6 +4173,51 @@ fn operator_content_geometry(available_width: f32, outer_margin: f32) -> (f32, f
     (content_width, inset)
 }
 
+fn default_conversation_labels(
+    live_sessions: &[LiveSession],
+    stored_sessions: &[SessionSummary],
+) -> Vec<String> {
+    live_sessions
+        .iter()
+        .enumerate()
+        .map(|(index, session)| default_conversation_title(session, index, stored_sessions))
+        .collect()
+}
+
+fn pending_conversation_session_index(
+    pending: &PendingConversation,
+    live_sessions: &[LiveSession],
+) -> Option<usize> {
+    live_sessions.iter().rposition(|session| {
+        session.agent_id == pending.agent_id
+            && !pending.existing_session_ids.contains(&session.session_id)
+    })
+}
+
+fn default_conversation_title(
+    session: &LiveSession,
+    index: usize,
+    stored_sessions: &[SessionSummary],
+) -> String {
+    stored_sessions
+        .iter()
+        .find(|stored| stored.session_id == session.session_id)
+        .and_then(|stored| stored.metadata.as_ref())
+        .and_then(|metadata| metadata.get("title"))
+        .and_then(|title| title.as_str())
+        .filter(|title| !title.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Conversation {}", index + 1))
+}
+
+fn render_conversation_loading(ui: &mut egui::Ui) {
+    let width = ui.available_width();
+    for factor in [0.68, 0.92, 0.54] {
+        ui.add(cast::Skeleton::new().width(width * factor));
+        ui.add_space(8.0);
+    }
+}
+
 fn menu_descendant_opens(item: &UiMenuItem, current_screen_id: Option<&str>) -> bool {
     let Some(current_screen_id) = current_screen_id else {
         return false;
@@ -3854,29 +4225,6 @@ fn menu_descendant_opens(item: &UiMenuItem, current_screen_id: Option<&str>) -> 
     item.items.iter().any(|child| {
         child.opens == current_screen_id || menu_descendant_opens(child, Some(current_screen_id))
     })
-}
-
-fn default_operator_metric_groups(
-    summary: &DefaultOperatorConsoleSummary,
-) -> Vec<DefaultOperatorMetricGroup> {
-    vec![
-        DefaultOperatorMetricGroup {
-            title: "Runtime",
-            metrics: vec![
-                ("Agents", summary.agents),
-                ("Harnesses", summary.harnesses),
-                ("Channels", summary.channels),
-            ],
-        },
-        DefaultOperatorMetricGroup {
-            title: "Work",
-            metrics: vec![
-                ("Live Sessions", summary.live_sessions),
-                ("Stored Sessions", summary.stored_sessions),
-                ("Tasks", summary.tasks),
-            ],
-        },
-    ]
 }
 
 fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
@@ -3973,17 +4321,6 @@ mod tests {
     }
 
     #[test]
-    fn default_operator_console_copy_explains_no_harness_path() {
-        assert_eq!(DEFAULT_OPERATOR_EMPTY_TITLE, "Turin is ready");
-        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("No custom app surface"));
-        assert!(DEFAULT_OPERATOR_EMPTY_BODY.contains("standard console"));
-        assert!(DEFAULT_OPERATOR_INTRO.contains("standard console"));
-        assert_eq!(DEFAULT_OPERATOR_GUIDANCE_TITLE, "Custom Apps");
-        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("focused screens"));
-        assert!(DEFAULT_OPERATOR_GUIDANCE_BODY.contains("lists, forms, reports"));
-    }
-
-    #[test]
     fn nested_menu_prefers_the_matching_child() {
         let item = UiMenuItem {
             label: "Work".to_string(),
@@ -4006,39 +4343,6 @@ mod tests {
     }
 
     #[test]
-    fn default_operator_metric_groups_keep_app_local_counts() {
-        let summary = DefaultOperatorConsoleSummary {
-            connection: "local".to_string(),
-            target: ".turin/config.toml".to_string(),
-            freshness: "fresh".to_string(),
-            agents: 2,
-            harnesses: 3,
-            channels: 4,
-            live_sessions: 5,
-            stored_sessions: 6,
-            tasks: 7,
-            ui_notices: 8,
-            ui_requests: 9,
-        };
-
-        let groups = default_operator_metric_groups(&summary);
-
-        assert_eq!(
-            groups,
-            vec![
-                DefaultOperatorMetricGroup {
-                    title: "Runtime",
-                    metrics: vec![("Agents", 2), ("Harnesses", 3), ("Channels", 4)],
-                },
-                DefaultOperatorMetricGroup {
-                    title: "Work",
-                    metrics: vec![("Live Sessions", 5), ("Stored Sessions", 6), ("Tasks", 7)],
-                },
-            ]
-        );
-    }
-
-    #[test]
     fn operator_shell_compacts_before_content_becomes_cramped() {
         assert!(!operator_shell_is_compact(1200.0));
         assert!(!operator_shell_is_compact(OPERATOR_COMPACT_BREAKPOINT));
@@ -4050,6 +4354,81 @@ mod tests {
         assert_eq!(operator_content_geometry(1400.0, 24.0), (1120.0, 140.0));
         assert_eq!(operator_content_geometry(800.0, 16.0), (768.0, 16.0));
         assert_eq!(operator_content_geometry(300.0, 16.0), (268.0, 16.0));
+    }
+
+    #[test]
+    fn default_conversation_title_prefers_user_title_without_exposing_ids() {
+        let live = LiveSession {
+            agent_id: "default".to_string(),
+            slot_id: "slot-1".to_string(),
+            session_id: "session-secret-id".to_string(),
+            running: true,
+            active_tasks: 0,
+            queued_tasks: 0,
+            current_request_id: None,
+            execution: turin_control_client::LiveExecution {
+                execution_id: "execution-1".to_string(),
+                context_target: serde_json::Value::Null,
+                visibility: "client".to_string(),
+                durability: "durable".to_string(),
+                write_policy: "read_write".to_string(),
+            },
+            conflict_policy: "queue".to_string(),
+        };
+        let stored = SessionSummary {
+            internal_id: 1,
+            session_id: live.session_id.clone(),
+            agent_id: live.agent_id.clone(),
+            metadata: Some(serde_json::json!({ "title": "Plan the migration" })),
+            created_at: "2026-07-31T00:00:00Z".to_string(),
+        };
+
+        assert_eq!(
+            default_conversation_title(&live, 0, &[stored]),
+            "Plan the migration"
+        );
+        assert_eq!(default_conversation_title(&live, 1, &[]), "Conversation 2");
+    }
+
+    #[test]
+    fn pending_conversation_selects_the_latest_new_session_for_its_agent() {
+        let live_session = |agent_id: &str, session_id: &str| LiveSession {
+            agent_id: agent_id.to_string(),
+            slot_id: format!("slot-{session_id}"),
+            session_id: session_id.to_string(),
+            running: true,
+            active_tasks: 0,
+            queued_tasks: 0,
+            current_request_id: None,
+            execution: turin_control_client::LiveExecution {
+                execution_id: format!("execution-{session_id}"),
+                context_target: serde_json::Value::Null,
+                visibility: "client".to_string(),
+                durability: "durable".to_string(),
+                write_policy: "read_write".to_string(),
+            },
+            conflict_policy: "queue".to_string(),
+        };
+        let pending = PendingConversation {
+            agent_id: "default".to_string(),
+            prompt: Some("Hello".to_string()),
+            existing_session_ids: BTreeSet::from(["existing".to_string()]),
+        };
+        let sessions = vec![
+            live_session("default", "existing"),
+            live_session("other", "other-new"),
+            live_session("default", "first-new"),
+            live_session("default", "latest-new"),
+        ];
+
+        assert_eq!(
+            pending_conversation_session_index(&pending, &sessions),
+            Some(3)
+        );
+        assert_eq!(
+            pending_conversation_session_index(&pending, &sessions[..2]),
+            None
+        );
     }
 
     #[test]

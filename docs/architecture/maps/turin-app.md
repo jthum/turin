@@ -29,18 +29,23 @@ worklist/default-screen/node-target derivation belong outside this crate.
 1. `main.rs` builds `ConnectionOptions`, connects through `turin-ui-core`, and
    spawns a `UiController`.
 2. `TurinDesktopApp` drains `UiUpdate` values into a local `DashboardState`.
-3. App tabs, selected harness app/screen, selected list rows, open panes,
-   confirmation modals, and form drafts remain app-local state.
-4. Visible harness screens and panes are projected into `UiListRequest` values.
-5. `OperatorCommand::LoadUiList` loads semantic worklist-backed data through the
+3. Without a harness-declared app, the client projects agents, live sessions,
+   session detail, and focused session events into a default conversation
+   workspace. Runtime inspection remains available through an explicit tools
+   sheet rather than becoming the landing page.
+4. App tabs, selected conversation, pending first prompt, selected harness
+   app/screen, selected list rows, open panes, confirmation modals, and form
+   drafts remain app-local state.
+5. Visible harness screens and panes are projected into `UiListRequest` values.
+6. `OperatorCommand::LoadUiList` loads semantic worklist-backed data through the
    shared controller path. Request-scoped list failures clear local loading
    state and render explicit retryable fallback copy.
-6. Harness actions and forms emit local `HarnessUiEvent` values, then run
+7. Harness actions and forms emit local `HarnessUiEvent` values, then run
    through `OperatorCommand::RunHarnessAction`.
-7. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
+8. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
    runtime events and completed harness action results are drained as local
    navigation, pane, focus, and cache-invalidation requests.
-8. `harness.action_ran` and explicit `ui.refresh(...)` invalidate matching
+9. `harness.action_ran` and explicit `ui.refresh(...)` invalidate matching
    visible list caches; they are not live queries.
 
 ## Invariants
@@ -48,6 +53,13 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - The app owns presentation state. Active tab, active screen, open pane,
   selected row, form draft, and confirmation state must not become runtime
   state.
+- The no-harness path is an opinionated agent workspace, not a runtime
+  diagnostics dashboard. Diagnostics belong behind deliberate secondary
+  navigation and ordinary surfaces should not expose socket paths, internal
+  session ids, or raw protocol payloads.
+- Opening a conversation and attaching its first prompt is client orchestration
+  over typed session commands. The pending selection is transient client state;
+  durable conversation state remains in the runtime.
 - Cast widgets are renderer details. Do not leak Cast or egui concepts into the
   harness/Lua/protocol APIs.
 - Harness UI intent is semantic. Render, degrade, or ignore by capability, but
@@ -141,3 +153,13 @@ list rows with the declared fields summarized beneath each title. Default list
 columns favor application content (`title`, `status`, `kind`, `priority`) rather
 than exposing public ids, and report prompts remain execution metadata rather
 than rendered prose.
+
+When no harness declares an app surface, the desktop client renders a focused
+conversation workspace built from Cast. It provides agent selection when
+needed, live conversation navigation, structured message and tool-call
+presentation, a persistent composer, and a first-prompt flow that opens a
+session before dispatching the prompt. Connection details, sessions, tasks,
+channels, events, and custom-app inspection remain available through Runtime
+Tools without competing with the primary workflow. The shell keeps its own
+selection and pending-command state and uses focused session events to
+invalidate session detail; it does not create runtime-owned view state.

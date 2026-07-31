@@ -119,6 +119,26 @@ pub(super) fn truncate_for_list(value: &str, max_chars: usize) -> String {
     }
 }
 
+pub(super) fn session_message_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(session_message_part_text)
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        serde_json::Value::Object(_) => session_message_part_text(content).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn session_message_part_text(part: &serde_json::Value) -> Option<String> {
+    part.get("text")
+        .and_then(|text| text.as_str())
+        .or_else(|| part.get("content").and_then(|content| content.as_str()))
+        .map(str::to_string)
+}
+
 pub(super) fn yes_no(value: bool) -> &'static str {
     if value { "Yes" } else { "No" }
 }
@@ -351,4 +371,24 @@ fn json_preview(value: &serde_json::Value, max_chars: usize) -> String {
         &serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string()),
         max_chars,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn session_message_text_reads_structured_text_parts() {
+        assert_eq!(
+            session_message_text(&json!([
+                { "type": "text", "text": "First paragraph" },
+                { "type": "image", "source": "ignored" },
+                { "type": "text", "text": "Second paragraph" }
+            ])),
+            "First paragraph\n\nSecond paragraph"
+        );
+        assert_eq!(session_message_text(&json!("Plain text")), "Plain text");
+        assert_eq!(session_message_text(&json!({ "type": "image" })), "");
+    }
 }
