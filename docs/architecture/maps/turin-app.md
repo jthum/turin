@@ -104,6 +104,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
   permanently expanded sidebar surface.
 - Forms use a bounded reading width, and their action row follows the fields in
   document flow rather than drifting to the edge or bottom of the page.
+- Confirmed harness actions use a sectioned Cast dialog with product-facing
+  copy and a distinct action footer. Dialog identity is scoped to the app and
+  action while the pending decision remains client-local.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with

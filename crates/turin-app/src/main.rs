@@ -2318,7 +2318,7 @@ impl TurinDesktopApp {
             self.handle_harness_ui_event(app, event);
         }
 
-        self.render_pending_harness_ui_action(ui, &app.id);
+        self.render_pending_harness_ui_action(ui, app);
         self.render_active_harness_pane(ui, app);
     }
 
@@ -3350,7 +3350,7 @@ impl TurinDesktopApp {
                     self.handle_harness_ui_event(&app, event);
                 }
 
-                self.render_pending_harness_ui_action(ui, &app.id);
+                self.render_pending_harness_ui_action(ui, &app);
                 self.render_latest_harness_action_result(ui, &app);
                 self.render_latest_harness_action_failure(ui, &app);
                 self.render_active_harness_pane(ui, &app);
@@ -3485,42 +3485,69 @@ impl TurinDesktopApp {
         });
     }
 
-    fn render_pending_harness_ui_action(&mut self, ui: &mut egui::Ui, app_id: &str) {
+    fn render_pending_harness_ui_action(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
         let Some(pending) = self
             .pending_harness_ui_action
             .as_ref()
-            .filter(|pending| pending.app_id == app_id)
+            .filter(|pending| pending.app_id == app.id)
         else {
             return;
         };
 
         let label = pending.label.clone();
-        let title = if label.ends_with(['?', '!', '.']) {
-            label.clone()
-        } else {
-            format!("{label}?")
-        };
+        let title = harness_action_confirmation_title(&label);
+        let dialog_id = (
+            "harness_ui_action_confirmation",
+            app.id.clone(),
+            pending.action.clone(),
+        );
         let mut open = true;
-        let response = cast::ConfirmDialog::new(&mut open, "harness_ui_action_confirmation")
+        let mut confirmed = false;
+        let mut cancelled = false;
+        cast::Dialog::new(&mut open, dialog_id)
             .title(title)
-            .description("This will update workflow data. Continue with this action?")
-            .confirm_label(label)
-            .cancel_label("Cancel")
-            .intent(cast::Intent::Primary)
-            .width(440.0)
-            .show(ui.ctx());
+            .width(420.0)
+            .muted_sections()
+            .show_with_footer(
+                ui.ctx(),
+                |ui, _dialog| {
+                    themed_muted(
+                        ui,
+                        format!("{} will run this action immediately.", ui_app_title(app)),
+                    );
+                },
+                |ui, dialog| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                cast::Button::new(label)
+                                    .intent(cast::Intent::Primary)
+                                    .size(cast::Size::Small),
+                            )
+                            .clicked()
+                        {
+                            confirmed = true;
+                            dialog.close();
+                        }
+                        if ui
+                            .add(
+                                cast::Button::new("Cancel")
+                                    .variant(cast::Variant::Outline)
+                                    .size(cast::Size::Small),
+                            )
+                            .clicked()
+                        {
+                            cancelled = true;
+                            dialog.close();
+                        }
+                    });
+                },
+            );
 
-        match response {
-            Some(cast::ConfirmDialogResponse::Confirmed) => {
-                self.confirm_pending_harness_ui_action();
-            }
-            Some(cast::ConfirmDialogResponse::Cancelled) => {
-                self.cancel_pending_harness_ui_action();
-            }
-            None if !open => {
-                self.cancel_pending_harness_ui_action();
-            }
-            None => {}
+        if confirmed {
+            self.confirm_pending_harness_ui_action();
+        } else if cancelled || !open {
+            self.cancel_pending_harness_ui_action();
         }
     }
 
@@ -4489,6 +4516,14 @@ fn menu_descendant_opens(item: &UiMenuItem, current_screen_id: Option<&str>) -> 
     })
 }
 
+fn harness_action_confirmation_title(label: &str) -> String {
+    if label.ends_with(['?', '!', '.']) {
+        label.to_string()
+    } else {
+        format!("{label}?")
+    }
+}
+
 fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
     match level {
         Some(UiNoticeLevel::Success) => cast::Intent::Success,
@@ -4602,6 +4637,18 @@ mod tests {
 
         assert!(menu_descendant_opens(&item, Some("approvals")));
         assert!(!menu_descendant_opens(&item, Some("overview")));
+    }
+
+    #[test]
+    fn harness_action_confirmation_title_adds_only_missing_punctuation() {
+        assert_eq!(
+            harness_action_confirmation_title("Approve release"),
+            "Approve release?"
+        );
+        assert_eq!(
+            harness_action_confirmation_title("Delete release?"),
+            "Delete release?"
+        );
     }
 
     #[test]
