@@ -12,7 +12,7 @@ use turin_control_client::{
     SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, HarnessActionRunResult, UiMenuItem, UiNoticeLevel, WorkItemList,
+    EventEnvelope, HarnessActionRunResult, UiMenuItem, UiNoticeLevel, UiShowIntent, WorkItemList,
 };
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
@@ -234,7 +234,7 @@ struct TurinDesktopApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
-    ui_active_pane: Option<String>,
+    ui_active_pane: Option<ActiveHarnessPane>,
     ui_open_disclosures: BTreeMap<String, bool>,
     ui_form_values: BTreeMap<String, String>,
     ui_selected_list_items: BTreeMap<String, String>,
@@ -273,6 +273,18 @@ struct PendingHarnessUiAction {
     agent_id: Option<String>,
     harness_id: Option<String>,
     params: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveHarnessPane {
+    id: String,
+    presentation: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HarnessPanePresentation {
+    Sheet,
+    Dialog,
 }
 
 #[derive(Debug, Clone)]
@@ -515,7 +527,11 @@ impl TurinDesktopApp {
             .get(&app.id)
             .copied()
             .unwrap_or_else(|| harness_ui::default_screen_index(&app));
-        visible_ui_list_requests(&app, screen_index, self.ui_active_pane.as_deref())
+        visible_ui_list_requests(
+            &app,
+            screen_index,
+            self.ui_active_pane.as_ref().map(|pane| pane.id.as_str()),
+        )
     }
 
     fn request_selected_ui_lists(&mut self, force: bool) {
@@ -578,7 +594,7 @@ impl TurinDesktopApp {
             self.apply_ui_open_request(&open.app_id, &open.target);
         }
         for show in self.dashboard.ui.take_shows() {
-            self.apply_ui_show_request(&show.app_id, &show.target);
+            self.apply_ui_show_request(&show);
         }
         for focus in self.dashboard.ui.take_focuses() {
             self.apply_ui_focus_request(&focus.app_id, &focus.target);
@@ -599,17 +615,20 @@ impl TurinDesktopApp {
         self.open_harness_screen(&app, screen_index);
     }
 
-    fn apply_ui_show_request(&mut self, app_id: &str, target: &str) {
-        let Some(app) = self.select_ui_app_by_id(app_id) else {
+    fn apply_ui_show_request(&mut self, show: &UiShowIntent) {
+        let Some(app) = self.select_ui_app_by_id(&show.app_id) else {
             return;
         };
-        match ui_show_target_for(&app, target) {
+        match ui_show_target_for(&app, &show.target) {
             Some(UiShowTarget::Screen { screen_index }) => {
                 self.open_harness_screen(&app, screen_index);
             }
             Some(UiShowTarget::Pane { pane_id }) => {
                 self.tab = TabKind::UiApps;
-                self.ui_active_pane = Some(pane_id.to_string());
+                self.ui_active_pane = Some(ActiveHarnessPane {
+                    id: pane_id.to_string(),
+                    presentation: show.presentation.clone(),
+                });
                 self.request_selected_ui_lists(false);
             }
             None => {
@@ -2360,7 +2379,7 @@ impl TurinDesktopApp {
         cast::Sheet::new(&mut open, "operator_settings")
             .title("Settings")
             .width(360.0)
-            .show(ui.ctx(), |ui, _sheet| {
+            .show(ui.ctx(), |ui, sheet| {
                 if !ready_local {
                     ui.add(cast::Badge::new(connection).intent(intent).status_dot());
                     ui.add_space(cast::theme_for_ui(ui).spacing.md);
@@ -2385,17 +2404,14 @@ impl TurinDesktopApp {
                 }
                 if ui
                     .add(
-                        cast::Button::new(if self.runtime_tools_open {
-                            "Close runtime tools"
-                        } else {
-                            "Open runtime tools"
-                        })
-                        .size(cast::Size::Small)
-                        .variant(cast::Variant::Ghost),
+                        cast::Button::new("Open runtime tools")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Ghost),
                     )
                     .clicked()
                 {
-                    self.runtime_tools_open = !self.runtime_tools_open;
+                    self.runtime_tools_open = true;
+                    sheet.close();
                 }
             });
         self.sidebar_settings_open = open;
@@ -3375,32 +3391,37 @@ impl TurinDesktopApp {
     }
 
     fn render_active_harness_pane(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
-        let Some(pane_id) = self.ui_active_pane.clone() else {
+        let Some(active) = self.ui_active_pane.clone() else {
             return;
         };
-        let Some(pane) = app.panes.get(&pane_id).cloned() else {
+        let Some(pane) = app.panes.get(&active.id).cloned() else {
             self.ui_active_pane = None;
             return;
         };
 
-        let mut pane_event = None;
         let mut open = true;
-        cast::Sheet::new(&mut open, format!("harness_ui_pane:{}:{}", app.id, pane.id))
-            .title(pane.title.clone())
-            .width(520.0)
-            .show(ui.ctx(), |ui, _sheet| {
-                ScrollArea::vertical().show(ui, |ui| {
-                    let mut render_state = harness_ui::HarnessRenderState {
-                        lists: &self.ui_lists,
-                        requested_lists: &self.requested_ui_lists,
-                        list_errors: &self.ui_list_errors,
-                        open_disclosures: &mut self.ui_open_disclosures,
-                        form_values: &mut self.ui_form_values,
-                        selected_list_items: &mut self.ui_selected_list_items,
-                    };
-                    pane_event = harness_ui::render_harness_pane(ui, app, &pane, &mut render_state);
-                });
-            });
+        let overlay_id = format!("harness_ui_pane:{}:{}", app.id, pane.id);
+        let dialog_body_height = harness_pane_dialog_height(ui.ctx().content_rect().height());
+        let mut pane_event = None;
+        match harness_pane_presentation(&active, &pane) {
+            HarnessPanePresentation::Sheet => {
+                cast::Sheet::new(&mut open, overlay_id)
+                    .title(pane.title.clone())
+                    .width(520.0)
+                    .show(ui.ctx(), |ui, _sheet| {
+                        pane_event = self.render_harness_pane_body(ui, app, &pane, None);
+                    });
+            }
+            HarnessPanePresentation::Dialog => {
+                cast::Dialog::new(&mut open, overlay_id)
+                    .title(pane.title.clone())
+                    .width(520.0)
+                    .show(ui.ctx(), |ui, _dialog| {
+                        pane_event =
+                            self.render_harness_pane_body(ui, app, &pane, Some(dialog_body_height));
+                    });
+            }
+        }
 
         if let Some(event) = pane_event {
             self.handle_harness_ui_event(app, event);
@@ -3408,6 +3429,34 @@ impl TurinDesktopApp {
         if !open {
             self.ui_active_pane = None;
         }
+    }
+
+    fn render_harness_pane_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &UiAppRecord,
+        pane: &turin_daemon_protocol::UiPaneIntent,
+        max_height: Option<f32>,
+    ) -> Option<HarnessUiEvent> {
+        let scroll = ScrollArea::vertical();
+        let scroll = if let Some(max_height) = max_height {
+            scroll.max_height(max_height)
+        } else {
+            scroll
+        };
+        scroll
+            .show(ui, |ui| {
+                let mut render_state = harness_ui::HarnessRenderState {
+                    lists: &self.ui_lists,
+                    requested_lists: &self.requested_ui_lists,
+                    list_errors: &self.ui_list_errors,
+                    open_disclosures: &mut self.ui_open_disclosures,
+                    form_values: &mut self.ui_form_values,
+                    selected_list_items: &mut self.ui_selected_list_items,
+                };
+                harness_ui::render_harness_pane(ui, app, pane, &mut render_state)
+            })
+            .inner
     }
 
     fn render_latest_harness_action_result(&self, ui: &mut egui::Ui, app: &UiAppRecord) {
@@ -4524,6 +4573,27 @@ fn harness_action_confirmation_title(label: &str) -> String {
     }
 }
 
+fn harness_pane_presentation(
+    active: &ActiveHarnessPane,
+    pane: &turin_daemon_protocol::UiPaneIntent,
+) -> HarnessPanePresentation {
+    let presentation = active
+        .presentation
+        .as_deref()
+        .or(pane.presentation.as_deref())
+        .unwrap_or_default();
+    let presentation = presentation.trim();
+    if presentation.eq_ignore_ascii_case("modal") || presentation.eq_ignore_ascii_case("dialog") {
+        HarnessPanePresentation::Dialog
+    } else {
+        HarnessPanePresentation::Sheet
+    }
+}
+
+fn harness_pane_dialog_height(viewport_height: f32) -> f32 {
+    (viewport_height * 0.66).clamp(240.0, 640.0)
+}
+
 fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
     match level {
         Some(UiNoticeLevel::Success) => cast::Intent::Success,
@@ -4649,6 +4719,42 @@ mod tests {
             harness_action_confirmation_title("Delete release?"),
             "Delete release?"
         );
+    }
+
+    #[test]
+    fn pane_presentation_prefers_dynamic_modal_hint_and_defaults_to_sheet() {
+        let mut active = ActiveHarnessPane {
+            id: "release-notes".to_string(),
+            presentation: None,
+        };
+        let mut pane = UiPaneIntent {
+            app_id: "release".to_string(),
+            id: active.id.clone(),
+            title: "Release notes".to_string(),
+            presentation: None,
+            nodes: Vec::new(),
+        };
+
+        assert_eq!(
+            harness_pane_presentation(&active, &pane),
+            HarnessPanePresentation::Sheet
+        );
+
+        pane.presentation = Some("modal".to_string());
+        assert_eq!(
+            harness_pane_presentation(&active, &pane),
+            HarnessPanePresentation::Dialog
+        );
+
+        active.presentation = Some("sheet".to_string());
+        assert_eq!(
+            harness_pane_presentation(&active, &pane),
+            HarnessPanePresentation::Sheet
+        );
+
+        assert_eq!(harness_pane_dialog_height(200.0), 240.0);
+        assert_eq!(harness_pane_dialog_height(800.0), 528.0);
+        assert_eq!(harness_pane_dialog_height(1200.0), 640.0);
     }
 
     #[test]

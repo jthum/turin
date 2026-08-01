@@ -107,6 +107,12 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - Confirmed harness actions use a sectioned Cast dialog with product-facing
   copy and a distinct action footer. Dialog identity is scoped to the app and
   action while the pending decision remains client-local.
+- Harness panes default to Cast sheets and may use Cast dialogs when either the
+  dynamic show request or pane declaration suggests `modal` or `dialog`.
+  Dynamic presentation hints take precedence and unsupported hints degrade to
+  a sheet.
+- Opening Runtime Tools from Settings closes the Settings sheet so secondary
+  overlays never stack over one another.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with
