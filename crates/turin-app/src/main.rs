@@ -12,7 +12,8 @@ use turin_control_client::{
     SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, HarnessActionRunResult, UiMenuItem, UiNoticeLevel, UiShowIntent, WorkItemList,
+    EventEnvelope, HarnessActionRunResult, UiIntent, UiMenuItem, UiNoticeLevel, UiShowIntent,
+    WorkItemList,
 };
 use turin_types::layout::DEFAULT_UI_PROFILES_PATH;
 use turin_ui_core::{
@@ -2445,8 +2446,15 @@ impl TurinDesktopApp {
 
     fn render_operator_feedback(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
         let mut feedback = Vec::new();
+        let matching_failure = self
+            .latest_harness_action_failure
+            .as_ref()
+            .filter(|failure| harness_action_failure_matches_app(failure, app));
 
-        if let Some(error) = &self.dashboard.last_error {
+        if let Some(error) = &self.dashboard.last_error
+            && !matching_failure
+                .is_some_and(|failure| dashboard_error_is_action_failure(error, failure))
+        {
             feedback.push((
                 format!("runtime-error:{error}"),
                 cast::Toast::new("Something went wrong")
@@ -2461,17 +2469,13 @@ impl TurinDesktopApp {
             .filter(|result| harness_action_result_matches_app(result, app))
         {
             let label = self.harness_action_label(&app.id, &result.action);
-            feedback.push((
-                format!("action-success:{}", self.harness_feedback_revision),
-                cast::Toast::new(format!("{label} completed"))
-                    .body("The workflow has been updated.")
-                    .intent(cast::Intent::Success),
-            ));
-        } else if let Some(failure) = self
-            .latest_harness_action_failure
-            .as_ref()
-            .filter(|failure| harness_action_failure_matches_app(failure, app))
-        {
+            if !harness_action_has_notice(result, &app.id) {
+                feedback.push((
+                    format!("action-success:{}", self.harness_feedback_revision),
+                    cast::Toast::new(format!("{label} completed")).intent(cast::Intent::Success),
+                ));
+            }
+        } else if let Some(failure) = matching_failure {
             let label = self.harness_action_label(&app.id, &failure.action);
             feedback.push((
                 format!("action-failure:{}", self.harness_feedback_revision),
@@ -2491,11 +2495,14 @@ impl TurinDesktopApp {
                 .take(3)
                 .map(|notice| {
                     let body = notice.body.clone().unwrap_or_default();
+                    let mut toast = cast::Toast::new(notice.title.clone())
+                        .intent(ui_notice_intent(notice.level));
+                    if !body.trim().is_empty() {
+                        toast = toast.body(body.clone());
+                    }
                     (
                         format!("notice:{}:{}:{body}", notice.app_id, notice.title),
-                        cast::Toast::new(notice.title.clone())
-                            .body(body)
-                            .intent(ui_notice_intent(notice.level)),
+                        toast,
                     )
                 }),
         );
@@ -4594,6 +4601,16 @@ fn harness_pane_dialog_height(viewport_height: f32) -> f32 {
     (viewport_height * 0.66).clamp(240.0, 640.0)
 }
 
+fn harness_action_has_notice(result: &HarnessActionRunResult, app_id: &str) -> bool {
+    result.ui_intents.iter().any(
+        |message| matches!(&message.intent, UiIntent::Notify(notice) if notice.app_id == app_id),
+    )
+}
+
+fn dashboard_error_is_action_failure(error: &str, failure: &HarnessActionFailure) -> bool {
+    error.starts_with(&format!("Harness action '{}' failed", failure.action))
+}
+
 fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
     match level {
         Some(UiNoticeLevel::Success) => cast::Intent::Success,
@@ -4606,7 +4623,10 @@ fn ui_notice_intent(level: Option<UiNoticeLevel>) -> cast::Intent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turin_daemon_protocol::{UiIntentSource, UiListNode, UiNode, UiPaneIntent, UiScreenIntent};
+    use turin_daemon_protocol::{
+        UiIntentMessage, UiIntentSource, UiListNode, UiNode, UiNoticeIntent, UiPaneIntent,
+        UiScreenIntent,
+    };
 
     #[test]
     fn visible_ui_list_requests_include_active_screen_and_pane_only() {
@@ -4719,6 +4739,39 @@ mod tests {
             harness_action_confirmation_title("Delete release?"),
             "Delete release?"
         );
+    }
+
+    #[test]
+    fn action_feedback_prefers_explicit_notices_and_specific_failures() {
+        let result = HarnessActionRunResult {
+            action: "release.approve".to_string(),
+            agent_id: "default".to_string(),
+            harness_id: Some("default".to_string()),
+            result: serde_json::Value::Null,
+            ui_intents: vec![UiIntentMessage::new(UiIntent::Notify(UiNoticeIntent {
+                app_id: "release".to_string(),
+                title: "Approved".to_string(),
+                body: None,
+                level: Some(UiNoticeLevel::Success),
+            }))],
+        };
+        assert!(harness_action_has_notice(&result, "release"));
+        assert!(!harness_action_has_notice(&result, "qa"));
+
+        let failure = HarnessActionFailure {
+            action: "release.reject".to_string(),
+            agent_id: Some("default".to_string()),
+            harness_id: Some("default".to_string()),
+            message: "Release was already approved".to_string(),
+        };
+        assert!(dashboard_error_is_action_failure(
+            "Harness action 'release.reject' failed in harness default: Release was already approved",
+            &failure,
+        ));
+        assert!(!dashboard_error_is_action_failure(
+            "Failed to load release data",
+            &failure,
+        ));
     }
 
     #[test]

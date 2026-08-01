@@ -113,6 +113,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
   a sheet.
 - Opening Runtime Tools from Settings closes the Settings sheet so secondary
   overlays never stack over one another.
+- Explicit harness notices take precedence over generic action-success toasts,
+  and action failures suppress an equivalent generic runtime-error toast.
+  Notice bodies are omitted when empty.
 - Unsupported list/activity/detail/report/chart sources should remain visible
   with explicit fallback copy rather than becoming blank panels.
 - Failed list/activity/detail/report/chart loads should remain visible with
