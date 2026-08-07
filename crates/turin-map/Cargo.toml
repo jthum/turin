@@ -13,7 +13,7 @@ inference-sdk-registry = { git = "https://github.com/jthum/inference-sdk-rust", 
 serde = "1.0"
 serde_json = "1.0"
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
-toml = "0.8"
+toml = "1.1"
 turin-code-index = { path = "../turin-code-index" }
 turin-code-index-writer = { path = "../turin-code-index-writer" }
 turin-types = { path = "../turin-types" }
