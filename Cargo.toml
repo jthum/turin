@@ -94,7 +94,7 @@ notify = "8.2"
 dotenvy = "0.15"
 
 # REPL
-rustyline = "14.0"
+rustyline = "18.0"
 
 
 # Database (Turso — pure Rust SQLite rewrite)
