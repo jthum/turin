@@ -164,7 +164,7 @@ impl DiscordChannelDriver {
             self.identify_payload()
         };
         stream
-            .send(WsMessage::Text(payload.to_string()))
+            .send(WsMessage::Text(payload.to_string().into()))
             .await
             .context(
                 "[discord_gateway_auth_payload_failed] Failed to send Discord gateway auth payload",
@@ -185,7 +185,7 @@ impl DiscordChannelDriver {
         });
         connection
             .stream
-            .send(WsMessage::Text(heartbeat.to_string()))
+            .send(WsMessage::Text(heartbeat.to_string().into()))
             .await
             .context("[discord_gateway_heartbeat_send_failed] Failed to send Discord heartbeat")?;
         connection.next_heartbeat_at = tokio::time::Instant::now() + connection.heartbeat_interval;

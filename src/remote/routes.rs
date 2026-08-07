@@ -394,7 +394,7 @@ async fn run_websocket_stream(
     loop {
         tokio::select! {
             _ = keepalive.tick() => {
-                websocket.send(Message::Ping(Vec::new())).await?;
+                websocket.send(Message::Ping(Vec::new().into())).await?;
             }
             incoming = websocket.next() => {
                 match incoming {
@@ -413,7 +413,7 @@ async fn run_websocket_stream(
                 match event {
                     Ok(Some(event)) => {
                         websocket
-                            .send(Message::Text(serde_json::to_string(&event)?))
+                            .send(Message::Text(serde_json::to_string(&event)?.into()))
                             .await?;
                     }
                     Ok(None) => break,
@@ -421,7 +421,7 @@ async fn run_websocket_stream(
                         let payload =
                             EventEnvelope::new("remote.error", json!({ "message": err.to_string() }));
                         websocket
-                            .send(Message::Text(serde_json::to_string(&payload)?))
+                            .send(Message::Text(serde_json::to_string(&payload)?.into()))
                             .await?;
                         break;
                     }

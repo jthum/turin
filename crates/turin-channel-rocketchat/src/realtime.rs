@@ -526,7 +526,7 @@ impl RocketChatChannelDriver {
 
 async fn send_ws_json(stream: &mut RocketChatWsStream, payload: serde_json::Value) -> Result<()> {
     stream
-        .send(WsMessage::Text(payload.to_string()))
+        .send(WsMessage::Text(payload.to_string().into()))
         .await
         .context("Failed to send Rocket.Chat websocket frame")
 }
