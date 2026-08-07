@@ -1621,7 +1621,7 @@ impl TurinDesktopApp {
         egui::Panel::top("default_shell_top")
             .exact_size(56.0)
             .frame(top_frame)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     themed_heading(ui, "Turin", 20.0);
                     self.render_connection_status_inline(ui);
@@ -1666,7 +1666,7 @@ impl TurinDesktopApp {
             };
             egui::Panel::top("default_session_nav_compact")
                 .frame(compact_nav_frame)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_default_session_nav(ui, &live_sessions, &recent_sessions, true);
                 });
         } else {
@@ -1680,7 +1680,7 @@ impl TurinDesktopApp {
                         .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
                         .inner_margin(egui::Margin::symmetric(16, 16)),
                 )
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_default_session_nav(ui, &live_sessions, &recent_sessions, false);
                 });
         }
@@ -1695,12 +1695,12 @@ impl TurinDesktopApp {
             };
             egui::Panel::bottom("default_conversation_composer")
                 .frame(composer_frame)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_default_composer(ui, session);
                 });
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 let outer_margin = if compact {
                     OPERATOR_COMPACT_CONTENT_MARGIN
@@ -2110,7 +2110,7 @@ impl TurinDesktopApp {
             };
             egui::Panel::top("operator_shell_compact_nav")
                 .frame(compact_nav_frame)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_compact_operator_nav(ui, &apps, &app);
                 });
         } else {
@@ -2124,12 +2124,12 @@ impl TurinDesktopApp {
                         .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
                         .inner_margin(egui::Margin::symmetric(16, 16)),
                 )
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     self.render_operator_sidebar(ui, &apps, &app);
                 });
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 let outer_margin = if compact {
                     OPERATOR_COMPACT_CONTENT_MARGIN
