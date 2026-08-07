@@ -98,8 +98,8 @@ rustyline = "14.0"
 
 
 # Database (Turso — pure Rust SQLite rewrite)
-turso = { version = "0.6", default-features = false }
-turso_core = { version = "0.6", features = ["fts"] }
+turso = { version = "0.7.2", default-features = false }
+turso_core = { version = "0.7.2", features = ["fts"] }
 
 # Lua harness engine (Luau dialect with sandboxing)
 mlua = { version = "0.11", features = ["luau", "serialize", "async", "macros", "send"] }
