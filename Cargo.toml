@@ -60,7 +60,7 @@ tokio = { version = "1.0", default-features = false, features = ["macros", "rt-m
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 turin-types = { path = "crates/turin-types" }
 turin-local-ipc = { path = "crates/turin-local-ipc" }
@@ -82,15 +82,15 @@ mcp-sdk = { git = "https://github.com/jthum/mcp-sdk-rust", rev = "3c5e0d3078f68d
 
 # Streaming
 futures = "0.3"
-similar = "2.7"
-sha2 = "0.10"
+similar = "3.1"
+sha2 = "0.11"
 
 # Async trait support
 async-trait = "0.1"
 
 # Unique IDs
 uuid = { version = "1.0", features = ["v4", "v7"] }
-notify = "6.1"
+notify = "8.2"
 dotenvy = "0.15"
 
 # REPL
@@ -108,17 +108,17 @@ tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter", "ans
 tracing-appender = "0.2.4"
 libc = "0.2"
 dhat = { version = "0.3", optional = true }
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1.0"
 http = "1.0"
 http-body-util = "0.1"
 hyper = { version = "1.8", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
-sha1 = "0.10"
+sha1 = "0.11"
 tokio-tungstenite = { version = "0.24", default-features = false }
 url = "2.5"
 reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "rustls"] }
-scraper = "0.23"
+scraper = "0.27"
 time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 
 [dev-dependencies]

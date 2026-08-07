@@ -150,5 +150,5 @@ fn detect_language(path: &Path) -> Option<&'static str> {
 fn file_content_hash(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
