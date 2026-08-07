@@ -486,6 +486,24 @@ struct Snapshot {
     daemon_task_assistant_content_bytes: Option<usize>,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct SnapshotMetrics {
+    turn_index: Option<u32>,
+    history_len: Option<usize>,
+    outbound_messages: Option<usize>,
+    active_sessions: Option<usize>,
+    live_sessions: Option<usize>,
+    messages_per_session: Option<usize>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct ChannelSnapshotMetrics {
+    outbound_messages: Option<usize>,
+    active_sessions: Option<usize>,
+    messages_per_session: Option<usize>,
+    live_sessions: Option<usize>,
+}
+
 impl From<PerfHotHistoryProfile> for HotHistoryProfile {
     fn from(value: PerfHotHistoryProfile) -> Self {
         match value {
@@ -872,11 +890,9 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
                 ));
             }
             if args.idle_timeout_seconds == 0 && index + 1 < args.requests {
-                let _ = wait_for_peer_runtime_release(
-                    &manager,
-                    Duration::from_millis(args.max_wait_ms),
-                )
-                .await;
+                let _ =
+                    wait_for_peer_runtime_release(manager, Duration::from_millis(args.max_wait_ms))
+                        .await;
             }
         }
     }
@@ -890,7 +906,7 @@ async fn run_idle_runtime(args: IdleRuntimeArgs) -> Result<()> {
     ));
 
     let released =
-        wait_for_peer_runtime_release(&manager, Duration::from_millis(args.max_wait_ms)).await;
+        wait_for_peer_runtime_release(manager, Duration::from_millis(args.max_wait_ms)).await;
     let live_sessions = manager.list_live_sessions(None).await.len();
     snapshots.push(idle_runtime_snapshot(
         if released {
@@ -957,12 +973,10 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         "start",
         start,
         &state_db_path,
-        None,
-        None,
-        Some(0),
-        None,
-        None,
-        None,
+        SnapshotMetrics {
+            outbound_messages: Some(0),
+            ..SnapshotMetrics::default()
+        },
     )];
 
     let mock_response = synthetic_text(&args.mock_response, args.response_bytes);
@@ -977,12 +991,11 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         "after-daemon-start",
         start,
         &state_db_path,
-        None,
-        None,
-        Some(0),
-        None,
-        Some(daemon.live_session_count().await?),
-        None,
+        SnapshotMetrics {
+            outbound_messages: Some(0),
+            live_sessions: Some(daemon.live_session_count().await?),
+            ..SnapshotMetrics::default()
+        },
     ));
 
     let runner = daemon.runner();
@@ -1001,12 +1014,11 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         "after-runner",
         start,
         &state_db_path,
-        None,
-        None,
-        Some(outbound_count),
-        None,
-        Some(daemon.live_session_count().await?),
-        None,
+        SnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            live_sessions: Some(daemon.live_session_count().await?),
+            ..SnapshotMetrics::default()
+        },
     ));
 
     if args.post_run_idle_wait_ms > 0 {
@@ -1015,12 +1027,11 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "after-idle-wait",
             start,
             &state_db_path,
-            None,
-            None,
-            Some(outbound_count),
-            None,
-            Some(daemon.live_session_count().await?),
-            None,
+            SnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                live_sessions: Some(daemon.live_session_count().await?),
+                ..SnapshotMetrics::default()
+            },
         ));
     }
 
@@ -1030,12 +1041,11 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "after-db-checkpoint",
             start,
             &state_db_path,
-            None,
-            None,
-            Some(outbound_count),
-            None,
-            Some(daemon.live_session_count().await?),
-            None,
+            SnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                live_sessions: Some(daemon.live_session_count().await?),
+                ..SnapshotMetrics::default()
+            },
         ));
     }
 
@@ -1045,12 +1055,11 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
             "after-allocator-trim",
             start,
             &state_db_path,
-            None,
-            None,
-            Some(outbound_count),
-            None,
-            Some(daemon.live_session_count().await?),
-            None,
+            SnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                live_sessions: Some(daemon.live_session_count().await?),
+                ..SnapshotMetrics::default()
+            },
         ));
     }
 
@@ -1059,12 +1068,10 @@ async fn run_fake_channel(args: FakeChannelArgs) -> Result<()> {
         "after-daemon-stop",
         start,
         &state_db_path,
-        None,
-        None,
-        Some(outbound_count),
-        None,
-        None,
-        None,
+        SnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            ..SnapshotMetrics::default()
+        },
     ));
 
     let report = PerfReport {
@@ -1108,10 +1115,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "fresh-start",
             start,
             &state_db_path,
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(0),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(0),
+                active_sessions: Some(0),
+                messages_per_session: Some(0),
+                live_sessions: Some(0),
+            },
             MemoryTarget::CurrentProcess,
         )
         .await?,
@@ -1129,10 +1138,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         "after-daemon-start",
         start,
         &state_db_path,
-        Some(0),
-        Some(0),
-        Some(0),
-        Some(daemon.live_session_count().await?),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(0),
+            active_sessions: Some(0),
+            messages_per_session: Some(0),
+            live_sessions: Some(daemon.live_session_count().await?),
+        },
         MemoryTarget::CurrentProcess,
     )
     .await?;
@@ -1173,10 +1184,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         "after-runner",
         start,
         &state_db_path,
-        Some(outbound_count),
-        Some(args.sessions),
-        Some(args.messages_per_session),
-        Some(daemon.live_session_count().await?),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            active_sessions: Some(args.sessions),
+            messages_per_session: Some(args.messages_per_session),
+            live_sessions: Some(daemon.live_session_count().await?),
+        },
         MemoryTarget::CurrentProcess,
     )
     .await?;
@@ -1191,10 +1204,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "after-idle-wait",
             start,
             &state_db_path,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-            Some(daemon.live_session_count().await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                active_sessions: Some(args.sessions),
+                messages_per_session: Some(args.messages_per_session),
+                live_sessions: Some(daemon.live_session_count().await?),
+            },
             MemoryTarget::CurrentProcess,
         )
         .await?;
@@ -1210,10 +1225,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "after-db-checkpoint",
             start,
             &state_db_path,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-            Some(daemon.live_session_count().await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                active_sessions: Some(args.sessions),
+                messages_per_session: Some(args.messages_per_session),
+                live_sessions: Some(daemon.live_session_count().await?),
+            },
             MemoryTarget::CurrentProcess,
         )
         .await?;
@@ -1229,10 +1246,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
             "after-allocator-trim",
             start,
             &state_db_path,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-            Some(daemon.live_session_count().await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                active_sessions: Some(args.sessions),
+                messages_per_session: Some(args.messages_per_session),
+                live_sessions: Some(daemon.live_session_count().await?),
+            },
             MemoryTarget::CurrentProcess,
         )
         .await?;
@@ -1247,10 +1266,12 @@ async fn run_channel_scale(args: ChannelScaleArgs) -> Result<()> {
         "after-daemon-stop",
         start,
         &state_db_path,
-        Some(outbound_count),
-        Some(args.sessions),
-        Some(args.messages_per_session),
-        None,
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            active_sessions: Some(args.sessions),
+            messages_per_session: Some(args.messages_per_session),
+            live_sessions: None,
+        },
         MemoryTarget::CurrentProcess,
     )
     .await?;
@@ -1310,10 +1331,12 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
         "fresh-start",
         start,
         &state_db_path,
-        Some(0),
-        Some(0),
-        Some(0),
-        Some(0),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(0),
+            active_sessions: Some(0),
+            messages_per_session: Some(0),
+            live_sessions: Some(0),
+        },
         MemoryTarget::CurrentProcess,
     )
     .await?;
@@ -1339,10 +1362,12 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
             "after-daemon-start",
             start,
             &state_db_path,
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(daemon.live_session_count().await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(0),
+                active_sessions: Some(0),
+                messages_per_session: Some(0),
+                live_sessions: Some(daemon.live_session_count().await?),
+            },
             memory_target,
         )
         .await?,
@@ -1377,10 +1402,12 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
         "after-runner",
         start,
         &state_db_path,
-        Some(outbound_count),
-        Some(args.sessions),
-        Some(args.messages_per_session),
-        Some(daemon.live_session_count().await?),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            active_sessions: Some(args.sessions),
+            messages_per_session: Some(args.messages_per_session),
+            live_sessions: Some(daemon.live_session_count().await?),
+        },
         memory_target,
     )
     .await?;
@@ -1395,10 +1422,12 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
             "after-idle-wait",
             start,
             &state_db_path,
-            Some(outbound_count),
-            Some(args.sessions),
-            Some(args.messages_per_session),
-            Some(daemon.live_session_count().await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                active_sessions: Some(args.sessions),
+                messages_per_session: Some(args.messages_per_session),
+                live_sessions: Some(daemon.live_session_count().await?),
+            },
             memory_target,
         )
         .await?;
@@ -1420,10 +1449,12 @@ async fn run_blackbox_channel_scale(args: BlackboxChannelScaleArgs) -> Result<()
         "after-daemon-stop",
         start,
         &state_db_path,
-        Some(outbound_count),
-        Some(args.sessions),
-        Some(args.messages_per_session),
-        None,
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(outbound_count),
+            active_sessions: Some(args.sessions),
+            messages_per_session: Some(args.messages_per_session),
+            live_sessions: None,
+        },
         MemoryTarget::Pid(pid),
     )
     .await?;
@@ -1478,10 +1509,12 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
         "fresh-start",
         start,
         &state_db_path,
-        Some(0),
-        Some(0),
-        Some(0),
-        Some(0),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(0),
+            active_sessions: Some(0),
+            messages_per_session: Some(0),
+            live_sessions: Some(0),
+        },
         MemoryTarget::CurrentProcess,
     )
     .await?;
@@ -1504,17 +1537,22 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
     let memory_target = MemoryTarget::Pid(daemon.pid());
     let client = daemon.client();
 
-    snapshots.push(blackbox_task_scale_snapshot(
-        &daemon,
-        "after-daemon-start",
-        start,
-        &state_db_path,
-        Some(0),
-        Some(1),
-        Some(0),
-        memory_target,
-    )
-    .await?);
+    snapshots.push(
+        blackbox_task_scale_snapshot(
+            &daemon,
+            "after-daemon-start",
+            start,
+            &state_db_path,
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(0),
+                active_sessions: Some(1),
+                messages_per_session: Some(0),
+                live_sessions: None,
+            },
+            memory_target,
+        )
+        .await?,
+    );
 
     let opened: OpenedSessionResponse = client
         .request_ok(
@@ -1566,9 +1604,12 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
                     &format!("after-{completed}-tasks"),
                     start,
                     &state_db_path,
-                    Some(completed),
-                    Some(1),
-                    Some(completed),
+                    ChannelSnapshotMetrics {
+                        outbound_messages: Some(completed),
+                        active_sessions: Some(1),
+                        messages_per_session: Some(completed),
+                        live_sessions: None,
+                    },
                     memory_target,
                 )
                 .await?,
@@ -1581,9 +1622,12 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
         "after-runner",
         start,
         &state_db_path,
-        Some(args.tasks),
-        Some(1),
-        Some(args.tasks),
+        ChannelSnapshotMetrics {
+            outbound_messages: Some(args.tasks),
+            active_sessions: Some(1),
+            messages_per_session: Some(args.tasks),
+            live_sessions: None,
+        },
         memory_target,
     )
     .await?;
@@ -1599,9 +1643,12 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
             "after-idle-wait",
             start,
             &state_db_path,
-            Some(args.tasks),
-            Some(1),
-            Some(args.tasks),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(args.tasks),
+                active_sessions: Some(1),
+                messages_per_session: Some(args.tasks),
+                live_sessions: None,
+            },
             memory_target,
         )
         .await?;
@@ -1621,10 +1668,12 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
             "after-daemon-stop",
             start,
             &state_db_path,
-            Some(args.tasks),
-            Some(1),
-            Some(args.tasks),
-            None,
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(args.tasks),
+                active_sessions: Some(1),
+                messages_per_session: Some(args.tasks),
+                live_sessions: None,
+            },
             MemoryTarget::Pid(pid),
         )
         .await?,
@@ -1659,9 +1708,7 @@ async fn blackbox_task_scale_snapshot(
     label: &str,
     start: Instant,
     state_db_path: &Path,
-    completed_tasks: Option<usize>,
-    active_sessions: Option<usize>,
-    messages_per_session: Option<usize>,
+    metrics: ChannelSnapshotMetrics,
     memory_target: MemoryTarget,
 ) -> Result<Snapshot> {
     let diagnostics = daemon.live_session_diagnostics().await?;
@@ -1669,10 +1716,10 @@ async fn blackbox_task_scale_snapshot(
         label,
         start,
         state_db_path,
-        completed_tasks,
-        active_sessions,
-        messages_per_session,
-        Some(diagnostics.count),
+        ChannelSnapshotMetrics {
+            live_sessions: Some(diagnostics.count),
+            ..metrics
+        },
         memory_target,
     )
     .await?;
@@ -1818,12 +1865,13 @@ fn persistence_scale_snapshot(
         label,
         start,
         state_db_path,
-        None,
-        read_history_len,
-        Some(completed_tasks),
-        Some(1),
-        None,
-        Some(completed_tasks),
+        SnapshotMetrics {
+            history_len: read_history_len,
+            outbound_messages: Some(completed_tasks),
+            active_sessions: Some(1),
+            messages_per_session: Some(completed_tasks),
+            ..SnapshotMetrics::default()
+        },
     );
     snapshot.persisted_messages = Some(completed_tasks.saturating_mul(2));
     if let Some(metrics) = event_metrics {
@@ -1989,7 +2037,10 @@ fn first_text_content(content: &[InferenceContent]) -> Option<&str> {
     })
 }
 
-async fn event_metrics_if_enabled(enabled: bool, state_db_path: &Path) -> Result<Option<EventMetrics>> {
+async fn event_metrics_if_enabled(
+    enabled: bool,
+    state_db_path: &Path,
+) -> Result<Option<EventMetrics>> {
     if enabled {
         persisted_event_metrics(state_db_path).await.map(Some)
     } else {
@@ -2014,7 +2065,12 @@ async fn persisted_event_metrics(state_db_path: &Path) -> Result<EventMetrics> {
         .experimental_index_method(true)
         .build()
         .await
-        .with_context(|| format!("failed to open '{}' for event metrics", state_db_path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to open '{}' for event metrics",
+                state_db_path.display()
+            )
+        })?;
     let conn = db.connect()?;
     conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
     let mut rows = conn
@@ -2575,7 +2631,7 @@ fn message_start() -> InferenceEvent {
 }
 
 fn should_call_tool(index: usize, tool_every: usize) -> bool {
-    tool_every > 0 && index % tool_every == 0
+    tool_every > 0 && index.is_multiple_of(tool_every)
 }
 
 fn tool_call_count(turns: usize, tool_every: usize) -> usize {
@@ -2600,12 +2656,7 @@ fn snapshot(
     label: &str,
     start: Instant,
     state_db_path: &Path,
-    turn_index: Option<u32>,
-    history_len: Option<usize>,
-    outbound_messages: Option<usize>,
-    active_sessions: Option<usize>,
-    live_sessions: Option<usize>,
-    messages_per_session: Option<usize>,
+    metrics: SnapshotMetrics,
 ) -> Snapshot {
     let memory = read_process_memory();
     let state_store_size = state_store_size(state_db_path);
@@ -2621,12 +2672,12 @@ fn snapshot(
         state_db_wal_bytes: state_store_size.wal_bytes,
         state_db_shm_bytes: state_store_size.shm_bytes,
         state_db_bytes: state_store_size.total_bytes(),
-        turn_index,
-        history_len,
-        outbound_messages,
-        active_sessions,
-        live_sessions,
-        messages_per_session,
+        turn_index: metrics.turn_index,
+        history_len: metrics.history_len,
+        outbound_messages: metrics.outbound_messages,
+        active_sessions: metrics.active_sessions,
+        live_sessions: metrics.live_sessions,
+        messages_per_session: metrics.messages_per_session,
         persisted_messages: None,
         history_message_offset: None,
         hot_window_pruned: None,
@@ -2672,12 +2723,10 @@ fn idle_runtime_snapshot(
         label,
         start,
         state_db_path,
-        None,
-        None,
-        None,
-        None,
-        Some(live_sessions),
-        None,
+        SnapshotMetrics {
+            live_sessions: Some(live_sessions),
+            ..SnapshotMetrics::default()
+        },
     )
 }
 
@@ -2691,12 +2740,11 @@ async fn hot_history_snapshot(
         label,
         start,
         state_db_path,
-        Some(session.turn_index),
-        Some(session.history.len()),
-        None,
-        None,
-        None,
-        None,
+        SnapshotMetrics {
+            turn_index: Some(session.turn_index),
+            history_len: Some(session.history.len()),
+            ..SnapshotMetrics::default()
+        },
     );
     let metrics = history_metrics(&session.history);
     snapshot.history_payload_bytes = Some(metrics.payload_bytes);
@@ -2730,22 +2778,20 @@ async fn channel_scale_snapshot(
     label: &str,
     start: Instant,
     state_db_path: &Path,
-    outbound_messages: Option<usize>,
-    active_sessions: Option<usize>,
-    messages_per_session: Option<usize>,
-    live_sessions: Option<usize>,
+    metrics: ChannelSnapshotMetrics,
     memory_target: MemoryTarget,
 ) -> Result<Snapshot> {
     let mut snapshot = snapshot(
         label,
         start,
         state_db_path,
-        None,
-        None,
-        outbound_messages,
-        active_sessions,
-        live_sessions,
-        messages_per_session,
+        SnapshotMetrics {
+            outbound_messages: metrics.outbound_messages,
+            active_sessions: metrics.active_sessions,
+            live_sessions: metrics.live_sessions,
+            messages_per_session: metrics.messages_per_session,
+            ..SnapshotMetrics::default()
+        },
     );
     let memory = read_process_memory_for_target(memory_target);
     snapshot.rss_kb = memory.rss_kb;
@@ -3130,10 +3176,12 @@ impl ScaleRecorder {
             ),
             self.start,
             &self.state_db_path,
-            Some(outbound_count),
-            Some(self.active_sessions),
-            Some(messages_per_session),
-            Some(live_session_count(&self.daemon).await?),
+            ChannelSnapshotMetrics {
+                outbound_messages: Some(outbound_count),
+                active_sessions: Some(self.active_sessions),
+                messages_per_session: Some(messages_per_session),
+                live_sessions: Some(live_session_count(&self.daemon).await?),
+            },
             self.memory_target,
         )
         .await?;
@@ -3175,11 +3223,11 @@ fn read_process_memory_from_proc(proc_path: &Path) -> ProcessMemory {
         }
     }
 
-    if rss_kb.is_none() {
-        if let Ok(raw) = fs::read_to_string(proc_path.join("status")) {
-            for line in raw.lines() {
-                rss_kb = rss_kb.or_else(|| parse_kb_line(line, "VmRSS:"));
-            }
+    if rss_kb.is_none()
+        && let Ok(raw) = fs::read_to_string(proc_path.join("status"))
+    {
+        for line in raw.lines() {
+            rss_kb = rss_kb.or_else(|| parse_kb_line(line, "VmRSS:"));
         }
     }
 
