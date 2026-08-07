@@ -178,7 +178,7 @@ impl HarnessEngine {
     pub fn evaluate_userdata(
         &self,
         hook_name: &str,
-        data: impl mlua::UserData + Clone + Send + 'static,
+        data: impl mlua::UserData + Clone + Send + Sync + 'static,
     ) -> Result<Verdict> {
         let verdicts = self.call_hook_userdata(hook_name, data)?;
         Ok(compose_verdicts(&verdicts))
@@ -417,7 +417,7 @@ impl HarnessEngine {
     fn call_hook_userdata(
         &self,
         hook_name: &str,
-        data: impl mlua::UserData + Clone + Send + 'static,
+        data: impl mlua::UserData + Clone + Send + Sync + 'static,
     ) -> Result<Vec<Verdict>> {
         let mut verdicts = Vec::new();
 
