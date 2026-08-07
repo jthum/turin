@@ -23,7 +23,7 @@ use crate::{
 };
 
 pub(crate) enum DriverEvent {
-    Message(Box<wa::Message>, Box<MessageInfo>),
+    Message(Arc<wa::Message>, Arc<MessageInfo>),
     LoggedOut(String),
 }
 
@@ -46,12 +46,12 @@ pub(crate) async fn build_bot(
     }
 
     let database_url = session_store_path.to_string_lossy().to_string();
-    let backend = Arc::new(SqliteStore::new(&database_url).await.with_context(|| {
+    let backend = SqliteStore::new(&database_url).await.with_context(|| {
         format!(
             "Failed to open WhatsApp session store '{}'",
             session_store_path.display()
         )
-    })?);
+    })?;
     tighten_path_permissions(session_store_path, 0o600).with_context(|| {
         format!(
             "Failed to harden permissions for WhatsApp session store '{}'",
@@ -84,34 +84,38 @@ pub(crate) async fn build_bot(
             let driver_event_tx = driver_event_tx.clone();
             let store_path_for_display = store_path_for_display.clone();
             async move {
-                match event {
-                    Event::Message(message, info) => {
-                        if let Some(driver_event_tx) = driver_event_tx.as_ref()
-                            && !info.source.is_from_me
-                        {
-                            let _ =
-                                driver_event_tx.send(DriverEvent::Message(message, Box::new(info)));
+                match &*event {
+                    Event::Messages(batch) => {
+                        if let Some(driver_event_tx) = driver_event_tx.as_ref() {
+                            for inbound in batch {
+                                if !inbound.info.source.is_from_me {
+                                    let _ = driver_event_tx.send(DriverEvent::Message(
+                                        Arc::clone(&inbound.message),
+                                        Arc::clone(&inbound.info),
+                                    ));
+                                }
+                            }
                         }
                     }
-                    Event::LoggedOut(reason) => {
+                    Event::LoggedOut(logout) => {
+                        let reason = format!("{:?}", logout.reason);
                         if let Some(driver_event_tx) = driver_event_tx.as_ref() {
-                            let _ = driver_event_tx
-                                .send(DriverEvent::LoggedOut(format!("{reason:?}")));
+                            let _ = driver_event_tx.send(DriverEvent::LoggedOut(reason.clone()));
                         }
                         if let Some(writer) = writer_for_callback.as_ref() {
                             let _ = writer.write(&WhatsAppAuthState {
                                 phase: WhatsAppAuthPhase::Failed,
                                 display: turin_channel_core::ChannelAuthFlowDisplay::default(),
                                 message: Some(format!(
-                                    "WhatsApp session logged out during pairing: {reason:?}"
+                                    "WhatsApp session logged out during pairing: {reason}"
                                 )),
                             });
                         }
                     }
-                    Event::PairingQrCode { code, timeout } => {
+                    Event::PairingQrCode(qr) => {
                         if driver_event_tx.is_some() {
                             warn!(
-                                expires_in_seconds = timeout.as_secs(),
+                                expires_in_seconds = qr.timeout.as_secs(),
                                 "WhatsApp runtime requested QR pairing; pair the session through setup before using the channel"
                             );
                         }
@@ -124,18 +128,18 @@ pub(crate) async fn build_bot(
                                 message: Some(
                                     "Scan this QR code in WhatsApp > Linked Devices.".to_string(),
                                 ),
-                                qr_text: Some(code),
-                                expires_in_seconds: Some(timeout.as_secs()),
+                                qr_text: Some(qr.code.clone()),
+                                expires_in_seconds: Some(qr.timeout.as_secs()),
                                 poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                                 ..turin_channel_core::ChannelAuthFlowDisplay::default()
                             },
                             message: None,
                         });
                     }
-                    Event::PairingCode { code, timeout } => {
+                    Event::PairingCode(pairing) => {
                         if driver_event_tx.is_some() {
                             warn!(
-                                expires_in_seconds = timeout.as_secs(),
+                                expires_in_seconds = pairing.timeout.as_secs(),
                                 "WhatsApp runtime requested a pairing code; pair the session through setup before using the channel"
                             );
                         }
@@ -148,8 +152,8 @@ pub(crate) async fn build_bot(
                                 message: Some(
                                     "Enter this pairing code in WhatsApp > Linked Devices > Link with phone number instead.".to_string(),
                                 ),
-                                pairing_code: Some(code),
-                                expires_in_seconds: Some(timeout.as_secs()),
+                                pairing_code: Some(pairing.code.clone()),
+                                expires_in_seconds: Some(pairing.timeout.as_secs()),
                                 poll_interval_seconds: Some(DEFAULT_AUTH_POLL_INTERVAL_SECONDS),
                                 ..turin_channel_core::ChannelAuthFlowDisplay::default()
                             },
@@ -182,7 +186,20 @@ pub(crate) async fn build_bot(
                         let _ = writer.write(&WhatsAppAuthState {
                             phase: WhatsAppAuthPhase::Failed,
                             display: turin_channel_core::ChannelAuthFlowDisplay::default(),
-                            message: Some(format!("WhatsApp pairing failed: {err:?}")),
+                            message: Some(format!("WhatsApp pairing failed: {}", err.error)),
+                        });
+                    }
+                    Event::PairingCodeError(err) => {
+                        let Some(writer) = writer_for_callback.as_ref() else {
+                            return;
+                        };
+                        let _ = writer.write(&WhatsAppAuthState {
+                            phase: WhatsAppAuthPhase::Failed,
+                            display: turin_channel_core::ChannelAuthFlowDisplay::default(),
+                            message: Some(format!(
+                                "WhatsApp phone-number pairing failed: {}",
+                                err.error
+                            )),
                         });
                     }
                     _ => {}

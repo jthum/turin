@@ -21,9 +21,9 @@ turin-channel-core = { path = "../turin-channel-core" }
 turin-channel-runner = { path = "../turin-channel-runner" }
 turin-daemon-client = { path = "../turin-daemon-client" }
 turin-daemon-protocol = { path = "../turin-daemon-protocol" }
-whatsapp-rust = { version = "0.5.0", default-features = false, features = ["sqlite-storage", "tokio-runtime", "tokio-transport", "ureq-client", "tokio-native", "signal"] }
-whatsapp-rust-tokio-transport = "0.5.0"
-whatsapp-rust-ureq-http-client = "0.5.0"
+whatsapp-rust = { version = "0.7.0", default-features = false, features = ["sqlite-storage", "tokio-runtime", "tokio-transport", "ureq-client", "tokio-native", "signal"] }
+whatsapp-rust-tokio-transport = "0.7.0"
+whatsapp-rust-ureq-http-client = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -188,7 +188,7 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
     let session: WhatsAppAuthSession =
         serde_json::from_str(session_json).context("Failed to parse auth flow worker session")?;
     let writer = AuthStateWriter::new(session.state_path.clone());
-    let (client, mut bot) = build_bot(
+    let (client, bot) = build_bot(
         &session.store_path,
         session.phone_number.clone(),
         session.custom_code.clone(),
@@ -202,7 +202,8 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
             session.store_path.display()
         )
     })?;
-    let mut bot_handle = bot.run().await.context("Failed to start WhatsApp bot")?;
+    let mut bot_handle = bot.spawn();
+    let mut bot_finished = false;
     let deadline = Instant::now() + Duration::from_secs(DEFAULT_AUTH_TIMEOUT_SECONDS);
 
     loop {
@@ -232,14 +233,9 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
         }
 
         tokio::select! {
-            result = &mut bot_handle => {
-                if let Err(err) = result {
-                    writer.write(&WhatsAppAuthState {
-                        phase: WhatsAppAuthPhase::Failed,
-                        display: ChannelAuthFlowDisplay::default(),
-                        message: Some(format!("WhatsApp pairing worker was cancelled: {err}")),
-                    })?;
-                } else if !client.is_logged_in() {
+            _ = &mut bot_handle => {
+                bot_finished = true;
+                if !client.is_logged_in() {
                     writer.write(&WhatsAppAuthState {
                         phase: WhatsAppAuthPhase::Failed,
                         display: ChannelAuthFlowDisplay::default(),
@@ -252,8 +248,9 @@ pub async fn run_auth_flow_worker(session_json: &str) -> Result<()> {
         }
     }
 
-    client.disconnect().await;
-    bot_handle.abort();
+    if !bot_finished {
+        bot_handle.shutdown().await;
+    }
     Ok(())
 }
 

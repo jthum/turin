@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::Cursor;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -24,8 +23,10 @@ use turin_channel_core::{
 use turin_channel_runner::ChannelDriver;
 use uuid::Uuid;
 use whatsapp_rust::Jid;
+use whatsapp_rust::UploadOptions;
 use whatsapp_rust::bot::BotHandle;
 use whatsapp_rust::download::{Downloadable, MediaType};
+use whatsapp_rust::media::{self, DocumentOptions, ImageOptions};
 use whatsapp_rust::proto_helpers::MessageExt;
 use whatsapp_rust::types::message::MessageInfo;
 use whatsapp_rust::waproto::whatsapp as wa;
@@ -57,7 +58,7 @@ pub struct WhatsAppChannelDriver {
     config: WhatsAppChannelDriverConfig,
     shutdown_rx: watch::Receiver<bool>,
     client: Arc<whatsapp_rust::Client>,
-    bot_handle: BotHandle,
+    bot_handle: Option<BotHandle>,
     event_rx: mpsc::UnboundedReceiver<DriverEvent>,
 }
 
@@ -71,7 +72,7 @@ impl WhatsAppChannelDriver {
     ) -> Result<Self> {
         let config = parse_settings(settings, Some(runtime_dir))?;
         let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let (runtime_client, mut bot) = build_bot(
+        let (runtime_client, bot) = build_bot(
             &config.session_store_path,
             None,
             None,
@@ -86,24 +87,21 @@ impl WhatsAppChannelDriver {
             )
         })?;
 
-        let bot_handle = bot
-            .run()
-            .await
-            .context("Failed to start WhatsApp runtime bot")?;
+        let bot_handle = bot.spawn();
 
         Ok(Self {
             config,
             shutdown_rx,
             client: runtime_client,
-            bot_handle,
+            bot_handle: Some(bot_handle),
             event_rx,
         })
     }
 
     async fn message_to_event(
         &self,
-        message: Box<wa::Message>,
-        info: MessageInfo,
+        message: Arc<wa::Message>,
+        info: Arc<MessageInfo>,
     ) -> Result<Option<InboundEvent>> {
         if info.source.is_from_me || info.source.chat.to_string() == "status@broadcast" {
             return Ok(None);
@@ -167,7 +165,7 @@ impl WhatsAppChannelDriver {
         Ok(Some(InboundEvent {
             message: ChannelMessageRef {
                 conversation: conversation.clone(),
-                message_id: info.id,
+                message_id: info.id.clone(),
             },
             conversation,
             user: ChannelUser {
@@ -195,10 +193,10 @@ impl WhatsAppChannelDriver {
         })?;
 
         let mut attachments = Vec::new();
-        if let Some(image) = &message.image_message {
+        if let Some(image) = message.image_message.as_option() {
             attachments.push(
                 self.download_whatsapp_attachment(
-                    &**image,
+                    image,
                     message_id,
                     image.mimetype.clone(),
                     image_name(image, message_id),
@@ -206,10 +204,10 @@ impl WhatsAppChannelDriver {
                 .await?,
             );
         }
-        if let Some(document) = &message.document_message {
+        if let Some(document) = message.document_message.as_option() {
             attachments.push(
                 self.download_whatsapp_attachment(
-                    &**document,
+                    document,
                     message_id,
                     document.mimetype.clone(),
                     document_name(document, message_id),
@@ -217,10 +215,10 @@ impl WhatsAppChannelDriver {
                 .await?,
             );
         }
-        if let Some(video) = &message.video_message {
+        if let Some(video) = message.video_message.as_option() {
             attachments.push(
                 self.download_whatsapp_attachment(
-                    &**video,
+                    video,
                     message_id,
                     video.mimetype.clone(),
                     format!("video-{message_id}.mp4"),
@@ -228,10 +226,10 @@ impl WhatsAppChannelDriver {
                 .await?,
             );
         }
-        if let Some(audio) = &message.audio_message {
+        if let Some(audio) = message.audio_message.as_option() {
             attachments.push(
                 self.download_whatsapp_attachment(
-                    &**audio,
+                    audio,
                     message_id,
                     audio.mimetype.clone(),
                     format!("audio-{message_id}.ogg"),
@@ -249,9 +247,9 @@ impl WhatsAppChannelDriver {
         content_type: Option<String>,
         suggested_name: String,
     ) -> Result<ChannelAttachment> {
-        let mut data = Cursor::new(Vec::new());
-        self.client
-            .download_to_file(media, &mut data)
+        let data = self
+            .client
+            .download(media)
             .await
             .context("Failed to download WhatsApp media attachment")?;
         let target_path = self.config.media_dir.join(format!(
@@ -259,7 +257,7 @@ impl WhatsAppChannelDriver {
             Uuid::new_v4(),
             sanitize_component(&suggested_name)
         ));
-        fs::write(&target_path, data.into_inner()).with_context(|| {
+        fs::write(&target_path, data).with_context(|| {
             format!(
                 "Failed to write WhatsApp media attachment '{}'",
                 target_path.display()
@@ -296,7 +294,7 @@ impl WhatsAppChannelDriver {
         let media_type = whatsapp_media_type(attachment.content_type.as_deref());
         let upload = self
             .client
-            .upload(bytes, media_type)
+            .upload(bytes, media_type, UploadOptions::default())
             .await
             .context("Failed to upload WhatsApp attachment")?;
         let mime_type = attachment
@@ -304,34 +302,22 @@ impl WhatsAppChannelDriver {
             .clone()
             .or_else(|| whatsapp_default_mime_type(media_type).map(str::to_string));
         let message = match media_type {
-            MediaType::Image => wa::Message {
-                image_message: Some(Box::new(wa::message::ImageMessage {
+            MediaType::Image => media::image_message(
+                upload,
+                ImageOptions {
                     mimetype: mime_type,
-                    url: Some(upload.url),
-                    direct_path: Some(upload.direct_path),
-                    media_key: Some(upload.media_key),
-                    file_enc_sha256: Some(upload.file_enc_sha256),
-                    file_sha256: Some(upload.file_sha256),
-                    file_length: Some(upload.file_length),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            },
-            _ => wa::Message {
-                document_message: Some(Box::new(wa::message::DocumentMessage {
+                    ..ImageOptions::default()
+                },
+            ),
+            _ => media::document_message(
+                upload,
+                DocumentOptions {
                     mimetype: mime_type,
                     title: Some(attachment.name.clone()),
                     file_name: Some(attachment.name.clone()),
-                    url: Some(upload.url),
-                    direct_path: Some(upload.direct_path),
-                    media_key: Some(upload.media_key),
-                    file_enc_sha256: Some(upload.file_enc_sha256),
-                    file_sha256: Some(upload.file_sha256),
-                    file_length: Some(upload.file_length),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            },
+                    ..DocumentOptions::default()
+                },
+            ),
         };
         self.client
             .send_message(chat, message)
@@ -384,7 +370,7 @@ impl ChannelDriver for WhatsAppChannelDriver {
                 maybe_event = self.event_rx.recv() => {
                     match maybe_event {
                         Some(DriverEvent::Message(message, info)) => {
-                            if let Some(event) = self.message_to_event(message, *info).await? {
+                            if let Some(event) = self.message_to_event(message, info).await? {
                                 return Ok(Some(event));
                             }
                         }
@@ -433,8 +419,9 @@ impl ChannelDriver for WhatsAppChannelDriver {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        self.client.disconnect().await;
-        self.bot_handle.abort();
+        if let Some(bot_handle) = self.bot_handle.take() {
+            bot_handle.shutdown().await;
+        }
         Ok(())
     }
 }
