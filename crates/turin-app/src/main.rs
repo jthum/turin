@@ -235,9 +235,11 @@ struct TurinDesktopApp {
     events_follow_latest: bool,
     paused_events: Vec<EventEnvelope>,
     ui_screen_indices: BTreeMap<String, usize>,
+    ui_assistant_apps: BTreeSet<String>,
     ui_active_pane: Option<ActiveHarnessPane>,
     ui_open_disclosures: BTreeMap<String, bool>,
     ui_form_values: BTreeMap<String, String>,
+    ui_list_filters: BTreeMap<String, String>,
     ui_selected_list_items: BTreeMap<String, String>,
     ui_list_requests: BTreeMap<String, UiListRequest>,
     ui_lists: BTreeMap<String, WorkItemList>,
@@ -382,9 +384,11 @@ impl TurinDesktopApp {
             events_follow_latest: true,
             paused_events: Vec::new(),
             ui_screen_indices: BTreeMap::new(),
+            ui_assistant_apps: BTreeSet::new(),
             ui_active_pane: None,
             ui_open_disclosures: BTreeMap::new(),
             ui_form_values: BTreeMap::new(),
+            ui_list_filters: BTreeMap::new(),
             ui_selected_list_items: BTreeMap::new(),
             ui_list_requests: BTreeMap::new(),
             ui_lists: BTreeMap::new(),
@@ -523,6 +527,14 @@ impl TurinDesktopApp {
         let Some(app) = self.selected_ui_app() else {
             return Vec::new();
         };
+        if self.operator_assistant_is_open(&app) {
+            return self
+                .ui_active_pane
+                .as_ref()
+                .and_then(|active| app.panes.get(&active.id))
+                .map(|pane| collect_ui_list_requests(&pane.nodes))
+                .unwrap_or_default();
+        }
         let screen_index = self
             .ui_screen_indices
             .get(&app.id)
@@ -679,6 +691,7 @@ impl TurinDesktopApp {
 
     fn open_harness_screen(&mut self, app: &UiAppRecord, screen_index: usize) {
         self.tab = TabKind::UiApps;
+        self.ui_assistant_apps.remove(&app.id);
         self.ui_screen_indices.insert(app.id.clone(), screen_index);
         self.ui_active_pane = None;
         self.request_selected_ui_lists(false);
@@ -1304,6 +1317,72 @@ impl TurinDesktopApp {
             .cloned()
     }
 
+    fn operator_assistant_is_open(&self, app: &UiAppRecord) -> bool {
+        self.ui_assistant_apps.contains(&app.id)
+    }
+
+    fn operator_agent_id<'a>(&'a self, app: Option<&'a UiAppRecord>) -> Option<&'a str> {
+        app.and_then(|app| app.source.agent_id.as_deref())
+            .or_else(|| {
+                self.dashboard
+                    .agents()
+                    .get(self.agent_index)
+                    .map(|agent| agent.id.as_str())
+            })
+    }
+
+    fn selected_operator_session(&self, app: Option<&UiAppRecord>) -> Option<LiveSession> {
+        let session = self.selected_live_session()?;
+        if app.is_none() {
+            return Some(session);
+        }
+        self.operator_agent_id(app)
+            .is_none_or(|agent_id| session.agent_id == agent_id)
+            .then_some(session)
+    }
+
+    fn open_operator_assistant(&mut self, app: &UiAppRecord) {
+        self.tab = TabKind::UiApps;
+        self.ui_assistant_apps.insert(app.id.clone());
+        self.ui_active_pane = None;
+        self.requested_session_detail = None;
+
+        let target_agent = app.source.agent_id.as_deref();
+        if let Some(agent_id) = target_agent
+            && let Some(index) = self
+                .dashboard
+                .agents()
+                .iter()
+                .position(|agent| agent.id == agent_id)
+        {
+            self.agent_index = index;
+        }
+
+        let selected_matches = self.selected_live_session().is_some_and(|session| {
+            target_agent.is_none_or(|agent_id| session.agent_id == agent_id)
+        });
+        if selected_matches {
+            return;
+        }
+
+        if let Some((index, session)) = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .enumerate()
+            .find(|(_, session)| target_agent.is_none_or(|agent_id| session.agent_id == agent_id))
+            .map(|(index, session)| (index, session.clone()))
+        {
+            self.live_session_index = index;
+            self.send_command(OperatorCommand::FocusSessionStream {
+                session_id: Some(session.session_id),
+            });
+        } else {
+            self.live_session_index = usize::MAX;
+            self.send_command(OperatorCommand::FocusSessionStream { session_id: None });
+        }
+    }
+
     fn start_default_conversation(&mut self, prompt: Option<String>) {
         let Some(agent_id) = self
             .dashboard
@@ -1567,9 +1646,14 @@ impl TurinDesktopApp {
     }
 
     fn current_detail_session_id(&self) -> Option<String> {
-        if self.dashboard.ui.apps().next().is_none() {
+        let selected_app = self.selected_ui_app();
+        if selected_app.is_none()
+            || selected_app
+                .as_ref()
+                .is_some_and(|app| self.operator_assistant_is_open(app))
+        {
             return self
-                .selected_live_session()
+                .selected_operator_session(selected_app.as_ref())
                 .map(|session| session.session_id);
         }
         match self.tab {
@@ -2129,6 +2213,33 @@ impl TurinDesktopApp {
                 });
         }
 
+        let top_frame = {
+            let theme = cast::theme_for_ui(ui);
+            egui::Frame::new()
+                .fill(theme.colors.surface)
+                .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                .inner_margin(egui::Margin::symmetric(20, 11))
+        };
+        egui::Panel::top("operator_shell_top")
+            .exact_size(56.0)
+            .frame(top_frame)
+            .show(ui, |ui| self.render_operator_top_bar(ui, &app));
+
+        if self.operator_assistant_is_open(&app)
+            && let Some(session) = self.selected_operator_session(Some(&app))
+        {
+            let composer_frame = {
+                let theme = cast::theme_for_ui(ui);
+                egui::Frame::new()
+                    .fill(theme.colors.surface)
+                    .stroke(egui::Stroke::new(theme.stroke.sm, theme.colors.border))
+                    .inner_margin(egui::Margin::symmetric(20, 12))
+            };
+            egui::Panel::bottom("operator_assistant_composer")
+                .frame(composer_frame)
+                .show(ui, |ui| self.render_default_composer(ui, &session));
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 let outer_margin = if compact {
@@ -2153,20 +2264,84 @@ impl TurinDesktopApp {
         self.render_runtime_tools_sheet(ui);
     }
 
+    fn render_operator_top_bar(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let current = if self.operator_assistant_is_open(app) {
+            "Assistant".to_string()
+        } else {
+            self.active_ui_screen_id(app)
+                .and_then(|screen_id| app.screens.get(&screen_id))
+                .map(|screen| screen.title.clone())
+                .unwrap_or_else(|| "Workspace".to_string())
+        };
+        ui.horizontal(|ui| {
+            ui.add(cast::Breadcrumb::new([ui_app_title(app), current]).size(cast::Size::Small));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        cast::Button::new("Runtime tools")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Ghost),
+                    )
+                    .clicked()
+                {
+                    self.runtime_tools_open = true;
+                }
+                if self.operator_assistant_is_open(app) {
+                    if ui
+                        .add(
+                            cast::Button::new("New conversation")
+                                .size(cast::Size::Small)
+                                .intent(cast::Intent::Primary)
+                                .enabled(
+                                    self.pending_conversation.is_none()
+                                        && self.pending_resume_session_id.is_none(),
+                                ),
+                        )
+                        .clicked()
+                    {
+                        self.open_operator_assistant(app);
+                        self.start_default_conversation(None);
+                    }
+                } else if ui
+                    .add(
+                        cast::Button::new("Refresh")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Outline),
+                    )
+                    .clicked()
+                {
+                    self.request_selected_ui_lists(true);
+                }
+                self.render_connection_status_inline(ui);
+            });
+        });
+    }
+
     fn render_operator_sidebar(
         &mut self,
         ui: &mut egui::Ui,
         apps: &[UiAppRecord],
         app: &UiAppRecord,
     ) {
-        let title_text = themed_heading_text(ui, ui_app_title(app), 22.0);
-        let title = ui.label(title_text);
-        if let Some(definition) = &app.definition
-            && let Some(about) = &definition.about
+        let app_title = ui_app_title(app);
+        ui.horizontal(|ui| {
+            ui.add(cast::Avatar::new(app_title.clone()).size(cast::Size::Medium));
+            ui.vertical(|ui| {
+                themed_heading(ui, app_title, 18.0);
+                if let Some(agent_id) = app.source.agent_id.as_deref() {
+                    themed_muted(ui, default_agent_label(agent_id));
+                }
+            });
+        });
+        if let Some(about) = app
+            .definition
+            .as_ref()
+            .and_then(|definition| definition.about.as_deref())
         {
-            title.on_hover_text(about);
+            ui.add_space(8.0);
+            themed_muted(ui, about);
         }
-        ui.add_space(14.0);
+        ui.add_space(16.0);
 
         if apps.len() > 1 {
             let previous = self.ui_app_index;
@@ -2179,6 +2354,23 @@ impl TurinDesktopApp {
             }
             ui.add_space(14.0);
         }
+
+        let assistant_selected = self.operator_assistant_is_open(app);
+        if ui
+            .add(
+                cast::MenuItem::new("Assistant")
+                    .selected(assistant_selected)
+                    .intent(if assistant_selected {
+                        cast::Intent::Primary
+                    } else {
+                        cast::Intent::Neutral
+                    }),
+            )
+            .clicked()
+        {
+            self.open_operator_assistant(app);
+        }
+        ui.add_space(8.0);
 
         let current_screen_id = self.active_ui_screen_id(app);
         if app.menus.is_empty() {
@@ -2254,23 +2446,29 @@ impl TurinDesktopApp {
 
         if !app.screens.is_empty() {
             ui.add_space(8.0);
-            let mut screen_index = self
+            let screen_index = self
                 .ui_screen_indices
                 .get(&app.id)
                 .copied()
-                .unwrap_or_else(|| harness_ui::default_screen_index(app));
-            screen_index = screen_index.min(app.screens.len() - 1);
-            let previous = screen_index;
-            let labels = app
-                .screens
-                .values()
-                .map(|screen| screen.title.clone())
-                .collect::<Vec<_>>();
+                .unwrap_or_else(|| harness_ui::default_screen_index(app))
+                .min(app.screens.len() - 1);
+            let mut route_index = if self.operator_assistant_is_open(app) {
+                0
+            } else {
+                screen_index + 1
+            };
+            let previous = route_index;
+            let mut labels = vec!["Assistant".to_string()];
+            labels.extend(app.screens.values().map(|screen| screen.title.clone()));
             ScrollArea::horizontal().show(ui, |ui| {
-                ui.add(cast::Tabs::new(&mut screen_index, labels).size(cast::Size::Small));
+                ui.add(cast::Tabs::new(&mut route_index, labels).size(cast::Size::Small));
             });
-            if screen_index != previous {
-                self.open_harness_screen(app, screen_index);
+            if route_index != previous {
+                if route_index == 0 {
+                    self.open_operator_assistant(app);
+                } else {
+                    self.open_harness_screen(app, route_index - 1);
+                }
             }
         }
     }
@@ -2314,6 +2512,13 @@ impl TurinDesktopApp {
     fn render_operator_stage(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
         self.render_operator_feedback(ui, app);
 
+        if self.operator_assistant_is_open(app) {
+            self.render_operator_assistant(ui, app);
+            self.render_pending_harness_ui_action(ui, app);
+            self.render_active_harness_pane(ui, app);
+            return;
+        }
+
         let mut screen_index = self
             .ui_screen_indices
             .get(&app.id)
@@ -2325,6 +2530,7 @@ impl TurinDesktopApp {
             list_errors: &self.ui_list_errors,
             open_disclosures: &mut self.ui_open_disclosures,
             form_values: &mut self.ui_form_values,
+            list_filters: &mut self.ui_list_filters,
             selected_list_items: &mut self.ui_selected_list_items,
         };
         let event = harness_ui::render_harness_screen_content(
@@ -2340,6 +2546,136 @@ impl TurinDesktopApp {
 
         self.render_pending_harness_ui_action(ui, app);
         self.render_active_harness_pane(ui, app);
+    }
+
+    fn render_operator_assistant(&mut self, ui: &mut egui::Ui, app: &UiAppRecord) {
+        let agent_id = self.operator_agent_id(Some(app)).map(str::to_string);
+        let live_sessions = self
+            .dashboard
+            .live_sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| {
+                agent_id
+                    .as_deref()
+                    .is_none_or(|agent_id| session.agent_id == agent_id)
+            })
+            .map(|(index, session)| (index, session.clone()))
+            .collect::<Vec<_>>();
+        let live_values = live_sessions
+            .iter()
+            .map(|(_, session)| session.clone())
+            .collect::<Vec<_>>();
+        let stored_sessions = self
+            .dashboard
+            .sessions
+            .iter()
+            .filter(|session| {
+                agent_id
+                    .as_deref()
+                    .is_none_or(|agent_id| session.agent_id == agent_id)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let recent_sessions = recent_default_conversations(
+            &live_values,
+            &stored_sessions,
+            DEFAULT_RECENT_CONVERSATION_LIMIT,
+        );
+
+        if !live_sessions.is_empty() || !recent_sessions.is_empty() {
+            let active_labels = default_conversation_labels(&live_values, &stored_sessions);
+            let mut labels = vec!["Choose a conversation".to_string()];
+            labels.extend(active_labels);
+            labels.extend(
+                recent_sessions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, session)| stored_conversation_title(session, index)),
+            );
+            let selected_live_position = live_sessions
+                .iter()
+                .position(|(index, _)| *index == self.live_session_index);
+            let mut selected = selected_live_position.map(|index| index + 1).unwrap_or(0);
+            let previous = selected;
+            cast::FilterBar::new().show(ui, |ui| {
+                ui.add(cast::Select::new(&mut selected, labels).width(360.0));
+            });
+            if selected != previous && selected > 0 {
+                let target = selected - 1;
+                if let Some((global_index, session)) = live_sessions.get(target) {
+                    self.live_session_index = *global_index;
+                    self.requested_session_detail = None;
+                    self.send_command(OperatorCommand::FocusSessionStream {
+                        session_id: Some(session.session_id.clone()),
+                    });
+                } else if let Some(session) = recent_sessions.get(target - live_sessions.len()) {
+                    self.resume_default_conversation(session.session_id.clone());
+                }
+            }
+            ui.add_space(18.0);
+        }
+
+        if let Some(session) = self.selected_operator_session(Some(app)) {
+            self.render_default_conversation(ui, &session);
+        } else {
+            self.render_operator_assistant_welcome(ui, app, agent_id.as_deref());
+        }
+    }
+
+    fn render_operator_assistant_welcome(
+        &mut self,
+        ui: &mut egui::Ui,
+        app: &UiAppRecord,
+        agent_id: Option<&str>,
+    ) {
+        if self.pending_resume_session_id.is_some() {
+            ui.add_space(48.0);
+            ui.vertical_centered(|ui| {
+                themed_heading(ui, "Opening conversation", 28.0);
+                ui.add_space(6.0);
+                themed_muted(ui, "Restoring its context and messages...");
+            });
+            ui.add_space(24.0);
+            render_conversation_loading(ui);
+            return;
+        }
+
+        let pending = self.pending_conversation.is_some();
+        ui.add_space(48.0);
+        ui.vertical_centered(|ui| {
+            themed_heading(ui, "What should we build?", 30.0);
+            ui.add_space(6.0);
+            themed_muted(
+                ui,
+                agent_id
+                    .map(|agent_id| {
+                        format!(
+                            "Work with {} while this workspace keeps tasks, reviews, and plans durable.",
+                            default_agent_label(agent_id)
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        "Use the agent for active work and the surrounding desk for durable context."
+                            .to_string()
+                    }),
+            );
+        });
+        ui.add_space(22.0);
+        let response = cast::AgentComposer::new(&mut self.prompt_input)
+            .placeholder("Describe the outcome, investigation, or change you want...")
+            .send_label("Start")
+            .rows(4)
+            .enabled(agent_id.is_some() && !pending)
+            .loading(pending)
+            .width(ui.available_width())
+            .show(ui)
+            .inner;
+        if response.submitted && !self.prompt_input.trim().is_empty() {
+            let prompt = mem::take(&mut self.prompt_input);
+            self.open_operator_assistant(app);
+            self.start_default_conversation(Some(prompt));
+        }
     }
 
     fn operator_connection_summary(&self) -> (&'static str, cast::Intent) {
@@ -3364,6 +3700,7 @@ impl TurinDesktopApp {
                     list_errors: &self.ui_list_errors,
                     open_disclosures: &mut self.ui_open_disclosures,
                     form_values: &mut self.ui_form_values,
+                    list_filters: &mut self.ui_list_filters,
                     selected_list_items: &mut self.ui_selected_list_items,
                 };
                 let event =
@@ -3459,6 +3796,7 @@ impl TurinDesktopApp {
                     list_errors: &self.ui_list_errors,
                     open_disclosures: &mut self.ui_open_disclosures,
                     form_values: &mut self.ui_form_values,
+                    list_filters: &mut self.ui_list_filters,
                     selected_list_items: &mut self.ui_selected_list_items,
                 };
                 harness_ui::render_harness_pane(ui, app, pane, &mut render_state)

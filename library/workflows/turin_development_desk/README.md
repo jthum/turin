@@ -33,10 +33,16 @@ specialist harnesses at this workflow:
 directory = "library/workflows/turin_development_desk/harness"
 
 [agents.planner]
-harness_dir = "library/workflows/turin_development_desk/agents/planner"
+harness = "planner"
 
 [agents.reviewer]
-harness_dir = "library/workflows/turin_development_desk/agents/reviewer"
+harness = "reviewer"
+
+[harnesses.planner]
+directory = "library/workflows/turin_development_desk/agents/planner"
+
+[harnesses.reviewer]
+directory = "library/workflows/turin_development_desk/agents/reviewer"
 ```
 
 Start the daemon and desktop client from the repository:

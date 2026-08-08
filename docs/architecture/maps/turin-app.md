@@ -33,19 +33,23 @@ worklist/default-screen/node-target derivation belong outside this crate.
    session detail, and focused session events into a default conversation
    workspace. Runtime inspection remains available through an explicit tools
    sheet rather than becoming the landing page.
-4. App tabs, selected conversation, pending first prompt, selected harness
-   app/screen, selected list rows, open panes, confirmation modals, and form
-   drafts remain app-local state.
-5. Visible harness screens and panes are projected into `UiListRequest` values.
-6. `OperatorCommand::LoadUiList` loads semantic worklist-backed data through the
+4. Harness-declared apps retain a client-provided Assistant route alongside
+   their semantic screens. The route binds to the app's source agent when one
+   is declared, but its selected conversation and open/closed state remain
+   local to that desktop window.
+5. App tabs, selected conversation, pending first prompt, selected harness
+   app/screen, Assistant route, list search, selected list rows, open panes,
+   confirmation modals, and form drafts remain app-local state.
+6. Visible harness screens and panes are projected into `UiListRequest` values.
+7. `OperatorCommand::LoadUiList` loads semantic worklist-backed data through the
    shared controller path. Request-scoped list failures clear local loading
    state and render explicit retryable fallback copy.
-7. Harness actions and forms emit local `HarnessUiEvent` values, then run
+8. Harness actions and forms emit local `HarnessUiEvent` values, then run
    through `OperatorCommand::RunHarnessAction`.
-8. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
+9. Dynamic `ui.open`, `ui.show`, `ui.focus`, and `ui.refresh` intents from
    runtime events and completed harness action results are drained as local
    navigation, pane, focus, and cache-invalidation requests.
-9. `harness.action_ran` and explicit `ui.refresh(...)` invalidate matching
+10. `harness.action_ran` and explicit `ui.refresh(...)` invalidate matching
    visible list caches; they are not live queries.
 
 ## Invariants
@@ -53,6 +57,10 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - The app owns presentation state. Active tab, active screen, open pane,
   selected row, form draft, and confirmation state must not become runtime
   state.
+- A harness app augments rather than replaces the core agent experience. The
+  desktop Assistant route is client chrome, not a synthetic harness screen or
+  a new runtime-owned UI primitive. Dynamic harness navigation may move the
+  client back to declared screens without losing conversation state.
 - The no-harness path is an opinionated agent workspace, not a runtime
   diagnostics dashboard. Diagnostics belong behind deliberate secondary
   navigation and ordinary surfaces should not expose socket paths, internal
@@ -78,6 +86,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
 - List rows stay compact in both wide and narrow layouts. Selected-item detail
   renders below the collection in normal document flow rather than inside a
   fixed-height table row that can clip richer content.
+- List search is a local projection over the bounded data already loaded for a
+  visible semantic list. It must not be represented as runtime filter state or
+  imply that the client has searched beyond the loaded result limit.
 - Wide work-item tables size to their content up to ten visible rows, then use
   a bounded scrolling body. A short collection must never expand its card to
   consume the remaining page height.
@@ -171,7 +182,8 @@ git diff --check
 
 The current app is the richest local client. It includes connection profile
 editing, runtime overview tabs, semantic harness app rendering, nested menu
-navigation, app-local row detail with named filter/sort/limit metadata,
+navigation, a client-provided Assistant route for harness workspaces,
+app-local list search and row detail with named filter/sort/limit metadata,
 row-count and selected-row feedback, direction-aware sorted-column markers,
 timeline/pause/claim/failure item context, filtered empty-list copy, editable
 forms with masked password-like fields, confirmation modals, latest action

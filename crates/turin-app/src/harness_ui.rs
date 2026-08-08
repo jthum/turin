@@ -58,6 +58,7 @@ pub(super) struct HarnessRenderState<'a> {
     pub(super) list_errors: &'a BTreeMap<String, String>,
     pub(super) open_disclosures: &'a mut BTreeMap<String, bool>,
     pub(super) form_values: &'a mut BTreeMap<String, String>,
+    pub(super) list_filters: &'a mut BTreeMap<String, String>,
     pub(super) selected_list_items: &'a mut BTreeMap<String, String>,
 }
 
@@ -149,13 +150,12 @@ pub(super) fn render_harness_screen_content(
             themed_heading(ui, screen.title.clone(), 28.0);
             render_node_badge(ui, app, Some(&screen.id));
         });
-        ui.add_space(12.0);
         let mut context = HarnessRenderContext {
             app,
             state,
             event: &mut event,
         };
-        render_nodes(ui, &screen.nodes, &mut context);
+        render_screen_nodes(ui, &screen.nodes, &mut context);
     } else {
         cast::EmptyState::new("No screens declared")
             .body("This harness app exists, but it has not declared any screens yet.")
@@ -164,6 +164,38 @@ pub(super) fn render_harness_screen_content(
     }
 
     event
+}
+
+fn render_screen_nodes(
+    ui: &mut egui::Ui,
+    nodes: &[UiNode],
+    context: &mut HarnessRenderContext<'_, '_>,
+) {
+    let (lead, body) = match nodes.split_first() {
+        Some((UiNode::Text(text), body)) => (Some(text), body),
+        _ => (None, nodes),
+    };
+
+    if let Some(lead) = lead {
+        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
+        render_screen_lead(ui, lead);
+    }
+    if !body.is_empty() {
+        ui.add_space(cast::theme_for_ui(ui).spacing.xl);
+        render_nodes(ui, body, context);
+    } else if lead.is_none() {
+        ui.add_space(cast::theme_for_ui(ui).spacing.md);
+        render_nodes(ui, body, context);
+    }
+}
+
+fn render_screen_lead(ui: &mut egui::Ui, text: &UiTextNode) {
+    let text_color = cast::theme_for_ui(ui).colors.text_muted;
+    ui.scope(|ui| {
+        ui.set_max_width(ui.available_width().min(760.0));
+        ui.visuals_mut().override_text_color = Some(text_color);
+        ui.add(cast::Markdown::new(text.text.clone()).selectable(true));
+    });
 }
 
 pub(super) fn render_harness_pane(
@@ -474,11 +506,12 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
             };
             let key = request.cache_key();
             match context.state.lists.get(&key) {
-                Some(items) => render_work_items(
+                Some(items) => render_filterable_work_items(
                     ui,
                     list,
                     items,
                     &key,
+                    context.state.list_filters,
                     context.state.selected_list_items,
                     context.event,
                 ),
@@ -495,6 +528,83 @@ fn render_list(ui: &mut egui::Ui, list: &UiListNode, context: &mut HarnessRender
             }
         },
     );
+}
+
+fn render_filterable_work_items(
+    ui: &mut egui::Ui,
+    list: &UiListNode,
+    items: &WorkItemList,
+    list_key: &str,
+    list_filters: &mut BTreeMap<String, String>,
+    selected_list_items: &mut BTreeMap<String, String>,
+    event: &mut Option<HarnessUiEvent>,
+) {
+    let filter = list_filters.entry(list_key.to_string()).or_default();
+    if items.items.len() >= 5 || !filter.is_empty() {
+        cast::FilterBar::new().show(ui, |ui| {
+            ui.add(
+                cast::SearchInput::new(filter)
+                    .hint_text("Search this view...")
+                    .size(cast::Size::Small)
+                    .width(280.0),
+            );
+            if !filter.trim().is_empty() {
+                let matching = items
+                    .items
+                    .iter()
+                    .filter(|item| work_item_matches_search(item, filter))
+                    .count();
+                ui.add(
+                    cast::Badge::new(format!("{matching} of {}", items.items.len()))
+                        .variant(cast::Variant::Subtle),
+                );
+            }
+        });
+        ui.add_space(cast::theme_for_ui(ui).spacing.sm);
+    }
+
+    if filter.trim().is_empty() {
+        render_work_items(ui, list, items, list_key, selected_list_items, event);
+        return;
+    }
+
+    let filtered = WorkItemList {
+        worklist_id: items.worklist_id.clone(),
+        items: items
+            .items
+            .iter()
+            .filter(|item| work_item_matches_search(item, filter))
+            .cloned()
+            .collect(),
+    };
+    if filtered.items.is_empty() {
+        render_empty_state(
+            ui,
+            "No matching work",
+            "Try a different title, status, area, or keyword.",
+        );
+        return;
+    }
+    render_work_items(ui, list, &filtered, list_key, selected_list_items, event);
+}
+
+fn work_item_matches_search(item: &WorkItemDetail, filter: &str) -> bool {
+    let filter = filter.trim().to_ascii_lowercase();
+    if filter.is_empty() {
+        return true;
+    }
+
+    item.title.to_ascii_lowercase().contains(&filter)
+        || item.kind.to_ascii_lowercase().contains(&filter)
+        || item.status.to_ascii_lowercase().contains(&filter)
+        || item
+            .prompt
+            .as_deref()
+            .is_some_and(|prompt| prompt.to_ascii_lowercase().contains(&filter))
+        || item
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.to_string().to_ascii_lowercase().contains(&filter))
 }
 
 fn render_work_items(
@@ -1707,6 +1817,25 @@ mod tests {
             ),
             "Lane: ops  ·  Release: 2026.06  ·  Priority: 4"
         );
+    }
+
+    #[test]
+    fn work_item_search_matches_visible_and_context_fields() {
+        let mut item = test_work_item(1, "DESK-1", "Polish desktop workspace");
+        item.kind = "review".to_string();
+        item.status = "pending".to_string();
+        item.prompt = Some("Inspect the compact layout".to_string());
+        item.metadata = Some(json!({
+            "area": "Desktop UI",
+            "effort": "Medium",
+        }));
+
+        assert!(work_item_matches_search(&item, "workspace"));
+        assert!(work_item_matches_search(&item, "review"));
+        assert!(work_item_matches_search(&item, "PENDING"));
+        assert!(work_item_matches_search(&item, "compact"));
+        assert!(work_item_matches_search(&item, "desktop ui"));
+        assert!(!work_item_matches_search(&item, "release notes"));
     }
 
     #[test]
