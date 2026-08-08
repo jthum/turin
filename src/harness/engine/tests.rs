@@ -355,6 +355,67 @@ fn test_ui_release_operator_example_loads() {
     assert!(nested_menu_seen);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_turin_development_desk_loads_and_seeds_idempotently() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("library/workflows/turin_development_desk/harness/main.lua");
+    let dir = TempDir::new().unwrap();
+    std::fs::copy(source, dir.path().join("main.lua")).unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let intents = engine.ui_intents().unwrap();
+    assert!(intents.iter().any(|message| matches!(
+        &message.intent,
+        turin_daemon_protocol::UiIntent::App(app) if app.id == "turin-development-desk"
+    )));
+    assert!(
+        intents
+            .iter()
+            .filter(|message| matches!(message.intent, turin_daemon_protocol::UiIntent::Screen(_)))
+            .count()
+            >= 8
+    );
+
+    let first = engine
+        .invoke_declared_action_for_agent("test-agent", "desk.seed", serde_json::json!({}))
+        .unwrap()
+        .expect("seed result");
+    assert_eq!(first["status"], "seeded");
+    assert_eq!(first["count"], 4);
+
+    let second = engine
+        .invoke_declared_action_for_agent("test-agent", "desk.seed", serde_json::json!({}))
+        .unwrap()
+        .expect("second seed result");
+    assert_eq!(second["status"], "unchanged");
+    assert_eq!(second["count"], 0);
+
+    let captured = engine
+        .invoke_declared_action_for_agent(
+            "test-agent",
+            "desk.capture",
+            serde_json::json!({
+                "title": "Exercise the development desk",
+                "description": "Use the real workflow end to end.",
+                "area": "Product",
+                "effort": "Small",
+                "priority": 110
+            }),
+        )
+        .unwrap()
+        .expect("capture result");
+    assert_eq!(captured["status"], "captured");
+    assert_eq!(captured["title"], "Exercise the development desk");
+
+    let status = engine
+        .invoke_declared_action_for_agent("test-agent", "desk.status", serde_json::json!({}))
+        .unwrap()
+        .expect("status result");
+    assert_eq!(status["work"]["total"], 5);
+}
+
 #[test]
 fn test_ui_worklist_sugar_normalizes_bare_and_prefixed_sources() {
     let dir = TempDir::new().unwrap();
