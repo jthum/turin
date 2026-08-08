@@ -330,6 +330,14 @@ pub struct SessionDetail {
     pub messages: Vec<SessionMessageDetail>,
     #[serde(default)]
     pub tool_executions: Vec<SessionToolExecutionDetail>,
+    #[serde(default)]
+    pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessageWindow {
+    pub offset: usize,
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

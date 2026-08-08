@@ -1,7 +1,7 @@
 use crate::daemon::protocol::{
     LiveSessionTargetParams, NoParams, OpenSessionParams, ResponseEnvelope, ResumeSessionParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
-    SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
+    SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
 };
 use crate::daemon::state::session_store_selector_from_filters;
 
@@ -123,11 +123,17 @@ pub(super) async fn resume(
 
 pub(super) async fn get(
     id: Option<String>,
-    params: SessionIdParams,
+    params: SessionGetParams,
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    let result = guard.get_session(&params.session_id).await;
+    let result = guard
+        .get_session_projection(
+            &params.session_id,
+            params.message_limit,
+            params.include_events.unwrap_or(true),
+        )
+        .await;
     optional_response(
         id,
         result,

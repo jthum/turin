@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use turin_control_client::{
     AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
-    SessionDetail, SessionSummary, TaskStatus,
+    SessionDetail, SessionMessageWindow, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
     EventEnvelope, HarnessActionRunResult, UiIntent, UiMenuItem, UiNoticeLevel, UiShowIntent,
@@ -228,6 +228,7 @@ struct TurinDesktopApp {
     branch_name_input: String,
     activate_new_branch: bool,
     requested_session_detail: Option<String>,
+    conversation_message_limits: BTreeMap<String, usize>,
     task_filter: String,
     channel_filter: String,
     event_filter: String,
@@ -377,6 +378,7 @@ impl TurinDesktopApp {
             branch_name_input: String::new(),
             activate_new_branch: true,
             requested_session_detail: None,
+            conversation_message_limits: BTreeMap::new(),
             task_filter: String::new(),
             channel_filter: String::new(),
             event_filter: String::new(),
@@ -417,10 +419,19 @@ impl TurinDesktopApp {
             && self.events_follow_latest;
         let harness_action_ran =
             matches!(&update, UiUpdate::Event(event) if event.event == "harness.action_ran");
-        if matches!(&update, UiUpdate::SessionEvent(_)) {
-            self.requested_session_detail = None;
+        if let UiUpdate::SessionEvent(event) = &update {
+            if session_event_changes_conversation(event)
+                && let Some(session_id) = self.current_detail_session_id()
+            {
+                self.request_conversation_detail(session_id);
+            }
             self.clamp_selection_indices();
             return;
+        }
+        if let UiUpdate::SessionDetail(detail) = &update
+            && self.requested_session_detail.as_deref() == Some(detail.session.session_id.as_str())
+        {
+            self.requested_session_detail = None;
         }
         if let UiUpdate::UiListLoaded { request, items } = &update {
             let key = request.cache_key();
@@ -1672,16 +1683,44 @@ impl TurinDesktopApp {
         };
 
         if self.dashboard.session_detail(&session_id).is_some() {
-            self.requested_session_detail = Some(session_id);
             return;
         }
 
+        self.request_conversation_detail(session_id);
+    }
+
+    fn request_conversation_detail(&mut self, session_id: String) {
         if self.requested_session_detail.as_deref() == Some(session_id.as_str()) {
             return;
         }
 
+        let message_limit = self
+            .conversation_message_limits
+            .get(&session_id)
+            .copied()
+            .unwrap_or(DEFAULT_CONVERSATION_MESSAGE_LIMIT);
         self.requested_session_detail = Some(session_id.clone());
-        self.send_command(OperatorCommand::LoadSessionDetail { session_id });
+        self.send_command(OperatorCommand::LoadSessionDetail {
+            session_id,
+            message_limit: Some(message_limit),
+        });
+    }
+
+    fn load_earlier_conversation_messages(&mut self, session_id: &str, total: usize) {
+        let current = self
+            .conversation_message_limits
+            .get(session_id)
+            .copied()
+            .unwrap_or(DEFAULT_CONVERSATION_MESSAGE_LIMIT);
+        let next = current
+            .saturating_add(CONVERSATION_MESSAGE_PAGE_SIZE)
+            .min(total);
+        if next <= current {
+            return;
+        }
+        self.conversation_message_limits
+            .insert(session_id.to_string(), next);
+        self.request_conversation_detail(session_id.to_string());
     }
 
     fn render_default_shell(&mut self, ui: &mut egui::Ui) {
@@ -1968,8 +2007,52 @@ impl TurinDesktopApp {
             render_conversation_loading(ui);
             return;
         };
-        let rendered_messages = detail
-            .messages
+        let requested_limit = self
+            .conversation_message_limits
+            .get(&session.session_id)
+            .copied()
+            .unwrap_or(DEFAULT_CONVERSATION_MESSAGE_LIMIT);
+        let (message_start, message_window) = match detail.message_window.clone() {
+            Some(window) => (0, Some(window)),
+            None => {
+                let offset = detail.messages.len().saturating_sub(requested_limit);
+                (
+                    offset,
+                    (offset > 0).then_some(SessionMessageWindow {
+                        offset,
+                        total: detail.messages.len(),
+                    }),
+                )
+            }
+        };
+        let mut load_earlier = false;
+        if let Some(window) = message_window.as_ref()
+            && window.offset > 0
+        {
+            ui.horizontal(|ui| {
+                load_earlier = ui
+                    .add(
+                        cast::Button::new("Load earlier messages")
+                            .size(cast::Size::Small)
+                            .variant(cast::Variant::Outline)
+                            .enabled(
+                                self.requested_session_detail.as_deref()
+                                    != Some(session.session_id.as_str()),
+                            ),
+                    )
+                    .clicked();
+                themed_muted(
+                    ui,
+                    format!(
+                        "Showing the latest {} of {} messages",
+                        window.total.saturating_sub(window.offset),
+                        window.total
+                    ),
+                );
+            });
+            ui.add_space(14.0);
+        }
+        let rendered_messages = detail.messages[message_start..]
             .iter()
             .filter_map(|message| {
                 let body = session_message_text(&message.content);
@@ -2048,6 +2131,9 @@ impl TurinDesktopApp {
                     );
                 }
             });
+        if load_earlier && let Some(window) = message_window {
+            self.load_earlier_conversation_messages(&session.session_id, window.total);
+        }
     }
 
     fn render_default_composer(&mut self, ui: &mut egui::Ui, session: &LiveSession) {
@@ -4787,6 +4873,8 @@ const OPERATOR_COMPACT_CONTENT_MARGIN: f32 = 16.0;
 const OPERATOR_MAX_CONTENT_WIDTH: f32 = 1120.0;
 const DEFAULT_MAX_CONVERSATION_WIDTH: f32 = 880.0;
 const DEFAULT_RECENT_CONVERSATION_LIMIT: usize = 10;
+const DEFAULT_CONVERSATION_MESSAGE_LIMIT: usize = 48;
+const CONVERSATION_MESSAGE_PAGE_SIZE: usize = 48;
 
 fn operator_shell_is_compact(available_width: f32) -> bool {
     available_width < OPERATOR_COMPACT_BREAKPOINT
@@ -4891,6 +4979,13 @@ fn default_conversation_title_from_prompt(prompt: &str) -> Option<String> {
 
 fn default_conversation_message_is_visible(role: &str, has_body: bool, has_tools: bool) -> bool {
     !role.eq_ignore_ascii_case("system") && (has_body || has_tools)
+}
+
+fn session_event_changes_conversation(event: &EventEnvelope) -> bool {
+    matches!(
+        event.event.as_str(),
+        "task_start" | "tool_result" | "message_end" | "task_complete"
+    )
 }
 
 fn render_conversation_loading(ui: &mut egui::Ui) {
@@ -5289,6 +5384,22 @@ mod tests {
             true
         ));
         assert!(default_conversation_message_is_visible("user", true, false));
+    }
+
+    #[test]
+    fn conversation_refreshes_only_for_persisted_transcript_events() {
+        for event in ["task_start", "tool_result", "message_end", "task_complete"] {
+            assert!(session_event_changes_conversation(&EventEnvelope::new(
+                event,
+                serde_json::Value::Null,
+            )));
+        }
+        for event in ["thinking_delta", "message_delta", "turn_prepare"] {
+            assert!(!session_event_changes_conversation(&EventEnvelope::new(
+                event,
+                serde_json::Value::Null,
+            )));
+        }
     }
 
     #[test]

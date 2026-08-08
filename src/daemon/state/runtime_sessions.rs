@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -7,7 +8,7 @@ use uuid::Uuid;
 
 use super::{
     DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
-    SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
+    SessionMessageWindow, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
 use crate::kernel::session_refs::{
@@ -95,6 +96,23 @@ impl DaemonState {
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
+        self.get_session_projection(session_id, None, true).await
+    }
+
+    #[instrument(
+        skip(self),
+        fields(
+            session_id = %session_id,
+            message_limit = ?message_limit,
+            include_events = include_events
+        )
+    )]
+    pub async fn get_session_projection(
+        &self,
+        session_id: &str,
+        message_limit: Option<usize>,
+        include_events: bool,
+    ) -> Result<Option<SessionDetail>> {
         let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
         else {
             return Ok(None);
@@ -105,21 +123,36 @@ impl DaemonState {
         );
         let active_branch = SessionReadTarget::ActiveBranch;
 
-        let events = store
-            .get_events(row.id, &active_branch)
-            .await?
-            .into_iter()
-            .map(|event| SessionEventDetail {
-                id: event.id,
-                event_type: event.event_type,
-                payload: super::helpers::parse_json_or_string(&event.payload),
-                created_at: event.created_at,
-            })
-            .collect();
+        let events = if include_events {
+            store
+                .get_events(row.id, &active_branch)
+                .await?
+                .into_iter()
+                .map(|event| SessionEventDetail {
+                    id: event.id,
+                    event_type: event.event_type,
+                    payload: super::helpers::parse_json_or_string(&event.payload),
+                    created_at: event.created_at,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-        let messages = store
-            .get_messages(row.id, &active_branch)
-            .await?
+        let (persisted_messages, total_messages) = match message_limit {
+            Some(limit) => {
+                store
+                    .get_recent_messages(row.id, &active_branch, limit)
+                    .await?
+            }
+            None => {
+                let messages = store.get_messages(row.id, &active_branch).await?;
+                let total = messages.len();
+                (messages, total)
+            }
+        };
+        let message_offset = total_messages.saturating_sub(persisted_messages.len());
+        let messages = persisted_messages
             .into_iter()
             .map(|message| SessionMessageDetail {
                 id: message.id,
@@ -129,10 +162,21 @@ impl DaemonState {
                 token_count: message.token_count,
                 created_at: message.created_at,
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let visible_turn_indexes = message_limit.map(|_| {
+            messages
+                .iter()
+                .map(|message| message.turn_index)
+                .collect::<HashSet<_>>()
+        });
 
         let tool_executions = store
-            .get_tool_executions(row.id, &active_branch)
+            .get_tool_executions_for_turn_indexes(
+                row.id,
+                &active_branch,
+                visible_turn_indexes.as_ref(),
+            )
             .await?
             .into_iter()
             .map(|execution| SessionToolExecutionDetail {
@@ -165,6 +209,10 @@ impl DaemonState {
             events,
             messages,
             tool_executions,
+            message_window: message_limit.map(|_| SessionMessageWindow {
+                offset: message_offset,
+                total: total_messages,
+            }),
         }))
     }
 

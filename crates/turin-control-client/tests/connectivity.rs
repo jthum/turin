@@ -192,6 +192,24 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .any(|message| message.role == "assistant")
     );
 
+    let windowed = client.get_session_window(&opened.session_id, 1).await?;
+    assert!(!windowed.messages.is_empty());
+    assert!(windowed.events.is_empty());
+    let window = windowed.message_window.context("message window metadata")?;
+    assert_eq!(window.total, detail.messages.len());
+    assert_eq!(window.offset + windowed.messages.len(), window.total);
+    let final_turn = windowed
+        .messages
+        .last()
+        .expect("windowed transcript message")
+        .turn_index;
+    assert!(
+        windowed
+            .messages
+            .iter()
+            .all(|message| message.turn_index == final_turn)
+    );
+
     Ok(())
 }
 

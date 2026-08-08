@@ -69,6 +69,9 @@ worklist/default-screen/node-target derivation belong outside this crate.
   the hidden system prompt. Tool-only turns remain visible through Cast tool
   call surfaces, and active execution keeps an in-thread progress affordance
   until the next agent response arrives.
+- Conversation detail requests load a bounded recent message window and omit
+  persisted runtime events. Earlier transcript pages expand explicitly in the
+  client while durable history remains complete in Turin.
 - Opening a conversation and attaching its first prompt is client orchestration
   over typed session commands. The pending selection is transient client state;
   durable conversation state remains in the runtime.
@@ -222,8 +225,10 @@ first-prompt flow that opens and titles a session before dispatching the
 prompt. Connection details, sessions, tasks, channels, events, and custom-app
 inspection remain available through Runtime Tools without competing with the
 primary workflow. The shell keeps its own selection and pending-command state
-and uses focused session events to invalidate session detail; it does not
-create runtime-owned view state. Conversation content and its composer share a
+and uses focused session events to refresh bounded session detail; it does not
+create runtime-owned view state. Only transcript-changing events request a
+coalesced refresh; token and thinking deltas do not trigger reloads.
+Conversation content and its composer share a
 readable 880-pixel maximum measure independently of wider table/report screens;
 routine local-ready status is quiet, while active work and degraded or remote
 connections remain visible.

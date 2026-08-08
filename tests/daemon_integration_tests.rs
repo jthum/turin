@@ -7,7 +7,9 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
-use turin::daemon::protocol::{DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope};
+use turin::daemon::protocol::{
+    DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, SessionGetParams,
+};
 use turin::kernel::session_refs::parse_session_reference;
 use turin::persistence::state::StateStore;
 use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
@@ -503,9 +505,11 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
 
     let session = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams { session_id },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id,
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     assert_eq!(session["session"]["agent_id"], "default");
@@ -675,11 +679,11 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
 
     let before_detail = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams {
-                    session_id: session_id.clone(),
-                },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.clone(),
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     let before_message_count = before_detail["messages"]
@@ -737,9 +741,11 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
 
     let after_detail = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams { session_id },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id,
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     let after_message_count = after_detail["messages"]
@@ -902,9 +908,11 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
 
     let session_detail = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams { session_id },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id,
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     let promoted_branch = branches["branches"]
@@ -987,11 +995,11 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
 
     let before_detail = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams {
-                    session_id: session_id.clone(),
-                },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.clone(),
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     let before_message_count = before_detail["messages"]
@@ -1050,11 +1058,11 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
 
     let after_detail = result_value(
         daemon
-            .request(DaemonRequest::SessionGet(
-                turin::daemon::protocol::SessionIdParams {
-                    session_id: session_id.clone(),
-                },
-            ))
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.clone(),
+                message_limit: None,
+                include_events: None,
+            }))
             .await?,
     );
     let after_message_count = after_detail["messages"]
@@ -1092,11 +1100,11 @@ async fn wait_for_persisted_user_messages(
     loop {
         let detail = result_value(
             daemon
-                .request(DaemonRequest::SessionGet(
-                    turin::daemon::protocol::SessionIdParams {
-                        session_id: session_id.to_string(),
-                    },
-                ))
+                .request(DaemonRequest::SessionGet(SessionGetParams {
+                    session_id: session_id.to_string(),
+                    message_limit: None,
+                    include_events: None,
+                }))
                 .await?,
         );
         let messages = detail["messages"]

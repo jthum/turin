@@ -932,6 +932,13 @@ async fn test_get_messages_follows_active_branch_path() {
     assert!(texts.iter().any(|content| content.contains("root")));
     assert!(texts.iter().any(|content| content.contains("alternate")));
     assert!(!texts.iter().any(|content| content.contains("main")));
+    let (recent_alt, total_alt) = store
+        .get_recent_messages(session, &active_branch(), 1)
+        .await
+        .unwrap();
+    assert_eq!(total_alt, 2);
+    assert_eq!(recent_alt.len(), 1);
+    assert!(recent_alt[0].content.contains("alternate"));
 
     let main_head = store
         .checkout_branch_head_by_name(session, "main")
@@ -950,6 +957,13 @@ async fn test_get_messages_follows_active_branch_path() {
     assert!(texts.iter().any(|content| content.contains("root")));
     assert!(texts.iter().any(|content| content.contains("main")));
     assert!(!texts.iter().any(|content| content.contains("alternate")));
+    let (recent_main, total_main) = store
+        .get_recent_messages(session, &active_branch(), 1)
+        .await
+        .unwrap();
+    assert_eq!(total_main, 2);
+    assert_eq!(recent_main.len(), 1);
+    assert!(recent_main[0].content.contains("main"));
 }
 
 #[tokio::test]

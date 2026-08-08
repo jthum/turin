@@ -70,6 +70,9 @@ Full materialization:
 - Hot-history pruning must not run for ephemeral or non-branch-advancing execution contexts.
 - `history_message_offset` must increase when hot messages are dropped and reset when full history is materialized.
 - Live session snapshots expose hot-history length and offset for diagnostics; these values are observational and must not drive runtime pruning decisions.
+- Client transcript windows are independent read projections over durable
+  history. They must not be confused with, or used to configure, the runtime
+  hot-history window.
 - Tool-result messages at the hot-window boundary should keep their preceding assistant/tool-use context.
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.

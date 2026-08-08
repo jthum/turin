@@ -22,6 +22,15 @@ pub struct SessionIdParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SessionGetParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub message_limit: Option<usize>,
+    #[serde(default)]
+    pub include_events: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LiveSessionTargetParams {
     pub session_id: String,
     #[serde(default)]

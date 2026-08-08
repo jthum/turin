@@ -86,6 +86,14 @@ pub struct SessionDetail {
     pub events: Vec<SessionEventDetail>,
     pub messages: Vec<SessionMessageDetail>,
     pub tool_executions: Vec<SessionToolExecutionDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMessageWindow {
+    pub offset: usize,
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

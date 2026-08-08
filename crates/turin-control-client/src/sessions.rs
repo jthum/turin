@@ -2,7 +2,7 @@ use anyhow::Result;
 use turin_daemon_protocol::{
     DaemonRequest, LiveSessionTargetParams, NoParams, OpenSessionParams, ResumeSessionParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
-    SessionIdParams, SessionListParams, SessionSearchParams, SessionSearchScope,
+    SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionSearchScope,
     SessionTitleParams,
 };
 
@@ -48,8 +48,26 @@ impl ControlClient {
     pub async fn get_session(&self, session_id: &str) -> Result<SessionDetail> {
         self.request_ok(
             None,
-            DaemonRequest::SessionGet(SessionIdParams {
+            DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
+                message_limit: None,
+                include_events: None,
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_session_window(
+        &self,
+        session_id: &str,
+        message_limit: usize,
+    ) -> Result<SessionDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.to_string(),
+                message_limit: Some(message_limit),
+                include_events: Some(false),
             }),
         )
         .await

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{Context, Result};
 
 use super::{SessionReadTarget, StateStore, ToolExecutionRow, TurnWriteTarget};
@@ -47,6 +49,16 @@ impl StateStore {
         session_id: i64,
         target: &SessionReadTarget,
     ) -> Result<Vec<ToolExecutionRow>> {
+        self.get_tool_executions_for_turn_indexes(session_id, target, None)
+            .await
+    }
+
+    pub async fn get_tool_executions_for_turn_indexes(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+        turn_indexes: Option<&HashSet<u32>>,
+    ) -> Result<Vec<ToolExecutionRow>> {
         let conn = self.connect().await?;
         let mut execs = Vec::new();
         let turns = match target {
@@ -63,7 +75,10 @@ impl StateStore {
                     .await?
             }
         };
-        for turn in turns {
+        for turn in turns
+            .into_iter()
+            .filter(|turn| turn_indexes.is_none_or(|indexes| indexes.contains(&turn.branch_depth)))
+        {
             let mut rows = conn
                 .query(
                     "SELECT id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM tool_executions WHERE turn_id = ?1 ORDER BY id",

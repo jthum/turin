@@ -101,6 +101,7 @@ pub enum OperatorCommand {
     },
     LoadSessionDetail {
         session_id: String,
+        message_limit: Option<usize>,
     },
     LoadChannelAccess {
         channel_id: String,
@@ -1620,8 +1621,16 @@ fn spawn_command_task(
                 continue;
             }
 
-            if let OperatorCommand::LoadSessionDetail { session_id } = &command {
-                match client.get_session(session_id.as_str()).await {
+            if let OperatorCommand::LoadSessionDetail {
+                session_id,
+                message_limit,
+            } = &command
+            {
+                let result = match message_limit {
+                    Some(limit) => client.get_session_window(session_id.as_str(), *limit).await,
+                    None => client.get_session(session_id.as_str()).await,
+                };
+                match result {
                     Ok(detail) => {
                         if tx.send(UiUpdate::SessionDetail(Box::new(detail))).is_err() {
                             break;

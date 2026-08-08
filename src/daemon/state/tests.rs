@@ -1845,6 +1845,54 @@ async fn sidestep_task_uses_ephemeral_slot_and_does_not_persist_transcript() -> 
 }
 
 #[tokio::test]
+async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let live = state.open_session("default", Some("main"), None).await?;
+    for prompt in ["First turn", "Second turn"] {
+        let task = state
+            .submit_task(
+                None,
+                Some(&live.session_id),
+                Some("main"),
+                prompt.to_string(),
+                None,
+                Default::default(),
+            )
+            .await?;
+        assert_eq!(
+            state
+                .wait_for_task(&task.request_id, Some(2_000))
+                .await?
+                .state,
+            "completed"
+        );
+    }
+
+    let full = state
+        .get_session(&live.session_id)
+        .await?
+        .expect("full session detail");
+    assert!(full.messages.len() > 2);
+    assert!(!full.events.is_empty());
+    assert!(full.message_window.is_none());
+
+    let windowed = state
+        .get_session_projection(&live.session_id, Some(2), false)
+        .await?
+        .expect("windowed session detail");
+    assert_eq!(windowed.messages.len(), 2);
+    assert!(windowed.events.is_empty());
+    let window = windowed.message_window.expect("message window metadata");
+    assert_eq!(window.total, full.messages.len());
+    assert_eq!(window.offset, full.messages.len() - 2);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

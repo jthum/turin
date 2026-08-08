@@ -37,6 +37,35 @@ fn request_envelope_round_trips_typed_shape() {
 }
 
 #[test]
+fn session_get_accepts_full_and_windowed_request_shapes() {
+    let full: RequestEnvelope = serde_json::from_value(json!({
+        "op": "session.get",
+        "params": { "session_id": "sess_123" }
+    }))
+    .expect("decode legacy full-detail request");
+    match full.request {
+        DaemonRequest::SessionGet(params) => {
+            assert_eq!(params.session_id, "sess_123");
+            assert!(params.message_limit.is_none());
+            assert!(params.include_events.is_none());
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+
+    let windowed = RequestEnvelope::new(
+        Some("req_session".to_string()),
+        DaemonRequest::SessionGet(SessionGetParams {
+            session_id: "sess_123".to_string(),
+            message_limit: Some(48),
+            include_events: Some(false),
+        }),
+    );
+    let value = serde_json::to_value(windowed).expect("serialize windowed request");
+    assert_eq!(value["params"]["message_limit"], 48);
+    assert_eq!(value["params"]["include_events"], false);
+}
+
+#[test]
 fn sidestep_request_round_trips_typed_shape() {
     let request = RequestEnvelope::new(
         Some("req_3".to_string()),

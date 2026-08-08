@@ -6,10 +6,10 @@ use crate::{
     HarnessActionRunParams, LiveSessionTargetParams, NoParams, OpenSessionParams,
     PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams,
     ScheduleUpdateParams, SessionBranchCheckoutParams, SessionBranchCreateParams,
-    SessionBranchSiblingsParams, SessionIdParams, SessionListParams, SessionSearchParams,
-    SessionTitleParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateAgentParams,
-    UpdateChannelParams, WaitTaskParams, WorkItemTargetParams, WorklistItemsParams,
-    WorklistListParams, WorklistTargetParams,
+    SessionBranchSiblingsParams, SessionGetParams, SessionIdParams, SessionListParams,
+    SessionSearchParams, SessionTitleParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams,
+    UpdateAgentParams, UpdateChannelParams, WaitTaskParams, WorkItemTargetParams,
+    WorklistItemsParams, WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -102,7 +102,7 @@ pub enum DaemonRequest {
     #[serde(rename = "session.resume")]
     SessionResume(ResumeSessionParams),
     #[serde(rename = "session.get")]
-    SessionGet(SessionIdParams),
+    SessionGet(SessionGetParams),
     #[serde(rename = "session.set_title")]
     SessionSetTitle(SessionTitleParams),
     #[serde(rename = "session.branch_list")]

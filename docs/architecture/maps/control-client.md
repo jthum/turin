@@ -44,6 +44,9 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 
 - Public types should remain importable from `turin_control_client::TypeName`.
 - Domain helper modules should stay thin: build protocol params, send the request, and unwrap list wrappers when helpful.
+- `get_session` preserves the complete persisted diagnostic view, while
+  `get_session_window` requests a bounded recent transcript without persisted
+  events for interactive clients.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - UI/manager presentation formatting does not belong in this crate.
