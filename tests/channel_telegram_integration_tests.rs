@@ -180,9 +180,22 @@ impl TelegramMockServer {
                     }
                     accepted = listener.accept() => {
                         let (mut stream, _) = accepted?;
-                        let request = read_http_request(&mut stream).await?;
-                        let response = handle_telegram_request(request, &state_for_task, &sent_messages_for_task, &requests_for_task)?;
-                        write_http_response(&mut stream, &response).await?;
+                        let connection_result = async {
+                            let request = read_http_request(&mut stream).await?;
+                            let response = handle_telegram_request(
+                                request,
+                                &state_for_task,
+                                &sent_messages_for_task,
+                                &requests_for_task,
+                            )?;
+                            write_http_response(&mut stream, &response).await
+                        }
+                        .await;
+                        if let Err(error) = connection_result
+                            && !is_client_disconnect(&error)
+                        {
+                            return Err(error);
+                        }
                     }
                 }
             }
@@ -405,20 +418,25 @@ fn handle_telegram_request(
         "sendMessage" => {
             let response = {
                 let mut guard = state.lock().expect("telegram mock state lock poisoned");
-                guard.sent_messages.push(body.clone());
-                guard.send_message_responses.pop_front().unwrap_or_else(|| {
+                let response = guard.send_message_responses.pop_front().unwrap_or_else(|| {
                     json!({
                         "ok": true,
                         "result": {
                             "message_id": 1
                         }
                     })
-                })
+                });
+                if response["ok"].as_bool() == Some(true) {
+                    guard.sent_messages.push(body.clone());
+                }
+                response
             };
-            sent_messages
-                .lock()
-                .expect("telegram mock sent_messages lock poisoned")
-                .push(body.clone());
+            if response["ok"].as_bool() == Some(true) {
+                sent_messages
+                    .lock()
+                    .expect("telegram mock sent_messages lock poisoned")
+                    .push(body.clone());
+            }
             Ok(TelegramMockResponse::Json(response))
         }
         "sendPhoto" | "sendDocument" => {
@@ -471,7 +489,11 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Result<Telegra
     let header_end = loop {
         let read = stream.read(&mut chunk).await?;
         if read == 0 {
-            return Err(anyhow!("telegram mock server received empty request"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "telegram mock client disconnected before sending request headers",
+            )
+            .into());
         }
         buffer.extend_from_slice(&chunk[..read]);
         if let Some(index) = find_header_end(&buffer) {
@@ -495,7 +517,11 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Result<Telegra
     while buffer.len() < header_end + 4 + content_length {
         let read = stream.read(&mut chunk).await?;
         if read == 0 {
-            break;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "telegram mock client disconnected before sending the complete request body",
+            )
+            .into());
         }
         buffer.extend_from_slice(&chunk[..read]);
     }
@@ -529,6 +555,22 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Result<Telegra
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn is_client_disconnect(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        })
 }
 
 fn parse_headers(header: &str) -> std::collections::HashMap<String, String> {
@@ -1067,6 +1109,14 @@ async fn telegram_channel_driver_retries_transient_poll_and_send_failures() -> R
     let mut run =
         tokio::spawn(async move { runner.run_driver("default", &mut driver, Some(5_000)).await });
     let _ = wait_for_telegram_outbound(&server, &mut run).await?;
+    let send_attempts = server
+        .requests
+        .lock()
+        .expect("telegram mock requests lock poisoned")
+        .iter()
+        .filter(|request| request.method == "sendMessage")
+        .count();
+    assert_eq!(send_attempts, 2, "expected one failed send and one retry");
 
     let _ = shutdown_tx.send(true);
     let _ = timeout(Duration::from_secs(5), run)
