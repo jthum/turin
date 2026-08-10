@@ -38,9 +38,6 @@
       const next = await client.status();
       status = next;
       error = "";
-      if (!selectedSessionId) {
-        selectedSessionId = next.snapshot.live_sessions[0]?.session_id ?? next.snapshot.sessions[0]?.session_id ?? null;
-      }
       if (activeView !== "assistant" && !next.ui.apps[activeView]) activeView = "assistant";
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
@@ -80,6 +77,12 @@
     activeView = "assistant";
     sidebarOpen = false;
   }
+
+  function startNewConversation() {
+    selectedSessionId = null;
+    activeView = "assistant";
+    sidebarOpen = false;
+  }
 </script>
 
 {#if loading}
@@ -96,6 +99,7 @@
         {selectedSessionId}
         onNavigate={navigate}
         onSession={selectSession}
+        onNewConversation={startNewConversation}
         onClose={() => sidebarOpen = false}
       />
     </div>
@@ -106,6 +110,7 @@
         {selectedSessionId}
         onNavigate={navigate}
         onSession={selectSession}
+        onNewConversation={startNewConversation}
         onClose={() => sidebarOpen = false}
       />
     </div>
@@ -118,6 +123,7 @@
           {status}
           {selectedSessionId}
           onSessionSelected={selectSession}
+          onNewConversation={startNewConversation}
           onStatusChanged={refreshStatus}
         />
       {:else if activeApp}

@@ -67,6 +67,10 @@ session state, invent renderer-specific harness APIs, or bypass
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
+- Opening the Assistant starts from a browser-local fresh-conversation draft. Persisted or live
+  sessions are selected explicitly rather than adopting an unrelated channel runtime by default.
+- Browser matching between persisted summaries and live sessions must compare bare and
+  store-qualified session references by session identity.
 - Browser form drafts, confirmation modals, and action-running state are
   memory-local and should not be persisted by `turin-web`.
 - Browser option-backed form selects should encode and decode option values as

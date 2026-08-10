@@ -11,6 +11,11 @@ export function humanize(value: string): string {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+export function sameSession(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (!left || !right) return left === right;
+  return left.split("@", 1)[0] === right.split("@", 1)[0];
+}
+
 export function messageText(content: JsonValue): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {

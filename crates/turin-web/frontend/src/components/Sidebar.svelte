@@ -9,6 +9,7 @@
   export let collapsed = false;
   export let onNavigate: (view: string) => void;
   export let onSession: (sessionId: string) => void;
+  export let onNewConversation: () => void;
   export let onClose: () => void;
 
   $: apps = Object.values(status.ui.apps) as UiApp[];
@@ -25,6 +26,10 @@
       <Icon name="close" />
     </button>
   </div>
+
+  <button class="new-conversation-button" onclick={onNewConversation}>
+    <Icon name="plus" size={16} /><span>New conversation</span>
+  </button>
 
   <nav class="primary-nav" aria-label="Primary navigation">
     <button class:active={activeView === "assistant"} onclick={() => onNavigate("assistant")}>

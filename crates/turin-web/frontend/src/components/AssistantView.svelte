@@ -2,7 +2,7 @@
   import { onDestroy, tick } from "svelte";
   import type { EventSubscription, TurinClient } from "../lib/TurinClient";
   import type { SessionDetail, SessionMessage, ToolExecution, TurinEvent, TurinStatus } from "../lib/types";
-  import { humanize, messageText, titleForSession } from "../lib/format";
+  import { humanize, messageText, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
 
   const PAGE_SIZE = 48;
@@ -12,6 +12,7 @@
   export let status: TurinStatus;
   export let selectedSessionId: string | null;
   export let onSessionSelected: (sessionId: string) => void;
+  export let onNewConversation: () => void;
   export let onStatusChanged: () => Promise<void>;
 
   let detail: SessionDetail | null = null;
@@ -21,6 +22,7 @@
   let loadingEarlier = false;
   let sending = false;
   let error = "";
+  let resumeFailed = false;
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
@@ -32,8 +34,8 @@
   let deltaFrame: number | undefined;
   let requestVersion = 0;
 
-  $: selectedSummary = status.snapshot.sessions.find(item => item.session_id === selectedSessionId);
-  $: selectedLive = status.snapshot.live_sessions.find(item => item.session_id === selectedSessionId);
+  $: selectedSummary = status.snapshot.sessions.find(item => sameSession(item.session_id, selectedSessionId));
+  $: selectedLive = status.snapshot.live_sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: agents = status.snapshot.status.registry.agents.filter(agent => agent.enabled);
   $: if (selectedSessionId !== loadedSessionId) switchSession(selectedSessionId);
 
@@ -50,6 +52,7 @@
     optimisticPrompt = "";
     messageLimit = PAGE_SIZE;
     error = "";
+    resumeFailed = false;
     subscription?.close();
     subscription = null;
     if (!sessionId) return;
@@ -135,16 +138,18 @@
     if (!value || sending) return;
     sending = true;
     error = "";
+    resumeFailed = false;
+    let attemptedResume = false;
     try {
       let sessionId = selectedSessionId;
       let live = selectedLive;
       if (!sessionId) {
-        const agent = agents[0];
-        if (!agent) throw new Error("No enabled agent is available.");
-        live = await client.openSession(agent.id);
+        const agentId = agents[0]?.id ?? status.snapshot.live_sessions[0]?.agent_id ?? "default";
+        live = await client.openSession(agentId);
         sessionId = live.session_id;
         onSessionSelected(sessionId);
       } else if (!live) {
+        attemptedResume = true;
         live = await client.resumeSession(sessionId);
       }
       optimisticPrompt = value;
@@ -160,6 +165,7 @@
       scheduleDetailRefresh(120);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
+      resumeFailed = attemptedResume;
       if (!prompt) prompt = value;
       optimisticPrompt = "";
     } finally {
@@ -201,20 +207,25 @@
       </div>
       <p>{selectedSummary ? humanize(selectedSummary.agent_id) : "A direct line to your Turin agents."}</p>
     </div>
-    {#if detail?.branches.length}
-      <details class="branch-menu">
-        <summary><Icon name="branch" size={16} />{detail.branches.find(branch => branch.active)?.name ?? "Branches"}</summary>
-        <div class="branch-popover">
-          <span class="popover-label">Conversation paths</span>
-          {#each detail.branches as branch (branch.branch_id)}
-            <div class:active={branch.active} class="branch-row">
-              <span>{branch.name}</span>
-              <small>{branch.head_turn_index === null ? "empty" : `turn ${branch.head_turn_index}`}</small>
-            </div>
-          {/each}
-        </div>
-      </details>
-    {/if}
+    <div class="header-actions">
+      {#if selectedSessionId}
+        <button class="new-conversation-header" onclick={onNewConversation}><Icon name="plus" size={15} />New conversation</button>
+      {/if}
+      {#if detail?.branches.length}
+        <details class="branch-menu">
+          <summary><Icon name="branch" size={16} />{detail.branches.find(branch => branch.active)?.name ?? "Branches"}</summary>
+          <div class="branch-popover">
+            <span class="popover-label">Conversation paths</span>
+            {#each detail.branches as branch (branch.branch_id)}
+              <div class:active={branch.active} class="branch-row">
+                <span>{branch.name}</span>
+                <small>{branch.head_turn_index === null ? "empty" : `turn ${branch.head_turn_index}`}</small>
+              </div>
+            {/each}
+          </div>
+        </details>
+      {/if}
+    </div>
   </header>
 
   <div class="transcript" bind:this={transcript}>
@@ -276,7 +287,12 @@
   </div>
 
   <footer class="composer-wrap">
-    {#if error && detail}<div class="composer-error">{error}</div>{/if}
+    {#if error && detail}
+      <div class="composer-error">
+        <span>{error}</span>
+        {#if resumeFailed}<button onclick={onNewConversation}>Start a new conversation</button>{/if}
+      </div>
+    {/if}
     <div class="composer">
       <textarea
         bind:this={composer}
