@@ -203,9 +203,10 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .error_for_status()?
         .text()
         .await?;
-    assert!(html.contains("Turin Web"));
+    assert!(html.contains("<title>Turin</title>"));
+    assert!(html.contains("id=\"app\""));
+    assert!(html.contains("type=\"module\""));
     assert!(html.contains("/assets/app.js"));
-    assert!(html.contains("id=\"connection-status\" role=\"status\" aria-live=\"polite\""));
 
     let css = client
         .get(format!("{base_url}/assets/app.css"))
@@ -215,6 +216,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .text()
         .await?;
     assert!(css.contains("--accent"));
+    assert!(css.contains(".assistant-view"));
+    assert!(css.contains(".harness-view"));
 
     let js = client
         .get(format!("{base_url}/assets/app.js"))
@@ -223,294 +226,8 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .error_for_status()?
         .text()
         .await?;
-    assert!(js.contains("/api/status"));
-    assert!(js.contains("EventSource"));
-    assert!(js.contains("connection: {"));
-    assert!(js.contains("setHttpStatus(reason === \"initial\" ? \"connecting\" : \"refreshing\")"));
-    assert!(js.contains("function renderConnectionStatus()"));
-    assert!(js.contains("Runtime live"));
-    assert!(js.contains("events reconnecting"));
-    assert!(js.contains("Event stream errors observed"));
-    assert!(js.contains("renderActivity"));
-    assert!(js.contains("renderDetail"));
-    assert!(js.contains("collectFormParams"));
-    assert!(js.contains("formDrafts"));
-    assert!(js.contains("draftValueFromInput"));
-    assert!(js.contains("rememberFormDraft(formKey, field.name, draftValueFromInput"));
-    assert!(js.contains("draftValueForField(formKey, field, node)"));
-    assert!(js.contains("field.name in node.params"));
-    assert!(
-        js.contains("if (!field.required && (rawValue === null || rawValue === \"\")) continue")
-    );
-    assert!(js.contains("} else if (field.options?.length) {"));
-    assert!(js.contains("input.append(new Option(value, encodeFieldValue(option)))"));
-    assert!(js.contains("if (field.options?.length) return decodeFieldValue(value)"));
-    assert!(js.contains("input.tagName === \"SELECT\" && field.options?.length"));
-    assert!(js.contains("return decodeFieldValue(input.value)"));
-    assert!(js.contains("function encodeFieldValue(value)"));
-    assert!(js.contains("function inputTypeForFieldKind(kind)"));
-    assert!(js.contains("if (kind === \"password\") return \"password\""));
-    assert!(js.contains("normalized === \"secret\" || normalized === \"passphrase\""));
-    assert!(js.contains("function decodeFieldValue(value)"));
-    assert!(js.contains("if (kind === \"number\") input.step = \"any\""));
-    assert!(
-        js.contains(
-            "if (normalized === \"float\" || normalized === \"decimal\") return \"number\""
-        )
-    );
-    assert!(js.contains(
-        "if (normalized === \"multiline\" || normalized === \"markdown\") return \"textarea\""
-    ));
-    assert!(js.contains("runningActions"));
-    assert!(js.contains("renderReport"));
-    assert!(js.contains("renderReportHighlight"));
-    assert!(js.contains("highestPriorityPendingItem"));
-    assert!(js.contains("Next highest-priority pending item"));
-    assert!(js.contains("const known ="));
-    assert!(js.contains("(counts.claimed || 0)"));
-    assert!(js.contains("if (other > 0) metrics.push({ label: \"Other\", value: other })"));
-    assert!(js.contains("renderChart"));
-    assert!(js.contains("chartGroupLabel(node)"));
-    assert!(js.contains("grouped by ${chartGroupLabel(node)}"));
-    assert!(js.contains("renderState"));
-    assert!(js.contains("appendState"));
-    assert!(js.contains("surface-state"));
-    assert!(js.contains("renderActionResult"));
-    assert!(js.contains("actionResultMeta(result)"));
-    assert!(js.contains("function actionResultMeta(result)"));
-    assert!(js.contains("function actionCompletedBody(result)"));
-    assert!(js.contains("completed without a result payload"));
-    assert!(js.contains("body: actionCompletedBody(result.result)"));
-    assert!(js.contains(
-        "pushNotice(\"success\", \"Action completed\", actionCompletedBody(result.result))"
-    ));
-    assert!(js.contains("Action ${result.action}"));
-    assert!(js.contains("Agent ${result.agentId}"));
-    assert!(js.contains("Harness ${result.harnessId}"));
-    assert!(js.contains("latestActionResult"));
-    assert!(js.contains("latestActionResultForApp"));
-    assert!(js.contains("appId: app?.id || null"));
-    assert!(js.contains("action: node.action"));
-    assert!(js.contains("agentId: app?.source?.agent_id || null"));
-    assert!(js.contains("harnessId: app?.source?.harness_id || null"));
-    assert!(js.contains("action: result.result.action"));
-    assert!(js.contains("agentId: result.result.agent_id || app?.source?.agent_id || null"));
-    assert!(js.contains("harnessId: result.result.harness_id || app?.source?.harness_id || null"));
-    assert!(js.contains("title: \"Action failed\""));
-    assert!(js.contains("body: error.message"));
-    assert!(js.contains("detail: error.envelope || null"));
-    assert!(js.contains("error.envelope = body?.error || null"));
-    assert!(js.contains("error.status = response.status"));
-    assert!(js.contains("pushNotice(\"error\", \"Action failed\", error.message)"));
-    assert!(js.contains("pendingAction"));
-    assert!(js.contains("renderActionConfirmation"));
-    assert!(js.contains("requestActionConfirmation"));
-    assert!(js.contains("function focusedDialogAction(selector)"));
-    assert!(js.contains("function focusDialogAction(dialog, preferredAction = null)"));
-    assert!(js.contains("function dialogActionButton(dialog, action)"));
-    assert!(js.contains("function activeOverlayDialog()"));
-    assert!(js.contains("function trapDialogTab(event, dialog)"));
-    assert!(js.contains("function focusableDialogControls(dialog)"));
-    assert!(js.contains("event.key === \"Tab\" && dialog"));
-    assert!(js.contains("event.key === \"Escape\" && state.pendingAction"));
-    assert!(js.contains("event.key === \"Escape\" && state.activePaneId"));
-    assert!(js.contains("const preferredAction = focusedDialogAction(\".confirm-dialog\")"));
-    assert!(js.contains("const preferredAction = focusedDialogAction(\".pane-sheet\")"));
-    assert!(js.contains("return active.dataset.dialogAction || null"));
-    assert!(js.contains("button.dataset.dialogAction === action && !button.disabled"));
-    assert!(js.contains("focusDialogAction(dialog, preferredAction)"));
-    assert!(js.contains("focusDialogAction(sheet, preferredAction)"));
-    assert!(js.contains("cancel.dataset.autofocus = \"true\""));
-    assert!(js.contains("cancel.dataset.dialogAction = \"cancel\""));
-    assert!(js.contains("run.dataset.dialogAction = \"run\""));
-    assert!(js.contains("close.dataset.autofocus = \"true\""));
-    assert!(js.contains("close.dataset.dialogAction = \"close\""));
-    assert!(js.contains("Confirm and run"));
-    assert!(js.contains("Queue for confirmation"));
-    assert!(js.contains("Action ${item.action.name} requires confirmation before running."));
-    assert!(!js.contains("window.confirm"));
-    assert!(js.contains("renderDefaultConsole"));
-    assert!(js.contains("Default Operator Console"));
-    assert!(js.contains("Runtime Overview"));
-    assert!(js.contains("renderMetricPanel(\"UI Signals\""));
-    assert!(js.contains("[\"Harness apps\", state.apps.length]"));
-    assert!(js.contains("[\"Requests\", uiRequestCount]"));
-    assert!(js.contains("[\"Local notices\", state.notices.length]"));
-    assert!(js.contains("Simple stays simple"));
-    assert!(js.contains("applyUiIntentPayload"));
-    assert!(js.contains("applyUiIntentMessages"));
-    assert!(js.contains("result.result.ui_intents"));
-    assert!(js.contains("ui?.refreshes"));
-    assert!(js.contains("case \"refresh\""));
-    assert!(js.contains("case \"badge\""));
-    assert!(js.contains("applyUiRefresh"));
-    assert!(js.contains("applyUiBadge"));
-    assert!(js.contains("localBadges"));
-    assert!(js.contains("applyLocalBadgesToApps"));
-    assert!(js.contains("state.localBadges.set(localBadgeKey(appId, target), badge)"));
-    assert!(js.contains("app.badges[target]"));
-    assert!(js.contains("appById(appId)"));
-    assert!(js.contains("invalidateListBinding"));
-    assert!(js.contains("parseListKey"));
-    assert!(js.contains("defaultScreenIdForApp(app)"));
-    assert!(
-        js.contains("return screenIdForTarget(app, app?.opens_with) || Object.keys(app?.screens ?? {})[0] || null")
-    );
-    assert!(js.contains("function applyUiShow(appId, target)"));
-    assert!(js.contains(
-        "if (screenIdForTarget(app, target)) return applyUiOpen(appId, target, \"show\")"
-    ));
-    assert!(js.contains("if (app.panes?.[target])"));
-    assert!(js.contains("state.activePaneId = target"));
-    assert!(js.contains("state.pendingAction = null"));
-    assert!(js.contains("Target '${target}' is not a screen or pane in '${appId}'."));
-    assert!(js.contains("focusScreenIdForTarget"));
-    assert!(js.contains("if (app?.screens?.[target]) return target"));
-    assert!(js.contains("screen.title === target"));
-    assert!(js.contains("const screenId = screenIdForTarget(app, target)"));
-    assert!(js.contains("for (const screen of Object.values(app?.screens ?? {}))"));
-    assert!(js.contains("if (node?.id === target) return true"));
-    assert!(js.contains("child => nodeContainsTarget(child, target)"));
-    assert!(js.contains("return node.action === target || node.label === target"));
-    assert!(js.contains("return node.action === target || node.title === target"));
-    assert!(js.contains("renderWorkItemDetail"));
-    assert!(js.contains("[\"ID\", item.public_id || String(item.id)]"));
-    assert!(js.contains("[\"Created\", item.created_at]"));
-    assert!(js.contains("[\"Updated\", item.updated_at]"));
-    assert!(js.contains("[\"Parent\", item.parent_id]"));
-    assert!(js.contains("[\"Paused\", item.paused ? \"yes\" : null]"));
-    assert!(js.contains("[\"Pause reason\", item.pause_reason]"));
-    assert!(js.contains("[\"Claimed by\", item.claim_agent_id]"));
-    assert!(js.contains("[\"Claimed at\", item.claimed_at]"));
-    assert!(js.contains("[\"Completed\", item.completed_at]"));
-    assert!(js.contains("[\"Failure\", item.failure_reason]"));
-    assert!(js.contains("item.action.name"));
-    assert!(js.contains("Action ${item.action.name} requires confirmation before running."));
-    assert!(js.contains("selectedListItems"));
-    assert!(js.contains("selectedListItem"));
-    assert!(js.contains("selectedListItemIndex"));
-    assert!(js.contains("appendListSummary"));
-    assert!(js.contains("Rows 1-${itemCount} of ${itemCount}${selected}"));
-    assert!(js.contains("appendListMetadata"));
-    assert!(js.contains("listMetadataParts"));
-    assert!(js.contains("emptyListMessage(node)"));
-    assert!(js.contains("function emptyListMessage(node)"));
-    assert!(js.contains("after applying ${whereCount} declared filter(s)"));
-    assert!(js.contains("Object.keys(node.where).length"));
-    assert!(js.contains("filterFields(node.where)"));
-    assert!(js.contains("Where ${whereFields.join(\",\")}"));
-    assert!(js.contains("Sort ${sortFields.join(\",\")}"));
-    assert!(js.contains("function filterFields(where)"));
-    assert!(js.contains("function sortFieldsForDisplay(sort)"));
-    assert!(js.contains("Limit ${node.limit}"));
-    assert!(js.contains("selectListItemAt"));
-    assert!(js.contains("focusSelectedListRow"));
-    assert!(js.contains("event.key === \"ArrowDown\""));
-    assert!(js.contains("event.key === \"ArrowUp\""));
-    assert!(js.contains("event.key === \"Home\""));
-    assert!(js.contains("event.key === \"End\""));
-    assert!(js.contains("aria-selected"));
-    assert!(js.contains("fieldHeaderLabel(field, node)"));
-    assert!(js.contains("function fieldHeaderLabel(field, node)"));
-    assert!(js.contains(
-        "const headers = [...fields.map(field => fieldHeaderLabel(field, node)), \"Action\"]"
-    ));
-    assert!(js.contains("workItemActionMarker(item)"));
-    assert!(js.contains("function workItemActionMarker(item)"));
-    assert!(js.contains("return item.action?.name ? \"action\" : \"-\";"));
-    assert!(js.contains("[sort ${index + 1}${direction"));
-    assert!(js.contains("sortFieldDirection(field, node?.sort || [])"));
-    assert!(js.contains("${direction ? ` ${direction}` : \"\"}"));
-    assert!(js.contains("function sortEntryDirection(entry)"));
-    assert!(js.contains("function directionLabel(value)"));
-    assert!(js.contains("function sortFieldIndex(field, sort)"));
-    assert!(js.contains("function sortEntryField(entry)"));
-    assert!(js.contains(".split(/\\s+/)[0]"));
-    assert!(js.contains("function fieldLabel(field)"));
-    assert!(js.contains(".split(/[_.]/)"));
-    assert!(js.contains("counts.done"));
-    assert!(js.contains("const other = items.length - known"));
-    assert!(js.contains("if (other > 0) metrics.push({ label: \"Other\", value: other })"));
-    assert!(js.contains("item.status === \"pending\""));
-    assert!(js.contains("(right.priority || 0) - (left.priority || 0)"));
-    assert!(js.contains("if (node.intent === \"kind_breakdown\") return \"kind\""));
-    assert!(js.contains("if (node.intent === \"priority_breakdown\") return \"priority\""));
-    assert!(js.contains("return \"status\""));
-    assert!(js.contains("function percentLabel(count, total)"));
-    assert!(js.contains("Math.round((count * 100) / total)"));
-    assert!(js.contains("const label = fieldValue(item, field) || \"unknown\""));
-    assert!(js.contains("No report data yet"));
-    assert!(js.contains("This report will populate when the backing worklist has rows."));
-    assert!(js.contains("field === \"id\" || field === \"public_id\""));
-    assert!(js.contains("unsupportedSourceMessage"));
-    assert!(js.contains("const normalizedSource = String(source || \"\").trim()"));
-    assert!(js.contains("source.slice(\"worklists.\".length).trim().length > 0"));
-    assert!(js.contains("This ${surface} is declared and visible, but no source was provided."));
-    assert!(js.contains("errorMessageFromEnvelope"));
-    assert!(js.contains("details?.guidance"));
-    assert!(js.contains("appendCachedDataError"));
-    assert!(js.contains("Retry data load"));
-    assert!(js.contains("function retryDataRequest(request)"));
-    assert!(js.contains("state.listCache.delete(listKey(request));"));
-    assert!(js.contains("envelope: error.envelope || null"));
-    assert!(js.contains("status: error.status || null"));
-    assert!(js.contains("details.source"));
-    assert!(js.contains("Only named worklists.<name> sources load today"));
-    assert!(js.contains("deliberate adapter for this client"));
-    assert!(js.contains("function dataNotLoadedMessage(kind)"));
-    assert!(js.contains("dataNotLoadedMessage(\"list\")"));
-    assert!(js.contains("dataNotLoadedMessage(\"activity\")"));
-    assert!(js.contains("dataNotLoadedMessage(\"detail\")"));
-    assert!(js.contains("dataNotLoadedMessage(\"report\")"));
-    assert!(js.contains("dataNotLoadedMessage(\"chart\")"));
-    assert!(js.contains("This ${surface} is visible, but its backing data has not loaded yet."));
-    assert!(js.contains("client requests and receives the current data."));
-    assert!(js.contains("isWorklistSource"));
-    assert!(js.contains("node.kind === \"activity\" && isWorklistSource(node.source)"));
-    assert!(js.contains("node.kind === \"detail\" && isWorklistSource(node.source)"));
-    assert!(js.contains("node.kind === \"report\" && isWorklistSource(node.source)"));
-    assert!(js.contains("node.kind === \"chart\" && isWorklistSource(node.source)"));
-    assert_eq!(js.matches("startsWith(\"worklists.\")").count(), 1);
-    assert!(js.contains("appendNodeBadge"));
-    assert!(js.contains("nodeBadge"));
-    assert!(js.contains("renderPlaceholder(node, app)"));
-    assert!(js.contains("activePaneId"));
-    assert!(js.contains("renderPane"));
-    assert!(js.contains("selectedPane"));
-    assert_eq!(
-        js.matches("const latestActionResult = latestActionResultForApp(app)")
-            .count(),
-        2
-    );
-    assert_eq!(
-        js.matches("const latestActionResult = latestActionResultForApp(null)")
-            .count(),
-        1
-    );
-    assert!(js.contains("state.pendingAction = null;\n    loadVisibleLists().then(render);"));
-    assert_eq!(js.matches("appendNodeBadge(row, node, app)").count(), 1);
-    assert_eq!(
-        js.matches("return node.action === target || node.title === target")
-            .count(),
-        1
-    );
-    assert!(css.contains(".list-selection"));
-    assert!(css.contains(".rail-status[data-state=\"success\"]"));
-    assert!(css.contains(".rail-status[data-state=\"warning\"]"));
-    assert!(css.contains(".rail-status[data-state=\"error\"]"));
-    assert!(css.contains(".surface-state"));
-    assert!(css.contains(".surface-state[data-level=\"error\"]"));
-    assert!(css.contains(".surface-state .ghost-button"));
-    assert!(css.contains(".confirm-overlay"));
-    assert!(css.contains(".confirm-dialog"));
-    assert!(css.contains(".default-console"));
-    assert!(css.contains(".default-grid"));
-    assert!(css.contains(".stat-card"));
-    assert!(css.contains(".list-summary"));
-    assert!(css.contains(".list-row"));
-    assert!(css.contains(".node-badge"));
-    assert!(css.contains(".pane-overlay"));
-    assert!(css.contains(".pane-sheet"));
+    assert!(!js.is_empty());
+    assert!(js.len() < 250_000, "frontend bootstrap unexpectedly grew");
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -520,6 +237,53 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .json()
         .await?;
     assert_eq!(health["ok"], true);
+
+    let opened: Value = client
+        .post(format!("{base_url}/api/sessions/open"))
+        .json(&json!({ "agent_id": "default" }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let session_id = opened["session"]["session_id"]
+        .as_str()
+        .context("open session response should include session id")?;
+    let slot_id = opened["session"]["slot_id"]
+        .as_str()
+        .context("open session response should include slot id")?;
+
+    let detail: Value = client
+        .get(format!("{base_url}/api/session"))
+        .query(&[("session_id", session_id), ("message_limit", "16")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(detail["detail"]["session"]["session_id"], session_id);
+
+    let invalid_window = client
+        .get(format!("{base_url}/api/session"))
+        .query(&[("session_id", session_id), ("message_limit", "0")])
+        .send()
+        .await?;
+    assert_eq!(invalid_window.status().as_u16(), 400);
+
+    let submitted: Value = client
+        .post(format!("{base_url}/api/tasks/submit"))
+        .json(&json!({
+            "session_id": session_id,
+            "slot_id": slot_id,
+            "prompt": "Reply with PONG"
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(submitted["task"]["agent_id"], "default");
+    assert!(submitted["task"]["request_id"].as_str().is_some());
 
     let event_response = client
         .get(format!("{base_url}/api/events"))

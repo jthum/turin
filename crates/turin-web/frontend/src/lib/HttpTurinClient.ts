@@ -1,0 +1,157 @@
+import type { EventSubscription, TurinClient } from "./TurinClient";
+import type {
+  LiveSession,
+  SessionDetail,
+  TaskStatus,
+  TurinEvent,
+  TurinStatus,
+  UiListRequest,
+  UiListResult,
+  JsonValue,
+} from "./types";
+
+interface ErrorEnvelope {
+  error?: { code?: string; message?: string; details?: JsonValue };
+}
+
+export class HttpTurinClient implements TurinClient {
+  constructor(private readonly baseUrl = "") {}
+
+  status(): Promise<TurinStatus> {
+    return this.request<TurinStatus>("/api/status");
+  }
+
+  async session(sessionId: string, messageLimit: number): Promise<SessionDetail> {
+    const result = await this.request<{ detail: SessionDetail }>(
+      `/api/session?session_id=${encodeURIComponent(sessionId)}&message_limit=${messageLimit}`,
+    );
+    return result.detail;
+  }
+
+  async openSession(agentId: string): Promise<LiveSession> {
+    const result = await this.request<{ session: LiveSession }>("/api/sessions/open", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    return result.session;
+  }
+
+  async resumeSession(sessionId: string): Promise<LiveSession> {
+    const result = await this.request<{ session: LiveSession }>("/api/sessions/resume", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    return result.session;
+  }
+
+  async submitTask(input: {
+    agent_id?: string;
+    session_id?: string;
+    slot_id?: string;
+    prompt: string;
+  }): Promise<TaskStatus> {
+    const result = await this.request<{ task: TaskStatus }>("/api/tasks/submit", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.task;
+  }
+
+  loadList(request: UiListRequest): Promise<UiListResult> {
+    return this.request<UiListResult>("/api/ui/list", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  runAction(input: {
+    action: string;
+    harness_id?: string;
+    agent_id?: string;
+    params?: JsonValue;
+  }): Promise<{ result: Record<string, JsonValue> }> {
+    return this.request("/api/actions/run", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  subscribe(
+    listener: (event: TurinEvent) => void,
+    options: { sessionId?: string } = {},
+  ): EventSubscription {
+    const query = options.sessionId
+      ? `?session_id=${encodeURIComponent(options.sessionId)}`
+      : "";
+    const source = new EventSource(`${this.baseUrl}/api/events${query}`);
+    const eventTypes = [
+      "runtime.snapshot",
+      "runtime.rescanned",
+      "ui.intent",
+      "task.submitted",
+      "task.updated",
+      "task_start",
+      "task_complete",
+      "turn_start",
+      "turn_end",
+      "message_start",
+      "message_delta",
+      "message_end",
+      "tool_call",
+      "tool_result",
+    ];
+    for (const type of eventTypes) {
+      source.addEventListener(type, raw => {
+        const message = raw as MessageEvent<string>;
+        try {
+          listener({ type, data: JSON.parse(message.data) as Record<string, JsonValue> });
+        } catch {
+          listener({ type: "web.decode_error", data: { event_type: type } });
+        }
+      });
+    }
+    source.addEventListener("web.error", raw => {
+      const message = raw as MessageEvent<string>;
+      listener({ type: "web.error", data: { message: message.data } });
+    });
+    return { close: () => source.close() };
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+    if (!response.ok) {
+      let body: ErrorEnvelope = {};
+      try {
+        body = (await response.json()) as ErrorEnvelope;
+      } catch {
+        // The status text remains useful when an intermediary returns non-JSON.
+      }
+      throw new TurinHttpError(
+        body.error?.message ?? `${response.status} ${response.statusText}`,
+        response.status,
+        body.error?.code,
+        body.error?.details,
+      );
+    }
+    return (await response.json()) as T;
+  }
+}
+
+export class TurinHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly details?: JsonValue,
+  ) {
+    super(message);
+    this.name = "TurinHttpError";
+  }
+}

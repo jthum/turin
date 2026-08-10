@@ -1,0 +1,297 @@
+<script lang="ts">
+  import { onDestroy, tick } from "svelte";
+  import type { EventSubscription, TurinClient } from "../lib/TurinClient";
+  import type { SessionDetail, SessionMessage, ToolExecution, TurinEvent, TurinStatus } from "../lib/types";
+  import { humanize, messageText, titleForSession } from "../lib/format";
+  import Icon from "./Icon.svelte";
+
+  const PAGE_SIZE = 48;
+  const MAX_MESSAGES = 256;
+
+  export let client: TurinClient;
+  export let status: TurinStatus;
+  export let selectedSessionId: string | null;
+  export let onSessionSelected: (sessionId: string) => void;
+  export let onStatusChanged: () => Promise<void>;
+
+  let detail: SessionDetail | null = null;
+  let loadedSessionId: string | null = null;
+  let messageLimit = PAGE_SIZE;
+  let loading = false;
+  let loadingEarlier = false;
+  let sending = false;
+  let error = "";
+  let prompt = "";
+  let streamText = "";
+  let pendingDelta = "";
+  let optimisticPrompt = "";
+  let transcript: HTMLDivElement;
+  let composer: HTMLTextAreaElement;
+  let subscription: EventSubscription | null = null;
+  let refreshTimer: number | undefined;
+  let deltaFrame: number | undefined;
+  let requestVersion = 0;
+
+  $: selectedSummary = status.snapshot.sessions.find(item => item.session_id === selectedSessionId);
+  $: selectedLive = status.snapshot.live_sessions.find(item => item.session_id === selectedSessionId);
+  $: agents = status.snapshot.status.registry.agents.filter(agent => agent.enabled);
+  $: if (selectedSessionId !== loadedSessionId) switchSession(selectedSessionId);
+
+  onDestroy(() => {
+    subscription?.close();
+    if (refreshTimer) window.clearTimeout(refreshTimer);
+    if (deltaFrame) window.cancelAnimationFrame(deltaFrame);
+  });
+
+  async function switchSession(sessionId: string | null) {
+    loadedSessionId = sessionId;
+    detail = null;
+    streamText = "";
+    optimisticPrompt = "";
+    messageLimit = PAGE_SIZE;
+    error = "";
+    subscription?.close();
+    subscription = null;
+    if (!sessionId) return;
+    subscription = client.subscribe(handleEvent, { sessionId });
+    await loadDetail(false);
+  }
+
+  async function loadDetail(preserveScroll: boolean) {
+    if (!selectedSessionId) return;
+    const version = ++requestVersion;
+    const previousHeight = preserveScroll ? transcript?.scrollHeight ?? 0 : 0;
+    loading = !detail;
+    error = "";
+    try {
+      const next = await client.session(selectedSessionId, messageLimit);
+      if (version !== requestVersion) return;
+      detail = next;
+      optimisticPrompt = "";
+      loadingEarlier = false;
+      await tick();
+      if (preserveScroll && transcript) {
+        transcript.scrollTop += transcript.scrollHeight - previousHeight;
+      } else {
+        scrollToBottom();
+      }
+    } catch (reason) {
+      if (version !== requestVersion) return;
+      error = reason instanceof Error ? reason.message : String(reason);
+      loadingEarlier = false;
+    } finally {
+      if (version === requestVersion) loading = false;
+    }
+  }
+
+  async function loadEarlier() {
+    const total = detail?.message_window?.total ?? detail?.messages.length ?? 0;
+    const next = Math.min(messageLimit + PAGE_SIZE, total, MAX_MESSAGES);
+    if (next <= messageLimit) return;
+    loadingEarlier = true;
+    messageLimit = next;
+    await loadDetail(true);
+  }
+
+  function handleEvent(event: TurinEvent) {
+    if (event.type === "message_start") {
+      streamText = "";
+      pendingDelta = "";
+      return;
+    }
+    if (event.type === "message_delta") {
+      const delta = event.data.content_delta;
+      if (typeof delta === "string") queueDelta(delta);
+      return;
+    }
+    if (["message_end", "turn_end", "task_complete"].includes(event.type)) {
+      scheduleDetailRefresh(event.type === "message_end" ? 80 : 180);
+      void onStatusChanged();
+    }
+  }
+
+  function queueDelta(delta: string) {
+    pendingDelta += delta;
+    if (deltaFrame) return;
+    const shouldFollow = isNearBottom();
+    deltaFrame = window.requestAnimationFrame(async () => {
+      streamText += pendingDelta;
+      pendingDelta = "";
+      deltaFrame = undefined;
+      if (shouldFollow) {
+        await tick();
+        scrollToBottom();
+      }
+    });
+  }
+
+  function scheduleDetailRefresh(delay: number) {
+    if (refreshTimer) window.clearTimeout(refreshTimer);
+    refreshTimer = window.setTimeout(() => void loadDetail(false), delay);
+  }
+
+  async function submit() {
+    const value = prompt.trim();
+    if (!value || sending) return;
+    sending = true;
+    error = "";
+    try {
+      let sessionId = selectedSessionId;
+      let live = selectedLive;
+      if (!sessionId) {
+        const agent = agents[0];
+        if (!agent) throw new Error("No enabled agent is available.");
+        live = await client.openSession(agent.id);
+        sessionId = live.session_id;
+        onSessionSelected(sessionId);
+      } else if (!live) {
+        live = await client.resumeSession(sessionId);
+      }
+      optimisticPrompt = value;
+      prompt = "";
+      await tick();
+      scrollToBottom();
+      await client.submitTask({
+        session_id: sessionId,
+        slot_id: live.slot_id,
+        prompt: value,
+      });
+      await onStatusChanged();
+      scheduleDetailRefresh(120);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : String(reason);
+      if (!prompt) prompt = value;
+      optimisticPrompt = "";
+    } finally {
+      sending = false;
+      await tick();
+      composer?.focus();
+    }
+  }
+
+  function onComposerKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void submit();
+    }
+  }
+
+  function toolsFor(message: SessionMessage): ToolExecution[] {
+    return detail?.tool_executions.filter(tool => tool.turn_index === message.turn_index) ?? [];
+  }
+
+  function isNearBottom(): boolean {
+    if (!transcript) return true;
+    return transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 120;
+  }
+
+  function scrollToBottom() {
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  }
+</script>
+
+<section class="assistant-view">
+  <header class="view-header assistant-header">
+    <div>
+      <div class="title-line">
+        <h1>{selectedSummary ? titleForSession(selectedSummary) : "Assistant"}</h1>
+        {#if selectedLive?.active_tasks}
+          <span class="working-badge"><i></i>Working</span>
+        {/if}
+      </div>
+      <p>{selectedSummary ? humanize(selectedSummary.agent_id) : "A direct line to your Turin agents."}</p>
+    </div>
+    {#if detail?.branches.length}
+      <details class="branch-menu">
+        <summary><Icon name="branch" size={16} />{detail.branches.find(branch => branch.active)?.name ?? "Branches"}</summary>
+        <div class="branch-popover">
+          <span class="popover-label">Conversation paths</span>
+          {#each detail.branches as branch (branch.branch_id)}
+            <div class:active={branch.active} class="branch-row">
+              <span>{branch.name}</span>
+              <small>{branch.head_turn_index === null ? "empty" : `turn ${branch.head_turn_index}`}</small>
+            </div>
+          {/each}
+        </div>
+      </details>
+    {/if}
+  </header>
+
+  <div class="transcript" bind:this={transcript}>
+    <div class="message-column">
+      {#if detail?.message_window && detail.message_window.offset > 0}
+        <button class="load-earlier" disabled={loadingEarlier || messageLimit >= MAX_MESSAGES} onclick={loadEarlier}>
+          {loadingEarlier ? "Loading..." : `Load earlier · ${detail.message_window.offset} before this window`}
+        </button>
+      {/if}
+
+      {#if loading}
+        <div class="conversation-skeleton" aria-label="Loading conversation">
+          <i></i><i></i><i></i>
+        </div>
+      {:else if !selectedSessionId && !optimisticPrompt}
+        <div class="welcome-state">
+          <span class="welcome-mark"><Icon name="spark" size={26} /></span>
+          <h2>What should we work on?</h2>
+          <p>Investigate a problem, build something, or ask Turin to coordinate a longer-running task.</p>
+          <div class="prompt-suggestions">
+            <button onclick={() => { prompt = "Review the current project and tell me what deserves attention next."; composer?.focus(); }}>Review this project</button>
+            <button onclick={() => { prompt = "Help me investigate a difficult problem step by step."; composer?.focus(); }}>Investigate a problem</button>
+          </div>
+        </div>
+      {:else if error && !detail}
+        <div class="inline-error"><strong>Conversation unavailable</strong><span>{error}</span><button onclick={() => loadDetail(false)}>Retry</button></div>
+      {:else}
+        {#each detail?.messages ?? [] as message (message.id)}
+          {@const body = messageText(message.content)}
+          {@const tools = toolsFor(message)}
+          {#if body || tools.length}
+            <article class:user={message.role.toLowerCase() === "user"} class="message">
+              <div class="message-author">{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</div>
+              {#if body}<div class="message-body">{body}</div>{/if}
+              {#if tools.length}
+                <div class="tool-stack">
+                  {#each tools as tool (tool.id)}
+                    <details class:error={tool.is_error} class="tool-call">
+                      <summary><span><Icon name="activity" size={15} />{humanize(tool.tool_name)}</span><small>{tool.duration_ms ? `${tool.duration_ms} ms` : tool.verdict}</small></summary>
+                      <pre>{tool.is_error ? messageText(tool.output ?? "") : JSON.stringify(tool.args, null, 2)}</pre>
+                    </details>
+                  {/each}
+                </div>
+              {/if}
+            </article>
+          {/if}
+        {/each}
+        {#if optimisticPrompt}
+          <article class="message user optimistic"><div class="message-author">You</div><div class="message-body">{optimisticPrompt}</div></article>
+        {/if}
+        {#if streamText || selectedLive?.active_tasks}
+          <article class="message streaming">
+            <div class="message-author">{humanize(selectedSummary?.agent_id ?? selectedLive?.agent_id ?? "Turin")}</div>
+            <div class="message-body">{streamText}<span class="stream-cursor"></span></div>
+          </article>
+        {/if}
+      {/if}
+    </div>
+  </div>
+
+  <footer class="composer-wrap">
+    {#if error && detail}<div class="composer-error">{error}</div>{/if}
+    <div class="composer">
+      <textarea
+        bind:this={composer}
+        bind:value={prompt}
+        rows="2"
+        placeholder="Message Turin..."
+        aria-label="Message Turin"
+        onkeydown={onComposerKeydown}
+      ></textarea>
+      <div class="composer-footer">
+        <span>Enter to send · Shift Enter for a new line</span>
+        <button class="send-button" aria-label="Send message" disabled={!prompt.trim() || sending} onclick={submit}>
+          <Icon name="send" size={17} />
+        </button>
+      </div>
+    </div>
+  </footer>
+</section>

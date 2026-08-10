@@ -2,10 +2,10 @@
 
 `turin-web` is the web-facing client surface for Turin.
 
-The first implementation is server/API-first with a small dependency-free
-browser shell. It exists to prove the web boundary against the same semantic UI
-model used by `turin-app` and `turin-tui` before a larger frontend structure is
-chosen.
+The current implementation is server/API-first with a compact Svelte client
+and authored CSS. It exists to prove the web boundary, streaming behavior,
+bounded conversation loading, and semantic harness UI model before Dashbase
+and the production visual system are integrated.
 
 ## Role
 
@@ -34,9 +34,10 @@ Initial layering should stay thin:
 1. Turin daemon remains the source of truth.
 2. `turin-control-client` remains the typed Rust facade.
 3. `turin-web` exposes web-oriented endpoints and event streams.
-4. The current browser shell renders semantic UI intent without a frontend build
-   step. A future shell can adopt Dashbase and a lightweight frontend runtime
-   once the web UX shape is proven.
+4. The Svelte client talks through a typed `TurinClient` interface. The HTTP
+   implementation uses same-origin JSON and SSE; a desktop host can later
+   provide a bridge implementation without inserting `turin-web` between the
+   desktop app and daemon.
 
 This keeps web behavior aligned with local and remote clients.
 
@@ -47,6 +48,10 @@ Start with a small API that mirrors what the current clients already need.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from harness UI intent. |
+| `GET /api/session` | Implemented. Bounded durable session detail using encoded `session_id` and `message_limit` query parameters. |
+| `POST /api/sessions/open` | Implemented. Opens a live session for an agent. |
+| `POST /api/sessions/resume` | Implemented. Resumes a stored session into a live slot. |
+| `POST /api/tasks/submit` | Implemented. Submits a prompt or structured task input. |
 | `GET /api/apps` | Implemented. Harness UI app registry derived from semantic UI intent. |
 | `GET /api/apps/{app_id}` | Implemented. One app's screens, menus, panes, and declared surfaces. |
 | `POST /api/ui/list` | Implemented for semantic worklist sources such as `worklists.release`. |
@@ -59,6 +64,39 @@ Start with a small API that mirrors what the current clients already need.
 
 The current version proxies through `turin-control-client` rather than exposing
 new daemon operations.
+
+## Frontend Build
+
+Svelte source lives in `crates/turin-web/frontend`. Vite emits deterministic
+asset names into `crates/turin-web/static`, and those built assets are checked
+in and embedded by `turin-web`. This means a normal Cargo build does not require
+Node.
+
+After changing frontend source, run:
+
+```sh
+cd crates/turin-web/frontend
+npm install
+npm run check
+npm run build
+```
+
+The temporary client uses custom components and CSS rather than Dashbase. Its
+transport and state boundaries are intended to survive the later visual-system
+replacement; its CSS is not a compatibility contract.
+
+## Conversation Windowing
+
+The assistant initially requests the latest 48 messages. "Load earlier"
+increases that bounded window in 48-message pages, preserves the current scroll
+anchor, and stops at the web boundary's 256-message cap. The browser does not
+fetch or retain the entire session tree by default.
+
+The active session uses a session-scoped SSE subscription. `message_delta`
+events are buffered and committed at most once per animation frame. On message
+or turn completion, the browser reloads the bounded durable session detail;
+SSE remains a stream and invalidation channel rather than a second transcript
+store.
 
 API responses use JSON envelopes and are marked `Cache-Control: no-store`.
 Errors have the shape:

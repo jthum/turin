@@ -17,11 +17,15 @@ session state, invent renderer-specific harness APIs, or bypass
 - `crates/turin-web/src/server.rs`
   - Hyper HTTP/1 server startup, shutdown, bind policy, and shared state setup.
 - `crates/turin-web/src/routes.rs`
-  - JSON route handling for status, app registry, UI list loading, action runs,
-    liveness, SSE event streaming, and first-party static shell routes.
+  - JSON route handling for status, bounded session detail, session lifecycle,
+    task submission, app registry, UI list loading, action runs, liveness, SSE
+    event streaming, and first-party static routes.
+- `crates/turin-web/frontend/`
+  - Svelte/TypeScript client source, typed `TurinClient` transport boundary,
+    custom CSS, assistant surface, and semantic harness renderer.
 - `crates/turin-web/static/`
-  - Dependency-free browser shell assets for rendering semantic UI intent
-    against the HTTP API.
+  - Checked-in Vite build output embedded by the Rust binary. Cargo builds do
+    not require Node; regenerate these assets after frontend changes.
 - `crates/turin-web/tests/release_operator.rs`
   - End-to-end smoke against a temporary daemon and the Release Operator
     harness, both through local IPC and through `turin-remote`.
@@ -50,6 +54,15 @@ session state, invent renderer-specific harness APIs, or bypass
     hints rather than durable daemon state.
 12. Browser list-load failures are cached per semantic request and can be
     retried by deleting that local cache entry and calling `/api/ui/list` again.
+13. The assistant loads a bounded latest-message window through
+    `GET /api/session`, then expands that window in fixed pages while preserving
+    the browser scroll anchor.
+14. The active conversation subscribes to a session-scoped SSE feed. Message
+    deltas render directly and are batched to animation frames; terminal stream
+    events invalidate and reload the bounded durable window.
+15. `HttpTurinClient` is one implementation of the frontend transport contract.
+    An embedded desktop host can provide a bridge implementation without
+    changing Svelte presentation components.
 
 ## Invariants
 
@@ -97,9 +110,15 @@ session state, invent renderer-specific harness APIs, or bypass
   buffering an oversized request.
 - `GET /api/events` is an invalidation/event feed. Browser `ui.refresh`
   handling should stay cache invalidation plus visible-data reload, not grow
-  into a live-query result cache.
-- Static assets are a bootstrap shell, not the final web framework decision.
-  Keep them small unless the project deliberately adopts a frontend build step.
+  into a live-query result cache. High-frequency message deltas may be rendered
+  ephemerally, but durable transcript truth still comes from bounded session
+  detail queries.
+- Session identifiers are compound and may contain store paths. Pass them as an
+  encoded `session_id` query/body value; do not place them in URL path segments.
+- Session detail requests must remain bounded. The web boundary rejects zero or
+  excessively large message windows rather than exposing unbounded history.
+- Frontend source lives under `frontend/`; `static/` is generated and checked in
+  so Rust-only builds remain reproducible without installing Node dependencies.
 - The browser shell should keep semantic list constraints such as named
   filter/sort/limit metadata visible when rendering list nodes and mark sorted
   columns, including advisory direction when declared, in table headers. Those
@@ -138,8 +157,11 @@ Add browser support:
 Focused checks:
 
 ```sh
+cargo test -p turin-web --lib
+cargo test -p turin-web --test release_operator
 cargo test -p turin-web
 cargo check -p turin-web
+cd crates/turin-web/frontend && npm run check && npm run build
 ```
 
 Basic checks:

@@ -1,0 +1,19 @@
+{
+  "name": "turin-web-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "svelte": "5.56.8"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@tsconfig/svelte": "5.0.8",
+    "svelte-check": "4.7.5",
+    "typescript": "6.0.3",
+    "vite": "8.2.1"
+  }
+}

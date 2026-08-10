@@ -1,0 +1,2 @@
+# Vite's minified Svelte runtime contains a multiline whitespace character set.
+/crates/turin-web/static/assets/app.js whitespace=-trailing-space

@@ -11,13 +11,16 @@ use http_body_util::{
     BodyExt, Full, LengthLimitError, Limited, StreamBody, combinators::UnsyncBoxBody,
 };
 use hyper::body::{Frame, Incoming};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::time::{MissedTickBehavior, interval};
-use turin_control_client::{ControlClient, DaemonStatus, ManagedEventStream};
+use turin_control_client::{
+    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionDetail, TaskStatus,
+};
 use turin_daemon_protocol::{
-    EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
-    WorkItemList, WorklistItemsParams, WorklistListParams,
+    DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult,
+    RuntimeEventsSubscribeParams, SubmitTaskParams, WorkItemList, WorklistItemsParams,
+    WorklistListParams,
 };
 use turin_ui_core::{
     DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
@@ -26,10 +29,12 @@ use turin_ui_core::{
 use url::form_urlencoded;
 
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
+const DEFAULT_MESSAGE_LIMIT: usize = 48;
+const MAX_MESSAGE_LIMIT: usize = 256;
 const EVENT_KEEPALIVE: Duration = Duration::from_secs(15);
 const INDEX_HTML: &str = include_str!("../static/index.html");
-const APP_CSS: &str = include_str!("../static/app.css");
-const APP_JS: &str = include_str!("../static/app.js");
+const APP_CSS: &str = include_str!("../static/assets/app.css");
+const APP_JS: &str = include_str!("../static/assets/app.js");
 
 pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 
@@ -88,6 +93,35 @@ struct WebListResponse {
 #[derive(Debug, Serialize)]
 struct WebActionResponse {
     result: HarnessActionRunResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSessionOpenRequest {
+    agent_id: String,
+    #[serde(default)]
+    slot_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSessionResumeRequest {
+    session_id: String,
+    #[serde(default)]
+    slot_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionResponse {
+    session: LiveSession,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionDetailResponse {
+    detail: SessionDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct WebTaskResponse {
+    task: TaskStatus,
 }
 
 struct SseState {
@@ -200,15 +234,101 @@ async fn route_request(
             },
         )),
         (Method::GET, "/api/status") => handle_status(&state).await,
+        (Method::GET, "/api/session") => handle_session_detail(req, &state).await,
         (Method::GET, "/api/apps") => handle_apps(&state).await,
         (Method::POST, "/api/ui/list") => handle_ui_list(req, &state).await,
         (Method::POST, "/api/actions/run") => handle_action_run(req, &state).await,
+        (Method::POST, "/api/sessions/open") => handle_session_open(req, &state).await,
+        (Method::POST, "/api/sessions/resume") => handle_session_resume(req, &state).await,
+        (Method::POST, "/api/tasks/submit") => handle_task_submit(req, &state).await,
         (Method::GET, "/api/events") => handle_sse_events(req, &state).await,
         _ => Err(WebError::not_found(format!(
             "No turin-web route matches '{}'",
             path
         ))),
     }
+}
+
+async fn handle_session_detail(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let (session_id, message_limit) = parse_session_detail_query(req.uri().query())?;
+    let detail = state
+        .client
+        .get_session_window(&session_id, message_limit)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to load session: {}", err)))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionDetailResponse { detail },
+    ))
+}
+
+async fn handle_session_open(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebSessionOpenRequest = read_json(req).await?;
+    if params.agent_id.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_agent_id",
+            "Agent id must not be empty",
+        ));
+    }
+    let session = state
+        .client
+        .open_session(params.agent_id.trim(), params.slot_id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to open session: {}", err)))?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &WebSessionResponse { session },
+    ))
+}
+
+async fn handle_session_resume(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebSessionResumeRequest = read_json(req).await?;
+    if params.session_id.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_session_id",
+            "Session id must not be empty",
+        ));
+    }
+    let session = state
+        .client
+        .resume_session(params.session_id.trim(), params.slot_id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to resume session: {}", err)))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionResponse { session },
+    ))
+}
+
+async fn handle_task_submit(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: SubmitTaskParams = read_json(req).await?;
+    if params.prompt.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_prompt",
+            "Prompt must not be empty",
+        ));
+    }
+    let task: TaskStatus = state
+        .client
+        .request_ok(None, DaemonRequest::TaskSubmit(params))
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to submit task: {}", err)))?;
+    Ok(json_response(
+        StatusCode::ACCEPTED,
+        &WebTaskResponse { task },
+    ))
 }
 
 async fn handle_status(state: &WebState) -> std::result::Result<Response<WebBody>, WebError> {
@@ -463,6 +583,48 @@ fn parse_event_filter(
     Ok(filter)
 }
 
+fn parse_session_detail_query(
+    query: Option<&str>,
+) -> std::result::Result<(String, usize), WebError> {
+    let mut session_id = None;
+    let mut message_limit = DEFAULT_MESSAGE_LIMIT;
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "session_id" => {
+                    if !value.is_empty() {
+                        session_id = Some(value.into_owned());
+                    }
+                }
+                "message_limit" => {
+                    message_limit = value.parse::<usize>().map_err(|_| {
+                        WebError::bad_request(
+                            "invalid_message_limit",
+                            "message_limit must be a positive integer",
+                        )
+                    })?;
+                }
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{}'", other),
+                    ));
+                }
+            }
+        }
+    }
+    if message_limit == 0 || message_limit > MAX_MESSAGE_LIMIT {
+        return Err(WebError::bad_request(
+            "invalid_message_limit",
+            format!("message_limit must be between 1 and {}", MAX_MESSAGE_LIMIT),
+        ));
+    }
+    let session_id = session_id.ok_or_else(|| {
+        WebError::bad_request("invalid_session_id", "session_id must not be empty")
+    })?;
+    Ok((session_id, message_limit))
+}
+
 fn format_sse_event(event: &EventEnvelope) -> String {
     let payload = serde_json::to_string(&event.data).expect("event payload serializes");
     format!("event: {}\ndata: {}\n\n", event.event, payload)
@@ -679,5 +841,27 @@ mod tests {
         let text = format_sse_event(&event);
         assert!(text.contains("event: runtime.snapshot"));
         assert!(text.contains("\"ok\":true"));
+    }
+
+    #[test]
+    fn session_detail_query_requires_id_and_bounds_window() {
+        assert!(parse_session_detail_query(None).is_err());
+        assert_eq!(
+            parse_session_detail_query(Some("session_id=session-1"))
+                .unwrap()
+                .1,
+            DEFAULT_MESSAGE_LIMIT
+        );
+        assert_eq!(
+            parse_session_detail_query(Some("session_id=session-1&message_limit=96"))
+                .unwrap()
+                .1,
+            96
+        );
+        assert!(parse_session_detail_query(Some("session_id=session-1&message_limit=0")).is_err());
+        assert!(
+            parse_session_detail_query(Some("session_id=session-1&message_limit=257")).is_err()
+        );
+        assert!(parse_session_detail_query(Some("session_id=session-1&offset=1")).is_err());
     }
 }
