@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import type { EventSubscription, TurinClient } from "../lib/TurinClient";
-  import type { SessionDetail, SessionMessage, ToolExecution, TurinEvent, TurinStatus } from "../lib/types";
+  import type { JsonValue, SessionDetail, SessionMessage, ToolExecution, TurinEvent, TurinStatus } from "../lib/types";
   import { humanize, messageText, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 
-  const PAGE_SIZE = 48;
-  const MAX_MESSAGES = 256;
+  const DATA_WINDOW_SIZE = 100;
+  const DATA_WINDOW_OVERLAP = 30;
+  const RENDER_WINDOW_SIZE = 30;
+  const RENDER_WINDOW_STEP = 10;
 
   export let client: TurinClient;
   export let status: TurinStatus;
@@ -18,12 +20,15 @@
 
   let detail: SessionDetail | null = null;
   let loadedSessionId: string | null = null;
-  let messageLimit = PAGE_SIZE;
+  let messageOffset: number | undefined;
+  let followLatest = true;
+  let renderStart = 0;
   let loading = false;
-  let loadingEarlier = false;
+  let slidingData = false;
   let sending = false;
   let error = "";
   let resumeFailed = false;
+  let copiedSession = false;
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
@@ -34,16 +39,33 @@
   let refreshTimer: number | undefined;
   let deltaFrame: number | undefined;
   let requestVersion = 0;
+  let copyTimer: number | undefined;
+  let scrollFrame: number | undefined;
+  let heightRevision = 0;
+  let topSpacerHeight = 0;
+  let bottomSpacerHeight = 0;
+  const measuredHeights = new Map<number, number>();
 
   $: selectedSummary = status.snapshot.sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: selectedLive = status.snapshot.live_sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: agents = status.snapshot.status.registry.agents.filter(agent => agent.enabled);
+  $: sessionReference = detail?.session.session_id ?? selectedSessionId;
+  $: transcriptMessages = (detail?.messages ?? []).filter(isTranscriptMessage);
+  $: renderEnd = Math.min(renderStart + RENDER_WINDOW_SIZE, transcriptMessages.length);
+  $: renderedMessages = transcriptMessages.slice(renderStart, renderEnd);
+  $: {
+    heightRevision;
+    topSpacerHeight = estimatedHeight(transcriptMessages.slice(0, renderStart));
+    bottomSpacerHeight = estimatedHeight(transcriptMessages.slice(renderEnd));
+  }
   $: if (selectedSessionId !== loadedSessionId) switchSession(selectedSessionId);
 
   onDestroy(() => {
     subscription?.close();
     if (refreshTimer) window.clearTimeout(refreshTimer);
     if (deltaFrame) window.cancelAnimationFrame(deltaFrame);
+    if (copyTimer) window.clearTimeout(copyTimer);
+    if (scrollFrame) window.cancelAnimationFrame(scrollFrame);
   });
 
   async function switchSession(sessionId: string | null) {
@@ -51,50 +73,92 @@
     detail = null;
     streamText = "";
     optimisticPrompt = "";
-    messageLimit = PAGE_SIZE;
+    messageOffset = undefined;
+    followLatest = true;
+    renderStart = 0;
+    measuredHeights.clear();
     error = "";
     resumeFailed = false;
     subscription?.close();
     subscription = null;
     if (!sessionId) return;
-    subscription = client.subscribe(handleEvent, { sessionId });
-    await loadDetail(false);
+    await connectSessionEvents(sessionId);
+    await loadDetail(false, true);
   }
 
-  async function loadDetail(preserveScroll: boolean) {
+  async function connectSessionEvents(sessionId: string, slotId?: string) {
+    subscription?.close();
+    subscription = client.subscribe(handleEvent, {
+      sessionId,
+      ...(slotId ? { slotId } : {}),
+    });
+    await waitForSubscription(subscription);
+  }
+
+  async function waitForSubscription(active: EventSubscription) {
+    await Promise.race([
+      active.ready,
+      new Promise<void>(resolve => window.setTimeout(resolve, 750)),
+    ]);
+  }
+
+  async function loadDetail(
+    preserveScroll: boolean,
+    retireStream = false,
+    requestedOffset = followLatest ? undefined : messageOffset,
+  ) {
     if (!selectedSessionId) return;
     const version = ++requestVersion;
-    const previousHeight = preserveScroll ? transcript?.scrollHeight ?? 0 : 0;
+    const anchor = preserveScroll ? captureAnchor() : null;
     loading = !detail;
     error = "";
     try {
-      const next = await client.session(selectedSessionId, messageLimit);
+      const next = await client.session(selectedSessionId, DATA_WINDOW_SIZE, requestedOffset);
       if (version !== requestVersion) return;
+      const nextMessages = next.messages.filter(isTranscriptMessage);
+      messageOffset = next.message_window?.offset;
+      if (requestedOffset === undefined) followLatest = true;
+      renderStart = anchor
+        ? renderStartForAnchor(nextMessages, anchor.id)
+        : Math.max(0, nextMessages.length - RENDER_WINDOW_SIZE);
       detail = next;
       optimisticPrompt = "";
-      loadingEarlier = false;
+      if (retireStream) {
+        streamText = "";
+        pendingDelta = "";
+        if (deltaFrame) window.cancelAnimationFrame(deltaFrame);
+        deltaFrame = undefined;
+      }
       await tick();
-      if (preserveScroll && transcript) {
-        transcript.scrollTop += transcript.scrollHeight - previousHeight;
+      if (anchor) {
+        restoreAnchor(anchor);
       } else {
         scrollToBottom();
       }
     } catch (reason) {
       if (version !== requestVersion) return;
       error = reason instanceof Error ? reason.message : String(reason);
-      loadingEarlier = false;
     } finally {
       if (version === requestVersion) loading = false;
     }
   }
 
-  async function loadEarlier() {
-    const total = detail?.message_window?.total ?? detail?.messages.length ?? 0;
-    const next = Math.min(messageLimit + PAGE_SIZE, total, MAX_MESSAGES);
-    if (next <= messageLimit) return;
-    loadingEarlier = true;
-    messageLimit = next;
-    await loadDetail(true);
+  async function slideData(direction: "older" | "newer") {
+    const window = detail?.message_window;
+    if (!window || slidingData) return;
+    const shift = DATA_WINDOW_SIZE - DATA_WINDOW_OVERLAP;
+    const latestOffset = Math.max(0, window.total - DATA_WINDOW_SIZE);
+    const nextOffset = direction === "older"
+      ? Math.max(0, window.offset - shift)
+      : Math.min(latestOffset, window.offset + shift);
+    if (nextOffset === window.offset) return;
+    slidingData = true;
+    try {
+      await loadDetail(true, false, nextOffset);
+      followLatest = direction === "newer" && nextOffset === latestOffset;
+    } finally {
+      slidingData = false;
+    }
   }
 
   function handleEvent(event: TurinEvent) {
@@ -109,7 +173,7 @@
       return;
     }
     if (["message_end", "turn_end", "task_complete"].includes(event.type)) {
-      scheduleDetailRefresh(event.type === "message_end" ? 80 : 180);
+      scheduleDetailRefresh(event.type === "message_end" ? 80 : 180, true);
       void onStatusChanged();
     }
   }
@@ -129,9 +193,9 @@
     });
   }
 
-  function scheduleDetailRefresh(delay: number) {
+  function scheduleDetailRefresh(delay: number, retireStream = false) {
     if (refreshTimer) window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => void loadDetail(false), delay);
+    refreshTimer = window.setTimeout(() => void loadDetail(false, retireStream), delay);
   }
 
   async function submit() {
@@ -149,13 +213,22 @@
         live = await client.openSession(agentId);
         sessionId = live.session_id;
         onSessionSelected(sessionId);
+        await tick();
+        if (subscription) {
+          await waitForSubscription(subscription);
+        } else {
+          await connectSessionEvents(sessionId, live.slot_id);
+        }
       } else {
         resuming = true;
         live = await client.resumeSession(sessionId, live?.slot_id);
+        await connectSessionEvents(sessionId, live.slot_id);
         resuming = false;
       }
       optimisticPrompt = value;
       prompt = "";
+      messageOffset = undefined;
+      followLatest = true;
       await tick();
       scrollToBottom();
       await client.submitTask({
@@ -185,7 +258,135 @@
   }
 
   function toolsFor(message: SessionMessage): ToolExecution[] {
-    return detail?.tool_executions.filter(tool => tool.turn_index === message.turn_index) ?? [];
+    if (message.role.toLowerCase() !== "assistant") return [];
+    const ids = toolCallIds(message.content);
+    return detail?.tool_executions.filter(tool => ids.has(tool.tool_call_id)) ?? [];
+  }
+
+  function toolCallIds(content: JsonValue): Set<string> {
+    const ids = new Set<string>();
+    const visit = (value: JsonValue) => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+      } else if (value && typeof value === "object") {
+        if (value.type === "tool_use" && typeof value.id === "string") ids.add(value.id);
+      }
+    };
+    visit(content);
+    return ids;
+  }
+
+  function isTranscriptMessage(message: SessionMessage): boolean {
+    const role = message.role.toLowerCase();
+    return role === "user" || role === "assistant";
+  }
+
+  function estimatedHeight(messages: SessionMessage[]): number {
+    return messages.reduce((total, message) => {
+      const fallback = message.role.toLowerCase() === "user" ? 88 : 150;
+      return total + (measuredHeights.get(message.id) ?? fallback);
+    }, 0);
+  }
+
+  function measureMessage(node: HTMLElement, messageId: number) {
+    const update = () => {
+      const margin = Number.parseFloat(getComputedStyle(node).marginBottom) || 0;
+      const height = Math.ceil(node.getBoundingClientRect().height + margin);
+      if (Math.abs((measuredHeights.get(messageId) ?? 0) - height) > 1) {
+        measuredHeights.set(messageId, height);
+        heightRevision += 1;
+      }
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    update();
+    return { destroy: () => observer.disconnect() };
+  }
+
+  interface ScrollAnchor {
+    id: number;
+    top: number;
+  }
+
+  function captureAnchor(): ScrollAnchor | null {
+    if (!transcript) return null;
+    const rootTop = transcript.getBoundingClientRect().top;
+    const nodes = transcript.querySelectorAll<HTMLElement>("[data-message-id]");
+    for (const node of nodes) {
+      const rect = node.getBoundingClientRect();
+      if (rect.bottom > rootTop + 1) {
+        return { id: Number(node.dataset.messageId), top: rect.top - rootTop };
+      }
+    }
+    return null;
+  }
+
+  function restoreAnchor(anchor: ScrollAnchor) {
+    if (!transcript) return;
+    const node = transcript.querySelector<HTMLElement>(`[data-message-id="${anchor.id}"]`);
+    if (!node) return;
+    const rootTop = transcript.getBoundingClientRect().top;
+    transcript.scrollTop += node.getBoundingClientRect().top - rootTop - anchor.top;
+  }
+
+  function renderStartForAnchor(messages: SessionMessage[], messageId: number): number {
+    const index = messages.findIndex(message => message.id === messageId);
+    if (index < 0) return Math.max(0, messages.length - RENDER_WINDOW_SIZE);
+    return Math.min(
+      Math.max(0, index - Math.floor(RENDER_WINDOW_STEP / 2)),
+      Math.max(0, messages.length - RENDER_WINDOW_SIZE),
+    );
+  }
+
+  async function slideRender(nextStart: number) {
+    const bounded = Math.min(
+      Math.max(0, nextStart),
+      Math.max(0, transcriptMessages.length - RENDER_WINDOW_SIZE),
+    );
+    if (bounded === renderStart) return;
+    const anchor = captureAnchor();
+    renderStart = bounded;
+    await tick();
+    if (anchor) restoreAnchor(anchor);
+  }
+
+  function onTranscriptScroll() {
+    if (scrollFrame || slidingData) return;
+    scrollFrame = window.requestAnimationFrame(async () => {
+      scrollFrame = undefined;
+      if (!transcript || !detail) return;
+      const nearRenderedTop = transcript.scrollTop < topSpacerHeight + 320;
+      const nearRenderedBottom = transcript.scrollTop + transcript.clientHeight
+        > transcript.scrollHeight - bottomSpacerHeight - 320;
+      if (nearRenderedTop) {
+        if (renderStart > 0) {
+          await slideRender(renderStart - RENDER_WINDOW_STEP);
+        } else if ((detail.message_window?.offset ?? 0) > 0) {
+          await slideData("older");
+        }
+      } else if (nearRenderedBottom) {
+        if (renderEnd < transcriptMessages.length) {
+          await slideRender(renderStart + RENDER_WINDOW_STEP);
+        } else if (
+          detail.message_window
+          && detail.message_window.offset + detail.messages.length < detail.message_window.total
+        ) {
+          await slideData("newer");
+        }
+      }
+    });
+  }
+
+  async function copySessionReference() {
+    if (!sessionReference) return;
+    try {
+      await navigator.clipboard.writeText(sessionReference);
+      copiedSession = true;
+      if (copyTimer) window.clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(() => copiedSession = false, 1400);
+    } catch {
+      error = "Could not copy the session reference. Select it from the header instead.";
+    }
   }
 
   function isNearBottom(): boolean {
@@ -207,7 +408,13 @@
           <span class="working-badge"><i></i>Working</span>
         {/if}
       </div>
-      <p>{selectedSummary ? humanize(selectedSummary.agent_id) : "A direct line to your Turin agents."}</p>
+      {#if sessionReference}
+        <button class="session-reference" title={sessionReference} onclick={copySessionReference}>
+          <Icon name="copy" size={13} /><span>{copiedSession ? "Copied" : `Session ${sessionReference.split("@", 1)[0]}`}</span>
+        </button>
+      {:else}
+        <p>A direct line to your Turin agents.</p>
+      {/if}
     </div>
     <div class="header-actions">
       {#if selectedSessionId}
@@ -230,14 +437,8 @@
     </div>
   </header>
 
-  <div class="transcript" bind:this={transcript}>
+  <div class="transcript" bind:this={transcript} onscroll={onTranscriptScroll}>
     <div class="message-column">
-      {#if detail?.message_window && detail.message_window.offset > 0}
-        <button class="load-earlier" disabled={loadingEarlier || messageLimit >= MAX_MESSAGES} onclick={loadEarlier}>
-          {loadingEarlier ? "Loading..." : `Load earlier · ${detail.message_window.offset} before this window`}
-        </button>
-      {/if}
-
       {#if loading}
         <div class="conversation-skeleton" aria-label="Loading conversation">
           <i></i><i></i><i></i>
@@ -255,11 +456,18 @@
       {:else if error && !detail}
         <div class="inline-error"><strong>Conversation unavailable</strong><span>{error}</span><button onclick={() => loadDetail(false)}>Retry</button></div>
       {:else}
-        {#each detail?.messages ?? [] as message (message.id)}
+        {#if slidingData}<div class="window-loading">Loading conversation history...</div>{/if}
+        <div class="message-spacer" style={`height: ${topSpacerHeight}px`}></div>
+        {#each renderedMessages as message (message.id)}
           {@const body = messageText(message.content)}
           {@const tools = toolsFor(message)}
-          {#if body || tools.length}
-            <article class:user={message.role.toLowerCase() === "user"} class="message">
+          {#if isTranscriptMessage(message) && (body || tools.length)}
+            <article
+              class:user={message.role.toLowerCase() === "user"}
+              class="message"
+              data-message-id={message.id}
+              use:measureMessage={message.id}
+            >
               <div class="message-author">{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</div>
               {#if body}
                 <div class="message-body">
@@ -283,6 +491,7 @@
             </article>
           {/if}
         {/each}
+        <div class="message-spacer" style={`height: ${bottomSpacerHeight}px`}></div>
         {#if optimisticPrompt}
           <article class="message user optimistic"><div class="message-author">You</div><div class="message-body"><span class="plain-message">{optimisticPrompt}</span></div></article>
         {/if}

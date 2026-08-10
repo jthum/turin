@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let name: "spark" | "chat" | "grid" | "branch" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" = "spark";
+  export let name: "spark" | "chat" | "grid" | "branch" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" = "spark";
   export let size = 18;
 </script>
 
@@ -37,5 +37,7 @@
     <path d="M12 5v14M5 12h14" />
   {:else if name === "activity"}
     <path d="M3 12h4l2.5-7 5 14 2.5-7h4" />
+  {:else if name === "copy"}
+    <rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
   {/if}
 </svg>

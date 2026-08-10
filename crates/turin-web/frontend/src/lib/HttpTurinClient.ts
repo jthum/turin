@@ -21,9 +21,14 @@ export class HttpTurinClient implements TurinClient {
     return this.request<TurinStatus>("/api/status");
   }
 
-  async session(sessionId: string, messageLimit: number): Promise<SessionDetail> {
+  async session(sessionId: string, messageLimit: number, messageOffset?: number): Promise<SessionDetail> {
+    const params = new URLSearchParams({
+      session_id: sessionId,
+      message_limit: String(messageLimit),
+    });
+    if (messageOffset !== undefined) params.set("message_offset", String(messageOffset));
     const result = await this.request<{ detail: SessionDetail }>(
-      `/api/session?session_id=${encodeURIComponent(sessionId)}&message_limit=${messageLimit}`,
+      `/api/session?${params}`,
     );
     return result.detail;
   }
@@ -78,12 +83,16 @@ export class HttpTurinClient implements TurinClient {
 
   subscribe(
     listener: (event: TurinEvent) => void,
-    options: { sessionId?: string } = {},
+    options: { sessionId?: string; slotId?: string } = {},
   ): EventSubscription {
-    const query = options.sessionId
-      ? `?session_id=${encodeURIComponent(options.sessionId)}`
-      : "";
+    const params = new URLSearchParams();
+    if (options.sessionId) params.set("session_id", options.sessionId);
+    if (options.slotId) params.set("slot_id", options.slotId);
+    const query = params.size ? `?${params}` : "";
     const source = new EventSource(`${this.baseUrl}/api/events${query}`);
+    const ready = new Promise<void>(resolve => {
+      source.addEventListener("open", () => resolve(), { once: true });
+    });
     const eventTypes = [
       "runtime.snapshot",
       "runtime.rescanned",
@@ -114,7 +123,7 @@ export class HttpTurinClient implements TurinClient {
       const message = raw as MessageEvent<string>;
       listener({ type: "web.error", data: { message: message.data } });
     });
-    return { close: () => source.close() };
+    return { ready, close: () => source.close() };
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

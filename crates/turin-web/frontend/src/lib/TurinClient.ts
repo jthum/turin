@@ -10,12 +10,13 @@ import type {
 } from "./types";
 
 export interface EventSubscription {
+  ready: Promise<void>;
   close(): void;
 }
 
 export interface TurinClient {
   status(): Promise<TurinStatus>;
-  session(sessionId: string, messageLimit: number): Promise<SessionDetail>;
+  session(sessionId: string, messageLimit: number, messageOffset?: number): Promise<SessionDetail>;
   openSession(agentId: string): Promise<LiveSession>;
   resumeSession(sessionId: string, slotId?: string): Promise<LiveSession>;
   submitTask(input: {
@@ -33,6 +34,6 @@ export interface TurinClient {
   }): Promise<{ result: Record<string, JsonValue> }>;
   subscribe(
     listener: (event: TurinEvent) => void,
-    options?: { sessionId?: string },
+    options?: { sessionId?: string; slotId?: string },
   ): EventSubscription;
 }

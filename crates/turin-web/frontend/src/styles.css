@@ -104,6 +104,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .view-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 88px; padding: 18px 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 94%, transparent); }
 .view-header h1 { margin: 0; font-size: 21px; font-weight: 680; letter-spacing: -.035em; }
 .view-header p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+.session-reference { display: flex; align-items: center; gap: 5px; max-width: min(430px, 55vw); margin: 3px 0 0; padding: 0; border: 0; background: transparent; color: var(--faint); font: 10px/1.4 "JetBrains Mono", "SFMono-Regular", monospace; text-align: left; }
+.session-reference span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.session-reference:hover { color: var(--accent-strong); }
 .title-line { display: flex; align-items: center; gap: 10px; }
 .header-actions { display: flex; align-items: center; gap: 8px; }
 .new-conversation-header { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted); font-size: 11px; font-weight: 620; box-shadow: var(--shadow-sm); }
@@ -122,9 +124,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .branch-row span { font-size: 11px; font-weight: 600; }
 .branch-row small { color: var(--faint); }
 
-.transcript { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+.transcript { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .message-column { width: min(820px, calc(100% - 42px)); min-height: 100%; margin: 0 auto; padding: 28px 0 40px; }
-.load-earlier { display: block; margin: 0 auto 28px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface-muted); color: var(--muted); font-size: 10px; }
+.message-spacer { width: 1px; pointer-events: none; }
+.window-loading { position: sticky; z-index: 4; top: 10px; width: max-content; margin: 0 auto -27px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 99px; background: var(--surface-raised); color: var(--muted); box-shadow: var(--shadow-sm); font-size: 9px; }
 .message { display: grid; justify-items: start; gap: 6px; max-width: 82%; margin: 0 0 22px; animation: reveal .24s ease-out both; }
 .message-author { color: var(--faint); font-size: 10px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
 .message-body { min-width: 44px; max-width: 720px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 5px 17px 17px 17px; background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow-sm); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }

@@ -55,8 +55,8 @@ session state, invent renderer-specific harness APIs, or bypass
 12. Browser list-load failures are cached per semantic request and can be
     retried by deleting that local cache entry and calling `/api/ui/list` again.
 13. The assistant loads a bounded latest-message window through
-    `GET /api/session`, then expands that window in fixed pages while preserving
-    the browser scroll anchor.
+    `GET /api/session`. Absolute offsets slide a 100-message data window while
+    preserving the browser's visible-message anchor.
 14. The active conversation subscribes to a session-scoped SSE feed. Message
     deltas render directly and are batched to animation frames; terminal stream
     events invalidate and reload the bounded durable window.
@@ -65,7 +65,9 @@ session state, invent renderer-specific harness APIs, or bypass
     does not invalidate a browser conversation.
 16. Assistant Markdown is parsed in the browser and sanitized before insertion;
     streaming text uses the same renderer after animation-frame batching.
-17. `HttpTurinClient` is one implementation of the frontend transport contract.
+17. Variable-height transcript virtualization keeps about 30 user/assistant
+    presentation messages mounted inside the current data window.
+18. `HttpTurinClient` is one implementation of the frontend transport contract.
     An embedded desktop host can provide a bridge implementation without
     changing Svelte presentation components.
 
@@ -80,6 +82,10 @@ session state, invent renderer-specific harness APIs, or bypass
   the session because the daemon may have evicted its idle runtime slot.
 - Parsed assistant Markdown must be sanitized before using Svelte's raw-HTML rendering.
   Remote images and generated inline styles remain disabled in the transcript.
+- Raw persisted tool-result messages remain diagnostic data, not chat bubbles.
+  Tool cards correlate to their assistant tool-use message by tool-call id.
+- The visible session reference must remain copyable for diagnostics without
+  making it browser-owned session state.
 - Browser form drafts, confirmation modals, and action-running state are
   memory-local and should not be persisted by `turin-web`.
 - Browser option-backed form selects should encode and decode option values as
