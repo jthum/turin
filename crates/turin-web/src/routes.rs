@@ -253,10 +253,11 @@ async fn handle_session_detail(
     req: Request<Incoming>,
     state: &WebState,
 ) -> std::result::Result<Response<WebBody>, WebError> {
-    let (session_id, message_limit) = parse_session_detail_query(req.uri().query())?;
+    let (session_id, message_limit, message_offset) =
+        parse_session_detail_query(req.uri().query())?;
     let detail = state
         .client
-        .get_session_window(&session_id, message_limit)
+        .get_session_window_at(&session_id, message_limit, message_offset)
         .await
         .map_err(|err| WebError::upstream(format!("Failed to load session: {}", err)))?;
     Ok(json_response(
@@ -585,9 +586,10 @@ fn parse_event_filter(
 
 fn parse_session_detail_query(
     query: Option<&str>,
-) -> std::result::Result<(String, usize), WebError> {
+) -> std::result::Result<(String, usize, Option<usize>), WebError> {
     let mut session_id = None;
     let mut message_limit = DEFAULT_MESSAGE_LIMIT;
+    let mut message_offset = None;
     if let Some(query) = query {
         for (key, value) in form_urlencoded::parse(query.as_bytes()) {
             match key.as_ref() {
@@ -603,6 +605,14 @@ fn parse_session_detail_query(
                             "message_limit must be a positive integer",
                         )
                     })?;
+                }
+                "message_offset" => {
+                    message_offset = Some(value.parse::<usize>().map_err(|_| {
+                        WebError::bad_request(
+                            "invalid_message_offset",
+                            "message_offset must be a non-negative integer",
+                        )
+                    })?);
                 }
                 other => {
                     return Err(WebError::bad_request(
@@ -622,7 +632,7 @@ fn parse_session_detail_query(
     let session_id = session_id.ok_or_else(|| {
         WebError::bad_request("invalid_session_id", "session_id must not be empty")
     })?;
-    Ok((session_id, message_limit))
+    Ok((session_id, message_limit, message_offset))
 }
 
 fn format_sse_event(event: &EventEnvelope) -> String {
@@ -858,10 +868,21 @@ mod tests {
                 .1,
             96
         );
+        assert_eq!(
+            parse_session_detail_query(Some(
+                "session_id=session-1&message_limit=96&message_offset=240"
+            ))
+            .unwrap()
+            .2,
+            Some(240)
+        );
         assert!(parse_session_detail_query(Some("session_id=session-1&message_limit=0")).is_err());
         assert!(
             parse_session_detail_query(Some("session_id=session-1&message_limit=257")).is_err()
         );
         assert!(parse_session_detail_query(Some("session_id=session-1&offset=1")).is_err());
+        assert!(
+            parse_session_detail_query(Some("session_id=session-1&message_offset=old")).is_err()
+        );
     }
 }

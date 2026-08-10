@@ -51,6 +51,7 @@ impl ControlClient {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 message_limit: None,
+                message_offset: None,
                 include_events: None,
             }),
         )
@@ -62,11 +63,22 @@ impl ControlClient {
         session_id: &str,
         message_limit: usize,
     ) -> Result<SessionDetail> {
+        self.get_session_window_at(session_id, message_limit, None)
+            .await
+    }
+
+    pub async fn get_session_window_at(
+        &self,
+        session_id: &str,
+        message_limit: usize,
+        message_offset: Option<usize>,
+    ) -> Result<SessionDetail> {
         self.request_ok(
             None,
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 message_limit: Some(message_limit),
+                message_offset,
                 include_events: Some(false),
             }),
         )

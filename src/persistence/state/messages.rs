@@ -125,6 +125,31 @@ impl StateStore {
             .await
     }
 
+    pub async fn get_message_window(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<MessageRow>, usize, usize)> {
+        let turns = match target {
+            SessionReadTarget::ActiveBranch => self.branch_path_turns(session_id, None).await?,
+            SessionReadTarget::BranchHead(branch_head_id) => {
+                self.branch_path_turns(session_id, Some(*branch_head_id))
+                    .await?
+            }
+            SessionReadTarget::TurnId(turn_id) => {
+                self.turn_path_to_turn_id(session_id, *turn_id).await?
+            }
+            SessionReadTarget::SelectedPath(turn_ids) => {
+                self.turn_rows_for_selected_path(session_id, turn_ids)
+                    .await?
+            }
+        };
+        self.messages_window_for_turns(session_id, &turns, offset, limit.max(1))
+            .await
+    }
+
     async fn messages_for_turns(
         &self,
         session_id: i64,
@@ -181,6 +206,51 @@ impl StateStore {
         messages.drain(0..retain_from);
         Ok((messages, total))
     }
+
+    async fn messages_window_for_turns(
+        &self,
+        session_id: i64,
+        turns: &[super::TurnRow],
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<MessageRow>, usize, usize)> {
+        if turns.is_empty() {
+            return Ok((Vec::new(), 0, 0));
+        }
+
+        let conn = self.connect().await?;
+        let counts = message_counts_for_turns(&conn, turns).await?;
+        let total = counts.values().copied().sum::<usize>();
+        let target_offset = offset.min(total);
+        let mut preceding = 0usize;
+        let mut selected_count = 0usize;
+        let mut selected_start = None;
+        let mut selected_end = 0usize;
+
+        for (index, turn) in turns.iter().enumerate() {
+            let count = counts.get(&turn.id).copied().unwrap_or(0);
+            if selected_start.is_none() {
+                if preceding.saturating_add(count) <= target_offset {
+                    preceding = preceding.saturating_add(count);
+                    continue;
+                }
+                selected_start = Some(index);
+            }
+            selected_count = selected_count.saturating_add(count);
+            selected_end = index + 1;
+            if selected_count >= limit {
+                break;
+            }
+        }
+
+        let Some(selected_start) = selected_start else {
+            return Ok((Vec::new(), total, total));
+        };
+        let messages = self
+            .messages_for_turns(session_id, &turns[selected_start..selected_end])
+            .await?;
+        Ok((messages, total, preceding))
+    }
 }
 
 async fn count_messages_for_turns(conn: &Connection, turns: &[super::TurnRow]) -> Result<usize> {
@@ -196,6 +266,25 @@ async fn count_messages_for_turns(conn: &Connection, turns: &[super::TurnRow]) -
         }
     }
     Ok(total)
+}
+
+async fn message_counts_for_turns(
+    conn: &Connection,
+    turns: &[super::TurnRow],
+) -> Result<HashMap<i64, usize>> {
+    let mut counts = HashMap::new();
+    for chunk in turns.chunks(MESSAGE_TURN_QUERY_CHUNK) {
+        let placeholders = query_placeholders(chunk.len());
+        let sql = format!(
+            "SELECT turn_id, COUNT(*) FROM messages WHERE turn_id IN ({placeholders}) GROUP BY turn_id"
+        );
+        let mut stmt = conn.prepare(&sql).await?;
+        let mut rows = stmt.query(turn_params(chunk)).await?;
+        while let Some(row) = rows.next().await? {
+            counts.insert(row.get::<i64>(0)?, row.get::<i64>(1)? as usize);
+        }
+    }
+    Ok(counts)
 }
 
 async fn query_message_chunk(

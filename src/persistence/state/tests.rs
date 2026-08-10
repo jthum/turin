@@ -318,6 +318,48 @@ async fn test_insert_and_get_messages() {
 }
 
 #[tokio::test]
+async fn test_message_window_preserves_complete_turn_groups() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for turn_index in 0..3 {
+        for role in ["user", "assistant"] {
+            store
+                .insert_message(
+                    session,
+                    turn(turn_index),
+                    role,
+                    &json!([{"type": "text", "text": format!("{role}-{turn_index}")}]),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    let (messages, total, offset) = store
+        .get_message_window(session, &active_branch(), 3, 3)
+        .await
+        .unwrap();
+    assert_eq!(total, 6);
+    assert_eq!(offset, 2);
+    assert_eq!(messages.len(), 4);
+    assert!(messages[0].content.contains("user-1"));
+    assert!(messages[3].content.contains("assistant-2"));
+
+    let (empty, total, offset) = store
+        .get_message_window(session, &active_branch(), 99, 3)
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+    assert_eq!(total, 6);
+    assert_eq!(offset, 6);
+}
+
+#[tokio::test]
 async fn test_insert_and_get_tool_executions() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

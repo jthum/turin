@@ -63,7 +63,9 @@ Persisted session detail:
 3. An optional message limit projects the recent transcript, skips events when
    requested, and returns window offset/total metadata. Matching tool
    executions are limited to turns represented in that message window.
-4. Rows are converted into daemon-facing detail structs.
+4. An optional absolute message offset selects an older bounded window. Window
+   boundaries expand to complete turn groups so a tool cycle is not split.
+5. Rows are converted into daemon-facing detail structs.
 
 Branch activation/checkout:
 
@@ -78,6 +80,8 @@ Branch activation/checkout:
 - Cross-store session access must use a qualified session reference.
 - Bounded session detail is a read projection only. It must not truncate
   persisted messages or change the runtime hot-history policy.
+- Offset session windows are indexed from the oldest active-branch message and
+  may contain slightly more than the requested limit to preserve complete turns.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
 - Channel-bound session open/resume should reuse channel persistence and inference overrides.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.

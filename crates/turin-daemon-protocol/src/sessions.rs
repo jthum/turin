@@ -27,6 +27,8 @@ pub struct SessionGetParams {
     #[serde(default)]
     pub message_limit: Option<usize>,
     #[serde(default)]
+    pub message_offset: Option<usize>,
+    #[serde(default)]
     pub include_events: Option<bool>,
 }
 

@@ -1880,7 +1880,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert!(full.message_window.is_none());
 
     let windowed = state
-        .get_session_projection(&live.session_id, Some(2), false)
+        .get_session_projection(&live.session_id, Some(2), None, false)
         .await?
         .expect("windowed session detail");
     assert_eq!(windowed.messages.len(), 2);
@@ -1888,6 +1888,15 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     let window = windowed.message_window.expect("message window metadata");
     assert_eq!(window.total, full.messages.len());
     assert_eq!(window.offset, full.messages.len() - 2);
+
+    let first_window = state
+        .get_session_projection(&live.session_id, Some(2), Some(0), false)
+        .await?
+        .expect("offset session detail");
+    let first_window_meta = first_window.message_window.expect("offset metadata");
+    assert_eq!(first_window_meta.total, full.messages.len());
+    assert_eq!(first_window_meta.offset, 0);
+    assert_eq!(first_window.messages[0].id, full.messages[0].id);
 
     Ok(())
 }

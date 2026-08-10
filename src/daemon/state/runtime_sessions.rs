@@ -96,7 +96,8 @@ impl DaemonState {
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        self.get_session_projection(session_id, None, true).await
+        self.get_session_projection(session_id, None, None, true)
+            .await
     }
 
     #[instrument(
@@ -111,8 +112,13 @@ impl DaemonState {
         &self,
         session_id: &str,
         message_limit: Option<usize>,
+        message_offset: Option<usize>,
         include_events: bool,
     ) -> Result<Option<SessionDetail>> {
+        anyhow::ensure!(
+            message_offset.is_none() || message_limit.is_some(),
+            "message_offset requires message_limit"
+        );
         let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
         else {
             return Ok(None);
@@ -139,19 +145,27 @@ impl DaemonState {
             Vec::new()
         };
 
-        let (persisted_messages, total_messages) = match message_limit {
-            Some(limit) => {
-                store
-                    .get_recent_messages(row.id, &active_branch, limit)
-                    .await?
-            }
-            None => {
-                let messages = store.get_messages(row.id, &active_branch).await?;
-                let total = messages.len();
-                (messages, total)
-            }
-        };
-        let message_offset = total_messages.saturating_sub(persisted_messages.len());
+        let (persisted_messages, total_messages, message_offset) =
+            match (message_limit, message_offset) {
+                (Some(limit), Some(offset)) => {
+                    store
+                        .get_message_window(row.id, &active_branch, offset, limit)
+                        .await?
+                }
+                (Some(limit), None) => {
+                    let (messages, total) = store
+                        .get_recent_messages(row.id, &active_branch, limit)
+                        .await?;
+                    let offset = total.saturating_sub(messages.len());
+                    (messages, total, offset)
+                }
+                (None, None) => {
+                    let messages = store.get_messages(row.id, &active_branch).await?;
+                    let total = messages.len();
+                    (messages, total, 0)
+                }
+                (None, Some(_)) => unreachable!("message offset was validated above"),
+            };
         let messages = persisted_messages
             .into_iter()
             .map(|message| SessionMessageDetail {

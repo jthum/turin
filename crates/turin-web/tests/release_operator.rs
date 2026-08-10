@@ -263,6 +263,20 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .await?;
     assert_eq!(detail["detail"]["session"]["session_id"], session_id);
 
+    let offset_detail: Value = client
+        .get(format!("{base_url}/api/session"))
+        .query(&[
+            ("session_id", session_id),
+            ("message_limit", "16"),
+            ("message_offset", "0"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(offset_detail["detail"]["message_window"]["offset"], 0);
+
     let invalid_window = client
         .get(format!("{base_url}/api/session"))
         .query(&[("session_id", session_id), ("message_limit", "0")])

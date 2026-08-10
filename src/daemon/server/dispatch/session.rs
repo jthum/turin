@@ -131,6 +131,7 @@ pub(super) async fn get(
         .get_session_projection(
             &params.session_id,
             params.message_limit,
+            params.message_offset,
             params.include_events.unwrap_or(true),
         )
         .await;
