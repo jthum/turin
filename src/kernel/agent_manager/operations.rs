@@ -239,9 +239,11 @@ impl AgentManager {
         };
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            if handle.control.current_session_id().as_deref() == Some(session_id) {
-                break;
+        let resumed_session_id = loop {
+            if let Some(current_session_id) = handle.control.current_session_id()
+                && session_references_match(&current_session_id, session_id)
+            {
+                break current_session_id;
             }
             if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!(
@@ -252,12 +254,12 @@ impl AgentManager {
                 );
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        };
 
         Ok(live_session_snapshot(
             &runtime_key,
             &handle,
-            session_id.to_string(),
+            resumed_session_id,
         ))
     }
 

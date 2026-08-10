@@ -69,6 +69,8 @@ End session:
 ## Invariants
 
 - A resumed session must belong to the requested agent.
+- Runtime resume completion must compare session references semantically; a bare id and the
+  canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.
 - Local target switches must not run while tasks are queued.
 - Branch-head targets preserve the active branch when no branch id is explicitly selected.

@@ -5,6 +5,7 @@ use crate::kernel::config::{
     AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
     LayoutConfig, PersistenceConfig, ProviderConfig, TurinConfig,
 };
+use crate::kernel::session_refs::{parse_session_reference, session_references_match};
 use crate::persistence::state::StateStore;
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
 use async_trait::async_trait;
@@ -613,6 +614,47 @@ async fn resume_session_restarts_dead_requested_slot() -> anyhow::Result<()> {
     assert_eq!(resumed.session_id, session_id);
     assert_eq!(resumed.agent_id, "default");
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn resume_session_accepts_bare_id_for_path_backed_state_store() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let mut kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    kernel.init_state().await?;
+    let manager = kernel.agent_manager();
+    let opened = manager
+        .open_session(
+            "default",
+            Some("original"),
+            None,
+            None,
+            None,
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+    let bare_session_id = parse_session_reference(&opened.session_id)?.public_id;
+
+    manager
+        .kill_session(&opened.session_id, Some("original"))
+        .await?;
+    let resumed = manager
+        .resume_session(
+            &bare_session_id,
+            Some("resumed"),
+            None,
+            InferenceOverrideConfig::default(),
+        )
+        .await?;
+
+    assert_eq!(resumed.slot_id, "resumed");
+    assert!(session_references_match(
+        &resumed.session_id,
+        &bare_session_id
+    ));
     Ok(())
 }
 
