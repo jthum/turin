@@ -152,10 +152,43 @@ pub enum StreamEvent {
     },
 }
 
+/// Estimated shape of a provider request after Turin has applied its context policy.
+///
+/// Provider-reported usage remains authoritative. These fields describe Turin's
+/// normalized request before provider-specific serialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceRequestMetrics {
+    pub provider: String,
+    pub model: String,
+    pub requested_context: String,
+    pub resolved_context: String,
+    pub compaction_mode: String,
+    pub estimated_input_tokens_before_compaction: u32,
+    pub estimated_input_tokens: u32,
+    pub system_prompt_tokens: u32,
+    pub message_tokens: u32,
+    pub tool_definition_tokens: u32,
+    pub reusable_prefix_tokens: u32,
+    pub context_window_tokens: u32,
+    pub context_window_configured: bool,
+    pub input_budget_tokens: u32,
+    pub max_output_tokens: Option<u32>,
+    pub thinking_budget_tokens: Option<u32>,
+    pub available_message_count: usize,
+    pub sent_message_count: usize,
+    pub history_message_offset: usize,
+    pub checkpoint_covered_message_count: usize,
+    pub truncated_tool_results: usize,
+    pub dropped_messages: usize,
+    pub estimated_payload_bytes: usize,
+}
+
 /// Durable events for auditing, logging, and metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuditEvent {
+    /// Provider request accounting captured after context assembly.
+    InferenceRequest { metrics: InferenceRequestMetrics },
     /// Tool execution completed
     ToolResult {
         id: String,
@@ -242,6 +275,7 @@ impl KernelEvent {
                 StreamEvent::ToolCall { .. } => "tool_call",
             },
             KernelEvent::Audit(e) => match e {
+                AuditEvent::InferenceRequest { .. } => "inference_request",
                 AuditEvent::ToolResult { .. } => "tool_result",
                 AuditEvent::ToolExecStart { .. } => "tool_exec_start",
                 AuditEvent::ToolExecEnd { .. } => "tool_exec_end",

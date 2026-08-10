@@ -15,9 +15,10 @@ use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, Resolved
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::estimate_history_input_tokens;
 
-use super::super::event::{KernelEvent, LifecycleEvent};
+use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
 use super::TurnContext;
+use crate::kernel::turn::context_window::estimate_request_token_breakdown;
 
 mod compaction;
 
@@ -369,7 +370,7 @@ impl ExecutionHost {
                 temperature: candidate.temperature,
                 thinking_budget: candidate.thinking_budget,
             };
-            let effective_request = self.compact_messages_for_candidate(
+            let prepared_request = self.compact_messages_for_candidate(
                 session,
                 &req.system_prompt,
                 &tools,
@@ -377,6 +378,47 @@ impl ExecutionHost {
                 provider_config,
                 &effective_inference.compaction.mode,
             );
+            let effective_request = &prepared_request.context;
+            let token_estimate = estimate_request_token_breakdown(
+                &effective_request.system_prompt,
+                &effective_request.messages,
+                &tools,
+            );
+            let request_metrics = InferenceRequestMetrics {
+                provider: candidate.provider_name.clone(),
+                model: candidate.model.clone(),
+                requested_context: requested_context.clone(),
+                resolved_context: resolved_context_label(&candidate).to_string(),
+                compaction_mode: match effective_inference.compaction.mode {
+                    crate::kernel::config::InferenceCompactionMode::Hybrid => "hybrid",
+                    crate::kernel::config::InferenceCompactionMode::TrimOnly => "trim_only",
+                    crate::kernel::config::InferenceCompactionMode::SummaryOnly => "summary_only",
+                }
+                .to_string(),
+                estimated_input_tokens_before_compaction: prepared_request
+                    .report
+                    .used_tokens_before,
+                estimated_input_tokens: token_estimate.total_tokens,
+                system_prompt_tokens: token_estimate.system_prompt_tokens,
+                message_tokens: token_estimate.message_tokens,
+                tool_definition_tokens: token_estimate.tool_definition_tokens,
+                reusable_prefix_tokens: token_estimate.reusable_prefix_tokens,
+                context_window_tokens: prepared_request.report.context_window_tokens,
+                context_window_configured: provider_config.context_window_tokens.is_some(),
+                input_budget_tokens: prepared_request.report.input_budget_tokens,
+                max_output_tokens: candidate.max_tokens,
+                thinking_budget_tokens: candidate.thinking_budget,
+                available_message_count: session.history.len(),
+                sent_message_count: effective_request.messages.len(),
+                history_message_offset: session.history_message_offset,
+                checkpoint_covered_message_count: session
+                    .context_checkpoint
+                    .as_ref()
+                    .map_or(0, |checkpoint| checkpoint.covered_message_count),
+                truncated_tool_results: prepared_request.report.truncated_tool_results,
+                dropped_messages: prepared_request.report.dropped_messages,
+                estimated_payload_bytes: token_estimate.estimated_payload_bytes,
+            };
 
             match client
                 .stream(
@@ -390,6 +432,12 @@ impl ExecutionHost {
                 .await
             {
                 Ok(stream) => {
+                    self.persist_event(
+                        session,
+                        &KernelEvent::Audit(AuditEvent::InferenceRequest {
+                            metrics: request_metrics,
+                        }),
+                    );
                     debug!(
                         requested_context = requested_context.as_str(),
                         resolved_context = resolved_context_label(&candidate),

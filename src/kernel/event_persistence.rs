@@ -141,7 +141,8 @@ fn event_is_branch_scoped(event: &KernelEvent) -> bool {
         KernelEvent::Ui(_) => false,
         KernelEvent::Audit(audit) => matches!(
             audit,
-            crate::kernel::event::AuditEvent::ToolResult { .. }
+            crate::kernel::event::AuditEvent::InferenceRequest { .. }
+                | crate::kernel::event::AuditEvent::ToolResult { .. }
                 | crate::kernel::event::AuditEvent::ToolExecStart { .. }
                 | crate::kernel::event::AuditEvent::ToolExecEnd { .. }
                 | crate::kernel::event::AuditEvent::TokenUsage { .. }

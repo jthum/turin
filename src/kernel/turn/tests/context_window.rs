@@ -23,6 +23,29 @@ fn estimate_history_tokens_is_non_zero_for_text() {
 }
 
 #[test]
+fn request_breakdown_separates_support_messages_and_reusable_prefix() {
+    let messages = vec![
+        text_message(InferenceRole::User, "Earlier request"),
+        text_message(InferenceRole::Assistant, "Earlier response"),
+        text_message(InferenceRole::User, "Current request"),
+    ];
+    let tools = vec![serde_json::json!({
+        "name": "search",
+        "description": "Search indexed documents"
+    })];
+
+    let estimate = estimate_request_token_breakdown("System prompt", &messages, &tools);
+
+    assert_eq!(
+        estimate.total_tokens,
+        estimate.system_prompt_tokens + estimate.message_tokens + estimate.tool_definition_tokens
+    );
+    assert!(estimate.reusable_prefix_tokens < estimate.total_tokens);
+    assert!(estimate.reusable_prefix_tokens > estimate.system_prompt_tokens);
+    assert!(estimate.estimated_payload_bytes > "System prompt".len());
+}
+
+#[test]
 fn compaction_truncates_old_tool_results_before_dropping_messages() {
     let messages = vec![
         text_message(InferenceRole::User, "First prompt"),

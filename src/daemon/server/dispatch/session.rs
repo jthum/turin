@@ -133,6 +133,7 @@ pub(super) async fn get(
             params.message_limit,
             params.message_offset,
             params.include_events.unwrap_or(true),
+            params.include_efficiency.unwrap_or(false),
         )
         .await;
     optional_response(

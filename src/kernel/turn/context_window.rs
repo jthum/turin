@@ -28,6 +28,16 @@ pub(crate) struct CompactionReport {
     pub dropped_messages: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestTokenEstimate {
+    pub system_prompt_tokens: u32,
+    pub message_tokens: u32,
+    pub tool_definition_tokens: u32,
+    pub total_tokens: u32,
+    pub reusable_prefix_tokens: u32,
+    pub estimated_payload_bytes: usize,
+}
+
 impl CompactionReport {
     pub(crate) fn applied(&self) -> bool {
         self.truncated_tool_results > 0 || self.dropped_messages > 0
@@ -70,6 +80,60 @@ pub(crate) fn estimate_request_input_tokens(
     tools: &[serde_json::Value],
 ) -> u32 {
     estimate_support_tokens(system_prompt, tools) + estimate_messages_tokens(messages)
+}
+
+pub(crate) fn estimate_request_token_breakdown(
+    system_prompt: &str,
+    messages: &[InferenceMessage],
+    tools: &[serde_json::Value],
+) -> RequestTokenEstimate {
+    let system_prompt_tokens = estimate_text_tokens(system_prompt).saturating_add(8);
+    let message_tokens = estimate_messages_tokens(messages);
+    let tool_definition_tokens = estimate_tool_tokens(tools);
+    let reusable_message_tokens = messages
+        .get(..messages.len().saturating_sub(1))
+        .map(estimate_messages_tokens)
+        .unwrap_or(0);
+    let reusable_prefix_tokens = system_prompt_tokens
+        .saturating_add(tool_definition_tokens)
+        .saturating_add(reusable_message_tokens);
+    let estimated_payload_bytes = system_prompt
+        .len()
+        .saturating_add(serde_json::to_vec(messages).map_or(0, |value| value.len()))
+        .saturating_add(serde_json::to_vec(tools).map_or(0, |value| value.len()));
+
+    RequestTokenEstimate {
+        system_prompt_tokens,
+        message_tokens,
+        tool_definition_tokens,
+        total_tokens: system_prompt_tokens
+            .saturating_add(message_tokens)
+            .saturating_add(tool_definition_tokens),
+        reusable_prefix_tokens,
+        estimated_payload_bytes,
+    }
+}
+
+pub(crate) fn estimate_message_input_tokens(message: &InferenceMessage) -> u32 {
+    estimate_message_tokens(message)
+}
+
+pub(crate) fn estimate_persisted_message_input_tokens(
+    role: &str,
+    content: &serde_json::Value,
+) -> Option<u32> {
+    let role = match role.to_ascii_lowercase().as_str() {
+        "user" => InferenceRole::User,
+        "assistant" => InferenceRole::Assistant,
+        "tool" | "tool_result" => InferenceRole::Tool,
+        _ => return None,
+    };
+    let content = serde_json::from_value::<Vec<InferenceContent>>(content.clone()).ok()?;
+    Some(estimate_message_input_tokens(&InferenceMessage {
+        role,
+        content,
+        tool_call_id: None,
+    }))
 }
 
 pub(crate) fn effective_request_context_from_window(

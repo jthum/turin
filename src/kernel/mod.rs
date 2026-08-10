@@ -25,7 +25,9 @@ pub mod task_promotion;
 mod turn;
 
 pub(crate) use session_lifecycle::prepare_persisted_session_sidestep;
-pub(crate) use turn::context_window::estimate_history_input_tokens;
+pub(crate) use turn::context_window::{
+    estimate_history_input_tokens, estimate_persisted_message_input_tokens,
+};
 
 use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;

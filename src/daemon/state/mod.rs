@@ -34,9 +34,10 @@ pub(crate) use scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
 };
 pub use types::{
-    AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionDetail,
-    SessionEventDetail, SessionMessageDetail, SessionMessageWindow, SessionSearchHit,
-    SessionSummary, SessionToolExecutionDetail,
+    AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionCompactionDetail,
+    SessionDetail, SessionEfficiencyDetail, SessionEventDetail, SessionMessageDetail,
+    SessionMessageWindow, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
+    SessionTurnEfficiencyDetail,
 };
 pub(crate) use worklists::WorklistItemsQuery;
 

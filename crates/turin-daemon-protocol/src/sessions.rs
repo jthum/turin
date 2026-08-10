@@ -30,6 +30,8 @@ pub struct SessionGetParams {
     pub message_offset: Option<usize>,
     #[serde(default)]
     pub include_events: Option<bool>,
+    #[serde(default)]
+    pub include_efficiency: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

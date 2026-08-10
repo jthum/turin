@@ -8,14 +8,20 @@ use crate::kernel::config::{
 use crate::kernel::event::AuditEvent;
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::{
-    EffectiveRequestContext, build_checkpoint_summary_request, compact_messages_for_input_budget,
-    effective_input_budget_tokens, effective_request_context_from_window,
-    estimate_request_input_tokens, resolve_context_window_tokens, target_checkpoint_coverage,
+    CompactionReport, EffectiveRequestContext, build_checkpoint_summary_request,
+    compact_messages_for_input_budget, effective_input_budget_tokens,
+    effective_request_context_from_window, estimate_request_input_tokens,
+    resolve_context_window_tokens, target_checkpoint_coverage,
 };
 
 use super::super::super::event::KernelEvent;
 use super::super::super::execution_host::ExecutionHost;
 use super::TurnRequestState;
+
+pub(super) struct PreparedRequestContext {
+    pub context: EffectiveRequestContext,
+    pub report: CompactionReport,
+}
 
 impl ExecutionHost {
     pub(super) fn estimate_turn_context_window_tokens(
@@ -200,7 +206,7 @@ impl ExecutionHost {
         candidate: &ResolvedInferenceCandidate,
         provider_config: &crate::kernel::config::ProviderConfig,
         compaction_mode: &InferenceCompactionMode,
-    ) -> EffectiveRequestContext {
+    ) -> PreparedRequestContext {
         let effective = if compaction_mode.uses_summary() {
             effective_request_context_from_window(
                 system_prompt,
@@ -232,7 +238,17 @@ impl ExecutionHost {
                     "Turn history still exceeds the estimated provider input budget in summary_only mode"
                 );
             }
-            return effective;
+            return PreparedRequestContext {
+                context: effective,
+                report: CompactionReport {
+                    used_tokens_before: used_tokens,
+                    used_tokens_after: used_tokens,
+                    context_window_tokens,
+                    input_budget_tokens,
+                    truncated_tool_results: 0,
+                    dropped_messages: 0,
+                },
+            };
         }
 
         let (messages, report) = compact_messages_for_input_budget(
@@ -263,9 +279,12 @@ impl ExecutionHost {
             );
         }
 
-        EffectiveRequestContext {
-            system_prompt: effective.system_prompt,
-            messages,
+        PreparedRequestContext {
+            context: EffectiveRequestContext {
+                system_prompt: effective.system_prompt,
+                messages,
+            },
+            report,
         }
     }
 }

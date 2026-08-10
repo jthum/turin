@@ -53,6 +53,7 @@ impl ControlClient {
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                include_efficiency: Some(true),
             }),
         )
         .await
@@ -80,6 +81,7 @@ impl ControlClient {
                 message_limit: Some(message_limit),
                 message_offset,
                 include_events: Some(false),
+                include_efficiency: Some(true),
             }),
         )
         .await

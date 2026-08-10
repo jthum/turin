@@ -58,6 +58,35 @@ async fn test_insert_and_get_events() {
 }
 
 #[tokio::test]
+async fn test_get_events_by_types_filters_before_projection() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for event_type in ["message_delta", "message_end", "inference_request"] {
+        store
+            .insert_event(session, None, event_type, &json!({"type": event_type}))
+            .await
+            .unwrap();
+    }
+
+    let events = store
+        .get_events_by_types(
+            session,
+            &active_branch(),
+            &["message_end", "inference_request"],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event_type, "message_end");
+    assert_eq!(events[1].event_type, "inference_request");
+}
+
+#[tokio::test]
 async fn test_events_isolated_by_session() {
     let store = StateStore::open_memory().await.unwrap();
     let session_a = store

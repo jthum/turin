@@ -2,6 +2,8 @@ use serde::Serialize;
 use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_protocol::{SessionSearchHitKind, UiIntentMessage};
 
+use crate::kernel::event::InferenceRequestMetrics;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentDetail {
     pub id: String,
@@ -62,6 +64,7 @@ pub struct SessionMessageDetail {
     pub role: String,
     pub content: serde_json::Value,
     pub token_count: Option<u64>,
+    pub estimated_token_count: Option<u32>,
     pub created_at: String,
 }
 
@@ -87,7 +90,38 @@ pub struct SessionDetail {
     pub messages: Vec<SessionMessageDetail>,
     pub tool_executions: Vec<SessionToolExecutionDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub efficiency: Option<SessionEfficiencyDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionEfficiencyDetail {
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub turns: Vec<SessionTurnEfficiencyDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_compaction: Option<SessionCompactionDetail>,
+    pub provider_cache_metrics_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTurnEfficiencyDetail {
+    pub turn_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<InferenceRequestMetrics>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionCompactionDetail {
+    pub covered_message_count: usize,
+    pub generated_at_turn_index: u32,
+    pub provider: String,
+    pub model: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

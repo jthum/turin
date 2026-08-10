@@ -262,6 +262,14 @@ pub struct LiveSession {
     pub current_request_id: Option<String>,
     pub execution: LiveExecution,
     pub conflict_policy: String,
+    #[serde(default)]
+    pub history: Option<LiveSessionHistory>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSessionHistory {
+    pub len: usize,
+    pub message_offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +292,8 @@ pub struct SessionMessageDetail {
     pub role: String,
     pub content: Value,
     pub token_count: Option<u64>,
+    #[serde(default)]
+    pub estimated_token_count: Option<u32>,
     pub created_at: String,
 }
 
@@ -331,7 +341,67 @@ pub struct SessionDetail {
     #[serde(default)]
     pub tool_executions: Vec<SessionToolExecutionDetail>,
     #[serde(default)]
+    pub efficiency: Option<SessionEfficiencyDetail>,
+    #[serde(default)]
     pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEfficiencyDetail {
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    #[serde(default)]
+    pub turns: Vec<SessionTurnEfficiencyDetail>,
+    #[serde(default)]
+    pub latest_compaction: Option<SessionCompactionDetail>,
+    #[serde(default)]
+    pub provider_cache_metrics_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTurnEfficiencyDetail {
+    pub turn_index: u32,
+    #[serde(default)]
+    pub request: Option<InferenceRequestMetrics>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceRequestMetrics {
+    pub provider: String,
+    pub model: String,
+    pub requested_context: String,
+    pub resolved_context: String,
+    pub compaction_mode: String,
+    pub estimated_input_tokens_before_compaction: u32,
+    pub estimated_input_tokens: u32,
+    pub system_prompt_tokens: u32,
+    pub message_tokens: u32,
+    pub tool_definition_tokens: u32,
+    pub reusable_prefix_tokens: u32,
+    pub context_window_tokens: u32,
+    pub context_window_configured: bool,
+    pub input_budget_tokens: u32,
+    pub max_output_tokens: Option<u32>,
+    pub thinking_budget_tokens: Option<u32>,
+    pub available_message_count: usize,
+    pub sent_message_count: usize,
+    pub history_message_offset: usize,
+    pub checkpoint_covered_message_count: usize,
+    pub truncated_tool_results: usize,
+    pub dropped_messages: usize,
+    pub estimated_payload_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionCompactionDetail {
+    pub covered_message_count: usize,
+    pub generated_at_turn_index: u32,
+    pub provider: String,
+    pub model: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

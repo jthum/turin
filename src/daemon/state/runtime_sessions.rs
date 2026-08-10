@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -7,10 +7,12 @@ use turin_daemon_protocol::SessionSearchScope;
 use uuid::Uuid;
 
 use super::{
-    DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
-    SessionMessageWindow, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
+    DaemonState, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
+    SessionEfficiencyDetail, SessionEventDetail, SessionMessageDetail, SessionMessageWindow,
+    SessionSearchHit, SessionSummary, SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
+use crate::kernel::event::InferenceRequestMetrics;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
@@ -96,7 +98,7 @@ impl DaemonState {
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        self.get_session_projection(session_id, None, None, true)
+        self.get_session_projection(session_id, None, None, true, true)
             .await
     }
 
@@ -114,6 +116,7 @@ impl DaemonState {
         message_limit: Option<usize>,
         message_offset: Option<usize>,
         include_events: bool,
+        include_efficiency: bool,
     ) -> Result<Option<SessionDetail>> {
         anyhow::ensure!(
             message_offset.is_none() || message_limit.is_some(),
@@ -168,13 +171,19 @@ impl DaemonState {
             };
         let messages = persisted_messages
             .into_iter()
-            .map(|message| SessionMessageDetail {
-                id: message.id,
-                turn_index: message.turn_index,
-                role: message.role,
-                content: super::helpers::parse_json_or_string(&message.content),
-                token_count: message.token_count,
-                created_at: message.created_at,
+            .map(|message| {
+                let content = super::helpers::parse_json_or_string(&message.content);
+                let estimated_token_count =
+                    crate::kernel::estimate_persisted_message_input_tokens(&message.role, &content);
+                SessionMessageDetail {
+                    id: message.id,
+                    turn_index: message.turn_index,
+                    role: message.role,
+                    content,
+                    token_count: message.token_count,
+                    estimated_token_count,
+                    created_at: message.created_at,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -217,12 +226,26 @@ impl DaemonState {
             .map(branch_detail_from_row)
             .collect();
 
+        let efficiency = if include_efficiency {
+            let events = store
+                .get_events_by_types(
+                    row.id,
+                    &active_branch,
+                    &["inference_request", "message_end", "context_compaction"],
+                )
+                .await?;
+            Some(session_efficiency_from_events(events))
+        } else {
+            None
+        };
+
         Ok(Some(SessionDetail {
             session: session_summary_from_row_and_selector(&row, &store_selector),
             branches,
             events,
             messages,
             tool_executions,
+            efficiency,
             message_window: message_limit.map(|_| SessionMessageWindow {
                 offset: message_offset,
                 total: total_messages,
@@ -439,6 +462,103 @@ impl DaemonState {
                 );
             }
         }
+    }
+}
+
+fn session_efficiency_from_events(
+    events: Vec<crate::persistence::schema::EventRow>,
+) -> SessionEfficiencyDetail {
+    let mut turns = BTreeMap::<u32, SessionTurnEfficiencyDetail>::new();
+    let mut latest_compaction = None;
+
+    for event in events {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
+            continue;
+        };
+        match event.event_type.as_str() {
+            "inference_request" => {
+                let (Some(turn_index), Some(metrics)) = (
+                    event.turn_index,
+                    payload.get("metrics").cloned().and_then(|value| {
+                        serde_json::from_value::<InferenceRequestMetrics>(value).ok()
+                    }),
+                ) else {
+                    continue;
+                };
+                let turn = turns
+                    .entry(turn_index)
+                    .or_insert_with(|| empty_turn_efficiency(turn_index, event.created_at.clone()));
+                turn.request = Some(metrics);
+                turn.created_at = event.created_at;
+            }
+            "message_end" => {
+                let Some(turn_index) = event.turn_index else {
+                    continue;
+                };
+                let turn = turns
+                    .entry(turn_index)
+                    .or_insert_with(|| empty_turn_efficiency(turn_index, event.created_at.clone()));
+                turn.input_tokens = turn.input_tokens.saturating_add(
+                    payload
+                        .get("input_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                );
+                turn.output_tokens = turn.output_tokens.saturating_add(
+                    payload
+                        .get("output_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                );
+                turn.created_at = event.created_at;
+            }
+            "context_compaction" => {
+                let Some(checkpoint) = payload.get("checkpoint") else {
+                    continue;
+                };
+                latest_compaction = Some(SessionCompactionDetail {
+                    covered_message_count: checkpoint
+                        .get("covered_message_count")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0) as usize,
+                    generated_at_turn_index: checkpoint
+                        .get("generated_at_turn_index")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0) as u32,
+                    provider: checkpoint
+                        .get("provider_name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    model: checkpoint
+                        .get("model")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    created_at: event.created_at,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let turns = turns.into_values().collect::<Vec<_>>();
+    SessionEfficiencyDetail {
+        total_input_tokens: turns.iter().map(|turn| turn.input_tokens).sum(),
+        total_output_tokens: turns.iter().map(|turn| turn.output_tokens).sum(),
+        turns,
+        latest_compaction,
+        provider_cache_metrics_available: false,
+    }
+}
+
+fn empty_turn_efficiency(turn_index: u32, created_at: String) -> SessionTurnEfficiencyDetail {
+    SessionTurnEfficiencyDetail {
+        turn_index,
+        request: None,
+        input_tokens: 0,
+        output_tokens: 0,
+        created_at,
     }
 }
 
