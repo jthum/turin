@@ -60,7 +60,12 @@ session state, invent renderer-specific harness APIs, or bypass
 14. The active conversation subscribes to a session-scoped SSE feed. Message
     deltas render directly and are batched to animation frames; terminal stream
     events invalidate and reload the bounded durable window.
-15. `HttpTurinClient` is one implementation of the frontend transport contract.
+15. Follow-up task submission idempotently resumes the selected session in its
+    previous slot immediately before enqueueing work, so peer-runtime idle eviction
+    does not invalidate a browser conversation.
+16. Assistant Markdown is parsed in the browser and sanitized before insertion;
+    streaming text uses the same renderer after animation-frame batching.
+17. `HttpTurinClient` is one implementation of the frontend transport contract.
     An embedded desktop host can provide a bridge implementation without
     changing Svelte presentation components.
 
@@ -71,6 +76,10 @@ session state, invent renderer-specific harness APIs, or bypass
   sessions are selected explicitly rather than adopting an unrelated channel runtime by default.
 - Browser matching between persisted summaries and live sessions must compare bare and
   store-qualified session references by session identity.
+- A browser-held live-session snapshot is advisory. Follow-up sends must re-establish
+  the session because the daemon may have evicted its idle runtime slot.
+- Parsed assistant Markdown must be sanitized before using Svelte's raw-HTML rendering.
+  Remote images and generated inline styles remain disabled in the transcript.
 - Browser form drafts, confirmation modals, and action-running state are
   memory-local and should not be persisted by `turin-web`.
 - Browser option-backed form selects should encode and decode option values as

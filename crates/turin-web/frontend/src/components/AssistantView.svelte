@@ -4,6 +4,7 @@
   import type { SessionDetail, SessionMessage, ToolExecution, TurinEvent, TurinStatus } from "../lib/types";
   import { humanize, messageText, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
+  import Markdown from "./Markdown.svelte";
 
   const PAGE_SIZE = 48;
   const MAX_MESSAGES = 256;
@@ -139,7 +140,7 @@
     sending = true;
     error = "";
     resumeFailed = false;
-    let attemptedResume = false;
+    let resuming = false;
     try {
       let sessionId = selectedSessionId;
       let live = selectedLive;
@@ -148,9 +149,10 @@
         live = await client.openSession(agentId);
         sessionId = live.session_id;
         onSessionSelected(sessionId);
-      } else if (!live) {
-        attemptedResume = true;
-        live = await client.resumeSession(sessionId);
+      } else {
+        resuming = true;
+        live = await client.resumeSession(sessionId, live?.slot_id);
+        resuming = false;
       }
       optimisticPrompt = value;
       prompt = "";
@@ -165,7 +167,7 @@
       scheduleDetailRefresh(120);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
-      resumeFailed = attemptedResume;
+      resumeFailed = resuming;
       if (!prompt) prompt = value;
       optimisticPrompt = "";
     } finally {
@@ -259,7 +261,15 @@
           {#if body || tools.length}
             <article class:user={message.role.toLowerCase() === "user"} class="message">
               <div class="message-author">{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</div>
-              {#if body}<div class="message-body">{body}</div>{/if}
+              {#if body}
+                <div class="message-body">
+                  {#if message.role.toLowerCase() === "user"}
+                    <span class="plain-message">{body}</span>
+                  {:else}
+                    <Markdown source={body} />
+                  {/if}
+                </div>
+              {/if}
               {#if tools.length}
                 <div class="tool-stack">
                   {#each tools as tool (tool.id)}
@@ -274,12 +284,12 @@
           {/if}
         {/each}
         {#if optimisticPrompt}
-          <article class="message user optimistic"><div class="message-author">You</div><div class="message-body">{optimisticPrompt}</div></article>
+          <article class="message user optimistic"><div class="message-author">You</div><div class="message-body"><span class="plain-message">{optimisticPrompt}</span></div></article>
         {/if}
         {#if streamText || selectedLive?.active_tasks}
           <article class="message streaming">
             <div class="message-author">{humanize(selectedSummary?.agent_id ?? selectedLive?.agent_id ?? "Turin")}</div>
-            <div class="message-body">{streamText}<span class="stream-cursor"></span></div>
+            <div class="message-body"><Markdown source={streamText} /><span class="stream-cursor"></span></div>
           </article>
         {/if}
       {/if}

@@ -17,7 +17,7 @@ export interface TurinClient {
   status(): Promise<TurinStatus>;
   session(sessionId: string, messageLimit: number): Promise<SessionDetail>;
   openSession(agentId: string): Promise<LiveSession>;
-  resumeSession(sessionId: string): Promise<LiveSession>;
+  resumeSession(sessionId: string, slotId?: string): Promise<LiveSession>;
   submitTask(input: {
     agent_id?: string;
     session_id?: string;

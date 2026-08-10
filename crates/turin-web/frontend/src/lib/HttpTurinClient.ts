@@ -36,10 +36,10 @@ export class HttpTurinClient implements TurinClient {
     return result.session;
   }
 
-  async resumeSession(sessionId: string): Promise<LiveSession> {
+  async resumeSession(sessionId: string, slotId?: string): Promise<LiveSession> {
     const result = await this.request<{ session: LiveSession }>("/api/sessions/resume", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify({ session_id: sessionId, slot_id: slotId }),
     });
     return result.session;
   }
