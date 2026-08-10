@@ -262,6 +262,9 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
         .json()
         .await?;
     assert_eq!(detail["detail"]["session"]["session_id"], session_id);
+    assert_eq!(detail["detail"]["efficiency"]["total_input_tokens"], 0);
+    assert_eq!(detail["detail"]["efficiency"]["total_request_count"], 0);
+    assert!(detail["detail"]["efficiency"]["turns"].is_array());
 
     let offset_detail: Value = client
         .get(format!("{base_url}/api/session"))

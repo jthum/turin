@@ -22,6 +22,7 @@ export interface LiveSession {
   active_tasks: number;
   queued_tasks: number;
   current_request_id?: string | null;
+  history?: { len: number; message_offset: number } | null;
 }
 
 export interface SessionSummary {
@@ -38,7 +39,64 @@ export interface SessionMessage {
   role: string;
   content: JsonValue;
   token_count?: number | null;
+  estimated_token_count?: number | null;
   created_at: string;
+}
+
+export interface InferenceRequestMetrics {
+  provider: string;
+  model: string;
+  requested_context: string;
+  resolved_context: string;
+  compaction_mode: string;
+  estimated_input_tokens_before_compaction: number;
+  estimated_input_tokens: number;
+  system_prompt_tokens: number;
+  message_tokens: number;
+  tool_definition_tokens: number;
+  reusable_prefix_tokens: number;
+  context_window_tokens: number;
+  context_window_configured: boolean;
+  input_budget_tokens: number;
+  max_output_tokens?: number | null;
+  thinking_budget_tokens?: number | null;
+  available_message_count: number;
+  sent_message_count: number;
+  history_message_offset: number;
+  checkpoint_covered_message_count: number;
+  truncated_tool_results: number;
+  dropped_messages: number;
+  estimated_payload_bytes: number;
+}
+
+export interface SessionTurnEfficiency {
+  turn_index: number;
+  requests: SessionRequestEfficiency[];
+  input_tokens: number;
+  output_tokens: number;
+  created_at: string;
+}
+
+export interface SessionRequestEfficiency {
+  metrics?: InferenceRequestMetrics | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  created_at: string;
+}
+
+export interface SessionEfficiency {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_request_count: number;
+  turns: SessionTurnEfficiency[];
+  latest_compaction?: {
+    covered_message_count: number;
+    generated_at_turn_index: number;
+    provider: string;
+    model: string;
+    created_at: string;
+  } | null;
+  provider_cache_metrics_available: boolean;
 }
 
 export interface ToolExecution {
@@ -69,6 +127,7 @@ export interface SessionDetail {
   branches: SessionBranch[];
   messages: SessionMessage[];
   tool_executions: ToolExecution[];
+  efficiency?: SessionEfficiency | null;
   message_window?: { offset: number; total: number } | null;
 }
 

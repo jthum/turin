@@ -9,7 +9,8 @@ use uuid::Uuid;
 use super::{
     DaemonState, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
     SessionEfficiencyDetail, SessionEventDetail, SessionMessageDetail, SessionMessageWindow,
-    SessionSearchHit, SessionSummary, SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
+    SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
+    SessionTurnEfficiencyDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
 use crate::kernel::event::InferenceRequestMetrics;
@@ -234,7 +235,10 @@ impl DaemonState {
                     &["inference_request", "message_end", "context_compaction"],
                 )
                 .await?;
-            Some(session_efficiency_from_events(events))
+            Some(session_efficiency_from_events(
+                events,
+                visible_turn_indexes.as_ref(),
+            ))
         } else {
             None
         };
@@ -467,9 +471,13 @@ impl DaemonState {
 
 fn session_efficiency_from_events(
     events: Vec<crate::persistence::schema::EventRow>,
+    visible_turn_indexes: Option<&HashSet<u32>>,
 ) -> SessionEfficiencyDetail {
     let mut turns = BTreeMap::<u32, SessionTurnEfficiencyDetail>::new();
     let mut latest_compaction = None;
+    let mut total_input_tokens = 0_u64;
+    let mut total_output_tokens = 0_u64;
+    let mut total_request_count = 0_usize;
 
     for event in events {
         let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
@@ -477,6 +485,7 @@ fn session_efficiency_from_events(
         };
         match event.event_type.as_str() {
             "inference_request" => {
+                total_request_count = total_request_count.saturating_add(1);
                 let (Some(turn_index), Some(metrics)) = (
                     event.turn_index,
                     payload.get("metrics").cloned().and_then(|value| {
@@ -485,31 +494,58 @@ fn session_efficiency_from_events(
                 ) else {
                     continue;
                 };
+                if visible_turn_indexes.is_some_and(|visible| !visible.contains(&turn_index)) {
+                    continue;
+                }
                 let turn = turns
                     .entry(turn_index)
                     .or_insert_with(|| empty_turn_efficiency(turn_index, event.created_at.clone()));
-                turn.request = Some(metrics);
+                turn.requests.push(SessionRequestEfficiencyDetail {
+                    metrics: Some(metrics),
+                    input_tokens: None,
+                    output_tokens: None,
+                    created_at: event.created_at.clone(),
+                });
                 turn.created_at = event.created_at;
             }
             "message_end" => {
                 let Some(turn_index) = event.turn_index else {
                     continue;
                 };
+                let input_tokens = payload
+                    .get("input_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                let output_tokens = payload
+                    .get("output_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                total_input_tokens = total_input_tokens.saturating_add(input_tokens);
+                total_output_tokens = total_output_tokens.saturating_add(output_tokens);
+                if visible_turn_indexes.is_some_and(|visible| !visible.contains(&turn_index)) {
+                    continue;
+                }
                 let turn = turns
                     .entry(turn_index)
                     .or_insert_with(|| empty_turn_efficiency(turn_index, event.created_at.clone()));
-                turn.input_tokens = turn.input_tokens.saturating_add(
-                    payload
-                        .get("input_tokens")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0),
-                );
-                turn.output_tokens = turn.output_tokens.saturating_add(
-                    payload
-                        .get("output_tokens")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0),
-                );
+                turn.input_tokens = turn.input_tokens.saturating_add(input_tokens);
+                turn.output_tokens = turn.output_tokens.saturating_add(output_tokens);
+                if let Some(request) = turn
+                    .requests
+                    .iter_mut()
+                    .rev()
+                    .find(|request| request.input_tokens.is_none())
+                {
+                    request.input_tokens = Some(input_tokens);
+                    request.output_tokens = Some(output_tokens);
+                } else {
+                    turn.requests.push(SessionRequestEfficiencyDetail {
+                        metrics: None,
+                        input_tokens: Some(input_tokens),
+                        output_tokens: Some(output_tokens),
+                        created_at: event.created_at.clone(),
+                    });
+                }
                 turn.created_at = event.created_at;
             }
             "context_compaction" => {
@@ -544,8 +580,9 @@ fn session_efficiency_from_events(
 
     let turns = turns.into_values().collect::<Vec<_>>();
     SessionEfficiencyDetail {
-        total_input_tokens: turns.iter().map(|turn| turn.input_tokens).sum(),
-        total_output_tokens: turns.iter().map(|turn| turn.output_tokens).sum(),
+        total_input_tokens,
+        total_output_tokens,
+        total_request_count,
         turns,
         latest_compaction,
         provider_cache_metrics_available: false,
@@ -555,7 +592,7 @@ fn session_efficiency_from_events(
 fn empty_turn_efficiency(turn_index: u32, created_at: String) -> SessionTurnEfficiencyDetail {
     SessionTurnEfficiencyDetail {
         turn_index,
-        request: None,
+        requests: Vec::new(),
         input_tokens: 0,
         output_tokens: 0,
         created_at,
@@ -696,7 +733,11 @@ fn slice_chars(value: &str, start: usize, end: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::excerpt_search_text;
+    use serde_json::json;
+
+    use super::{excerpt_search_text, session_efficiency_from_events};
+    use crate::kernel::event::InferenceRequestMetrics;
+    use crate::persistence::schema::EventRow;
 
     #[test]
     fn search_excerpt_centers_query_when_possible() {
@@ -712,5 +753,80 @@ mod tests {
         let text = "alpha beta gamma delta epsilon";
         let excerpt = excerpt_search_text(text, "", 12);
         assert_eq!(excerpt, "alpha beta g…");
+    }
+
+    #[test]
+    fn efficiency_projection_preserves_each_request_in_a_tool_turn() {
+        let request = InferenceRequestMetrics {
+            provider: "test".to_string(),
+            model: "test-model".to_string(),
+            requested_context: "default".to_string(),
+            resolved_context: "default".to_string(),
+            compaction_mode: "hybrid".to_string(),
+            estimated_input_tokens_before_compaction: 120,
+            estimated_input_tokens: 100,
+            system_prompt_tokens: 20,
+            message_tokens: 70,
+            tool_definition_tokens: 10,
+            reusable_prefix_tokens: 65,
+            context_window_tokens: 128_000,
+            context_window_configured: false,
+            input_budget_tokens: 123_904,
+            max_output_tokens: Some(4_096),
+            thinking_budget_tokens: None,
+            available_message_count: 4,
+            sent_message_count: 4,
+            history_message_offset: 0,
+            checkpoint_covered_message_count: 0,
+            truncated_tool_results: 0,
+            dropped_messages: 0,
+            estimated_payload_bytes: 400,
+        };
+        let events = vec![
+            efficiency_event(
+                1,
+                "inference_request",
+                json!({ "metrics": request.clone() }),
+            ),
+            efficiency_event(
+                2,
+                "message_end",
+                json!({ "input_tokens": 101, "output_tokens": 12 }),
+            ),
+            efficiency_event(
+                3,
+                "inference_request",
+                json!({ "metrics": InferenceRequestMetrics {
+                    estimated_input_tokens: 140,
+                    ..request.clone()
+                } }),
+            ),
+            efficiency_event(
+                4,
+                "message_end",
+                json!({ "input_tokens": 143, "output_tokens": 29 }),
+            ),
+        ];
+
+        let efficiency = session_efficiency_from_events(events, None);
+        assert_eq!(efficiency.turns.len(), 1);
+        assert_eq!(efficiency.total_request_count, 2);
+        assert_eq!(efficiency.turns[0].requests.len(), 2);
+        assert_eq!(efficiency.turns[0].requests[0].input_tokens, Some(101));
+        assert_eq!(efficiency.turns[0].requests[1].input_tokens, Some(143));
+        assert_eq!(efficiency.total_input_tokens, 244);
+        assert_eq!(efficiency.total_output_tokens, 41);
+    }
+
+    fn efficiency_event(id: i64, event_type: &str, payload: serde_json::Value) -> EventRow {
+        EventRow {
+            id,
+            session_id: 1,
+            turn_id: Some(1),
+            event_type: event_type.to_string(),
+            payload: payload.to_string(),
+            turn_index: Some(1),
+            created_at: format!("2026-08-10T00:00:0{id}Z"),
+        }
     }
 }

@@ -70,6 +70,13 @@ session state, invent renderer-specific harness APIs, or bypass
 18. `HttpTurinClient` is one implementation of the frontend transport contract.
     An embedded desktop host can provide a bridge implementation without
     changing Svelte presentation components.
+19. Session detail carries a bounded efficiency projection. The assistant
+    presents provider-measured input/output totals separately from estimated
+    request composition, per-message cost, context utilization, payload size,
+    compaction, and reusable-prefix opportunity.
+20. Live `inference_request`, thinking, tool, and message events drive a
+    contained response-status bubble with phase and elapsed time. Terminal
+    events still reconcile the surface against durable session detail.
 
 ## Invariants
 
@@ -136,6 +143,11 @@ session state, invent renderer-specific harness APIs, or bypass
   encoded `session_id` query/body value; do not place them in URL path segments.
 - Session detail requests must remain bounded. The web boundary rejects zero or
   excessively large message windows rather than exposing unbounded history.
+- Request-efficiency UI must label provider-reported usage as measured and
+  Turin-derived request/message counts as estimated. A reusable prefix is not
+  evidence that a provider cache accepted or billed it differently.
+- Live response indicators should participate in normal chat layout. They must
+  not use absolute-positioned cursors that can escape the response bubble.
 - Frontend source lives under `frontend/`; `static/` is generated and checked in
   so Rust-only builds remain reproducible without installing Node dependencies.
 - The browser shell should keep semantic list constraints such as named

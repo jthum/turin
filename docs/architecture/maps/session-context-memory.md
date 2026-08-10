@@ -19,7 +19,7 @@ This subsystem should preserve three guarantees:
 - `src/kernel/hot_history.rs`
   - In-memory hot-window pruning, older tool-result payload trimming, and hot-history reports.
 - `src/kernel/turn/preflight.rs`
-  - Turn preparation, harness `on_turn_start`/`on_turn_prepare`, provider route fallback, stream preparation, and provider client initialization.
+  - Turn preparation, harness `on_turn_start`/`on_turn_prepare`, provider route fallback, stream preparation, provider client initialization, and sparse accepted-request efficiency telemetry.
 - `src/kernel/turn/preflight/compaction.rs`
   - Context-window estimation, context checkpoint refresh, summary generation, and provider request context compaction for turn preflight.
 - `src/kernel/turn/context_window.rs`
@@ -57,7 +57,10 @@ Turn preflight:
 2. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize older history.
 3. Provider request context is built from the hot window plus any checkpoint summary.
 4. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
-5. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
+5. After a provider accepts the stream request, Turin persists one
+   `inference_request` event with normalized token and payload estimates,
+   context-budget provenance, compaction counts, and route identity.
+6. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
 
 Full materialization:
 
@@ -77,6 +80,15 @@ Full materialization:
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.
 - Context-window structural compaction is request-local; it should not mutate session history.
+- `inference_request` telemetry must remain sparse. It records counts and route
+  metadata, never another copy of prompts, messages, tool schemas, or checkpoint
+  summaries.
+- Provider-reported `message_end` input/output totals are authoritative when
+  present. Request and per-message token counts are Turin estimates based on
+  normalized pre-provider content, not billing claims or exact wire sizes.
+- Reusable-prefix tokens describe a stable-prefix opportunity. They must not be
+  presented as cache hits until the inference boundary exposes provider cache
+  read/write counters.
 - Harness `on_turn_prepare` may see full history and may replace it, so pruning happens after turn execution, not before the hook.
 - Debug hot-history profile can opt out of bounds; default profile should remain memory-safe.
 
@@ -134,6 +146,8 @@ The current module split is deliberate:
 - `context_window.rs` answers "what fits into this provider request?"
 - `preflight.rs` answers "when do turn hooks run and how do we try provider route candidates?"
 - `preflight/compaction.rs` answers "when do we refresh summaries and build compacted provider request context?"
+- `InferenceRequestMetrics` answers "what did Turin estimate it sent after
+  compaction, and how close was that request to its input budget?"
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
 - `LiveSessionSnapshot.history` answers "how much hot history is currently resident in a live runtime?"
 

@@ -5302,6 +5302,7 @@ mod tests {
                 write_policy: "read_write".to_string(),
             },
             conflict_policy: "queue".to_string(),
+            history: None,
         };
         let stored = SessionSummary {
             internal_id: 1,
@@ -5336,6 +5337,7 @@ mod tests {
                 write_policy: "read_write".to_string(),
             },
             conflict_policy: "queue".to_string(),
+            history: None,
         };
         let stored = ["live", "most-recent", "older"]
             .into_iter()
@@ -5420,6 +5422,7 @@ mod tests {
                 write_policy: "read_write".to_string(),
             },
             conflict_policy: "queue".to_string(),
+            history: None,
         };
         let pending = PendingConversation {
             agent_id: "default".to_string(),

@@ -90,8 +90,19 @@ pub(crate) fn estimate_request_token_breakdown(
     let system_prompt_tokens = estimate_text_tokens(system_prompt).saturating_add(8);
     let message_tokens = estimate_messages_tokens(messages);
     let tool_definition_tokens = estimate_tool_tokens(tools);
+    let request_specific_suffix = if messages
+        .last()
+        .is_some_and(|message| message.role == InferenceRole::Tool)
+        && messages
+            .get(messages.len().saturating_sub(2))
+            .is_some_and(|message| message.role == InferenceRole::Assistant)
+    {
+        2
+    } else {
+        1
+    };
     let reusable_message_tokens = messages
-        .get(..messages.len().saturating_sub(1))
+        .get(..messages.len().saturating_sub(request_specific_suffix))
         .map(estimate_messages_tokens)
         .unwrap_or(0);
     let reusable_prefix_tokens = system_prompt_tokens

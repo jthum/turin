@@ -99,6 +99,7 @@ pub struct SessionDetail {
 pub struct SessionEfficiencyDetail {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_request_count: usize,
     pub turns: Vec<SessionTurnEfficiencyDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_compaction: Option<SessionCompactionDetail>,
@@ -108,10 +109,20 @@ pub struct SessionEfficiencyDetail {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionTurnEfficiencyDetail {
     pub turn_index: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request: Option<InferenceRequestMetrics>,
+    pub requests: Vec<SessionRequestEfficiencyDetail>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionRequestEfficiencyDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<InferenceRequestMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
     pub created_at: String,
 }
 

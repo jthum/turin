@@ -1886,16 +1886,28 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert_eq!(windowed.messages.len(), 2);
     assert!(windowed.events.is_empty());
     let efficiency = windowed.efficiency.expect("efficiency projection");
-    assert_eq!(efficiency.turns.len(), 2);
+    assert_eq!(efficiency.turns.len(), 1);
+    assert_eq!(efficiency.total_request_count, 2);
     assert!(efficiency.total_input_tokens > 0);
     assert!(efficiency.total_output_tokens > 0);
+    assert_eq!(
+        efficiency
+            .turns
+            .iter()
+            .map(|turn| turn.requests.len())
+            .sum::<usize>(),
+        1
+    );
     assert!(
         efficiency
             .turns
             .iter()
-            .all(|turn| turn.request.as_ref().is_some_and(|request| {
-                request.estimated_input_tokens > 0
-                    && request.sent_message_count <= request.available_message_count
+            .flat_map(|turn| &turn.requests)
+            .all(|request| request.metrics.as_ref().is_some_and(|metrics| {
+                metrics.estimated_input_tokens > 0
+                    && metrics.sent_message_count <= metrics.available_message_count
+                    && request.input_tokens.is_some()
+                    && request.output_tokens.is_some()
             }))
     );
     assert!(

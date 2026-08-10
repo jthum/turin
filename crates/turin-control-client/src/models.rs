@@ -351,6 +351,8 @@ pub struct SessionEfficiencyDetail {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     #[serde(default)]
+    pub total_request_count: usize,
+    #[serde(default)]
     pub turns: Vec<SessionTurnEfficiencyDetail>,
     #[serde(default)]
     pub latest_compaction: Option<SessionCompactionDetail>,
@@ -362,9 +364,20 @@ pub struct SessionEfficiencyDetail {
 pub struct SessionTurnEfficiencyDetail {
     pub turn_index: u32,
     #[serde(default)]
-    pub request: Option<InferenceRequestMetrics>,
+    pub requests: Vec<SessionRequestEfficiencyDetail>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRequestEfficiencyDetail {
+    #[serde(default)]
+    pub metrics: Option<InferenceRequestMetrics>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
     pub created_at: String,
 }
 

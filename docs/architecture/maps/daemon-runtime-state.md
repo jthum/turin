@@ -65,7 +65,13 @@ Persisted session detail:
    executions are limited to turns represented in that message window.
 4. An optional absolute message offset selects an older bounded window. Window
    boundaries expand to complete turn groups so a tool cycle is not split.
-5. Rows are converted into daemon-facing detail structs.
+5. Full and bounded detail requests independently load only
+   `inference_request`, `message_end`, and `context_compaction` events to build
+   a bounded request-efficiency projection. High-volume stream deltas are
+   filtered in SQL rather than materialized for this projection.
+6. Rows are converted into daemon-facing detail structs. Per-turn request
+   estimates are paired with provider-reported input/output usage when both
+   exist, while older sessions remain valid without request telemetry.
 
 Branch activation/checkout:
 
@@ -80,6 +86,8 @@ Branch activation/checkout:
 - Cross-store session access must use a qualified session reference.
 - Bounded session detail is a read projection only. It must not truncate
   persisted messages or change the runtime hot-history policy.
+- Efficiency detail is also a read projection. It must preserve the distinction
+  between provider-measured usage and Turin-estimated request composition.
 - Offset session windows are indexed from the oldest active-branch message and
   may contain slightly more than the requested limit to preserve complete turns.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.

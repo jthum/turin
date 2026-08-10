@@ -48,7 +48,7 @@ Start with a small API that mirrors what the current clients already need.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from harness UI intent. |
-| `GET /api/session` | Implemented. Bounded durable session detail using encoded `session_id`, `message_limit`, and optional absolute `message_offset` query parameters. |
+| `GET /api/session` | Implemented. Bounded durable session detail and request-efficiency projection using encoded `session_id`, `message_limit`, and optional absolute `message_offset` query parameters. |
 | `POST /api/sessions/open` | Implemented. Opens a live session for an agent. |
 | `POST /api/sessions/resume` | Implemented. Resumes a stored session into a live slot. |
 | `POST /api/tasks/submit` | Implemented. Submits a prompt or structured task input. |
@@ -111,6 +111,60 @@ assistant tool-use message by tool-call ID.
 The assistant header exposes the canonical session reference as a copyable
 diagnostic value. This identifies the persisted session without making
 navigation or other browser state runtime-owned.
+
+## Request Efficiency
+
+The assistant's **Efficiency** inspector separates facts reported by the
+provider from estimates Turin can derive before serialization:
+
+- **Measured:** provider-reported input and output tokens per request, per turn,
+  and in total.
+- **Estimated:** final request tokens, system/message/tool-schema composition,
+  normalized payload bytes, per-message context cost, context utilization, and
+  structural compaction counts.
+- **Reusable prefix:** the stable request prefix that could be eligible for a
+  provider prompt cache. It is an opportunity estimate, not a cache hit or
+  billing measurement. Turin's current inference boundary does not expose
+  provider cache-read or cache-write counters.
+
+The normalized request estimate is intentionally not described as exact HTTP
+body size. Provider adapters may add serialization overhead or tokenize content
+differently. Measured provider totals remain authoritative where available.
+Older sessions retain their measured totals but cannot reconstruct request
+composition that was not recorded at inference time.
+
+Session-wide measured totals and provider-call count remain visible while the
+per-request records follow the current bounded transcript window. Scrolling to
+an older data window therefore exposes the accounting for those turns without
+retaining every request record in the browser.
+
+Durable transcript size does not determine request size. Turin retains the full
+branch transcript in Turso, keeps a bounded hot runtime history by default, and
+builds a separate token-budgeted provider request from the hot window and any
+semantic checkpoint. Structural compaction can trim older tool payloads or
+drop older messages without mutating durable history. Consequently, a session
+with thousands of stored messages does not automatically resend them all, but
+the effective request can still grow close to the configured context budget.
+The inspector makes that behavior visible for every newly accepted request.
+
+Current tuning levers are:
+
+- configure the provider/model context window accurately rather than relying
+  on Turin's fallback assumption
+- keep repeated system instructions and tool definitions concise, because they
+  consume input on every request even when a provider can cache their prefix
+- use hybrid context compaction and semantic checkpoints to retain older intent
+  without retaining every old message in the effective request
+- tune hot-history bounds for resident memory independently of provider request
+  compaction
+- reserve only the output and thinking budget the task needs, because those
+  reservations reduce the available input budget
+- investigate large tool results and low reusable-prefix ratios before applying
+  broad transcript truncation
+
+Per-message estimates describe each stored message's approximate contribution
+when included. Per-request accounting is the reliable view of what the final
+compacted request actually contained.
 
 API responses use JSON envelopes and are marked `Cache-Control: no-store`.
 Errors have the shape:
