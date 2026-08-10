@@ -48,7 +48,7 @@ Start with a small API that mirrors what the current clients already need.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/status` | Implemented. Current dashboard snapshot plus UI registry derived from harness UI intent. |
-| `GET /api/session` | Implemented. Bounded durable session detail using encoded `session_id` and `message_limit` query parameters. |
+| `GET /api/session` | Implemented. Bounded durable session detail using encoded `session_id`, `message_limit`, and optional absolute `message_offset` query parameters. |
 | `POST /api/sessions/open` | Implemented. Opens a live session for an agent. |
 | `POST /api/sessions/resume` | Implemented. Resumes a stored session into a live slot. |
 | `POST /api/tasks/submit` | Implemented. Submits a prompt or structured task input. |
@@ -87,16 +87,30 @@ replacement; its CSS is not a compatibility contract.
 
 ## Conversation Windowing
 
-The assistant initially requests the latest 48 messages. "Load earlier"
-increases that bounded window in 48-message pages, preserves the current scroll
-anchor, and stops at the web boundary's 256-message cap. The browser does not
+The assistant initially requests the latest 100 persisted message rows. It
+keeps that bounded data window in the browser and mounts about 30
+user/assistant messages at a time. Variable-height spacer estimates preserve
+the scrollbar while measured message heights refine the virtual layout.
+
+Scrolling near either render boundary slides the mounted window. Reaching a
+data-window boundary requests another absolute window with a 30-row overlap and
+restores the first visible message as the scroll anchor. Database windows keep
+complete turns together, so a response can be slightly larger than the nominal
+limit rather than separating a tool call from its result. The browser does not
 fetch or retain the entire session tree by default.
 
 The active session uses a session-scoped SSE subscription. `message_delta`
-events are buffered and committed at most once per animation frame. On message
-or turn completion, the browser reloads the bounded durable session detail;
-SSE remains a stream and invalidation channel rather than a second transcript
-store.
+events are buffered and committed at most once per animation frame. A resumed
+runtime rebinds that subscription before task submission. On message or turn
+completion, the browser reloads the bounded durable session detail and retires
+the transient streamed copy; SSE remains a stream and invalidation channel
+rather than a second transcript store. Raw persisted tool-result messages stay
+out of the chat transcript, while tool executions attach to the corresponding
+assistant tool-use message by tool-call ID.
+
+The assistant header exposes the canonical session reference as a copyable
+diagnostic value. This identifies the persisted session without making
+navigation or other browser state runtime-owned.
 
 API responses use JSON envelopes and are marked `Cache-Control: no-store`.
 Errors have the shape:
