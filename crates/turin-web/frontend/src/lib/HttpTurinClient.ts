@@ -2,12 +2,16 @@ import type { EventSubscription, TurinClient } from "./TurinClient";
 import type {
   LiveSession,
   SessionDetail,
+  SessionSummary,
   TaskStatus,
   TurinEvent,
   TurinStatus,
   UiListRequest,
   UiListResult,
   JsonValue,
+  MemoryList,
+  WorklistDetail,
+  WorklistItem,
 } from "./types";
 
 interface ErrorEnvelope {
@@ -49,6 +53,14 @@ export class HttpTurinClient implements TurinClient {
     return result.session;
   }
 
+  async setSessionTitle(sessionId: string, title: string): Promise<SessionSummary> {
+    const result = await this.request<{ session: SessionSummary }>("/api/session/title", {
+      method: "PUT",
+      body: JSON.stringify({ session_id: sessionId, title }),
+    });
+    return result.session;
+  }
+
   async submitTask(input: {
     agent_id?: string;
     session_id?: string;
@@ -67,6 +79,37 @@ export class HttpTurinClient implements TurinClient {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  async worklists(): Promise<WorklistDetail[]> {
+    const result = await this.request<{ worklists: WorklistDetail[] }>("/api/data/worklists");
+    return result.worklists;
+  }
+
+  async worklistItems(worklistId: string, limit = 100): Promise<WorklistItem[]> {
+    const params = new URLSearchParams({ id: worklistId, limit: String(limit) });
+    const result = await this.request<{ list: { items: WorklistItem[] } }>(
+      `/api/data/worklist-items?${params}`,
+    );
+    return result.list.items;
+  }
+
+  async memories(input: {
+    scopeKind?: string;
+    scopeKey?: string;
+    includeSuperseded?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<MemoryList> {
+    const params = new URLSearchParams({
+      limit: String(input.limit ?? 100),
+      offset: String(input.offset ?? 0),
+    });
+    if (input.scopeKind) params.set("scope_kind", input.scopeKind);
+    if (input.scopeKey) params.set("scope_key", input.scopeKey);
+    if (input.includeSuperseded) params.set("include_superseded", "true");
+    const result = await this.request<{ list: MemoryList }>(`/api/data/memories?${params}`);
+    return result.list;
   }
 
   runAction(input: {

@@ -259,10 +259,14 @@ Reference:
 
 Globals:
 
-- `tool.define(name, spec)`
+- `tool.declare(name, spec)`
 - `tool.call(name, args?)`
 - `tool.sequence(calls, callback?)`
 - `shell.quote(input)`
+
+During `on_turn_prepare(turn)`, `turn.tools` conditionally exposes declared and
+native tools with `only`, `include`, `exclude`, and `all`. Exposure controls the
+provider request surface; governance remains the execution boundary.
 
 Reference:
 

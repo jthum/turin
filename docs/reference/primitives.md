@@ -852,6 +852,7 @@ Harness-declared virtual tools.
 ```lua
 {
   description = "Play an audio file with mpg123",
+  follow_up = "always", -- or "if_no_response"
   params = {
     filename = { type = "string", required = true }
   },
@@ -885,9 +886,11 @@ Notes:
 
 - `tool.declare(...)` can only be called during harness load
 - `params` is normalized into JSON Schema internally
-- declared tools are exposed to the model in the normal provider tool list
-- handlers execute in the harness VM and return nested tool-call descriptors for Turin to execute afterward
+- declared tools are exposed by default; `turn.tools` can narrow the provider tool list during `on_turn_prepare`
+- handlers execute in the harness VM and may return a direct string/result object or nested tool-call descriptors for Turin to execute afterward
 - handlers can use `runtime.*`, DX helpers, memory, KV, DB, and policy checks to decide what to dispatch
+- `follow_up = "always"` is the default and continues inference after execution
+- `follow_up = "if_no_response"` completes without another inference when the same assistant turn already produced visible text; a tool-only response still continues so the agent can answer
 - `callback` is optional; for `tool.call(...)` it receives one result object, and for `tool.sequence(...)` it receives an array of result objects
 - each result object includes `id`, `name`, `args`, `verdict`, `duration_ms`, `content`, and `is_error`
 - callbacks may return:
@@ -1768,6 +1771,9 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
 - `agent.session.queue_next(prompt) -> bool`
 - `agent.session.queue_all({prompts...}) -> bool`
 - `agent.session.load(session_id) -> session_row|nil`
+- `agent.session.set_title(title, opts?) -> session_row`
+  - `opts.if_empty = true` atomically preserves an existing title
+  - `opts.session_id` optionally targets another resolvable session; the active session is the default
 - `agent.session.list(limit?, offset?) -> rows`
 
 ### Peer-agent convenience

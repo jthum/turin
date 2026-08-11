@@ -22,13 +22,13 @@ session state, invent renderer-specific harness APIs, or bypass
     event streaming, and first-party static routes.
 - `crates/turin-web/frontend/`
   - Svelte/TypeScript client source, typed `TurinClient` transport boundary,
-    custom CSS, assistant surface, and semantic harness renderer.
+    custom CSS, assistant surface, built-in Data Explorer, and semantic harness renderer.
 - `crates/turin-web/static/`
   - Checked-in Vite build output embedded by the Rust binary. Cargo builds do
     not require Node; regenerate these assets after frontend changes.
-- `crates/turin-web/tests/release_operator.rs`
-  - End-to-end smoke against a temporary daemon and the Release Operator
-    harness, both through local IPC and through `turin-remote`.
+- `crates/turin-web/tests/ui_contract.rs`
+  - End-to-end smoke against a temporary daemon and test-only semantic UI
+    fixture, both through local IPC and through `turin-remote`.
 
 ## Data Flow
 
@@ -77,6 +77,14 @@ session state, invent renderer-specific harness APIs, or bypass
 20. Live `inference_request`, thinking, tool, and message events drive a
     contained response-status bubble with phase and elapsed time. Terminal
     events still reconcile the surface against durable session detail.
+21. The built-in Data Explorer uses typed, bounded endpoints for worklists,
+    memories, and sessions. Memory browsing is observational and does not count
+    as a retrieval.
+22. Opening a conversation requests the latest durable message window, mounts
+    its newest render slice, then settles scroll position after layout.
+23. Manual title edits use the typed daemon session-title operation and remain
+    durable. Automatic naming is harness policy; the browser observes the
+    resulting session metadata rather than deriving and persisting its own title.
 
 ## Invariants
 
@@ -87,6 +95,8 @@ session state, invent renderer-specific harness APIs, or bypass
   store-qualified session references by session identity.
 - A browser-held live-session snapshot is advisory. Follow-up sends must re-establish
   the session because the daemon may have evicted its idle runtime slot.
+- Automatic title generation belongs to the active harness. Browser clients
+  must not race that policy with their own persisted first-prompt title.
 - Parsed assistant Markdown must be sanitized before using Svelte's raw-HTML rendering.
   Remote images and generated inline styles remain disabled in the transcript.
 - Raw persisted tool-result messages remain diagnostic data, not chat bubbles.
@@ -130,6 +140,8 @@ session state, invent renderer-specific harness APIs, or bypass
   surfaces, not renderer-specific widget state.
 - `POST /api/ui/list` should accept semantic UI list requests first. Add raw
   daemon-query escape hatches only after the UI model proves it needs them.
+- Built-in operator data routes should expose Turin-owned semantic projections,
+  not arbitrary SQLite tables or embedding blobs.
 - Unsupported sources and planned endpoints should return explicit JSON errors,
   not silent empty responses.
 - JSON request body limits should be enforced while reading the body, not after
@@ -146,6 +158,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Request-efficiency UI must label provider-reported usage as measured and
   Turin-derived request/message counts as estimated. A reusable prefix is not
   evidence that a provider cache accepted or billed it differently.
+- Provider cache-read and cache-creation counters are displayed only when the
+  inference provider reports them. Missing counters remain unavailable rather
+  than being inferred or presented as zero.
 - Live response indicators should participate in normal chat layout. They must
   not use absolute-positioned cursors that can escape the response bubble.
 - Frontend source lives under `frontend/`; `static/` is generated and checked in
@@ -174,7 +189,7 @@ Add a new UI data endpoint:
 2. Add the route in `routes.rs` and keep request/response structs serializable.
 3. Prefer semantic UI requests over raw daemon protocol shapes for harness UI
    client routes.
-4. Extend the Release Operator smoke when the behavior can be exercised there.
+4. Extend the UI contract smoke when the behavior can be exercised there.
 
 Add browser support:
 
@@ -189,7 +204,7 @@ Focused checks:
 
 ```sh
 cargo test -p turin-web --lib
-cargo test -p turin-web --test release_operator
+cargo test -p turin-web --test ui_contract
 cargo test -p turin-web
 cargo check -p turin-web
 cd crates/turin-web/frontend && npm run check && npm run build

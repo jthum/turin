@@ -36,7 +36,7 @@ export function displayValue(value: unknown): string {
 }
 
 export function shortDate(value: string): string {
-  const date = new Date(value);
+  const date = parseTurinDate(value);
   if (Number.isNaN(date.valueOf())) return value;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -44,4 +44,36 @@ export function shortDate(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+export function messageTimestamp(value: string): string {
+  const date = parseTurinDate(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  return new Intl.DateTimeFormat(undefined, sameDay
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+  ).format(date);
+}
+
+export function fullDate(value: string): string {
+  const date = parseTurinDate(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function parseTurinDate(value: string): Date {
+  const withoutZone = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+  const normalized = withoutZone.test(value) ? `${value.replace(" ", "T")}Z` : value;
+  return new Date(normalized);
 }

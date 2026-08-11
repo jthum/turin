@@ -33,6 +33,10 @@ This subsystem should preserve four guarantees:
   - Convenience `session.memory`, `session.kv`, `user.memory`, and `user.kv` aliases.
 - `src/tools/builtins/memory_tools.rs`
   - Native `remember` and `recall` tools backed by the same memory backend.
+- `src/persistence/search.rs`
+  - Memory search plus bounded, read-only memory inspection used by operator clients.
+- `src/daemon/state/memories.rs`
+  - Maps inspection rows into the typed daemon `memory.list` response.
 
 ## Data Flow
 
@@ -76,6 +80,7 @@ Lua bridge:
 - Multi-source memory search should not apply the caller's store selector after sources are resolved.
 - Lua-facing memory/KV APIs should share bridge helpers; do not copy backend invocation blocks into every namespace.
 - Native `remember` and `recall` should continue to call the scoped-data backend directly, not reimplement persistence semantics.
+- Operator inspection must not update retrieval count or last-retrieved timestamps and must never expose embedding blobs.
 
 ## Common Changes
 
@@ -105,6 +110,12 @@ Change native memory tools:
 1. Update `src/tools/builtins/memory_tools.rs`.
 2. Keep parsing/tool output separate from backend persistence behavior.
 3. Run `cargo test -p turin memory_tools --lib`.
+
+Change operator memory inspection:
+
+1. Keep the persistence query bounded and observational in `src/persistence/search.rs`.
+2. Update the typed daemon projection in `src/daemon/state/memories.rs`.
+3. Run `cargo test -p turin memory_inspection_is_bounded_filtered_and_does_not_record_retrieval`.
 
 ## Tests
 

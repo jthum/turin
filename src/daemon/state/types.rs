@@ -99,6 +99,8 @@ pub struct SessionDetail {
 pub struct SessionEfficiencyDetail {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cache_read_input_tokens: u64,
+    pub total_cache_creation_input_tokens: u64,
     pub total_request_count: usize,
     pub turns: Vec<SessionTurnEfficiencyDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +125,10 @@ pub struct SessionRequestEfficiencyDetail {
     pub input_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
     pub created_at: String,
 }
 

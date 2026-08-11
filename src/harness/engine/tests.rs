@@ -44,6 +44,8 @@ impl InferenceProvider for CountingTextProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 1,
                     output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ];
@@ -139,6 +141,67 @@ fn test_engine_no_scripts() {
         .evaluate("on_tool_call", serde_json::json!({}))
         .unwrap();
     assert_eq!(verdict, Verdict::Allow);
+}
+
+#[test]
+fn test_turn_context_selects_exposed_tools() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            function on_turn_prepare(turn)
+                local available = turn.tools:available()
+                if #available ~= 2 or available[1] ~= "alpha" or available[2] ~= "beta" then
+                    return REJECT, "unexpected available tools"
+                end
+
+                turn.tools:only("alpha")
+                turn.tools:include("beta")
+                turn.tools:exclude("alpha")
+
+                local exposed = turn.tools:exposed()
+                if #exposed ~= 1 or exposed[1] ~= "beta" then
+                    return REJECT, "unexpected exposed tools"
+                end
+                return ALLOW
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+    let ctx = ContextWrapper::new(
+        None,
+        "mock-model".to_string(),
+        "mock".to_string(),
+        "System".to_string(),
+        Vec::new(),
+        0,
+        0,
+        true,
+        "task-1".to_string(),
+        None,
+        0,
+        100_000,
+        0,
+        RequestOptionsOverride::default(),
+        std::collections::HashMap::new(),
+        Arc::new(crate::kernel::config::TurinConfig::default()),
+        "default".to_string(),
+        InferenceOverrideConfig::default(),
+        "session-1".to_string(),
+        None,
+        std::collections::BTreeSet::from(["alpha".to_string(), "beta".to_string()]),
+    );
+
+    let verdict = engine
+        .evaluate_userdata("on_turn_prepare", ctx.clone())
+        .unwrap();
+    assert!(verdict.is_allowed());
+    let exposure = ctx.get_state().tool_exposure;
+    assert!(!exposure.exposes("alpha"));
+    assert!(exposure.exposes("beta"));
 }
 
 #[test]
@@ -263,8 +326,8 @@ fn test_ui_load_time_intents_are_collected() {
 }
 
 #[test]
-fn test_ui_release_operator_example_loads() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/harnesses/ui_release_operator");
+fn test_ui_contract_fixture_loads() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harnesses/ui_contract");
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(&dir).unwrap();
 
@@ -353,67 +416,6 @@ fn test_ui_release_operator_example_loads() {
     assert!(pane_seen);
     assert!(badge_seen);
     assert!(nested_menu_seen);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_turin_development_desk_loads_and_seeds_idempotently() {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("library/workflows/turin_development_desk/harness/main.lua");
-    let dir = TempDir::new().unwrap();
-    std::fs::copy(source, dir.path().join("main.lua")).unwrap();
-
-    let mut engine = HarnessEngine::new(test_app_data_for_root(dir.path().to_path_buf())).unwrap();
-    engine.load_dir(dir.path()).unwrap();
-
-    let intents = engine.ui_intents().unwrap();
-    assert!(intents.iter().any(|message| matches!(
-        &message.intent,
-        turin_daemon_protocol::UiIntent::App(app) if app.id == "turin-development-desk"
-    )));
-    assert!(
-        intents
-            .iter()
-            .filter(|message| matches!(message.intent, turin_daemon_protocol::UiIntent::Screen(_)))
-            .count()
-            >= 8
-    );
-
-    let first = engine
-        .invoke_declared_action_for_agent("test-agent", "desk.seed", serde_json::json!({}))
-        .unwrap()
-        .expect("seed result");
-    assert_eq!(first["status"], "seeded");
-    assert_eq!(first["count"], 4);
-
-    let second = engine
-        .invoke_declared_action_for_agent("test-agent", "desk.seed", serde_json::json!({}))
-        .unwrap()
-        .expect("second seed result");
-    assert_eq!(second["status"], "unchanged");
-    assert_eq!(second["count"], 0);
-
-    let captured = engine
-        .invoke_declared_action_for_agent(
-            "test-agent",
-            "desk.capture",
-            serde_json::json!({
-                "title": "Exercise the development desk",
-                "description": "Use the real workflow end to end.",
-                "area": "Product",
-                "effort": "Small",
-                "priority": 110
-            }),
-        )
-        .unwrap()
-        .expect("capture result");
-    assert_eq!(captured["status"], "captured");
-    assert_eq!(captured["title"], "Exercise the development desk");
-
-    let status = engine
-        .invoke_declared_action_for_agent("test-agent", "desk.status", serde_json::json!({}))
-        .unwrap()
-        .expect("status result");
-    assert_eq!(status["work"]["total"], 5);
 }
 
 #[test]
@@ -2276,13 +2278,16 @@ fn test_engine_invokes_virtual_tool_handler_sequence() {
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
-    let plan = engine
+    let resolution = engine
         .invoke_virtual_tool(
             "play_playlist",
             serde_json::json!({ "first": "one.mp3", "second": "two.mp3" }),
         )
         .unwrap()
         .unwrap();
+    let VirtualToolResultResolution::Plan(plan) = resolution else {
+        panic!("expected virtual tool plan");
+    };
 
     assert_eq!(plan.calls.len(), 2);
     assert_eq!(plan.calls[0].name, "shell_exec");
@@ -2317,13 +2322,16 @@ fn test_engine_invokes_virtual_tool_result_handler() {
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(dir.path()).unwrap();
 
-    let plan = engine
+    let resolution = engine
         .invoke_virtual_tool(
             "read_note_wrapped",
             serde_json::json!({ "path": "note.txt" }),
         )
         .unwrap()
         .unwrap();
+    let VirtualToolResultResolution::Plan(plan) = resolution else {
+        panic!("expected virtual tool plan");
+    };
 
     let handler_key = plan
         .result_handler_key
@@ -2355,6 +2363,42 @@ fn test_engine_invokes_virtual_tool_result_handler() {
             }
         )
     );
+}
+
+#[test]
+fn test_engine_invokes_direct_virtual_tool_output() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            tool.declare("label", {
+                description = "Return a label",
+                params = {
+                    value = { type = "string", required = true }
+                },
+                handler = function(args)
+                    return {
+                        content = "label: " .. args.value,
+                        is_error = false
+                    }
+                end
+            })
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let resolution = engine
+        .invoke_virtual_tool("label", serde_json::json!({ "value": "ready" }))
+        .unwrap()
+        .unwrap();
+    let VirtualToolResultResolution::Output(output) = resolution else {
+        panic!("expected direct virtual tool output");
+    };
+    assert_eq!(output.content, "label: ready");
+    assert!(!output.is_error);
 }
 
 #[test]
@@ -3589,6 +3633,9 @@ async fn test_fs_summary_reuses_cached_summary_until_file_changes() {
             Arc::new(crate::kernel::config::TurinConfig::default()),
             "default".to_string(),
             InferenceOverrideConfig::default(),
+            "test-session".to_string(),
+            None,
+            std::collections::BTreeSet::new(),
         )
     };
 

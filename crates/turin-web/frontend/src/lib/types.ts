@@ -81,12 +81,16 @@ export interface SessionRequestEfficiency {
   metrics?: InferenceRequestMetrics | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
   created_at: string;
 }
 
 export interface SessionEfficiency {
   total_input_tokens: number;
   total_output_tokens: number;
+  total_cache_read_input_tokens: number;
+  total_cache_creation_input_tokens: number;
   total_request_count: number;
   turns: SessionTurnEfficiency[];
   latest_compaction?: {
@@ -262,6 +266,64 @@ export interface WorkItem {
   metadata?: Record<string, JsonValue>;
   action?: { name: string; params?: JsonValue } | null;
   [key: string]: unknown;
+}
+
+export interface WorklistDetail {
+  id: number;
+  public_id: string;
+  name: string;
+  scope_ref: string;
+  metadata?: JsonValue;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorklistItem {
+  id: number;
+  public_id: string;
+  worklist_id: string;
+  parent_id?: string | null;
+  title: string;
+  kind: string;
+  status: string;
+  paused: boolean;
+  priority: number;
+  metadata?: JsonValue;
+  claim_agent_id?: string | null;
+  completed_at?: string | null;
+  failure_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryDetail {
+  public_id: string;
+  scope_kind: string;
+  scope_key: string;
+  content: string;
+  metadata?: JsonValue;
+  storage: "embedded" | "lexical_only" | string;
+  embedding_key?: string | null;
+  embedding_dimensions?: number | null;
+  weight: number;
+  retrieval_count: number;
+  last_retrieved_at?: string | null;
+  superseded_at?: string | null;
+  created_at: string;
+}
+
+export interface MemoryScope {
+  scope_kind: string;
+  scope_key: string;
+  count: number;
+}
+
+export interface MemoryList {
+  memories: MemoryDetail[];
+  scopes: MemoryScope[];
+  total: number;
+  offset: number;
+  limit: number;
 }
 
 export interface UiListResult {

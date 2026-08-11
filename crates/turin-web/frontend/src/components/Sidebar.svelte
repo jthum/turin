@@ -35,6 +35,9 @@
     <button class:active={activeView === "assistant"} onclick={() => onNavigate("assistant")}>
       <Icon name="chat" /><span>Assistant</span>
     </button>
+    <button class:active={activeView === "data"} onclick={() => onNavigate("data")}>
+      <Icon name="database" /><span>Data Explorer</span>
+    </button>
     {#each apps as app (app.id)}
       <button class:active={activeView === app.id} onclick={() => onNavigate(app.id)}>
         <Icon name="grid" /><span>{app.definition?.title ?? app.id}</span>

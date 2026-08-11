@@ -72,6 +72,41 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
 }
 
 #[test]
+fn memory_list_round_trips_filters_and_window() {
+    let request = RequestEnvelope::new(
+        Some("req_memory".to_string()),
+        DaemonRequest::MemoryList(MemoryListParams {
+            persistence: None,
+            scope_kind: Some("agent".to_string()),
+            scope_key: Some("researcher".to_string()),
+            include_superseded: true,
+            limit: Some(40),
+            offset: Some(80),
+        }),
+    );
+
+    let value = serde_json::to_value(&request).expect("serialize memory list request");
+    assert_eq!(value["op"], "memory.list");
+    assert_eq!(value["params"]["scope_kind"], "agent");
+    assert_eq!(value["params"]["scope_key"], "researcher");
+    assert_eq!(value["params"]["include_superseded"], true);
+    assert_eq!(value["params"]["limit"], 40);
+    assert_eq!(value["params"]["offset"], 80);
+
+    let decoded: RequestEnvelope = serde_json::from_value(value).expect("decode memory list");
+    match decoded.request {
+        DaemonRequest::MemoryList(params) => {
+            assert_eq!(params.scope_kind.as_deref(), Some("agent"));
+            assert_eq!(params.scope_key.as_deref(), Some("researcher"));
+            assert!(params.include_superseded);
+            assert_eq!(params.limit, Some(40));
+            assert_eq!(params.offset, Some(80));
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+}
+
+#[test]
 fn sidestep_request_round_trips_typed_shape() {
     let request = RequestEnvelope::new(
         Some("req_3".to_string()),

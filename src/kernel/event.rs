@@ -143,6 +143,10 @@ pub enum StreamEvent {
         role: String,
         input_tokens: u64,
         output_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_read_input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_creation_input_tokens: Option<u64>,
     },
     /// LLM requests a tool execution (produced by stream)
     ToolCall {

@@ -42,6 +42,16 @@ pub(crate) fn session_channel_id_from_metadata(metadata: Option<&str>) -> Option
         .and_then(|value| value.as_str().map(ToString::to_string))
 }
 
+pub(crate) fn session_title_from_metadata(metadata: Option<&str>) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(metadata?).ok()?;
+    value
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
 fn turin_metadata(metadata: Option<&str>) -> Option<serde_json::Value> {
     metadata
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())

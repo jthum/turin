@@ -13,7 +13,7 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/harness/context/request_options.rs`
   - `RequestOptionsOverride` and shared provider request-option layering.
 - `src/kernel/turn/preflight.rs`
-  - Builds the normal provider request stream and applies harness `on_turn_prepare` mutations.
+  - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -23,8 +23,9 @@ Turn preflight:
 
 1. `preflight.rs` builds a `ContextWrapper` from the current request state.
 2. Harness `on_turn_prepare` can mutate model/provider/system prompt/messages/thinking/request options.
-3. The mutated context is read back into the provider request state.
-4. Request options are built from provider defaults plus harness overrides.
+3. Harness code can inspect the current session title/message count and select among tools already available to the turn.
+4. The mutated context and tool exposure are read back into provider request state.
+5. Request options are built from provider defaults plus harness overrides.
 
 Structured inference:
 
@@ -42,6 +43,8 @@ Structured inference:
 - `ctx.prompt` and `ctx.messages` must remain synchronized when either is replaced.
 - Structured calls may define `prompt` or `messages`, not both.
 - Context token counts must be recomputed after message or system prompt mutation.
+- Tool declarations remain load-time; `ctx.tools` only filters definitions for the current provider inference.
+- Conditional exposure must not bypass native policy, governance, or tool-call hooks.
 
 ## Common Changes
 
@@ -70,6 +73,7 @@ Focused tests:
 ```sh
 cargo test -p turin request_options_override --lib
 cargo test -p turin --test harness_tests test_harness_request_options_passthrough
+cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
 ```

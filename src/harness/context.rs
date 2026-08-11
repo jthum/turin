@@ -1,6 +1,6 @@
-use mlua::{LuaSerdeExt, MetaMethod, UserData, UserDataMethods, Value};
+use mlua::{Lua, LuaSerdeExt, MetaMethod, Table, UserData, UserDataMethods, Value};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::harness::globals::block_on_current;
@@ -35,6 +35,54 @@ pub struct ContextState {
     pub token_limit: u32,
     pub thinking_budget: u32,
     pub request_options: RequestOptionsOverride,
+    pub session_id: String,
+    pub session_title: Option<String>,
+    pub user_message_count: usize,
+    pub tool_exposure: ToolExposure,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ToolExposure {
+    selected: Option<BTreeSet<String>>,
+    excluded: BTreeSet<String>,
+}
+
+impl ToolExposure {
+    pub fn exposes(&self, name: &str) -> bool {
+        self.selected
+            .as_ref()
+            .is_none_or(|selected| selected.contains(name))
+            && !self.excluded.contains(name)
+    }
+
+    fn only(&mut self, names: BTreeSet<String>) {
+        self.selected = Some(names);
+        self.excluded.clear();
+    }
+
+    fn include(&mut self, names: BTreeSet<String>) {
+        for name in names {
+            self.excluded.remove(&name);
+            if let Some(selected) = self.selected.as_mut() {
+                selected.insert(name);
+            }
+        }
+    }
+
+    fn exclude(&mut self, names: BTreeSet<String>) {
+        if let Some(selected) = self.selected.as_mut() {
+            for name in names {
+                selected.remove(&name);
+            }
+        } else {
+            self.excluded.extend(names);
+        }
+    }
+
+    fn expose_all(&mut self) {
+        self.selected = None;
+        self.excluded.clear();
+    }
 }
 
 /// UserData wrapper for Context validation and mutation
@@ -45,6 +93,13 @@ pub struct ContextWrapper {
     pub config: Arc<TurinConfig>,
     pub agent_id: String,
     pub session_inference: InferenceOverrideConfig,
+    available_tools: Arc<BTreeSet<String>>,
+}
+
+#[derive(Clone)]
+struct ToolExposureProxy {
+    state: Arc<Mutex<ContextState>>,
+    available_tools: Arc<BTreeSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,8 +150,15 @@ impl ContextWrapper {
         config: Arc<TurinConfig>,
         agent_id: String,
         session_inference: InferenceOverrideConfig,
+        session_id: String,
+        session_title: Option<String>,
+        available_tools: BTreeSet<String>,
     ) -> Self {
         let prompt = infer_prompt_from_messages(&messages);
+        let user_message_count = messages
+            .iter()
+            .filter(|message| message.role == crate::inference::provider::InferenceRole::User)
+            .count();
 
         Self {
             state: Arc::new(Mutex::new(ContextState {
@@ -115,11 +177,16 @@ impl ContextWrapper {
                 token_limit,
                 thinking_budget,
                 request_options,
+                session_id,
+                session_title,
+                user_message_count,
+                tool_exposure: ToolExposure::default(),
             })),
             clients,
             config,
             agent_id,
             session_inference,
+            available_tools: Arc::new(available_tools),
         }
     }
 
@@ -133,6 +200,117 @@ impl ContextWrapper {
     /// Retrieve the inner state (cloning the data out)
     pub fn get_state(&self) -> ContextState {
         self.lock_state().clone()
+    }
+}
+
+fn tool_names_from_value(value: Value) -> mlua::Result<BTreeSet<String>> {
+    let names = match value {
+        Value::String(name) => vec![name.to_str()?.to_string()],
+        Value::Table(table) => table
+            .sequence_values::<String>()
+            .collect::<mlua::Result<Vec<_>>>()?,
+        _ => {
+            return Err(mlua::Error::runtime(
+                "tool selection expects a tool name or an array of tool names",
+            ));
+        }
+    };
+
+    let mut normalized = BTreeSet::new();
+    for name in names {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(mlua::Error::runtime("tool names must not be empty"));
+        }
+        normalized.insert(name.to_string());
+    }
+    Ok(normalized)
+}
+
+fn validate_tool_names(
+    names: &BTreeSet<String>,
+    available_tools: &BTreeSet<String>,
+) -> mlua::Result<()> {
+    let unknown = names
+        .difference(available_tools)
+        .cloned()
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(mlua::Error::runtime(format!(
+            "unknown or unavailable tool(s): {}",
+            unknown.join(", ")
+        )))
+    }
+}
+
+fn names_to_lua_table(lua: &Lua, names: impl IntoIterator<Item = String>) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    for (index, name) in names.into_iter().enumerate() {
+        table.set(index + 1, name)?;
+    }
+    Ok(table)
+}
+
+impl UserData for ToolExposureProxy {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("only", |_, this, value: Value| {
+            let names = tool_names_from_value(value)?;
+            validate_tool_names(&names, &this.available_tools)?;
+            this.state
+                .lock()
+                .expect("context state mutex poisoned")
+                .tool_exposure
+                .only(names);
+            Ok(())
+        });
+
+        methods.add_method("include", |_, this, value: Value| {
+            let names = tool_names_from_value(value)?;
+            validate_tool_names(&names, &this.available_tools)?;
+            this.state
+                .lock()
+                .expect("context state mutex poisoned")
+                .tool_exposure
+                .include(names);
+            Ok(())
+        });
+
+        methods.add_method("exclude", |_, this, value: Value| {
+            let names = tool_names_from_value(value)?;
+            validate_tool_names(&names, &this.available_tools)?;
+            this.state
+                .lock()
+                .expect("context state mutex poisoned")
+                .tool_exposure
+                .exclude(names);
+            Ok(())
+        });
+
+        methods.add_method("all", |_, this, ()| {
+            this.state
+                .lock()
+                .expect("context state mutex poisoned")
+                .tool_exposure
+                .expose_all();
+            Ok(())
+        });
+
+        methods.add_method("available", |lua, this, ()| {
+            names_to_lua_table(lua, this.available_tools.iter().cloned())
+        });
+
+        methods.add_method("exposed", |lua, this, ()| {
+            let state = this.state.lock().expect("context state mutex poisoned");
+            names_to_lua_table(
+                lua,
+                this.available_tools
+                    .iter()
+                    .filter(|name| state.tool_exposure.exposes(name))
+                    .cloned(),
+            )
+        });
     }
 }
 
@@ -344,6 +522,19 @@ impl UserData for ContextWrapper {
                     let state = this.lock_state();
                     lua.to_value(&state.messages).map_err(mlua::Error::external)
                 }
+                "session" => {
+                    let state = this.lock_state();
+                    let session = lua.create_table()?;
+                    session.set("id", state.session_id.clone())?;
+                    session.set("title", state.session_title.clone())?;
+                    session.set("user_message_count", state.user_message_count)?;
+                    session.set("is_first_user_message", state.user_message_count == 1)?;
+                    Ok(Value::Table(session))
+                }
+                "tools" => Ok(Value::UserData(lua.create_userdata(ToolExposureProxy {
+                    state: Arc::clone(&this.state),
+                    available_tools: Arc::clone(&this.available_tools),
+                })?)),
                 _ => Ok(Value::Nil),
             },
         );

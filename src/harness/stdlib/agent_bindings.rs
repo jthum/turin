@@ -525,6 +525,52 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
         )?;
     }
 
+    // agent.session.set_title(title, opts?)
+    {
+        let manager = app_data.store_manager.clone();
+        let execution_ctx = app_data.execution_ctx.clone();
+        session_ns.set(
+            "set_title",
+            lua.create_function(move |lua, (title, opts): (String, Option<Table>)| {
+                let title = title.trim().to_string();
+                if title.is_empty() {
+                    return nil_err(lua, "Session title must not be empty");
+                }
+                if title.chars().count() > 120 {
+                    return nil_err(lua, "Session title must not exceed 120 characters");
+                }
+
+                let manager = manager.clone();
+                let execution_ctx = execution_ctx.clone();
+                let requested_session = opt_session_id(opts.as_ref());
+                let if_empty = opts
+                    .as_ref()
+                    .and_then(|table| table.get::<bool>("if_empty").ok())
+                    .unwrap_or(false);
+                let result = bridge_async_result(async move {
+                    let session =
+                        require_session_store(&manager, &execution_ctx, requested_session).await?;
+                    let public_id = uuid::Uuid::parse_str(&session.session_ref.public_id)
+                        .map_err(|err| err.to_string())?;
+                    let updated = if if_empty {
+                        session
+                            .store
+                            .update_session_title_if_empty(public_id, &title)
+                            .await
+                    } else {
+                        session
+                            .store
+                            .update_session_title(public_id, Some(&title))
+                            .await
+                    }
+                    .map_err(|err| err.to_string())?;
+                    updated.ok_or_else(|| "Session not found".to_string())
+                });
+                lua_table_result(lua, result, |lua, row| session_row_to_lua_table(lua, &row))
+            })?,
+        )?;
+    }
+
     // agent.session.branch_list(opts?)
     {
         let manager = app_data.store_manager.clone();

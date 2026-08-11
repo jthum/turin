@@ -46,6 +46,8 @@ impl InferenceProvider for SequenceMockProvider {
                     Ok(InferenceEvent::MessageEnd {
                         input_tokens: 1,
                         output_tokens: 1,
+                        cache_read_input_tokens: None,
+                        cache_creation_input_tokens: None,
                         stop_reason: None,
                     }),
                 ]
@@ -92,6 +94,8 @@ impl InferenceProvider for FailThenRecoverProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 1,
                     output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ];
@@ -178,6 +182,8 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             InferenceEvent::MessageEnd {
                 input_tokens: 10,
                 output_tokens: 5,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -193,6 +199,8 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
             InferenceEvent::MessageEnd {
                 input_tokens: 5,
                 output_tokens: 2,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -374,6 +382,8 @@ async fn test_harness_observation() -> Result<()> {
         InferenceEvent::MessageEnd {
             input_tokens: 1,
             output_tokens: 1,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
             stop_reason: None,
         },
     ]];
@@ -487,6 +497,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
             InferenceEvent::MessageEnd {
                 input_tokens: 1,
                 output_tokens: 1,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -502,6 +514,8 @@ async fn test_nested_agent_spawning() -> Result<()> {
             InferenceEvent::MessageEnd {
                 input_tokens: 1,
                 output_tokens: 1,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -1251,6 +1265,8 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
                 InferenceEvent::MessageEnd {
                     input_tokens: 10,
                     output_tokens: 5,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 },
             ],
@@ -1266,6 +1282,8 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
                 InferenceEvent::MessageEnd {
                     input_tokens: 5,
                     output_tokens: 2,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 },
             ],

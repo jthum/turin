@@ -501,6 +501,42 @@ async fn test_update_session_title_preserves_other_metadata() {
 }
 
 #[tokio::test]
+async fn test_update_session_title_if_empty_preserves_existing_title() {
+    let store = StateStore::open_memory().await.unwrap();
+    let public_id = uuid::Uuid::now_v7();
+    let metadata = json!({
+        "source": "manual",
+        "title": "Manual title",
+    });
+
+    store
+        .create_session(public_id, "default", Some(&metadata.to_string()))
+        .await
+        .unwrap();
+
+    let unchanged = store
+        .update_session_title_if_empty(public_id, "Generated title")
+        .await
+        .unwrap()
+        .expect("session exists");
+    let parsed: serde_json::Value =
+        serde_json::from_str(unchanged.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["title"], "Manual title");
+    assert_eq!(parsed["source"], "manual");
+
+    store.update_session_title(public_id, None).await.unwrap();
+    let updated = store
+        .update_session_title_if_empty(public_id, "Generated title")
+        .await
+        .unwrap()
+        .expect("session exists");
+    let parsed: serde_json::Value =
+        serde_json::from_str(updated.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["title"], "Generated title");
+    assert_eq!(parsed["source"], "manual");
+}
+
+#[tokio::test]
 async fn test_search_session_history_queries_messages_tools_events_and_titles() {
     let store = StateStore::open_memory().await.unwrap();
     let public_id = uuid::Uuid::now_v7();
@@ -1445,6 +1481,52 @@ async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_res
         messages[2]
             .content
             .contains("second write on resolved turn")
+    );
+}
+
+#[tokio::test]
+async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
+    let store = StateStore::open_memory()
+        .await
+        .expect("Failed to open state store");
+    for (scope_key, content) in [
+        ("alpha", "First memory"),
+        ("alpha", "Second memory"),
+        ("beta", "Third memory"),
+    ] {
+        store
+            .insert_memory(
+                "agent",
+                scope_key,
+                content,
+                None,
+                None,
+                None,
+                &json!({ "source": "test" }),
+            )
+            .await
+            .unwrap();
+    }
+
+    let first_page = store
+        .inspect_memories(None, None, false, 2, 0)
+        .await
+        .unwrap();
+    assert_eq!(first_page.total, 3);
+    assert_eq!(first_page.rows.len(), 2);
+    assert_eq!(first_page.scopes.len(), 2);
+    assert!(first_page.rows.iter().all(|row| row.retrieval_count == 0));
+
+    let alpha = store
+        .inspect_memories(Some("agent"), Some("alpha"), false, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(alpha.total, 2);
+    assert!(alpha.rows.iter().all(|row| row.scope_key == "alpha"));
+    assert!(alpha.rows.iter().all(|row| row.retrieval_count == 0));
+    assert_eq!(
+        alpha.rows[0].metadata.as_deref(),
+        Some(r#"{"source":"test"}"#)
     );
 }
 

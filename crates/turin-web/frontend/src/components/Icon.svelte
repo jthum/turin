@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let name: "spark" | "chat" | "grid" | "branch" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" = "spark";
+  export let name: "spark" | "chat" | "grid" | "database" | "branch" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" | "edit" = "spark";
   export let size = 18;
 </script>
 
@@ -21,6 +21,8 @@
     <path d="M20 15a4 4 0 0 1-4 4H8l-5 2 1.4-4.2A7 7 0 0 1 3 12V8a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4v7Z" />
   {:else if name === "grid"}
     <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" />
+  {:else if name === "database"}
+    <ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
   {:else if name === "branch"}
     <circle cx="6" cy="5" r="2" /><circle cx="18" cy="7" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 10h5a5 5 0 0 0 5-5" />
   {:else if name === "refresh"}
@@ -39,5 +41,7 @@
     <path d="M3 12h4l2.5-7 5 14 2.5-7h4" />
   {:else if name === "copy"}
     <rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+  {:else if name === "edit"}
+    <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
   {/if}
 </svg>

@@ -1,3 +1,4 @@
+-- Test-only fixture exercising the complete semantic UI contract.
 local RELEASE_WORKLIST = "release"
 local RELEASE_BINDING = "worklists." .. RELEASE_WORKLIST
 

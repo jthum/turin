@@ -15,12 +15,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::time::{MissedTickBehavior, interval};
 use turin_control_client::{
-    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionDetail, TaskStatus,
+    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionDetail, SessionSummary,
+    TaskStatus,
 };
 use turin_daemon_protocol::{
-    DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult,
-    RuntimeEventsSubscribeParams, SubmitTaskParams, WorkItemList, WorklistItemsParams,
-    WorklistListParams,
+    DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, MemoryList,
+    MemoryListParams, RuntimeEventsSubscribeParams, SubmitTaskParams, WorkItemList, WorklistDetail,
+    WorklistItemsParams, WorklistListParams,
 };
 use turin_ui_core::{
     DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
@@ -31,6 +32,8 @@ use url::form_urlencoded;
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
 const DEFAULT_MESSAGE_LIMIT: usize = 48;
 const MAX_MESSAGE_LIMIT: usize = 256;
+const DEFAULT_DATA_LIMIT: u32 = 100;
+const MAX_DATA_LIMIT: u32 = 250;
 const EVENT_KEEPALIVE: Duration = Duration::from_secs(15);
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_CSS: &str = include_str!("../static/assets/app.css");
@@ -91,6 +94,21 @@ struct WebListResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct WebWorklistsResponse {
+    worklists: Vec<WorklistDetail>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebWorklistItemsResponse {
+    list: WorkItemList,
+}
+
+#[derive(Debug, Serialize)]
+struct WebMemoriesResponse {
+    list: MemoryList,
+}
+
+#[derive(Debug, Serialize)]
 struct WebActionResponse {
     result: HarnessActionRunResult,
 }
@@ -109,6 +127,12 @@ struct WebSessionResumeRequest {
     slot_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WebSessionTitleRequest {
+    session_id: String,
+    title: String,
+}
+
 #[derive(Debug, Serialize)]
 struct WebSessionResponse {
     session: LiveSession,
@@ -117,6 +141,11 @@ struct WebSessionResponse {
 #[derive(Debug, Serialize)]
 struct WebSessionDetailResponse {
     detail: SessionDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionTitleResponse {
+    session: SessionSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -235,6 +264,10 @@ async fn route_request(
         )),
         (Method::GET, "/api/status") => handle_status(&state).await,
         (Method::GET, "/api/session") => handle_session_detail(req, &state).await,
+        (Method::PUT, "/api/session/title") => handle_session_title(req, &state).await,
+        (Method::GET, "/api/data/worklists") => handle_data_worklists(&state).await,
+        (Method::GET, "/api/data/worklist-items") => handle_data_worklist_items(req, &state).await,
+        (Method::GET, "/api/data/memories") => handle_data_memories(req, &state).await,
         (Method::GET, "/api/apps") => handle_apps(&state).await,
         (Method::POST, "/api/ui/list") => handle_ui_list(req, &state).await,
         (Method::POST, "/api/actions/run") => handle_action_run(req, &state).await,
@@ -247,6 +280,103 @@ async fn route_request(
             path
         ))),
     }
+}
+
+async fn handle_session_title(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebSessionTitleRequest = read_json(req).await?;
+    validate_session_title(&params)?;
+    let session = state
+        .client
+        .set_session_title(&params.session_id, Some(params.title.trim().to_string()))
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to rename session: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionTitleResponse { session },
+    ))
+}
+
+fn validate_session_title(params: &WebSessionTitleRequest) -> std::result::Result<(), WebError> {
+    if params.session_id.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_session_id",
+            "Session id must not be empty",
+        ));
+    }
+    let title = params.title.trim();
+    if title.is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_session_title",
+            "Session title must not be empty",
+        ));
+    }
+    if title.chars().count() > 120 {
+        return Err(WebError::bad_request(
+            "invalid_session_title",
+            "Session title must not exceed 120 characters",
+        ));
+    }
+    Ok(())
+}
+
+async fn handle_data_worklists(
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let worklists = state
+        .client
+        .list_worklists(WorklistListParams {
+            persistence: None,
+            name: None,
+            scope: None,
+        })
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list worklists: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebWorklistsResponse { worklists },
+    ))
+}
+
+async fn handle_data_worklist_items(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let (id, limit) = parse_worklist_items_query(req.uri().query())?;
+    let list = state
+        .client
+        .list_worklist_items(WorklistItemsParams {
+            id,
+            persistence: None,
+            status: None,
+            parent_id: None,
+            r#where: None,
+            claimed_only: false,
+            paused_only: false,
+            due_only: false,
+            limit: Some(limit),
+        })
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list worklist items: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebWorklistItemsResponse { list },
+    ))
+}
+
+async fn handle_data_memories(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params = parse_memory_list_query(req.uri().query())?;
+    let list = state
+        .client
+        .list_memories(params)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list memories: {err}")))?;
+    Ok(json_response(StatusCode::OK, &WebMemoriesResponse { list }))
 }
 
 async fn handle_session_detail(
@@ -635,6 +765,95 @@ fn parse_session_detail_query(
     Ok((session_id, message_limit, message_offset))
 }
 
+fn parse_worklist_items_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {
+    let mut id = None;
+    let mut limit = DEFAULT_DATA_LIMIT;
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "id" if !value.is_empty() => id = Some(value.into_owned()),
+                "id" => {}
+                "limit" => limit = parse_data_limit(&value)?,
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{other}'"),
+                    ));
+                }
+            }
+        }
+    }
+    let id =
+        id.ok_or_else(|| WebError::bad_request("invalid_worklist_id", "id must not be empty"))?;
+    Ok((id, limit))
+}
+
+fn parse_memory_list_query(query: Option<&str>) -> std::result::Result<MemoryListParams, WebError> {
+    let mut params = MemoryListParams {
+        persistence: None,
+        scope_kind: None,
+        scope_key: None,
+        include_superseded: false,
+        limit: Some(DEFAULT_DATA_LIMIT),
+        offset: Some(0),
+    };
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "scope_kind" if !value.is_empty() => {
+                    params.scope_kind = Some(value.into_owned());
+                }
+                "scope_kind" => {}
+                "scope_key" if !value.is_empty() => {
+                    params.scope_key = Some(value.into_owned());
+                }
+                "scope_key" => {}
+                "include_superseded" => {
+                    params.include_superseded = match value.as_ref() {
+                        "true" | "1" => true,
+                        "false" | "0" => false,
+                        _ => {
+                            return Err(WebError::bad_request(
+                                "invalid_include_superseded",
+                                "include_superseded must be true or false",
+                            ));
+                        }
+                    };
+                }
+                "limit" => params.limit = Some(parse_data_limit(&value)?),
+                "offset" => {
+                    params.offset = Some(value.parse::<u32>().map_err(|_| {
+                        WebError::bad_request(
+                            "invalid_data_offset",
+                            "offset must be a non-negative integer",
+                        )
+                    })?);
+                }
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{other}'"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(params)
+}
+
+fn parse_data_limit(value: &str) -> std::result::Result<u32, WebError> {
+    let limit = value.parse::<u32>().map_err(|_| {
+        WebError::bad_request("invalid_data_limit", "limit must be a positive integer")
+    })?;
+    if limit == 0 || limit > MAX_DATA_LIMIT {
+        return Err(WebError::bad_request(
+            "invalid_data_limit",
+            format!("limit must be between 1 and {MAX_DATA_LIMIT}"),
+        ));
+    }
+    Ok(limit)
+}
+
 fn format_sse_event(event: &EventEnvelope) -> String {
     let payload = serde_json::to_string(&event.data).expect("event payload serializes");
     format!("event: {}\ndata: {}\n\n", event.event, payload)
@@ -883,6 +1102,60 @@ mod tests {
         assert!(parse_session_detail_query(Some("session_id=session-1&offset=1")).is_err());
         assert!(
             parse_session_detail_query(Some("session_id=session-1&message_offset=old")).is_err()
+        );
+    }
+
+    #[test]
+    fn data_queries_require_identity_and_bound_windows() {
+        assert!(parse_worklist_items_query(None).is_err());
+        assert_eq!(
+            parse_worklist_items_query(Some("id=worklist-1&limit=40")).unwrap(),
+            ("worklist-1".to_string(), 40)
+        );
+        assert!(parse_worklist_items_query(Some("id=worklist-1&limit=0")).is_err());
+
+        let params = parse_memory_list_query(Some(
+            "scope_kind=agent&scope_key=researcher&include_superseded=true&limit=50&offset=100",
+        ))
+        .unwrap();
+        assert_eq!(params.scope_kind.as_deref(), Some("agent"));
+        assert_eq!(params.scope_key.as_deref(), Some("researcher"));
+        assert!(params.include_superseded);
+        assert_eq!(params.limit, Some(50));
+        assert_eq!(params.offset, Some(100));
+        assert!(parse_memory_list_query(Some("limit=251")).is_err());
+        assert!(parse_memory_list_query(Some("include_superseded=maybe")).is_err());
+    }
+
+    #[test]
+    fn session_title_requires_bounded_non_empty_values() {
+        assert!(
+            validate_session_title(&WebSessionTitleRequest {
+                session_id: "session-1".to_string(),
+                title: "Project review".to_string(),
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_session_title(&WebSessionTitleRequest {
+                session_id: "".to_string(),
+                title: "Project review".to_string(),
+            })
+            .is_err()
+        );
+        assert!(
+            validate_session_title(&WebSessionTitleRequest {
+                session_id: "session-1".to_string(),
+                title: " ".to_string(),
+            })
+            .is_err()
+        );
+        assert!(
+            validate_session_title(&WebSessionTitleRequest {
+                session_id: "session-1".to_string(),
+                title: "x".repeat(121),
+            })
+            .is_err()
         );
     }
 }

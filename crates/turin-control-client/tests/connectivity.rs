@@ -697,7 +697,7 @@ async fn control_client_remote_health_and_events_work() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn control_client_release_operator_ui_smoke() -> Result<()> {
     let daemon = DaemonHarness::start_with_harness(include_str!(
-        "../../../examples/harnesses/ui_release_operator/main.lua"
+        "../../../tests/fixtures/harnesses/ui_contract/main.lua"
     ))
     .await?;
     let client = ControlClient::connect(&ConnectionSpec::LocalEndpoint {
@@ -713,7 +713,7 @@ async fn control_client_release_operator_ui_smoke() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn control_client_release_operator_ui_smoke_remote() -> Result<()> {
     let daemon = DaemonHarness::start_with_harness(include_str!(
-        "../../../examples/harnesses/ui_release_operator/main.lua"
+        "../../../tests/fixtures/harnesses/ui_contract/main.lua"
     ))
     .await?;
     let remote = RemoteHarness::start(&daemon.config_path).await?;

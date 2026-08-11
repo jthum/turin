@@ -147,9 +147,9 @@ impl RemoteHarness {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn turin_web_release_operator_smoke() -> Result<()> {
+async fn turin_web_ui_contract_smoke() -> Result<()> {
     let daemon = DaemonHarness::start_with_harness(include_str!(
-        "../../../examples/harnesses/ui_release_operator/main.lua"
+        "../../../tests/fixtures/harnesses/ui_contract/main.lua"
     ))
     .await?;
     let server = start_web(WebServeOptions {
@@ -163,16 +163,16 @@ async fn turin_web_release_operator_smoke() -> Result<()> {
     let base_url = format!("http://{}", server.local_addr());
     let client = reqwest::Client::new();
 
-    assert_release_operator_web(&base_url, &client).await?;
+    assert_ui_contract_web(&base_url, &client).await?;
 
     server.stop().await?;
     daemon.stop().await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn turin_web_release_operator_smoke_remote() -> Result<()> {
+async fn turin_web_ui_contract_smoke_remote() -> Result<()> {
     let daemon = DaemonHarness::start_with_harness(include_str!(
-        "../../../examples/harnesses/ui_release_operator/main.lua"
+        "../../../tests/fixtures/harnesses/ui_contract/main.lua"
     ))
     .await?;
     let remote = RemoteHarness::start(&daemon.config_path).await?;
@@ -188,14 +188,14 @@ async fn turin_web_release_operator_smoke_remote() -> Result<()> {
     let base_url = format!("http://{}", server.local_addr());
     let client = reqwest::Client::new();
 
-    assert_release_operator_web(&base_url, &client).await?;
+    assert_ui_contract_web(&base_url, &client).await?;
 
     server.stop().await?;
     remote.stop().await?;
     daemon.stop().await
 }
 
-async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -> Result<()> {
+async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Result<()> {
     let html = client
         .get(format!("{base_url}/"))
         .send()
@@ -218,6 +218,7 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     assert!(css.contains("--accent"));
     assert!(css.contains(".assistant-view"));
     assert!(css.contains(".harness-view"));
+    assert!(css.contains(".data-explorer"));
 
     let js = client
         .get(format!("{base_url}/assets/app.js"))
@@ -252,6 +253,22 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
     let slot_id = opened["session"]["slot_id"]
         .as_str()
         .context("open session response should include slot id")?;
+
+    let renamed: Value = client
+        .put(format!("{base_url}/api/session/title"))
+        .json(&json!({
+            "session_id": session_id,
+            "title": "Web smoke conversation"
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(
+        renamed["session"]["metadata"]["title"],
+        "Web smoke conversation"
+    );
 
     let detail: Value = client
         .get(format!("{base_url}/api/session"))
@@ -643,6 +660,50 @@ async fn assert_release_operator_web(base_url: &str, client: &reqwest::Client) -
             .iter()
             .all(|item| item["action"]["name"] == "release.approve_next")
     );
+
+    let data_worklists: Value = client
+        .get(format!("{base_url}/api/data/worklists"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let release_worklist = data_worklists["worklists"]
+        .as_array()
+        .and_then(|worklists| {
+            worklists
+                .iter()
+                .find(|worklist| worklist["name"] == "release")
+        })
+        .context("data explorer should list the release worklist")?;
+    let release_worklist_id = release_worklist["public_id"]
+        .as_str()
+        .context("release worklist should expose its public id")?;
+
+    let data_items: Value = client
+        .get(format!("{base_url}/api/data/worklist-items"))
+        .query(&[("id", release_worklist_id), ("limit", "250")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(
+        data_items["list"]["items"].as_array().map(Vec::len),
+        Some(4)
+    );
+
+    let data_memories: Value = client
+        .get(format!("{base_url}/api/data/memories"))
+        .query(&[("limit", "100"), ("offset", "0")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(data_memories["list"]["total"], 0);
+    assert!(data_memories["list"]["memories"].is_array());
+    assert!(data_memories["list"]["scopes"].is_array());
 
     Ok(())
 }

@@ -107,12 +107,11 @@ A release console is useful when an operator can quickly answer:
 If those answers are easier to find in the Turin client than in a chat
 transcript, the release console is paying for itself.
 
-## Reference Fixture
+## Current Status
 
-Use `examples/harnesses/ui_release_operator` as the current reference shape.
-It exercises app screens, nested navigation, worklist-backed lists, forms,
-reports, charts, panes, badges, notices, focus/open/show/refresh hints, action
-confirmation, and local/remote web smoke coverage.
+Turin does not currently ship a ready-to-use Release Operator harness. The UI
+contract remains covered by internal fixtures while practical workflows are
+revisited after the core client surfaces mature.
 
 Related docs:
 

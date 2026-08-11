@@ -56,6 +56,12 @@ Session branch helpers:
 4. The session row is fetched by public id.
 5. Branch operations call persistence APIs, then reload live sessions when needed.
 
+Session metadata helpers:
+
+1. Lua calls `agent.session.set_title(title, opts?)`.
+2. The requested or active session resolves through the same store helper as branch operations.
+3. Normal updates preserve unrelated metadata; `if_empty = true` uses a database-side conditional update so generated titles cannot overwrite an existing title.
+
 ## Invariants
 
 - `agent.spawn` requires `runtime.agent.spawn`.
@@ -67,6 +73,8 @@ Session branch helpers:
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.
 - `agent.session.load` returns nil for missing sessions; branch APIs treat missing sessions as errors.
+- Session titles are trimmed, non-empty, and bounded to 120 characters at the Lua boundary.
+- Generated title policies should use `if_empty = true`; explicit retitles may overwrite.
 
 ## Common Changes
 
@@ -86,6 +94,7 @@ Change session branch behavior:
 cargo test -p turin --test harness_tests test_agent_persistence_store_overrides_default_scoped_data_store
 cargo test -p turin --test harness_tests test_agent_sidestep_creates_hidden_sibling_branch_on_current_session
 cargo test -p turin --test harness_tests test_agent_can_promote_detached_local_sidestep_result
+cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
 ```
 
 Change peer-agent delegation:

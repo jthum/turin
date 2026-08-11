@@ -5,13 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleActionParams, StoreTargetParams, WorkItemDetail,
-    WorkItemList, WorklistDetail,
+    ContextPersistenceParams, ScheduleActionParams, WorkItemDetail, WorkItemList, WorklistDetail,
 };
 
 use super::DaemonState;
-use crate::kernel::config::ContextPersistenceConfig;
-use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{WorkItemRow, WorklistRow};
 use crate::persistence::state::StateStore;
 use crate::work_items::{
@@ -149,47 +146,11 @@ impl DaemonState {
         &self,
         persistence: Option<&ContextPersistenceParams>,
     ) -> Result<Arc<StateStore>> {
-        let selector = resolve_worklist_store_selector(&self.bootstrap_config, persistence)?;
+        let selector = super::helpers::context_store_selector_from_params(
+            &self.bootstrap_config,
+            persistence,
+        )?;
         self.kernel.store_manager().open(&selector).await
-    }
-}
-
-fn resolve_worklist_store_selector(
-    config: &crate::kernel::config::TurinConfig,
-    persistence: Option<&ContextPersistenceParams>,
-) -> Result<StoreSelector> {
-    let Some(persistence) = persistence else {
-        return config.persistence.top_level_state_selector();
-    };
-    let context = ContextPersistenceConfig {
-        state: persistence
-            .state
-            .as_ref()
-            .map(store_target_config_from_params),
-        store: persistence
-            .store
-            .as_ref()
-            .map(store_target_config_from_params),
-    };
-    if persistence.store.is_some() {
-        config
-            .persistence
-            .resolve_context_store_selector(Some(&context))
-    } else if persistence.state.is_some() {
-        config
-            .persistence
-            .resolve_context_state_selector(Some(&context))
-    } else {
-        config.persistence.top_level_state_selector()
-    }
-}
-
-fn store_target_config_from_params(
-    value: &StoreTargetParams,
-) -> crate::kernel::config::StoreTargetConfig {
-    crate::kernel::config::StoreTargetConfig {
-        path: value.path.clone(),
-        alias: value.alias.clone(),
     }
 }
 

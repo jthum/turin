@@ -11,7 +11,7 @@
     TurinEvent,
     TurinStatus,
   } from "../lib/types";
-  import { humanize, messageText, sameSession, titleForSession } from "../lib/format";
+  import { fullDate, humanize, messageText, messageTimestamp, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 
@@ -38,16 +38,22 @@
   let error = "";
   let resumeFailed = false;
   let copiedSession = false;
+  let editingTitle = false;
+  let titleDraft = "";
+  let titleSaving = false;
+  let titleError = "";
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
   let optimisticPrompt = "";
+  let optimisticCreatedAt = "";
   let responsePhase = "Preparing request";
   let responseElapsedMs = 0;
   let responseStartedAt: number | null = null;
   let liveRequestMetrics: InferenceRequestMetrics | null = null;
   let transcript: HTMLDivElement;
   let composer: HTMLTextAreaElement;
+  let titleInput: HTMLInputElement;
   let subscription: EventSubscription | null = null;
   let refreshTimer: number | undefined;
   let deltaFrame: number | undefined;
@@ -97,6 +103,7 @@
     detail = null;
     streamText = "";
     optimisticPrompt = "";
+    optimisticCreatedAt = "";
     liveRequestMetrics = null;
     stopResponseStatus();
     messageOffset = undefined;
@@ -105,6 +112,8 @@
     measuredHeights.clear();
     error = "";
     resumeFailed = false;
+    editingTitle = false;
+    titleError = "";
     subscription?.close();
     subscription = null;
     if (!sessionId) return;
@@ -149,6 +158,7 @@
         : Math.max(0, nextMessages.length - RENDER_WINDOW_SIZE);
       detail = next;
       optimisticPrompt = "";
+      optimisticCreatedAt = "";
       if (retireStream) {
         streamText = "";
         pendingDelta = "";
@@ -159,7 +169,7 @@
       if (anchor) {
         restoreAnchor(anchor);
       } else {
-        scrollToBottom();
+        await scrollToLatest();
       }
     } catch (reason) {
       if (version !== requestVersion) return;
@@ -285,6 +295,7 @@
       }
       startResponseStatus();
       optimisticPrompt = value;
+      optimisticCreatedAt = new Date().toISOString();
       prompt = "";
       messageOffset = undefined;
       followLatest = true;
@@ -302,6 +313,7 @@
       resumeFailed = resuming;
       if (!prompt) prompt = value;
       optimisticPrompt = "";
+      optimisticCreatedAt = "";
       stopResponseStatus();
     } finally {
       sending = false;
@@ -373,6 +385,10 @@
 
   function percentage(numerator: number, denominator: number): string {
     return denominator > 0 ? `${Math.round((numerator / denominator) * 100)}%` : "0%";
+  }
+
+  function isReported(value: number | null | undefined): value is number {
+    return value !== null && value !== undefined;
   }
 
   function onComposerKeydown(event: KeyboardEvent) {
@@ -522,17 +538,75 @@
   function scrollToBottom() {
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
   }
+
+  async function scrollToLatest() {
+    await tick();
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+    scrollToBottom();
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+    scrollToBottom();
+  }
+
+  async function startTitleEdit() {
+    if (!selectedSummary) return;
+    titleDraft = titleForSession(selectedSummary);
+    titleError = "";
+    editingTitle = true;
+    await tick();
+    titleInput?.select();
+  }
+
+  async function saveTitle() {
+    const title = titleDraft.trim();
+    if (!selectedSessionId || !title || titleSaving) return;
+    titleSaving = true;
+    titleError = "";
+    try {
+      const session = await client.setSessionTitle(selectedSessionId, title);
+      if (detail && sameSession(detail.session.session_id, session.session_id)) {
+        detail = { ...detail, session };
+      }
+      editingTitle = false;
+      await onStatusChanged();
+    } catch (reason) {
+      titleError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      titleSaving = false;
+    }
+  }
+
+  function onTitleKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void saveTitle();
+    } else if (event.key === "Escape") {
+      editingTitle = false;
+      titleError = "";
+    }
+  }
 </script>
 
 <section class="assistant-view">
   <header class="view-header assistant-header">
     <div>
       <div class="title-line">
-        <h1>{selectedSummary ? titleForSession(selectedSummary) : "Assistant"}</h1>
+        {#if editingTitle}
+          <div class="session-title-editor">
+            <input bind:this={titleInput} bind:value={titleDraft} maxlength="120" aria-label="Session title" onkeydown={onTitleKeydown} />
+            <button disabled={!titleDraft.trim() || titleSaving} onclick={saveTitle}>{titleSaving ? "Saving" : "Save"}</button>
+            <button onclick={() => editingTitle = false}>Cancel</button>
+          </div>
+        {:else}
+          <h1>{selectedSummary ? titleForSession(selectedSummary) : "Assistant"}</h1>
+          {#if selectedSummary}
+            <button class="title-edit-button" aria-label="Rename conversation" title="Rename conversation" onclick={startTitleEdit}><Icon name="edit" size={13} /></button>
+          {/if}
+        {/if}
         {#if selectedLive?.active_tasks}
           <span class="working-badge"><i></i>Working</span>
         {/if}
       </div>
+      {#if titleError}<span class="title-error">{titleError}</span>{/if}
       {#if sessionReference}
         <button class="session-reference" title={sessionReference} onclick={copySessionReference}>
           <Icon name="copy" size={13} /><span>{copiedSession ? "Copied" : `Session ${sessionReference.split("@", 1)[0]}`}</span>
@@ -558,6 +632,9 @@
             <div class="efficiency-totals">
               <div><span>Provider input</span><strong>{formatTokens(efficiency?.total_input_tokens ?? 0)}</strong><small>measured</small></div>
               <div><span>Provider output</span><strong>{formatTokens(efficiency?.total_output_tokens ?? 0)}</strong><small>measured</small></div>
+              {#if efficiency?.provider_cache_metrics_available}
+                <div><span>Cache reads</span><strong>{formatTokens(efficiency.total_cache_read_input_tokens)}</strong><small>provider reported</small></div>
+              {/if}
               <div><span>Requests</span><strong>{efficiency?.total_request_count ?? 0}</strong><small>provider calls</small></div>
             </div>
 
@@ -596,9 +673,21 @@
                 </div>
                 <div>
                   <span>Provider cache read</span>
-                  <strong>Unavailable</strong>
-                  <small>The SDK does not expose cache counters yet</small>
+                  {#if isReported(latestRequestRecord?.cache_read_input_tokens)}
+                    <strong>{formatTokens(latestRequestRecord.cache_read_input_tokens)} · {percentage(latestRequestRecord.cache_read_input_tokens, latestRequestRecord.input_tokens ?? 0)}</strong>
+                    <small>Reported cached subset of provider input</small>
+                  {:else}
+                    <strong>Unavailable</strong>
+                    <small>This provider did not report cache-read usage</small>
+                  {/if}
                 </div>
+                {#if isReported(latestRequestRecord?.cache_creation_input_tokens)}
+                  <div>
+                    <span>Provider cache creation</span>
+                    <strong>{formatTokens(latestRequestRecord.cache_creation_input_tokens)}</strong>
+                    <small>Input used to populate the provider cache</small>
+                  </div>
+                {/if}
               </section>
 
               {#if requestReduction(latestRequest) > 0 || latestRequest.dropped_messages || latestRequest.truncated_tool_results}
@@ -679,7 +768,10 @@
               data-message-id={message.id}
               use:measureMessage={message.id}
             >
-              <div class="message-author">{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</div>
+              <div class="message-author">
+                <span>{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</span>
+                <time datetime={message.created_at} title={fullDate(message.created_at)}>{messageTimestamp(message.created_at)}</time>
+              </div>
               {#if body}
                 <div class="message-body">
                   {#if message.role.toLowerCase() === "user"}
@@ -718,6 +810,8 @@
                             <div><span>Input budget</span><strong>{percentage(request.metrics.estimated_input_tokens, request.metrics.input_budget_tokens)}</strong></div>
                             <div><span>Payload</span><strong>~{formatBytes(request.metrics.estimated_payload_bytes)}</strong></div>
                             <div><span>Reusable prefix</span><strong>~{formatTokens(request.metrics.reusable_prefix_tokens)}</strong></div>
+                            {#if isReported(request.cache_read_input_tokens)}<div><span>Cache read</span><strong>{formatTokens(request.cache_read_input_tokens)}</strong></div>{/if}
+                            {#if isReported(request.cache_creation_input_tokens)}<div><span>Cache creation</span><strong>{formatTokens(request.cache_creation_input_tokens)}</strong></div>{/if}
                             <div><span>Messages</span><strong>{request.metrics.sent_message_count} / {request.metrics.available_message_count}</strong></div>
                             <div><span>Reduced</span><strong>~{formatTokens(requestReduction(request.metrics))}</strong></div>
                           </div>
@@ -734,7 +828,7 @@
         {/each}
         <div class="message-spacer" style={`height: ${bottomSpacerHeight}px`}></div>
         {#if optimisticPrompt}
-          <article class="message user optimistic"><div class="message-author">You</div><div class="message-body"><span class="plain-message">{optimisticPrompt}</span></div></article>
+          <article class="message user optimistic"><div class="message-author"><span>You</span><time datetime={optimisticCreatedAt} title={fullDate(optimisticCreatedAt)}>{messageTimestamp(optimisticCreatedAt)}</time></div><div class="message-body"><span class="plain-message">{optimisticPrompt}</span></div></article>
         {/if}
         {#if streamText || selectedLive?.active_tasks}
           <article class="message streaming">

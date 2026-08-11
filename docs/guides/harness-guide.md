@@ -180,7 +180,9 @@ Notes:
 - `tool.declare(...)` is load-time only, just like `use(...)` and `watch(...)`
 - `params` is sugar that Turin normalizes into JSON Schema before sending the tool to the provider
 - `input_schema = {...}` is still available when you need the full JSON Schema shape directly
-- handlers run in the normal harness environment, so they can use `runtime.*`, DX helpers, memory, KV, and policy checks to decide which native calls to return
+- handlers run in the normal harness environment, so they can use `runtime.*`, DX helpers, memory, KV, DB, session helpers, and policy checks
+- handlers may return a direct string or `{ content = "...", is_error = bool? }` after performing Lua-side work, or return nested calls for Turin to execute
+- `follow_up = "if_no_response"` avoids another provider request when the assistant already streamed a response alongside the tool call; tool-only responses still continue
 - `tool.call(...)` and `tool.sequence(...)` accept an optional callback that receives structured nested results after execution
 - callbacks may return final content or another `tool.call(...)` / `tool.sequence(...)` follow-up plan
 - handlers still do not await nested tool results inline; result callbacks run after Turin finishes the nested native tool execution
@@ -188,6 +190,43 @@ Notes:
 - declaration order does not matter; virtual tool names are resolved after harness load completes
 - virtual tools can call other virtual tools
 - Turin rejects recursive virtual-tool chains and enforces a max virtual nesting depth of `8`
+
+Tools can be selected for each inference without changing their load-time declarations:
+
+```lua
+tool.declare("set_conversation_title", {
+  description = "Set a concise title for the current conversation",
+  follow_up = "if_no_response",
+  params = {
+    title = { type = "string", required = true, maxLength = 80 },
+  },
+  handler = function(args)
+    agent.session.set_title(args.title, { if_empty = true })
+    return "Conversation title recorded"
+  end,
+})
+
+function on_turn_prepare(turn)
+  turn.tools:exclude("set_conversation_title")
+
+  if turn.session.is_first_user_message
+    and turn.session.title == nil
+  then
+    turn.tools:include("set_conversation_title")
+    turn.system_prompt = turn.system_prompt .. [[
+
+Choose a concise title for this conversation. While answering the user
+normally, also call set_conversation_title exactly once.]]
+  end
+
+  return ALLOW
+end
+```
+
+`turn.tools:only(...)` starts from a narrow set, `include(...)` adds tools,
+`exclude(...)` removes tools, and `all()` restores every tool available to the
+turn. This reduces provider context and tool-selection ambiguity; it does not
+replace tool policy, governance, or `on_tool_call` validation.
 
 ## Writing With the DX Layer
 
@@ -673,9 +712,8 @@ Useful rules:
 - Start with one screen, one useful list, and one action or form. Add reports,
   charts, activity, detail panes, and badges only when the workflow needs them.
 
-For a runnable example that exercises screens, menus, lists, forms, reports,
-charts, panes, dynamic notices, badges, focus, show, and refresh, see
-`examples/harnesses/ui_release_operator/main.lua`.
+The complete UI contract remains covered by an internal test fixture without
+presenting that fixture as a ready-to-use workflow.
 
 ### Grant wrapper
 

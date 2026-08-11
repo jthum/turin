@@ -22,7 +22,6 @@ cargo test --test example_harness_examples
 
 Current highlighted entries:
 
-- `library/workflows/turin_development_desk/` — durable, UI-enabled dogfooding workspace for planning, building, reviewing, and shipping Turin
 - `library/workflows/openclaw_style_personal_assistant/` — workspace-contract personal assistant with planner/reviewer routing and durable artifacts
 - `library/workflows/full_coding_harness/` — spec/task-driven coding workflow with planner + reviewer specialists
 - `library/workflows/bug_triage_desk/` — issue-intake workflow with triager + responder specialists

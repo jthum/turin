@@ -477,7 +477,10 @@ fn session_efficiency_from_events(
     let mut latest_compaction = None;
     let mut total_input_tokens = 0_u64;
     let mut total_output_tokens = 0_u64;
+    let mut total_cache_read_input_tokens = 0_u64;
+    let mut total_cache_creation_input_tokens = 0_u64;
     let mut total_request_count = 0_usize;
+    let mut provider_cache_metrics_available = false;
 
     for event in events {
         let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
@@ -504,6 +507,8 @@ fn session_efficiency_from_events(
                     metrics: Some(metrics),
                     input_tokens: None,
                     output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     created_at: event.created_at.clone(),
                 });
                 turn.created_at = event.created_at;
@@ -520,8 +525,24 @@ fn session_efficiency_from_events(
                     .get("output_tokens")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
+                let cache_read_input_tokens = payload
+                    .get("cache_read_input_tokens")
+                    .and_then(serde_json::Value::as_u64);
+                let cache_creation_input_tokens = payload
+                    .get("cache_creation_input_tokens")
+                    .and_then(serde_json::Value::as_u64);
                 total_input_tokens = total_input_tokens.saturating_add(input_tokens);
                 total_output_tokens = total_output_tokens.saturating_add(output_tokens);
+                if let Some(tokens) = cache_read_input_tokens {
+                    provider_cache_metrics_available = true;
+                    total_cache_read_input_tokens =
+                        total_cache_read_input_tokens.saturating_add(tokens);
+                }
+                if let Some(tokens) = cache_creation_input_tokens {
+                    provider_cache_metrics_available = true;
+                    total_cache_creation_input_tokens =
+                        total_cache_creation_input_tokens.saturating_add(tokens);
+                }
                 if visible_turn_indexes.is_some_and(|visible| !visible.contains(&turn_index)) {
                     continue;
                 }
@@ -538,11 +559,15 @@ fn session_efficiency_from_events(
                 {
                     request.input_tokens = Some(input_tokens);
                     request.output_tokens = Some(output_tokens);
+                    request.cache_read_input_tokens = cache_read_input_tokens;
+                    request.cache_creation_input_tokens = cache_creation_input_tokens;
                 } else {
                     turn.requests.push(SessionRequestEfficiencyDetail {
                         metrics: None,
                         input_tokens: Some(input_tokens),
                         output_tokens: Some(output_tokens),
+                        cache_read_input_tokens,
+                        cache_creation_input_tokens,
                         created_at: event.created_at.clone(),
                     });
                 }
@@ -582,10 +607,12 @@ fn session_efficiency_from_events(
     SessionEfficiencyDetail {
         total_input_tokens,
         total_output_tokens,
+        total_cache_read_input_tokens,
+        total_cache_creation_input_tokens,
         total_request_count,
         turns,
         latest_compaction,
-        provider_cache_metrics_available: false,
+        provider_cache_metrics_available,
     }
 }
 
@@ -791,7 +818,11 @@ mod tests {
             efficiency_event(
                 2,
                 "message_end",
-                json!({ "input_tokens": 101, "output_tokens": 12 }),
+                json!({
+                    "input_tokens": 101,
+                    "output_tokens": 12,
+                    "cache_read_input_tokens": 80
+                }),
             ),
             efficiency_event(
                 3,
@@ -804,7 +835,12 @@ mod tests {
             efficiency_event(
                 4,
                 "message_end",
-                json!({ "input_tokens": 143, "output_tokens": 29 }),
+                json!({
+                    "input_tokens": 143,
+                    "output_tokens": 29,
+                    "cache_read_input_tokens": 60,
+                    "cache_creation_input_tokens": 20
+                }),
             ),
         ];
 
@@ -816,6 +852,17 @@ mod tests {
         assert_eq!(efficiency.turns[0].requests[1].input_tokens, Some(143));
         assert_eq!(efficiency.total_input_tokens, 244);
         assert_eq!(efficiency.total_output_tokens, 41);
+        assert_eq!(efficiency.total_cache_read_input_tokens, 140);
+        assert_eq!(efficiency.total_cache_creation_input_tokens, 20);
+        assert!(efficiency.provider_cache_metrics_available);
+        assert_eq!(
+            efficiency.turns[0].requests[0].cache_read_input_tokens,
+            Some(80)
+        );
+        assert_eq!(
+            efficiency.turns[0].requests[1].cache_creation_input_tokens,
+            Some(20)
+        );
     }
 
     fn efficiency_event(id: i64, event_type: &str, payload: serde_json::Value) -> EventRow {

@@ -89,9 +89,9 @@ sessions.
 
 ### Release Desk
 
-Start with `examples/harnesses/ui_release_operator`. Keep the first version
-worklist-backed: approvals, a seed action, a detail pane, and a readiness
-summary.
+Keep the first version worklist-backed: approvals, one real action, a detail
+pane, and a readiness summary. Add custom UI only after the underlying release
+workflow is useful from the default client.
 
 ### Documentation Team
 

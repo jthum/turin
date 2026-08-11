@@ -14,7 +14,7 @@ use crate::harness::globals::{self, HarnessAppData, HarnessExecutionBinding};
 use crate::harness::stdlib::{action_bindings, runtime_signal, tool_bindings, ui_bindings};
 use crate::harness::verdict::{Verdict, compose_verdicts};
 use crate::harness::virtual_tools::{
-    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution,
+    DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
 };
 use crate::kernel::event::{KernelEvent, UiEvent};
 
@@ -573,8 +573,16 @@ impl HarnessEngine {
         &self,
         name: &str,
         args: serde_json::Value,
-    ) -> Result<Option<VirtualToolPlan>> {
+    ) -> Result<Option<VirtualToolResultResolution>> {
         tool_bindings::invoke_declared_virtual_tool(&self.lua, name, args)
+    }
+
+    pub fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>> {
+        Ok(self
+            .declared_virtual_tools()?
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .map(|tool| tool.follow_up))
     }
 
     pub fn dispatch_runtime_signal(

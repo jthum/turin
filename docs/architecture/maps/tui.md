@@ -124,7 +124,7 @@ Add a harness UI node renderer:
 
 1. Update `harness_ui.rs`.
 2. Preserve fallback text for unsupported terminal renderings.
-3. Check the `examples/harnesses/ui_release_operator` fixture still loads and
+3. Check the test-only UI contract fixture still loads and
    remains usable.
 
 Add a command or keybinding:
@@ -140,7 +140,7 @@ Focused checks:
 ```sh
 cargo check -p turin-tui
 cargo check -p turin-ui-core
-cargo test -p turin --lib harness::engine::tests::test_ui_release_operator_example_loads
+cargo test -p turin --lib harness::engine::tests::test_ui_contract_fixture_loads
 ```
 
 Basic checks:

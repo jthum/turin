@@ -70,8 +70,9 @@ Persisted session detail:
    a bounded request-efficiency projection. High-volume stream deltas are
    filtered in SQL rather than materialized for this projection.
 6. Rows are converted into daemon-facing detail structs. Per-turn request
-   estimates are paired with provider-reported input/output usage when both
-   exist, while older sessions remain valid without request telemetry.
+   estimates are paired with provider-reported input/output and optional
+   prompt-cache usage when present, while older sessions remain valid without
+   request telemetry or cache counters.
 
 Branch activation/checkout:
 
@@ -88,6 +89,9 @@ Branch activation/checkout:
   persisted messages or change the runtime hot-history policy.
 - Efficiency detail is also a read projection. It must preserve the distinction
   between provider-measured usage and Turin-estimated request composition.
+- Cache-read and cache-creation counts remain optional provider measurements;
+  absence must not be rendered as a measured zero or inferred from Turin's
+  reusable-prefix estimate.
 - Offset session windows are indexed from the oldest active-branch message and
   may contain slightly more than the requested limit to preserve complete turns.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.

@@ -30,6 +30,7 @@ pub(super) enum TurnPreflight {
 pub(super) struct PreparedTurnStream {
     pub provider_name: String,
     pub model: String,
+    pub exposed_tool_names: BTreeSet<String>,
     pub stream: Pin<Box<dyn Stream<Item = Result<KernelEvent>> + Send>>,
 }
 
@@ -41,6 +42,7 @@ pub(super) struct TurnRequestState {
     system_prompt: String,
     thinking_budget: u32,
     request_options_override: RequestOptionsOverride,
+    tool_exposure: crate::harness::context::ToolExposure,
 }
 
 fn requested_context_label(route: &ResolvedInferenceRoute) -> &str {
@@ -87,15 +89,17 @@ impl ExecutionHost {
             return Ok(TurnPreflight::Rejected);
         }
 
+        let tool_definitions = self.tool_definitions_for_session(session, turn_ctx)?;
+
         if self
-            .emit_turn_prepare_and_apply_hook(session, turn_ctx, &mut req)
+            .emit_turn_prepare_and_apply_hook(session, turn_ctx, &tool_definitions, &mut req)
             .await?
         {
             return Ok(TurnPreflight::Rejected);
         }
 
         let prepared = self
-            .build_prepared_turn_stream(session, turn_ctx, req)
+            .build_prepared_turn_stream(session, req, tool_definitions)
             .await?;
         Ok(TurnPreflight::Ready(prepared))
     }
@@ -113,6 +117,7 @@ impl ExecutionHost {
                 .and_then(|t| if t.enabled { t.budget_tokens } else { None })
                 .unwrap_or(0),
             request_options_override: RequestOptionsOverride::default(),
+            tool_exposure: crate::harness::context::ToolExposure::default(),
         })
     }
 
@@ -145,6 +150,17 @@ impl ExecutionHost {
         }
 
         Ok(tools)
+    }
+
+    async fn session_title(&self, session: &SessionState) -> Result<Option<String>> {
+        let Some(internal_id) = session.internal_id else {
+            return Ok(None);
+        };
+        let store = self.store_manager.open(&session.store_selector).await?;
+        let row = store.get_session_row(internal_id).await?;
+        Ok(row.and_then(|row| {
+            crate::kernel::session_metadata::session_title_from_metadata(row.metadata.as_deref())
+        }))
     }
 
     fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
@@ -202,6 +218,7 @@ impl ExecutionHost {
         &mut self,
         session: &mut SessionState,
         turn_ctx: &TurnContext,
+        available_tools: &[serde_json::Value],
         req: &mut TurnRequestState,
     ) -> Result<bool> {
         self.persist_event(
@@ -226,8 +243,15 @@ impl ExecutionHost {
         }
 
         if has_prepare_hook && let Some(harness) = self.session_harness_engine(session) {
+            let available_tool_names = available_tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+                .map(ToOwned::to_owned)
+                .collect();
             let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
             let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
+            let session_id = self.session_reference(session);
+            let session_title = self.session_title(session).await?;
             let engine = harness.lock().expect("session harness mutex poisoned");
             let ctx = ContextWrapper::new(
                 req.inference_context.clone(),
@@ -248,6 +272,9 @@ impl ExecutionHost {
                 self.config.clone(),
                 session.identity.agent_id().to_string(),
                 session.inference.clone(),
+                session_id,
+                session_title,
+                available_tool_names,
             );
 
             match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
@@ -273,6 +300,7 @@ impl ExecutionHost {
             req.provider_name = state.provider;
             req.thinking_budget = state.thinking_budget;
             req.request_options_override = state.request_options;
+            req.tool_exposure = state.tool_exposure;
         }
 
         Ok(false)
@@ -281,10 +309,19 @@ impl ExecutionHost {
     async fn build_prepared_turn_stream(
         &mut self,
         session: &mut SessionState,
-        turn_ctx: &TurnContext,
         req: TurnRequestState,
+        mut tools: Vec<serde_json::Value>,
     ) -> Result<PreparedTurnStream> {
-        let tools = self.tool_definitions_for_session(session, turn_ctx)?;
+        tools.retain(|tool| {
+            tool.get("name")
+                .and_then(|value| value.as_str())
+                .is_some_and(|name| req.tool_exposure.exposes(name))
+        });
+        let exposed_tool_names = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .map(ToOwned::to_owned)
+            .collect();
         let effective_inference = self.config.effective_inference_config_for_agent(
             session.identity.agent_id(),
             Some(&session.inference),
@@ -448,6 +485,7 @@ impl ExecutionHost {
                     return Ok(PreparedTurnStream {
                         provider_name: candidate.provider_name,
                         model: candidate.model,
+                        exposed_tool_names,
                         stream,
                     });
                 }

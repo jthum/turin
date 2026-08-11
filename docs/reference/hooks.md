@@ -169,6 +169,18 @@ The runtime passes a userdata object with property access and mutation support. 
 - `ctx.max_input_tokens`
 - `ctx.thinking_budget`
 - `ctx.request_options`
+- `ctx.session`
+  - `id`
+  - `title` (optional)
+  - `user_message_count`
+  - `is_first_user_message`
+- `ctx.tools`
+  - `only(name_or_names)`
+  - `include(name_or_names)`
+  - `exclude(name_or_names)`
+  - `all()`
+  - `available() -> names`
+  - `exposed() -> names`
 
 Related runtime helper:
 
@@ -198,6 +210,9 @@ Notes:
 - `ctx.prompt` is text-only and ignores image/file parts when deriving the latest prompt.
 - If the latest user message has only attachments, `ctx.prompt` is `nil`.
 - Assigning `ctx.prompt` rewrites the text portion of the latest user message and leaves non-text attachments intact.
+- Tool declarations remain load-time. `ctx.tools` selects which available native and virtual tool definitions are sent for this inference.
+- Tool exposure is not authorization. Turin still applies native tool policy, governance, and `on_tool_call` when a call executes.
+- Unknown or unavailable names passed to `ctx.tools` raise a harness error rather than silently changing the request.
 
 ### Methods
 

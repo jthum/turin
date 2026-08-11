@@ -643,6 +643,38 @@ pub struct MemoryRow {
     pub superseded_at: Option<String>,
 }
 
+/// A memory row projected for read-only operator inspection.
+#[derive(Debug, Clone)]
+pub struct MemoryInspectionRow {
+    pub public_id: Vec<u8>,
+    pub scope_kind: String,
+    pub scope_key: String,
+    pub content: String,
+    pub metadata: Option<String>,
+    pub embedded: bool,
+    pub embedding_key: Option<String>,
+    pub embedding_dimensions: Option<u32>,
+    pub weight: f64,
+    pub retrieval_count: u64,
+    pub last_retrieved_at: Option<String>,
+    pub superseded_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryInspectionScopeRow {
+    pub scope_kind: String,
+    pub scope_key: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryInspectionPage {
+    pub rows: Vec<MemoryInspectionRow>,
+    pub scopes: Vec<MemoryInspectionScopeRow>,
+    pub total: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryStorageKind {
     LexicalOnly,

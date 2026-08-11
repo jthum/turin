@@ -4,7 +4,7 @@ mod virtual_tools;
 
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use crate::display;
 use crate::harness::verdict::Verdict;
-use crate::harness::virtual_tools::VirtualToolPlan;
+use crate::harness::virtual_tools::{VirtualToolPlan, VirtualToolResultResolution};
 use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
@@ -45,6 +45,7 @@ struct FinalToolRecord {
 enum ExecutionArtifact {
     Native(ToolEffect),
     VirtualPlan(VirtualToolPlan),
+    VirtualOutput { content: String, is_error: bool },
 }
 
 impl ExecutionHost {
@@ -54,13 +55,17 @@ impl ExecutionHost {
         session: &mut SessionState,
         tool_ctx: &ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
+        exposed_tool_names: &BTreeSet<String>,
     ) -> Result<TurnOutcome> {
         if session.cancel_token.is_cancelled() {
             return Ok(TurnOutcome::Cancelled);
         }
 
-        let (immediate_records, validated_calls) =
-            self.evaluate_pending_tool_calls(session, &pending_tool_calls);
+        let (immediate_records, validated_calls) = self.evaluate_pending_tool_calls(
+            session,
+            &pending_tool_calls,
+            Some(exposed_tool_names),
+        );
         let (immediate_records, validated_calls) =
             self.apply_tool_rate_limit(session, immediate_records, validated_calls);
         let final_by_id = self
@@ -94,7 +99,7 @@ impl ExecutionHost {
             }
 
             let (immediate_records, validated_calls) =
-                self.evaluate_pending_tool_calls(session, &pending_tool_calls);
+                self.evaluate_pending_tool_calls(session, &pending_tool_calls, None);
             let (immediate_records, validated_calls) =
                 self.apply_tool_rate_limit(session, immediate_records, validated_calls);
             let final_by_id = self
@@ -119,12 +124,31 @@ impl ExecutionHost {
         &self,
         session: &SessionState,
         pending_tool_calls: &[PendingToolCall],
+        exposed_tool_names: Option<&BTreeSet<String>>,
     ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
         let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
         let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
         let ansi_stdout = display::stdout_ansi();
 
         for tc in pending_tool_calls {
+            if exposed_tool_names.is_some_and(|names| !names.contains(&tc.name)) {
+                warn!(tool = %tc.name, "Tool call rejected because it was not exposed for this inference");
+                immediate_records.push(FinalToolRecord {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    args: tc.args.clone(),
+                    verdict: "not_exposed".to_string(),
+                    duration_ms: 0,
+                    content: format!(
+                        "[NOT EXPOSED] Tool '{}' was not available for this inference",
+                        tc.name
+                    ),
+                    is_error: true,
+                    emit_exec_start: true,
+                    governance_denial: None,
+                });
+                continue;
+            }
             let verdict = self.evaluate_tool_call(session, &tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
@@ -315,7 +339,15 @@ impl ExecutionHost {
                     };
 
                     match plan_res {
-                        Ok(Some(plan)) => Ok(ExecutionArtifact::VirtualPlan(plan)),
+                        Ok(Some(VirtualToolResultResolution::Plan(plan))) => {
+                            Ok(ExecutionArtifact::VirtualPlan(plan))
+                        }
+                        Ok(Some(VirtualToolResultResolution::Output(output))) => {
+                            Ok(ExecutionArtifact::VirtualOutput {
+                                content: output.content,
+                                is_error: output.is_error,
+                            })
+                        }
                         Ok(None) => Err(ToolError::ExecutionError(format!(
                             "Unknown tool: {}",
                             tc.name
@@ -436,6 +468,13 @@ impl ExecutionHost {
                             is_error = true;
                         }
                     }
+                }
+                ExecutionArtifact::VirtualOutput {
+                    content: output,
+                    is_error: output_is_error,
+                } => {
+                    content = output;
+                    is_error = is_error || output_is_error;
                 }
             }
 

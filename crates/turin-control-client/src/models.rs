@@ -351,6 +351,10 @@ pub struct SessionEfficiencyDetail {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     #[serde(default)]
+    pub total_cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub total_cache_creation_input_tokens: u64,
+    #[serde(default)]
     pub total_request_count: usize,
     #[serde(default)]
     pub turns: Vec<SessionTurnEfficiencyDetail>,
@@ -378,6 +382,10 @@ pub struct SessionRequestEfficiencyDetail {
     pub input_tokens: Option<u64>,
     #[serde(default)]
     pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
     pub created_at: String,
 }
 

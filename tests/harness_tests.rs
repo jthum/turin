@@ -47,6 +47,8 @@ impl InferenceProvider for ToolMockProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 10,
                     output_tokens: 5,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ];
@@ -90,6 +92,8 @@ impl InferenceProvider for HeaderCaptureProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 1,
                     output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ];
@@ -120,6 +124,8 @@ impl InferenceProvider for FixedTextProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 1,
                     output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ];
@@ -133,6 +139,69 @@ struct VirtualToolProvider {
     tool_args: serde_json::Value,
     seen_tools: Arc<std::sync::Mutex<Vec<String>>>,
     stage: Arc<std::sync::Mutex<u32>>,
+}
+
+struct ConditionalTitleToolProvider {
+    seen_tools: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+    request_count: Arc<std::sync::Mutex<u32>>,
+}
+
+impl InferenceProvider for ConditionalTitleToolProvider {
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let seen_tools = self.seen_tools.clone();
+        let request_count = self.request_count.clone();
+        Box::pin(async move {
+            let tool_names = request
+                .tools
+                .as_ref()
+                .map(|tools| tools.iter().map(|tool| tool.name.clone()).collect())
+                .unwrap_or_default();
+            seen_tools.lock().unwrap().push(tool_names);
+
+            let current = {
+                let mut count = request_count.lock().unwrap();
+                let current = *count;
+                *count += 1;
+                current
+            };
+            let mut events = vec![Ok(InferenceEvent::MessageStart {
+                role: "assistant".to_string(),
+                model: "mock-model".to_string(),
+                provider_id: "mock".to_string(),
+            })];
+            events.push(Ok(InferenceEvent::MessageDelta {
+                content: if current == 0 {
+                    "Let us inspect the memory behavior.".to_string()
+                } else {
+                    "The title tool is no longer needed.".to_string()
+                },
+            }));
+            if current == 0 {
+                events.push(Ok(InferenceEvent::ToolCallStart {
+                    id: "set-title-call".to_string(),
+                    name: "set_conversation_title".to_string(),
+                }));
+                events.push(Ok(InferenceEvent::ToolCallDelta {
+                    delta: serde_json::json!({
+                        "title": "Investigate session memory growth"
+                    })
+                    .to_string(),
+                }));
+            }
+            events.push(Ok(InferenceEvent::MessageEnd {
+                input_tokens: 10,
+                output_tokens: 8,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
+                stop_reason: None,
+            }));
+            Ok(Box::pin(stream::iter(events)) as InferenceStream)
+        })
+    }
 }
 
 impl InferenceProvider for VirtualToolProvider {
@@ -177,6 +246,8 @@ impl InferenceProvider for VirtualToolProvider {
                     Ok(InferenceEvent::MessageEnd {
                         input_tokens: 8,
                         output_tokens: 5,
+                        cache_read_input_tokens: None,
+                        cache_creation_input_tokens: None,
                         stop_reason: None,
                     }),
                 ]
@@ -193,6 +264,8 @@ impl InferenceProvider for VirtualToolProvider {
                     Ok(InferenceEvent::MessageEnd {
                         input_tokens: 4,
                         output_tokens: 2,
+                        cache_read_input_tokens: None,
+                        cache_creation_input_tokens: None,
                         stop_reason: None,
                     }),
                 ]
@@ -451,6 +524,148 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
         found_virtual_result,
         "expected virtual tool result content to reach the outer tool result history"
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_harness_conditionally_exposes_one_shot_session_title_tool() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("test.db");
+    let harness_dir = tmp.path().join("harnesses");
+    std::fs::create_dir(&harness_dir)?;
+    std::fs::write(
+        harness_dir.join("main.lua"),
+        r#"
+        tool.declare("set_conversation_title", {
+            description = "Set a concise title for this conversation",
+            follow_up = "if_no_response",
+            params = {
+                title = {
+                    type = "string",
+                    required = true,
+                    maxLength = 120
+                }
+            },
+            handler = function(args)
+                local session = agent.session.set_title(args.title, { if_empty = true })
+                return {
+                    content = "Conversation title recorded",
+                    is_error = false
+                }
+            end
+        })
+
+        function on_turn_prepare(turn)
+            turn.tools:exclude("set_conversation_title")
+            if turn.session.is_first_user_message
+                and turn.session.title == nil
+            then
+                turn.tools:include("set_conversation_title")
+                turn.system_prompt = turn.system_prompt .. [[
+
+Choose a concise title for this conversation. Call set_conversation_title while
+also answering the user normally. Do not mention the title operation.]]
+            end
+            return ALLOW
+        end
+        "#,
+    )?;
+
+    let mut providers = HashMap::new();
+    providers.insert(
+        "mock".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            api_key_env: None,
+            base_url: None,
+            ..ProviderConfig::default()
+        },
+    );
+    let config = TurinConfig {
+        tools: Default::default(),
+        agent: AgentConfig {
+            tools: Default::default(),
+            id: "default".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "You are a test assistant.".to_string(),
+            thinking: None,
+            harness: None,
+            idle_timeout_seconds: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+        agents: std::collections::HashMap::new(),
+        kernel: KernelConfig {
+            workspace_root: tmp.path().to_str().unwrap().to_string(),
+            max_turns: 5,
+            heartbeat_interval_seconds: 30,
+            initial_spawn_depth: 0,
+        },
+        layout: Default::default(),
+        inference: InferenceConfig::default(),
+        persistence: PersistenceConfig::with_state_path(db_path.to_str().unwrap().to_string()),
+        harness: HarnessConfig {
+            directory: harness_dir.to_str().unwrap().to_string(),
+            fs_root: ".".to_string(),
+            memory_limit_mb: 32,
+        },
+        harnesses: std::collections::HashMap::new(),
+        providers,
+        embeddings: None,
+        governance: GovernanceConfig::default(),
+        daemon: Default::default(),
+        remote: Default::default(),
+    };
+
+    let seen_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let request_count = Arc::new(std::sync::Mutex::new(0));
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new(
+            "mock",
+            Arc::new(ConditionalTitleToolProvider {
+                seen_tools: seen_tools.clone(),
+                request_count: request_count.clone(),
+            }),
+        ),
+    );
+    kernel.init_harness().await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Why does session history keep growing?".to_string()),
+        )
+        .await?;
+    assert_eq!(*request_count.lock().unwrap(), 1);
+
+    let store = kernel
+        .store_manager()
+        .open(&StoreSelector::Alias("state".to_string()))
+        .await?;
+    let session_id = uuid::Uuid::parse_str(session.identity.session_id())?;
+    let persisted = store
+        .get_session_row_by_public_id(session_id)
+        .await?
+        .expect("persisted session");
+    let metadata: serde_json::Value = serde_json::from_str(persisted.metadata.as_deref().unwrap())?;
+    assert_eq!(metadata["title"], "Investigate session memory growth");
+
+    kernel
+        .run(
+            &mut session,
+            Some("What should we change next?".to_string()),
+        )
+        .await?;
+    let seen = seen_tools.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].iter().any(|name| name == "set_conversation_title"));
+    assert!(!seen[1].iter().any(|name| name == "set_conversation_title"));
 
     Ok(())
 }

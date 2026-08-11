@@ -3,8 +3,8 @@ use mlua::{Function, Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::harness::virtual_tools::{
-    DeclaredVirtualTool, VirtualToolPlan, VirtualToolResultResolution, normalize_tool_declaration,
-    parse_handler_plan, parse_result_handler_output, shell_quote,
+    DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
+    normalize_tool_declaration, parse_handler_output, parse_result_handler_output, shell_quote,
 };
 
 const DECLARED_TOOL_REGISTRY_KEY: &str = "__harness_declared_tools";
@@ -30,6 +30,12 @@ pub fn register_tool_globals(lua: &Lua) -> LuaResult<()> {
             let input_schema = read_optional_json_field(lua, &spec, "input_schema")?;
             let normalized = normalize_tool_declaration(&name, &description, params, input_schema)
                 .map_err(mlua::Error::runtime)?;
+            let follow_up = spec
+                .get::<Option<String>>("follow_up")?
+                .map(|value| value.parse::<VirtualToolFollowUp>())
+                .transpose()
+                .map_err(mlua::Error::runtime)?
+                .unwrap_or_default();
 
             let registry = ensure_declared_tool_registry(lua)?;
             if registry.contains_key(name.clone())? {
@@ -43,6 +49,13 @@ pub fn register_tool_globals(lua: &Lua) -> LuaResult<()> {
             entry.set("description", normalized.description)?;
             entry.set("input_schema", lua.to_value(&normalized.input_schema)?)?;
             entry.set("handler", handler)?;
+            entry.set(
+                "follow_up",
+                match follow_up {
+                    VirtualToolFollowUp::Always => "always",
+                    VirtualToolFollowUp::IfNoResponse => "if_no_response",
+                },
+            )?;
             registry.set(name, entry)?;
             Ok(())
         })?,
@@ -132,10 +145,15 @@ pub(crate) fn declared_virtual_tools(lua: &Lua) -> Result<Vec<DeclaredVirtualToo
         let description: String = entry.get("description")?;
         let input_schema = entry.get::<Value>("input_schema")?;
         let input_schema = lua.from_value::<serde_json::Value>(input_schema)?;
+        let follow_up = entry
+            .get::<Option<String>>("follow_up")?
+            .unwrap_or_else(|| "always".to_string())
+            .parse()?;
         tools.push(DeclaredVirtualTool {
             name,
             description,
             input_schema,
+            follow_up,
         });
     }
     tools.sort_by(|a, b| a.name.cmp(&b.name));
@@ -146,7 +164,7 @@ pub(crate) fn invoke_declared_virtual_tool(
     lua: &Lua,
     name: &str,
     args: serde_json::Value,
-) -> Result<Option<VirtualToolPlan>> {
+) -> Result<Option<VirtualToolResultResolution>> {
     let registry = ensure_declared_tool_registry(lua)?;
     let entry = match registry.get::<Value>(name)? {
         Value::Nil => return Ok(None),
@@ -169,7 +187,7 @@ pub(crate) fn invoke_declared_virtual_tool(
         )
     })?;
 
-    Ok(Some(parse_handler_plan(&result)?))
+    Ok(Some(parse_handler_output(&result)?))
 }
 
 pub(crate) fn invoke_virtual_result_handler(

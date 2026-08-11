@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import AssistantView from "./components/AssistantView.svelte";
+  import DataExplorer from "./components/DataExplorer.svelte";
   import HarnessView from "./components/HarnessView.svelte";
   import Icon from "./components/Icon.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -21,8 +22,8 @@
   let refreshTimer: number | undefined;
 
   $: activeApp = status?.ui.apps[activeView] as UiApp | undefined;
-  $: if (status && activeView !== "assistant") connectGlobalEvents();
-  $: if (activeView === "assistant") closeGlobalEvents();
+  $: if (status && activeView !== "assistant" && activeView !== "data") connectGlobalEvents();
+  $: if (activeView === "assistant" || activeView === "data") closeGlobalEvents();
 
   onMount(async () => {
     await refreshStatus();
@@ -38,7 +39,7 @@
       const next = await client.status();
       status = next;
       error = "";
-      if (activeView !== "assistant" && !next.ui.apps[activeView]) activeView = "assistant";
+      if (activeView !== "assistant" && activeView !== "data" && !next.ui.apps[activeView]) activeView = "assistant";
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -126,6 +127,8 @@
           onNewConversation={startNewConversation}
           onStatusChanged={refreshStatus}
         />
+      {:else if activeView === "data"}
+        <DataExplorer {client} {status} onSession={selectSession} />
       {:else if activeApp}
         <HarnessView {client} app={activeApp} {eventRevision} {latestUiIntent} />
       {/if}

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BindHarnessParams, ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHeartbeatParams,
     ChannelRunnerHelloParams, CreateAgentParams, CreateChannelParams, EntityIdParams,
-    HarnessActionRunParams, LiveSessionTargetParams, NoParams, OpenSessionParams,
+    HarnessActionRunParams, LiveSessionTargetParams, MemoryListParams, NoParams, OpenSessionParams,
     PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams,
     ScheduleUpdateParams, SessionBranchCheckoutParams, SessionBranchCreateParams,
     SessionBranchSiblingsParams, SessionGetParams, SessionIdParams, SessionListParams,
@@ -91,6 +91,8 @@ pub enum DaemonRequest {
     WorklistItems(WorklistItemsParams),
     #[serde(rename = "workitem.get")]
     WorkItemGet(WorkItemTargetParams),
+    #[serde(rename = "memory.list")]
+    MemoryList(MemoryListParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]

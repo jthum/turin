@@ -103,6 +103,38 @@ impl StateStore {
         Ok(Some(row))
     }
 
+    pub async fn update_session_title_if_empty(
+        &self,
+        public_id: uuid::Uuid,
+        title: &str,
+    ) -> Result<Option<SessionRow>> {
+        let title = title.trim();
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        conn.execute(
+            r#"
+UPDATE sessions
+SET metadata = CASE
+    WHEN metadata IS NULL OR json_valid(metadata) = 0 OR json_type(metadata) <> 'object'
+        THEN json_object('title', ?1)
+    ELSE json_set(metadata, '$.title', ?1)
+END
+WHERE public_id = ?2
+  AND (
+      metadata IS NULL
+      OR json_valid(metadata) = 0
+      OR json_type(metadata) <> 'object'
+      OR json_type(metadata, '$.title') IS NULL
+      OR trim(COALESCE(json_extract(metadata, '$.title'), '')) = ''
+  )
+"#,
+            turso::params![title, public_id_bytes],
+        )
+        .await
+        .context("Failed to set empty session metadata title")?;
+        self.get_session_row_by_public_id(public_id).await
+    }
+
     pub async fn search_session_history(
         &self,
         query: &str,

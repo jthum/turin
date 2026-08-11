@@ -13,6 +13,7 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::harness::virtual_tools::VirtualToolFollowUp;
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
@@ -50,6 +51,7 @@ impl ExecutionHost {
         };
         let provider_name = prepared.provider_name;
         let model = prepared.model;
+        let exposed_tool_names = prepared.exposed_tool_names;
         let stream = prepared.stream;
 
         let stream_output = self
@@ -78,8 +80,33 @@ impl ExecutionHost {
             return Ok(TurnOutcome::Complete);
         }
 
+        let requires_follow_up = response_text.trim().is_empty()
+            || pending_tool_calls.iter().any(|call| {
+                if !exposed_tool_names.contains(&call.name) {
+                    return true;
+                }
+                if self.tool_registry.contains(&call.name) {
+                    return true;
+                }
+                self.session_harness_engine(session)
+                    .and_then(|harness| {
+                        harness
+                            .lock()
+                            .ok()
+                            .and_then(|engine| engine.virtual_tool_follow_up(&call.name).ok())
+                            .flatten()
+                    })
+                    .is_none_or(|follow_up| follow_up == VirtualToolFollowUp::Always)
+            });
+
         // Execute tools.
-        self.execute_tool_calls(session, tool_ctx, pending_tool_calls)
-            .await
+        let outcome = self
+            .execute_tool_calls(session, tool_ctx, pending_tool_calls, &exposed_tool_names)
+            .await?;
+        if outcome == TurnOutcome::Continue && !requires_follow_up {
+            Ok(TurnOutcome::Complete)
+        } else {
+            Ok(outcome)
+        }
     }
 }

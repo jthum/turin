@@ -143,9 +143,9 @@ the same semantic surfaces in its own way.
 
 ### Start Small
 
-Use `examples/harnesses/ui_release_operator` as the reference shape. Keep the
-first version worklist-backed and add richer data adapters only when worklists
-stop being enough.
+Keep the first version worklist-backed and add richer data adapters only when
+worklists stop being enough. Turin does not currently ship this scenario as a
+ready-to-use harness.
 
 For a deeper walkthrough of this scenario, see
 `docs/guides/release-operator-console.md`.

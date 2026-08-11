@@ -7,6 +7,8 @@ pub struct DeclaredVirtualTool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    #[serde(default)]
+    pub follow_up: VirtualToolFollowUp,
 }
 
 impl DeclaredVirtualTool {
@@ -16,6 +18,29 @@ impl DeclaredVirtualTool {
             "description": self.description,
             "input_schema": self.input_schema,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VirtualToolFollowUp {
+    #[default]
+    Always,
+    IfNoResponse,
+}
+
+impl std::str::FromStr for VirtualToolFollowUp {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value.trim() {
+            "always" => Ok(Self::Always),
+            "if_no_response" => Ok(Self::IfNoResponse),
+            other => bail!(
+                "invalid virtual tool follow_up '{}'; expected always|if_no_response",
+                other
+            ),
+        }
     }
 }
 
@@ -101,6 +126,7 @@ pub fn normalize_tool_declaration(
         name: name.to_string(),
         description: description.to_string(),
         input_schema,
+        follow_up: VirtualToolFollowUp::Always,
     })
 }
 
@@ -247,6 +273,15 @@ pub fn parse_result_handler_output(
             "virtual tool result handler must return tool.call(...), tool.sequence(...), a string, or {{ content = ..., is_error? = ... }}"
         ),
     }
+}
+
+pub fn parse_handler_output(value: &Value) -> Result<VirtualToolResultResolution> {
+    parse_result_handler_output(value, false).map_err(|err| {
+        anyhow::anyhow!(
+            "virtual tool handler must return tool.call(...), tool.sequence(...), a string, or {{ content = ..., is_error? = ... }}: {}",
+            err
+        )
+    })
 }
 
 impl From<VirtualToolResultOutput> for VirtualToolResultResolution {

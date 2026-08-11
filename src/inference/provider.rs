@@ -316,6 +316,8 @@ fn map_sdk_event(
         InferenceEvent::MessageEnd {
             input_tokens,
             output_tokens,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
             ..
         } => {
             match pending_tool.flush() {
@@ -327,6 +329,8 @@ fn map_sdk_event(
                 role: "assistant".to_string(),
                 input_tokens: input_tokens as u64,
                 output_tokens: output_tokens as u64,
+                cache_read_input_tokens: cache_read_input_tokens.map(u64::from),
+                cache_creation_input_tokens: cache_creation_input_tokens.map(u64::from),
             })));
         }
         _ => {}
@@ -445,6 +449,8 @@ impl InferenceProvider for MockProvider {
                             Ok(InferenceEvent::MessageEnd {
                                 input_tokens: 10,
                                 output_tokens: 5,
+                                cache_read_input_tokens: None,
+                                cache_creation_input_tokens: None,
                                 stop_reason: None,
                             }),
                             (3, delay, content),
@@ -492,5 +498,31 @@ mod tests {
             }
             other => panic!("unexpected mapped event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn maps_provider_cache_usage_to_kernel_stream_event() {
+        let mut pending_tool = PendingToolCallEvent::default();
+        let events = map_sdk_event(
+            InferenceEvent::MessageEnd {
+                input_tokens: 120,
+                output_tokens: 24,
+                cache_read_input_tokens: Some(80),
+                cache_creation_input_tokens: Some(16),
+                stop_reason: None,
+            },
+            &mut pending_tool,
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [Ok(KernelEvent::Stream(StreamEvent::MessageEnd {
+                input_tokens: 120,
+                output_tokens: 24,
+                cache_read_input_tokens: Some(80),
+                cache_creation_input_tokens: Some(16),
+                ..
+            }))]
+        ));
     }
 }

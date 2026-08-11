@@ -2,6 +2,7 @@ mod channels;
 mod client;
 mod harnesses;
 mod health;
+mod memories;
 mod models;
 mod schedules;
 mod sessions;

@@ -26,6 +26,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   - Harness detail, UI intent, and action invocation convenience methods.
 - `crates/turin-control-client/src/worklists.rs`
   - Worklist and work-item convenience methods.
+- `crates/turin-control-client/src/memories.rs`
+  - Bounded memory inspection convenience method.
 - `crates/turin-control-client/src/channels.rs`
   - Agent/channel detail, channel runtime status, settings update, and access-room convenience methods.
 - `crates/turin-control-client/tests/connectivity.rs`

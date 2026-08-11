@@ -156,7 +156,7 @@ Add or change a harness UI renderer:
 2. Preserve explicit fallback behavior for unsupported sources or widgets.
 3. Keep app-local state in `main.rs`; do not add shared active-screen/session
    state.
-4. Check the Release Operator fixture still loads.
+4. Check the test-only UI contract fixture still loads.
 
 Add a command or modal:
 
@@ -171,7 +171,7 @@ Focused checks:
 ```sh
 cargo check -p turin-app
 cargo check -p turin-ui-core
-cargo test -p turin --lib harness::engine::tests::test_ui_release_operator_example_loads
+cargo test -p turin --lib harness::engine::tests::test_ui_contract_fixture_loads
 ```
 
 Basic checks:

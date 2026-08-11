@@ -1,12 +1,51 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use turin_daemon_protocol::{ContextPersistenceParams, StoreTargetParams};
 
 use crate::daemon::state::SessionSummary;
-use crate::kernel::config::TurinConfig;
+use crate::kernel::config::{ContextPersistenceConfig, StoreTargetConfig, TurinConfig};
+use crate::persistence::manager::StoreSelector;
 
 pub(super) fn normalize_bootstrap_paths(config: &mut TurinConfig, config_base: &Path) {
     config.normalize_runtime_paths(config_base);
+}
+
+pub(super) fn context_store_selector_from_params(
+    config: &TurinConfig,
+    persistence: Option<&ContextPersistenceParams>,
+) -> Result<StoreSelector> {
+    let Some(persistence) = persistence else {
+        return config.persistence.top_level_state_selector();
+    };
+    let context = ContextPersistenceConfig {
+        state: persistence
+            .state
+            .as_ref()
+            .map(store_target_config_from_params),
+        store: persistence
+            .store
+            .as_ref()
+            .map(store_target_config_from_params),
+    };
+    if persistence.store.is_some() {
+        config
+            .persistence
+            .resolve_context_store_selector(Some(&context))
+    } else if persistence.state.is_some() {
+        config
+            .persistence
+            .resolve_context_state_selector(Some(&context))
+    } else {
+        config.persistence.top_level_state_selector()
+    }
+}
+
+fn store_target_config_from_params(value: &StoreTargetParams) -> StoreTargetConfig {
+    StoreTargetConfig {
+        path: value.path.clone(),
+        alias: value.alias.clone(),
+    }
 }
 
 pub(super) fn validate_agent_id(agent_id: &str) -> Result<()> {

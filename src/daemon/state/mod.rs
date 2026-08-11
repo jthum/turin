@@ -1,6 +1,7 @@
 mod channel_validation;
 mod harness_actions;
 mod helpers;
+mod memories;
 mod registry_ops;
 mod runtime_sessions;
 mod runtime_tasks;

@@ -138,6 +138,8 @@ impl InferenceProvider for CaptureMessagesProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 10,
                     output_tokens: 5,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ]);
@@ -201,6 +203,8 @@ impl InferenceProvider for SequenceCaptureProvider {
                         InferenceEvent::MessageEnd {
                             input_tokens: 1,
                             output_tokens: 1,
+                            cache_read_input_tokens: None,
+                            cache_creation_input_tokens: None,
                             stop_reason: None,
                         },
                     ]
@@ -243,6 +247,8 @@ impl InferenceProvider for StructuredOutputProvider {
                 usage: Usage {
                     input_tokens: 12,
                     output_tokens: 6,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 },
             })
         })
@@ -266,6 +272,8 @@ impl InferenceProvider for StructuredOutputProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 4,
                     output_tokens: 2,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ]);
@@ -306,6 +314,8 @@ impl InferenceProvider for PromptStructuredFallbackProvider {
                 usage: Usage {
                     input_tokens: 10,
                     output_tokens: 4,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 },
             })
         })
@@ -329,6 +339,8 @@ impl InferenceProvider for PromptStructuredFallbackProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 4,
                     output_tokens: 2,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ]);
@@ -363,6 +375,8 @@ impl InferenceProvider for ContextCheckpointProvider {
                 usage: turin::inference::provider::Usage {
                     input_tokens: 32,
                     output_tokens: 8,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 },
             })
         })
@@ -401,6 +415,8 @@ impl InferenceProvider for ContextCheckpointProvider {
                 Ok(InferenceEvent::MessageEnd {
                     input_tokens: 12,
                     output_tokens: 6,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 }),
             ]);
@@ -1622,6 +1638,8 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             InferenceEvent::MessageEnd {
                 input_tokens: 10,
                 output_tokens: 4,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -1637,6 +1655,8 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             InferenceEvent::MessageEnd {
                 input_tokens: 8,
                 output_tokens: 3,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
@@ -1652,6 +1672,8 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             InferenceEvent::MessageEnd {
                 input_tokens: 12,
                 output_tokens: 4,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
                 stop_reason: None,
             },
         ],
