@@ -1885,6 +1885,15 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
         .expect("windowed session detail");
     assert_eq!(windowed.messages.len(), 2);
     assert!(windowed.events.is_empty());
+    assert_eq!(windowed.execution.tasks.len(), 2);
+    assert!(
+        windowed
+            .execution
+            .tasks
+            .iter()
+            .all(|task| task.status == "success" && !task.turns.is_empty())
+    );
+    assert!(!windowed.execution.truncated);
     let efficiency = windowed.efficiency.expect("efficiency projection");
     assert_eq!(efficiency.turns.len(), 1);
     assert_eq!(efficiency.total_request_count, 2);

@@ -73,6 +73,10 @@ Persisted session detail:
    estimates are paired with provider-reported input/output and optional
    prompt-cache usage when present, while older sessions remain valid without
    request telemetry or cache counters.
+7. Session detail also projects the newest bounded task, plan, and turn
+   lifecycle records into a typed execution summary. This projection retains
+   execution context, terminal outcomes, branch outcomes, and errors without
+   exposing the raw event log to clients.
 
 Branch activation/checkout:
 
@@ -92,6 +96,9 @@ Branch activation/checkout:
 - Cache-read and cache-creation counts remain optional provider measurements;
   absence must not be rendered as a measured zero or inferred from Turin's
   reusable-prefix estimate.
+- Execution detail is a durable read projection, not live client state. Its
+  lifecycle-event query must remain independently capped and report when older
+  execution records were omitted.
 - Offset session windows are indexed from the oldest active-branch message and
   may contain slightly more than the requested limit to preserve complete turns.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.

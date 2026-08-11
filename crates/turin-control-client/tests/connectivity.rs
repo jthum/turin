@@ -191,6 +191,8 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .iter()
             .any(|message| message.role == "assistant")
     );
+    assert_eq!(detail.execution.tasks.len(), 1);
+    assert_eq!(detail.execution.tasks[0].status, "success");
 
     let windowed = client.get_session_window(&opened.session_id, 1).await?;
     assert!(!windowed.messages.is_empty());

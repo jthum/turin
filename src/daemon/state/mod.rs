@@ -36,9 +36,10 @@ pub(crate) use scheduled_jobs::{
 };
 pub use types::{
     AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionCompactionDetail,
-    SessionDetail, SessionEfficiencyDetail, SessionEventDetail, SessionMessageDetail,
-    SessionMessageWindow, SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary,
-    SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
+    SessionDetail, SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
+    SessionExecutionDetail, SessionMessageDetail, SessionMessageWindow, SessionPlanExecutionDetail,
+    SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionTaskExecutionDetail,
+    SessionTaskTurnDetail, SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
 };
 pub(crate) use worklists::WorklistItemsQuery;
 

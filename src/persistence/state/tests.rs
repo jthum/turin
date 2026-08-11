@@ -87,6 +87,34 @@ async fn test_get_events_by_types_filters_before_projection() {
 }
 
 #[tokio::test]
+async fn test_get_recent_events_by_types_is_bounded_and_chronological() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for index in 0..6 {
+        store
+            .insert_event(session, None, "task_start", &json!({"index": index}))
+            .await
+            .unwrap();
+    }
+
+    let events = store
+        .get_recent_events_by_types(session, &active_branch(), &["task_start"], 3)
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 3);
+    assert!(events.windows(2).all(|pair| pair[0].id < pair[1].id));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&events[0].payload).unwrap()["index"],
+        3
+    );
+}
+
+#[tokio::test]
 async fn test_events_isolated_by_session() {
     let store = StateStore::open_memory().await.unwrap();
     let session_a = store

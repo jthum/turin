@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -8,18 +8,24 @@ use uuid::Uuid;
 
 use super::{
     DaemonState, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
-    SessionEfficiencyDetail, SessionEventDetail, SessionMessageDetail, SessionMessageWindow,
-    SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionToolExecutionDetail,
-    SessionTurnEfficiencyDetail,
+    SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
+    SessionExecutionDetail, SessionMessageDetail, SessionMessageWindow, SessionPlanExecutionDetail,
+    SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionTaskExecutionDetail,
+    SessionTaskTurnDetail, SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
-use crate::kernel::event::InferenceRequestMetrics;
+use crate::kernel::event::{
+    InferenceRequestMetrics, KernelEvent, LifecycleEvent, TaskTerminalStatus,
+};
+use crate::kernel::session::ExecutionStatusSnapshot;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{BranchHeadRow, SessionRow};
 use crate::persistence::state::{SessionReadTarget, StateStore};
+
+const SESSION_EXECUTION_EVENT_LIMIT: usize = 400;
 
 impl DaemonState {
     #[instrument(skip(self), fields(store = %store_selector_label_opt(store_selector.as_ref())))]
@@ -243,6 +249,26 @@ impl DaemonState {
             None
         };
 
+        let mut execution_events = store
+            .get_recent_events_by_types(
+                row.id,
+                &active_branch,
+                &[
+                    "task_start",
+                    "task_complete",
+                    "plan_complete",
+                    "turn_start",
+                    "turn_end",
+                ],
+                SESSION_EXECUTION_EVENT_LIMIT + 1,
+            )
+            .await?;
+        let execution_truncated = execution_events.len() > SESSION_EXECUTION_EVENT_LIMIT;
+        if execution_truncated {
+            execution_events.remove(0);
+        }
+        let execution = session_execution_from_events(execution_events, execution_truncated);
+
         Ok(Some(SessionDetail {
             session: session_summary_from_row_and_selector(&row, &store_selector),
             branches,
@@ -250,6 +276,7 @@ impl DaemonState {
             messages,
             tool_executions,
             efficiency,
+            execution,
             message_window: message_limit.map(|_| SessionMessageWindow {
                 offset: message_offset,
                 total: total_messages,
@@ -466,6 +493,240 @@ impl DaemonState {
                 );
             }
         }
+    }
+}
+
+fn session_execution_from_events(
+    events: Vec<crate::persistence::schema::EventRow>,
+    truncated: bool,
+) -> SessionExecutionDetail {
+    let mut tasks = Vec::<SessionTaskExecutionDetail>::new();
+    let mut task_indexes = HashMap::<String, usize>::new();
+    let mut plan_completions = BTreeMap::<String, SessionPlanExecutionDetail>::new();
+
+    for event in events {
+        let Ok(KernelEvent::Lifecycle(lifecycle)) = serde_json::from_str(&event.payload) else {
+            continue;
+        };
+        match lifecycle {
+            LifecycleEvent::TaskStart {
+                identity,
+                task_id,
+                trace_id,
+                plan_id,
+                title,
+                prompt,
+                queue_depth,
+                execution,
+            } => {
+                let index = tasks.len();
+                task_indexes.insert(task_id.clone(), index);
+                tasks.push(SessionTaskExecutionDetail {
+                    task_id,
+                    trace_id,
+                    plan_id,
+                    run_id: identity.run_id().map(str::to_string),
+                    agent_id: identity.agent_id().to_string(),
+                    title,
+                    prompt,
+                    status: "running".to_string(),
+                    queue_depth,
+                    task_turn_count: 0,
+                    execution: execution_context_detail(execution),
+                    turns: Vec::new(),
+                    branch_outcome: None,
+                    error: None,
+                    started_at: event.created_at,
+                    completed_at: None,
+                });
+            }
+            LifecycleEvent::TaskComplete {
+                identity,
+                task_id,
+                trace_id,
+                plan_id,
+                status,
+                task_turn_count,
+                execution,
+                branch_outcome,
+                error,
+            } => {
+                let index = if let Some(index) = task_indexes.get(&task_id).copied() {
+                    index
+                } else {
+                    let index = tasks.len();
+                    task_indexes.insert(task_id.clone(), index);
+                    tasks.push(SessionTaskExecutionDetail {
+                        task_id: task_id.clone(),
+                        trace_id: trace_id.clone(),
+                        plan_id: plan_id.clone(),
+                        run_id: identity.run_id().map(str::to_string),
+                        agent_id: identity.agent_id().to_string(),
+                        title: None,
+                        prompt: String::new(),
+                        status: task_terminal_status(status).to_string(),
+                        queue_depth: 0,
+                        task_turn_count,
+                        execution: execution_context_detail(execution.clone()),
+                        turns: Vec::new(),
+                        branch_outcome: None,
+                        error: None,
+                        started_at: event.created_at.clone(),
+                        completed_at: None,
+                    });
+                    index
+                };
+                let task = &mut tasks[index];
+                task.trace_id = trace_id;
+                task.plan_id = plan_id;
+                task.status = task_terminal_status(status).to_string();
+                task.task_turn_count = task_turn_count;
+                task.execution = execution_context_detail(execution);
+                task.branch_outcome =
+                    branch_outcome.and_then(|outcome| serde_json::to_value(outcome).ok());
+                task.error = error;
+                task.completed_at = Some(event.created_at);
+            }
+            LifecycleEvent::TurnStart {
+                turn_index,
+                task_id,
+                task_turn_index,
+                ..
+            } => {
+                let Some(index) = task_indexes.get(&task_id).copied() else {
+                    continue;
+                };
+                tasks[index].turns.push(SessionTaskTurnDetail {
+                    turn_index,
+                    task_turn_index,
+                    has_tool_calls: None,
+                    started_at: event.created_at,
+                    completed_at: None,
+                });
+            }
+            LifecycleEvent::TurnEnd {
+                turn_index,
+                task_id,
+                task_turn_index,
+                has_tool_calls,
+                ..
+            } => {
+                let Some(index) = task_indexes.get(&task_id).copied() else {
+                    continue;
+                };
+                let task = &mut tasks[index];
+                if let Some(turn) = task
+                    .turns
+                    .iter_mut()
+                    .rev()
+                    .find(|turn| turn.turn_index == turn_index)
+                {
+                    turn.has_tool_calls = Some(has_tool_calls);
+                    turn.completed_at = Some(event.created_at);
+                } else {
+                    task.turns.push(SessionTaskTurnDetail {
+                        turn_index,
+                        task_turn_index,
+                        has_tool_calls: Some(has_tool_calls),
+                        started_at: event.created_at.clone(),
+                        completed_at: Some(event.created_at),
+                    });
+                }
+            }
+            LifecycleEvent::PlanComplete {
+                plan_id,
+                title,
+                total_tasks,
+                completed_tasks,
+                ..
+            } => {
+                plan_completions.insert(
+                    plan_id.clone(),
+                    SessionPlanExecutionDetail {
+                        plan_id,
+                        title: Some(title),
+                        status: "complete".to_string(),
+                        total_tasks,
+                        completed_tasks,
+                        started_at: event.created_at.clone(),
+                        completed_at: Some(event.created_at),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    for task in &tasks {
+        let Some(plan_id) = task.plan_id.as_ref() else {
+            continue;
+        };
+        let plan =
+            plan_completions
+                .entry(plan_id.clone())
+                .or_insert_with(|| SessionPlanExecutionDetail {
+                    plan_id: plan_id.clone(),
+                    title: None,
+                    status: "running".to_string(),
+                    total_tasks: 0,
+                    completed_tasks: 0,
+                    started_at: task.started_at.clone(),
+                    completed_at: None,
+                });
+        if plan.completed_at.is_none() {
+            plan.total_tasks = plan.total_tasks.saturating_add(1);
+            if task.status != "running" {
+                plan.completed_tasks = plan.completed_tasks.saturating_add(1);
+            }
+            if task.started_at < plan.started_at {
+                plan.started_at.clone_from(&task.started_at);
+            }
+        }
+    }
+
+    tasks.sort_by(|left, right| {
+        let left_date = left.completed_at.as_ref().unwrap_or(&left.started_at);
+        let right_date = right.completed_at.as_ref().unwrap_or(&right.started_at);
+        right_date.cmp(left_date)
+    });
+    let mut plans = plan_completions.into_values().collect::<Vec<_>>();
+    plans.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+
+    SessionExecutionDetail {
+        tasks,
+        plans,
+        event_limit: SESSION_EXECUTION_EVENT_LIMIT,
+        truncated,
+    }
+}
+
+fn execution_context_detail(execution: ExecutionStatusSnapshot) -> SessionExecutionContextDetail {
+    SessionExecutionContextDetail {
+        execution_id: execution.execution_id,
+        context_target: serde_json::to_value(execution.context_target)
+            .unwrap_or(serde_json::Value::Null),
+        visibility: serialized_enum_name(&execution.visibility),
+        durability: serialized_enum_name(&execution.durability),
+        write_policy: serialized_enum_name(&execution.write_policy),
+    }
+}
+
+fn serialized_enum_name(value: &impl serde::Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn task_terminal_status(status: TaskTerminalStatus) -> &'static str {
+    match status {
+        TaskTerminalStatus::Success => "success",
+        TaskTerminalStatus::Rejected => "rejected",
+        TaskTerminalStatus::Conflict => "conflict",
+        TaskTerminalStatus::MaxTurns => "max_turns",
+        TaskTerminalStatus::Error => "error",
+        TaskTerminalStatus::Cancelled => "cancelled",
+        TaskTerminalStatus::Killed => "killed",
     }
 }
 

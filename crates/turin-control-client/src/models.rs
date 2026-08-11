@@ -343,7 +343,84 @@ pub struct SessionDetail {
     #[serde(default)]
     pub efficiency: Option<SessionEfficiencyDetail>,
     #[serde(default)]
+    pub execution: SessionExecutionDetail,
+    #[serde(default)]
     pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionExecutionDetail {
+    #[serde(default)]
+    pub tasks: Vec<SessionTaskExecutionDetail>,
+    #[serde(default)]
+    pub plans: Vec<SessionPlanExecutionDetail>,
+    #[serde(default)]
+    pub event_limit: usize,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTaskExecutionDetail {
+    pub task_id: String,
+    pub trace_id: String,
+    #[serde(default)]
+    pub plan_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    pub agent_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub prompt: String,
+    pub status: String,
+    #[serde(default)]
+    pub queue_depth: usize,
+    #[serde(default)]
+    pub task_turn_count: u32,
+    pub execution: SessionExecutionContextDetail,
+    #[serde(default)]
+    pub turns: Vec<SessionTaskTurnDetail>,
+    #[serde(default)]
+    pub branch_outcome: Option<Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub started_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionExecutionContextDetail {
+    pub execution_id: String,
+    pub context_target: Value,
+    pub visibility: String,
+    pub durability: String,
+    pub write_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTaskTurnDetail {
+    pub turn_index: u32,
+    pub task_turn_index: u32,
+    #[serde(default)]
+    pub has_tool_calls: Option<bool>,
+    pub started_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionPlanExecutionDetail {
+    pub plan_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub status: String,
+    pub total_tasks: usize,
+    pub completed_tasks: usize,
+    pub started_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -91,8 +91,75 @@ pub struct SessionDetail {
     pub tool_executions: Vec<SessionToolExecutionDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub efficiency: Option<SessionEfficiencyDetail>,
+    pub execution: SessionExecutionDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_window: Option<SessionMessageWindow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionExecutionDetail {
+    pub tasks: Vec<SessionTaskExecutionDetail>,
+    pub plans: Vec<SessionPlanExecutionDetail>,
+    pub event_limit: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTaskExecutionDetail {
+    pub task_id: String,
+    pub trace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub prompt: String,
+    pub status: String,
+    pub queue_depth: usize,
+    pub task_turn_count: u32,
+    pub execution: SessionExecutionContextDetail,
+    pub turns: Vec<SessionTaskTurnDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch_outcome: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionExecutionContextDetail {
+    pub execution_id: String,
+    pub context_target: serde_json::Value,
+    pub visibility: String,
+    pub durability: String,
+    pub write_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTaskTurnDetail {
+    pub turn_index: u32,
+    pub task_turn_index: u32,
+    pub has_tool_calls: Option<bool>,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionPlanExecutionDetail {
+    pub plan_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub status: String,
+    pub total_tasks: usize,
+    pub completed_tasks: usize,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
