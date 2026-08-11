@@ -85,6 +85,10 @@ session state, invent renderer-specific harness APIs, or bypass
 23. Manual title edits use the typed daemon session-title operation and remain
     durable. Automatic naming is harness policy; the browser observes the
     resulting session metadata rather than deriving and persisting its own title.
+24. The Assistant Run Center renders the bounded execution projection from
+    session detail. Task, plan, turn, tool, execution-policy, branch-outcome,
+    and error disclosure remains observational; lifecycle SSE events only
+    invalidate and reconcile that durable projection.
 
 ## Invariants
 
@@ -161,6 +165,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Provider cache-read and cache-creation counters are displayed only when the
   inference provider reports them. Missing counters remain unavailable rather
   than being inferred or presented as zero.
+- The Run Center must use the daemon's bounded typed execution projection. It
+  must not fetch the raw event history, retain a second task ledger in browser
+  memory, or treat SSE delivery as durable execution truth.
 - Live response indicators should participate in normal chat layout. They must
   not use absolute-positioned cursors that can escape the response bubble.
 - Frontend source lives under `frontend/`; `static/` is generated and checked in

@@ -282,6 +282,8 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert_eq!(detail["detail"]["efficiency"]["total_input_tokens"], 0);
     assert_eq!(detail["detail"]["efficiency"]["total_request_count"], 0);
     assert!(detail["detail"]["efficiency"]["turns"].is_array());
+    assert!(detail["detail"]["execution"]["tasks"].is_array());
+    assert!(detail["detail"]["execution"]["plans"].is_array());
 
     let offset_detail: Value = client
         .get(format!("{base_url}/api/session"))

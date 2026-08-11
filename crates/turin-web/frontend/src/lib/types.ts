@@ -126,12 +126,65 @@ export interface SessionBranch {
   created_at: string;
 }
 
+export interface SessionExecutionContext {
+  execution_id: string;
+  context_target: JsonValue;
+  visibility: string;
+  durability: string;
+  write_policy: string;
+}
+
+export interface SessionTaskTurn {
+  turn_index: number;
+  task_turn_index: number;
+  has_tool_calls?: boolean | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface SessionTaskExecution {
+  task_id: string;
+  trace_id: string;
+  plan_id?: string | null;
+  run_id?: string | null;
+  agent_id: string;
+  title?: string | null;
+  prompt: string;
+  status: string;
+  queue_depth: number;
+  task_turn_count: number;
+  execution: SessionExecutionContext;
+  turns: SessionTaskTurn[];
+  branch_outcome?: JsonValue;
+  error?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface SessionPlanExecution {
+  plan_id: string;
+  title?: string | null;
+  status: string;
+  total_tasks: number;
+  completed_tasks: number;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+export interface SessionExecution {
+  tasks: SessionTaskExecution[];
+  plans: SessionPlanExecution[];
+  event_limit: number;
+  truncated: boolean;
+}
+
 export interface SessionDetail {
   session: SessionSummary;
   branches: SessionBranch[];
   messages: SessionMessage[];
   tool_executions: ToolExecution[];
   efficiency?: SessionEfficiency | null;
+  execution: SessionExecution;
   message_window?: { offset: number; total: number } | null;
 }
 

@@ -6,6 +6,7 @@
     JsonValue,
     SessionDetail,
     SessionMessage,
+    SessionTaskExecution,
     SessionTurnEfficiency,
     ToolExecution,
     TurinEvent,
@@ -71,6 +72,11 @@
   $: agents = status.snapshot.status.registry.agents.filter(agent => agent.enabled);
   $: sessionReference = detail?.session.session_id ?? selectedSessionId;
   $: efficiency = detail?.efficiency;
+  $: execution = detail?.execution;
+  $: runTasks = execution?.tasks ?? [];
+  $: runTurnCount = runTasks.reduce((total, task) => total + task.turns.length, 0);
+  $: runToolCount = detail?.tool_executions.length ?? 0;
+  $: failedRunCount = runTasks.filter(task => !["running", "success"].includes(task.status)).length;
   $: latestTurn = efficiency?.turns[efficiency.turns.length - 1];
   $: latestRequestRecord = latestTurn?.requests[latestTurn.requests.length - 1];
   $: latestRequest = liveRequestMetrics ?? latestRequestRecord?.metrics ?? null;
@@ -232,11 +238,15 @@
       responsePhase = "Processing tool result";
       return;
     }
+    if (["task_start", "turn_start", "tool_exec_end"].includes(event.type)) {
+      scheduleDetailRefresh(120, false, true);
+      void onStatusChanged();
+    }
     if (event.type === "turn_end" && selectedLive?.active_tasks) {
       responsePhase = "Preparing next turn";
     }
     if (["message_end", "turn_end", "task_complete"].includes(event.type)) {
-      scheduleDetailRefresh(event.type === "message_end" ? 80 : 180, true);
+      scheduleDetailRefresh(event.type === "message_end" ? 80 : 180, true, event.type !== "message_end");
       if (event.type === "task_complete") {
         stopResponseStatus();
         liveRequestMetrics = null;
@@ -260,9 +270,9 @@
     });
   }
 
-  function scheduleDetailRefresh(delay: number, retireStream = false) {
+  function scheduleDetailRefresh(delay: number, retireStream = false, preserveScroll = false) {
     if (refreshTimer) window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => void loadDetail(false, retireStream), delay);
+    refreshTimer = window.setTimeout(() => void loadDetail(preserveScroll, retireStream), delay);
   }
 
   async function submit() {
@@ -389,6 +399,50 @@
 
   function isReported(value: number | null | undefined): value is number {
     return value !== null && value !== undefined;
+  }
+
+  function taskLabel(task: SessionTaskExecution): string {
+    if (task.title?.trim()) return task.title;
+    if (task.prompt.trim()) {
+      return task.prompt.length > 68 ? `${task.prompt.slice(0, 65)}...` : task.prompt;
+    }
+    return `Task ${shortId(task.task_id)}`;
+  }
+
+  function shortId(value: string): string {
+    return value.length > 12 ? value.slice(-8) : value;
+  }
+
+  function taskTools(task: SessionTaskExecution): ToolExecution[] {
+    const turns = new Set(task.turns.map(turn => turn.turn_index));
+    return detail?.tool_executions.filter(tool => turns.has(tool.turn_index)) ?? [];
+  }
+
+  function toolsForTurn(turnIndex: number): ToolExecution[] {
+    return detail?.tool_executions.filter(tool => tool.turn_index === turnIndex) ?? [];
+  }
+
+  function executionTarget(target: JsonValue): string {
+    if (!target || typeof target !== "object" || Array.isArray(target)) return "session path";
+    const kind = typeof target.kind === "string" ? target.kind : "session_path";
+    return humanize(kind);
+  }
+
+  function branchOutcome(outcome: JsonValue | undefined): string | null {
+    if (!outcome || typeof outcome !== "object" || Array.isArray(outcome)) return null;
+    const kind = typeof outcome.kind === "string" ? humanize(outcome.kind) : "Branch created";
+    const name = typeof outcome.branch_name === "string" ? outcome.branch_name : null;
+    return name ? `${kind} · ${name}` : kind;
+  }
+
+  function elapsedBetween(start: string, end?: string | null): string {
+    const startMs = Date.parse(start);
+    const endMs = end ? Date.parse(end) : Date.now();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return "-";
+    const milliseconds = Math.max(0, endMs - startMs);
+    if (milliseconds < 1_000) return `${milliseconds} ms`;
+    if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+    return `${Math.floor(milliseconds / 60_000)}m ${Math.floor((milliseconds % 60_000) / 1_000)}s`;
   }
 
   function onComposerKeydown(event: KeyboardEvent) {
@@ -616,6 +670,105 @@
       {/if}
     </div>
     <div class="header-actions">
+      {#if selectedSessionId}
+        <details class="run-menu">
+          <summary>
+            <Icon name="activity" size={15} />
+            <span>Run Center</span>
+            {#if selectedLive?.active_tasks}<small>{selectedLive.active_tasks} active</small>{:else if runTasks.length}<small>{runTasks.length} recent</small>{/if}
+          </summary>
+          <div class="run-popover">
+            <header>
+              <div><span class="eyebrow">Session execution</span><h2>Run Center</h2></div>
+              {#if selectedLive?.active_tasks}<span class="run-live"><i></i>Live</span>{:else}<span class="run-idle">Durable history</span>{/if}
+            </header>
+
+            <div class="run-totals">
+              <div><span>Tasks</span><strong>{runTasks.length}</strong><small>recent lifecycle</small></div>
+              <div><span>Turns</span><strong>{runTurnCount}</strong><small>model loops</small></div>
+              <div><span>Tools</span><strong>{runToolCount}</strong><small>loaded window</small></div>
+              <div><span>Issues</span><strong class:has-issues={failedRunCount}>{failedRunCount}</strong><small>non-success</small></div>
+            </div>
+
+            {#if execution?.plans.length}
+              <section class="run-plans">
+                <span class="run-section-label">Plans</span>
+                {#each execution.plans as plan (plan.plan_id)}
+                  <div class="run-plan">
+                    <div>
+                      <strong>{plan.title ?? `Plan ${shortId(plan.plan_id)}`}</strong>
+                      <span>{plan.completed_tasks} of {plan.total_tasks} tasks · {humanize(plan.status)}</span>
+                    </div>
+                    <div class="run-plan-meter" aria-label={`${plan.completed_tasks} of ${plan.total_tasks} tasks complete`}>
+                      <i style={`width: ${plan.total_tasks ? Math.min(100, (plan.completed_tasks / plan.total_tasks) * 100) : 0}%`}></i>
+                    </div>
+                  </div>
+                {/each}
+              </section>
+            {/if}
+
+            <section class="run-tasks">
+              <span class="run-section-label">Recent tasks</span>
+              {#if runTasks.length}
+                {#each runTasks as task (task.task_id)}
+                  {@const tools = taskTools(task)}
+                  {@const outcome = branchOutcome(task.branch_outcome)}
+                  <details class="run-task" class:failed={!["running", "success"].includes(task.status)}>
+                    <summary>
+                      <span class={`run-status ${task.status}`}><i></i></span>
+                      <div>
+                        <strong>{taskLabel(task)}</strong>
+                        <span>{humanize(task.agent_id)} · {task.turns.length} {task.turns.length === 1 ? "turn" : "turns"}{tools.length ? ` · ${tools.length} tools` : ""}</span>
+                      </div>
+                      <time title={fullDate(task.completed_at ?? task.started_at)}>{task.status === "running" ? elapsedBetween(task.started_at) : elapsedBetween(task.started_at, task.completed_at)}</time>
+                      <Icon name="chevron" size={14} />
+                    </summary>
+                    <div class="run-task-detail">
+                      {#if task.prompt}<p>{task.prompt}</p>{/if}
+                      <div class="run-context">
+                        <span>{executionTarget(task.execution.context_target)}</span>
+                        <span>{humanize(task.execution.visibility)}</span>
+                        <span>{humanize(task.execution.durability)}</span>
+                        <span title={task.trace_id}>Trace {shortId(task.trace_id)}</span>
+                      </div>
+                      {#if outcome}<div class="run-outcome"><Icon name="branch" size={14} />{outcome}</div>{/if}
+                      {#if task.error}<div class="run-error"><strong>{humanize(task.status)}</strong><span>{task.error}</span></div>{/if}
+                      {#if task.turns.length}
+                        <div class="run-timeline">
+                          {#each task.turns as turn (turn.turn_index)}
+                            {@const turnTools = toolsForTurn(turn.turn_index)}
+                            <div class="run-turn">
+                              <i class:complete={Boolean(turn.completed_at)}></i>
+                              <div>
+                                <strong>Turn {turn.turn_index}</strong>
+                                <span>{turn.completed_at ? elapsedBetween(turn.started_at, turn.completed_at) : "In progress"}{turn.has_tool_calls ? " · used tools" : ""}</span>
+                                {#if turnTools.length}
+                                  <div class="run-tool-list">
+                                    {#each turnTools as tool (tool.id)}
+                                      <span class:error={tool.is_error}><Icon name="activity" size={12} />{humanize(tool.tool_name)}<small>{tool.duration_ms ? `${tool.duration_ms} ms` : humanize(tool.verdict)}</small></span>
+                                    {/each}
+                                  </div>
+                                {/if}
+                              </div>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  </details>
+                {/each}
+              {:else}
+                <div class="run-empty">
+                  <span><Icon name="activity" size={18} /></span>
+                  <strong>No task history yet</strong>
+                  <p>Send a message to see Turin's task, turn, tool, and branch execution here.</p>
+                </div>
+              {/if}
+            </section>
+            {#if execution?.truncated}<p class="run-truncated">Showing the newest execution records. Older activity remains durable in the session database.</p>{/if}
+          </div>
+        </details>
+      {/if}
       {#if selectedSessionId}
         <details class="efficiency-menu">
           <summary>
