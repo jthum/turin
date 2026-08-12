@@ -82,6 +82,63 @@ JSON reports keep the raw snapshots. Markdown reports add a short summary table
 with first, final, delta, and peak values for the main memory, storage, and
 session-volume metrics.
 
+## Session Storage And Retrieval Lab
+
+`session-lab` is an on-demand development sidecar for comparing Turin's current
+graph history materialization with an equivalent serial-chat schema. It does not
+change Turin's runtime retrieval implementation and is not part of the main Cargo
+workspace or release binaries.
+
+```bash
+CARGO_TARGET_DIR=target cargo run --release --manifest-path tools/perf-suite/Cargo.toml -- \
+  session-lab \
+  --turns 1000 \
+  --branches 8 \
+  --branch-turns 25 \
+  --samples 7
+```
+
+The scenario creates two disposable stores with identical active-path message and
+event payloads:
+
+- a Turin turn graph with configurable off-path branches
+- a flat `session_id + sequence` serial baseline
+
+It reports active/off-path turns, branches, row counts, attributable logical
+payload bytes by category, complete store/WAL/SHM bytes, and warm retrieval
+min/median/p95/max timings. The compared retrieval paths are:
+
+- Turin's unchanged production `StateStore` materialization
+- a sidecar-only bulk turn-link probe that resolves the path in memory
+- the flat serial baseline
+
+The report fails if those implementations do not return the same message count,
+event count, and payload bytes. JSON, Markdown, and standalone HTML reports are
+written to the report directory.
+
+Inspect an existing session with `session-inspect`. Stop the Turin daemon first
+so the DB/WAL copy is a stable snapshot:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --release --manifest-path tools/perf-suite/Cargo.toml -- \
+  session-inspect \
+  --state-db .turin/data/state.db \
+  --session-id SESSION_ID \
+  --samples 7
+```
+
+Inspection copies the DB, WAL, and SHM into a temporary directory and opens only
+that copy. It does not mutate the supplied store. A shared SQLite/Turso store
+cannot honestly attribute physical pages to one session, so reports distinguish:
+
+- logical owned bytes, from session-owned row payloads
+- logical associated bytes, such as session-scoped memory/KV and work-item refs
+- physical bytes for the complete shared store
+
+Warm timings are suitable for live before/after implementation comparisons.
+For cold-cache comparisons, run the command in separate processes and remember
+that restarting a process still does not guarantee the OS page cache was cleared.
+
 Runtime scenarios suppress streamed turn output by default so long runs do not
 flood the terminal. Add `--verbose-turn-output` to hot-history, fake-channel,
 channel-scale, or idle-runtime when debugging the mocked conversation itself.

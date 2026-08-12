@@ -35,6 +35,10 @@ use turin_channel_runner::{
     ChannelDriver, ChannelProgressUpdate, ChannelRunner, RunnerConfig, TaskSnapshot,
 };
 
+mod session_diagnostics;
+
+use session_diagnostics::{SessionInspectArgs, SessionLabArgs};
+
 #[derive(Parser)]
 #[command(name = "turin-perf-suite")]
 #[command(about = "Local Turin performance and footprint scenarios")]
@@ -61,6 +65,10 @@ enum Command {
     PersistenceScale(PersistenceScaleArgs),
     /// Measure peer-runtime memory before and after idle hibernation.
     IdleRuntime(IdleRuntimeArgs),
+    /// Generate matched flat and graph histories, then compare storage and retrieval.
+    SessionLab(SessionLabArgs),
+    /// Inspect and benchmark one session from an offline state-store copy.
+    SessionInspect(SessionInspectArgs),
 }
 
 #[derive(Parser)]
@@ -656,6 +664,8 @@ async fn main() -> Result<()> {
         Command::BlackboxTaskScale(args) => run_blackbox_task_scale(args).await,
         Command::PersistenceScale(args) => run_persistence_scale(args).await,
         Command::IdleRuntime(args) => run_idle_runtime(args).await,
+        Command::SessionLab(args) => session_diagnostics::run_session_lab(args).await,
+        Command::SessionInspect(args) => session_diagnostics::run_session_inspect(args).await,
     }
 }
 
@@ -2599,6 +2609,8 @@ fn build_responses(
                 InferenceEvent::MessageEnd {
                     input_tokens: 10,
                     output_tokens: 5,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                     stop_reason: None,
                 },
             ]);
@@ -2617,6 +2629,8 @@ fn final_events(index: usize, response_bytes: usize) -> Vec<InferenceEvent> {
         InferenceEvent::MessageEnd {
             input_tokens: 5,
             output_tokens: 2,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
             stop_reason: None,
         },
     ]
