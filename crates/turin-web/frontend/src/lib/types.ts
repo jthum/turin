@@ -35,6 +35,7 @@ export interface SessionSummary {
 
 export interface SessionMessage {
   id: number;
+  turn_id: number;
   turn_index: number;
   role: string;
   content: JsonValue;

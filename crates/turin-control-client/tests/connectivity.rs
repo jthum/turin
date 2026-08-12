@@ -191,6 +191,7 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .iter()
             .any(|message| message.role == "assistant")
     );
+    assert!(detail.messages.iter().all(|message| message.turn_id > 0));
     assert_eq!(detail.execution.tasks.len(), 1);
     assert_eq!(detail.execution.tasks[0].status, "success");
 
@@ -227,6 +228,10 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .messages
             .iter()
             .all(|message| message.turn_index <= first_turn.turn_index)
+    );
+    assert_eq!(
+        inspected.messages.last().map(|message| message.turn_id),
+        Some(first_turn.turn_id)
     );
 
     Ok(())

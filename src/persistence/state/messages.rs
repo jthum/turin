@@ -315,6 +315,7 @@ async fn query_message_chunk(
             MessageRow {
                 id: message_id,
                 session_id,
+                turn_id,
                 turn_index: *turn_index,
                 role: row.get::<String>(2)?,
                 content: row.get::<String>(3)?,

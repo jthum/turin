@@ -74,7 +74,10 @@ Persisted session detail:
    `inference_request`, `message_end`, and `context_compaction` events to build
    a bounded request-efficiency projection. High-volume stream deltas are
    filtered in SQL rather than materialized for this projection.
-6. Rows are converted into daemon-facing detail structs. Per-turn request
+6. Rows are converted into daemon-facing detail structs. Message projections
+   retain their exact durable turn id as well as path-relative turn index so
+   clients can perform exact contextual branch operations without loading the
+   complete turn graph. Per-turn request
    estimates are paired with provider-reported input/output and optional
    prompt-cache usage when present, while older sessions remain valid without
    request telemetry or cache counters.
@@ -134,6 +137,8 @@ validates that the turn belongs to the resolved session.
 - Exact-turn session projections validate turn ownership through the same
   `SessionReadTarget::TurnId` path used by persistence materialization and must
   remain observational.
+- A projected message's `turn_id` is durable identity; `turn_index` remains a
+  path-relative presentation depth and must not be used for exact branch writes.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
 - Channel-bound session open/resume should reuse channel persistence and inference overrides.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.

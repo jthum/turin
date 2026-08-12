@@ -265,6 +265,7 @@ impl DaemonState {
                     crate::kernel::estimate_persisted_message_input_tokens(&message.role, &content);
                 SessionMessageDetail {
                     id: message.id,
+                    turn_id: message.turn_id,
                     turn_index: message.turn_index,
                     role: message.role,
                     content,

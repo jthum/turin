@@ -6,6 +6,7 @@
     JsonValue,
     PerfOperationSummary,
     PerfProcessMemory,
+    SessionBranch,
     SessionDetail,
     SessionMessage,
     SessionTaskExecution,
@@ -47,8 +48,13 @@
   let titleSaving = false;
   let titleError = "";
   let graphOpen = false;
-  let graphTurnIndex: number | null = null;
+  let graphTurnId: number | null = null;
   let graphMode: "inspect" | "compare" | "explore" = "inspect";
+  let inlineForkTurnId: number | null = null;
+  let inlineForkName = "";
+  let branchAction = "";
+  let branchActionError = "";
+  let branchActionTurnId: number | null = null;
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
@@ -162,6 +168,10 @@
     resumeFailed = false;
     editingTitle = false;
     graphOpen = false;
+    inlineForkTurnId = null;
+    branchAction = "";
+    branchActionError = "";
+    branchActionTurnId = null;
     titleError = "";
     subscription?.close();
     subscription = null;
@@ -794,16 +804,79 @@
     await onStatusChanged();
   }
 
-  function openGraph(turnIndex: number | null = null, mode: "inspect" | "compare" | "explore" = "inspect") {
-    graphTurnIndex = turnIndex;
+  function openGraph(turnId: number | null = null, mode: "inspect" | "compare" | "explore" = "inspect") {
+    graphTurnId = turnId;
     graphMode = mode;
     graphOpen = true;
   }
 
-  function openGraphFromTurn(event: MouseEvent, turnIndex: number, mode: "inspect" | "compare" | "explore") {
-    const menu = (event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null;
-    if (menu) menu.open = false;
-    openGraph(turnIndex, mode);
+  function branchesFrom(message: SessionMessage): SessionBranch[] {
+    return (detail?.branches ?? []).filter(branch => branch.source_turn_id === message.turn_id);
+  }
+
+  function defaultForkName(turnIndex: number): string {
+    const existing = new Set((detail?.branches ?? []).map(branch => branch.name));
+    const base = `fork-turn-${turnIndex}`;
+    if (!existing.has(base)) return base;
+    let suffix = 2;
+    while (existing.has(`${base}-${suffix}`)) suffix += 1;
+    return `${base}-${suffix}`;
+  }
+
+  async function revealInlineFork(message: SessionMessage) {
+    inlineForkTurnId = message.turn_id;
+    inlineForkName = defaultForkName(message.turn_index);
+    branchActionError = "";
+    branchActionTurnId = null;
+    await tick();
+    document.querySelector<HTMLInputElement>(`[data-fork-turn-id="${message.turn_id}"]`)?.select();
+  }
+
+  async function createInlineFork(message: SessionMessage) {
+    const name = inlineForkName.trim();
+    if (!selectedSessionId || !name || branchAction) return;
+    branchAction = `fork:${message.turn_id}`;
+    branchActionError = "";
+    branchActionTurnId = message.turn_id;
+    try {
+      await client.createBranch({
+        session_id: selectedSessionId,
+        ...(selectedLive?.slot_id ? { slot_id: selectedLive.slot_id } : {}),
+        name,
+        from_turn_id: message.turn_id,
+        activate: true,
+      });
+      inlineForkTurnId = null;
+      await loadDetail(false, true);
+      await onStatusChanged();
+      await scrollToLatest();
+    } catch (reason) {
+      branchActionError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      branchAction = "";
+    }
+  }
+
+  async function checkoutInlineBranch(message: SessionMessage, branch: SessionBranch) {
+    if (!selectedSessionId || branch.active || branchAction) return;
+    branchAction = `checkout:${branch.branch_id}`;
+    branchActionError = "";
+    branchActionTurnId = message.turn_id;
+    try {
+      await client.checkoutBranch({
+        session_id: selectedSessionId,
+        ...(selectedLive?.slot_id ? { slot_id: selectedLive.slot_id } : {}),
+        branch: branch.branch_id,
+      });
+      inlineForkTurnId = null;
+      await loadDetail(false, true);
+      await onStatusChanged();
+      await scrollToLatest();
+    } catch (reason) {
+      branchActionError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      branchAction = "";
+    }
   }
 
   function onTitleKeydown(event: KeyboardEvent) {
@@ -1122,6 +1195,7 @@
           {@const body = messageText(message.content)}
           {@const tools = toolsFor(message)}
           {@const turn = turnFor(message)}
+          {@const splitBranches = branchesFrom(message)}
           {#if isTranscriptMessage(message) && (body || tools.length)}
             <article
               class:user={message.role.toLowerCase() === "user"}
@@ -1156,18 +1230,39 @@
                 {#if message.estimated_token_count}<span>~{formatTokens(message.estimated_token_count)} message tokens</span>{/if}
               </div>
               {#if isFinalAssistantMessageInTurn(message)}
-                <div class="turn-controls">
-                  <details class="turn-path-menu" name="turn-path-actions">
-                    <summary title={`Actions for Turn ${message.turn_index}`}><Icon name="branch" size={13} /><span>Turn {message.turn_index}</span><Icon name="chevron" size={11} /></summary>
-                    <div class="turn-path-popover">
-                      <span>Continue from Turn {message.turn_index}</span>
-                      <button onclick={event => openGraphFromTurn(event, message.turn_index, "inspect")}><Icon name="chat" size={14} /><div><strong>Inspect path</strong><small>See the durable history selected for continuation.</small></div></button>
-                      <button onclick={event => openGraphFromTurn(event, message.turn_index, "explore")}><Icon name="branch" size={14} /><div><strong>Fork or explore</strong><small>Create a path or ask a private aside from here.</small></div></button>
-                      {#if (detail?.branches.length ?? 0) > 1}
-                        <button onclick={event => openGraphFromTurn(event, message.turn_index, "compare")}><Icon name="activity" size={14} /><div><strong>Compare paths</strong><small>Review differences between durable branch heads.</small></div></button>
-                      {/if}
+                <div class="turn-context">
+                  <div class="turn-action-row">
+                    <span>Turn {message.turn_index}</span>
+                    {#if splitBranches.length}<b><Icon name="branch" size={11} />{splitBranches.length} {splitBranches.length === 1 ? "path" : "paths"} from here</b>{/if}
+                    <i></i>
+                    <button onclick={() => openGraph(message.turn_id, "inspect")}>Inspect</button>
+                    <button onclick={() => revealInlineFork(message)}><Icon name="branch" size={11} />Fork</button>
+                  </div>
+                  {#if splitBranches.length}
+                    <div class="branch-point">
+                      <span><Icon name="branch" size={12} />Paths created here</span>
+                      <div>
+                        {#each splitBranches as branch (branch.branch_id)}
+                          <button
+                            class:active={branch.active}
+                            disabled={branch.active || Boolean(branchAction)}
+                            title={branch.active ? `${branch.name} is active` : `Check out ${branch.name}`}
+                            onclick={() => checkoutInlineBranch(message, branch)}
+                          >
+                            <i></i><strong>{branch.name}</strong>
+                            {#if branchAction === `checkout:${branch.branch_id}`}<small>Switching</small>{:else if branch.active}<small>Active</small>{:else if branch.head_turn_index !== null && branch.head_turn_index !== undefined}<small>Turn {branch.head_turn_index}</small>{/if}
+                          </button>
+                        {/each}
+                      </div>
                     </div>
-                  </details>
+                  {/if}
+                  {#if inlineForkTurnId === message.turn_id}
+                    <form class="inline-fork" onsubmit={event => { event.preventDefault(); void createInlineFork(message); }}>
+                      <label><span>New path from Turn {message.turn_index}</span><input data-fork-turn-id={message.turn_id} bind:value={inlineForkName} maxlength="80" aria-label={`New path name from Turn ${message.turn_index}`} /></label>
+                      <div><button type="button" onclick={() => inlineForkTurnId = null}>Cancel</button><button class="primary" disabled={!inlineForkName.trim() || Boolean(branchAction)}>{branchAction === `fork:${message.turn_id}` ? "Creating..." : "Create & switch"}</button></div>
+                    </form>
+                  {/if}
+                  {#if branchActionError && branchActionTurnId === message.turn_id}<p class="branch-action-error">{branchActionError}</p>{/if}
                 </div>
               {/if}
               {#if turn && isFinalAssistantMessageInTurn(message)}
@@ -1259,7 +1354,7 @@
       {client}
       sessionId={selectedSessionId}
       slotId={selectedLive?.slot_id}
-      initialTurnIndex={graphTurnIndex}
+      initialTurnId={graphTurnId}
       initialMode={graphMode}
       onClose={() => graphOpen = false}
       onChanged={refreshAfterGraphChange}

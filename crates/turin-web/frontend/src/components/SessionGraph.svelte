@@ -16,7 +16,7 @@
   export let client: TurinClient;
   export let sessionId: string;
   export let slotId: string | undefined = undefined;
-  export let initialTurnIndex: number | null = null;
+  export let initialTurnId: number | null = null;
   export let initialMode: "inspect" | "compare" | "explore" = "inspect";
   export let onClose: () => void;
   export let onChanged: () => void | Promise<void>;
@@ -96,8 +96,8 @@
       graph = await client.sessionGraph(sessionId);
       const retained = graph.turns.some(turn => turn.turn_id === selectedTurnId);
       if (!retained) {
-        const requestedTurn = !initialSelectionApplied && initialTurnIndex !== null
-          ? activePathTurnAtIndex(graph, initialTurnIndex)
+        const requestedTurn = !initialSelectionApplied && initialTurnId !== null
+          ? graph.turns.find(turn => turn.turn_id === initialTurnId) ?? null
           : null;
         selectedTurnId = requestedTurn?.turn_id
           ?? graph.branches.find(branch => branch.active)?.head_turn_id
@@ -468,20 +468,6 @@
       else groups.push({ turnIndex: message.turn_index, messages: [message] });
     }
     return groups;
-  }
-
-  function activePathTurnAtIndex(model: SessionGraphModel, turnIndex: number): SessionGraphTurn | null {
-    const turnById = new Map(model.turns.map(turn => [turn.turn_id, turn]));
-    let turnId = model.branches.find(branch => branch.active)?.head_turn_id;
-    const visited = new Set<number>();
-    while (turnId !== null && turnId !== undefined && !visited.has(turnId)) {
-      visited.add(turnId);
-      const turn = turnById.get(turnId);
-      if (!turn) return null;
-      if (turn.turn_index === turnIndex) return turn;
-      turnId = turn.parent_turn_id;
-    }
-    return null;
   }
 
   function branchSource(branch: SessionBranch): string | null {
@@ -1035,8 +1021,8 @@
   .context-explainer > div { display: grid; gap: 1px; }
   .context-explainer strong { color: var(--ink); font-size: 10px; }
   .context-explainer span { color: var(--muted); font-size: 9px; line-height: 1.4; }
-  .context-turns { display: grid; gap: 8px; max-height: 390px; padding-right: 3px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
-  .context-turn { position: relative; display: grid; gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .context-turns { display: grid; gap: 8px; }
+  .context-turn { position: relative; display: grid; gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
   .context-turn.current { border-color: color-mix(in srgb, var(--blue) 32%, var(--line)); box-shadow: inset 3px 0 var(--blue); }
   .context-turn > header { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 5px 9px; border-bottom: 1px solid var(--line); background: var(--surface-muted); color: var(--faint); font-size: 9px; font-weight: 700; }
   .context-turn > header b { color: var(--blue); font-size: 8px; }

@@ -60,6 +60,7 @@ pub struct SessionEventDetail {
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionMessageDetail {
     pub id: i64,
+    pub turn_id: i64,
     pub turn_index: u32,
     pub role: String,
     pub content: serde_json::Value,

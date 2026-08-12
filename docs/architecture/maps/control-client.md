@@ -56,6 +56,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   exact durable turn. It must not activate a branch or retarget a live session.
 - Exact-turn branch creation uses an internal turn id because turn indexes are
   path-relative and can repeat across sibling branches.
+- Session messages retain that exact turn id so clients can associate branch
+  provenance and contextual actions without loading the on-demand graph.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - UI/manager presentation formatting does not belong in this crate.

@@ -333,6 +333,7 @@ pub struct EventRow {
 pub struct MessageRow {
     pub id: i64,
     pub session_id: i64,
+    pub turn_id: i64,
     pub turn_index: u32,
     pub role: String,
     pub content: String,

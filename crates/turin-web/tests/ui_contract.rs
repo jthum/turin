@@ -350,6 +350,13 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
             .is_some_and(|rows| !rows.is_empty())
     );
     assert_eq!(
+        path["detail"]["messages"]
+            .as_array()
+            .and_then(|rows| rows.last())
+            .and_then(|message| message["turn_id"].as_i64()),
+        Some(source_turn_id)
+    );
+    assert_eq!(
         path["detail"]["efficiency"],
         Value::Null,
         "path inspection should stay a lean transcript projection"

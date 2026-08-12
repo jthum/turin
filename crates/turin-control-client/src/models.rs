@@ -288,6 +288,7 @@ pub struct SessionEventDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMessageDetail {
     pub id: i64,
+    pub turn_id: i64,
     pub turn_index: u32,
     pub role: String,
     pub content: Value,
