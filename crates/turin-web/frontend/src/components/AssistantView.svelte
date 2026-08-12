@@ -4,9 +4,8 @@
   import type {
     InferenceRequestMetrics,
     JsonValue,
-    PerfLiveSnapshot,
     PerfOperationSummary,
-    PerfProcessSample,
+    PerfProcessMemory,
     SessionDetail,
     SessionMessage,
     SessionTaskExecution,
@@ -59,11 +58,8 @@
   let composer: HTMLTextAreaElement;
   let titleInput: HTMLInputElement;
   let subscription: EventSubscription | null = null;
-  let perfSource: EventSource | null = null;
   let perfDetected = false;
-  let perfConnection: "idle" | "connecting" | "connected" | "unavailable" = "idle";
   let perfOperations: PerfOperationSummary[] = [];
-  let perfSamples: PerfProcessSample[] = [];
   let refreshTimer: number | undefined;
   let deltaFrame: number | undefined;
   let requestVersion = 0;
@@ -127,9 +123,6 @@
     .filter(operation => operation.operation !== "persistence.branch_path")
     .sort((left, right) => right.elapsed_us - left.elapsed_us)
     .slice(0, 6);
-  $: latestProcessSample = latestRetrieval
-    ? [...perfSamples].reverse().find(sample => sample.pid === latestRetrieval?.pid)
-    : undefined;
   $: {
     heightRevision;
     topSpacerHeight = estimatedHeight(transcriptMessages.slice(0, renderStart));
@@ -139,7 +132,6 @@
 
   onDestroy(() => {
     subscription?.close();
-    perfSource?.close();
     if (refreshTimer) window.clearTimeout(refreshTimer);
     if (deltaFrame) window.cancelAnimationFrame(deltaFrame);
     if (copyTimer) window.clearTimeout(copyTimer);
@@ -156,7 +148,6 @@
     liveRequestMetrics = null;
     perfDetected = false;
     perfOperations = [];
-    perfSamples = [];
     perfStarts.clear();
     stopResponseStatus();
     messageOffset = undefined;
@@ -324,7 +315,6 @@
       startedAt: Date.now(),
       fields: objectField(data, "fields"),
     });
-    connectPerfSidecar();
   }
 
   function recordPerfCompletion(data: Record<string, JsonValue>) {
@@ -348,40 +338,13 @@
       outcome: optionalStringField(data, "outcome") ?? "unknown",
       start_fields: started?.fields ?? {},
       fields: objectField(data, "fields"),
+      memory_start: processMemoryField(data, "memory_start"),
+      memory_end: processMemoryField(data, "memory_end"),
+      memory_peak: processMemoryField(data, "memory_peak"),
+      rss_delta_kb: optionalNumericField(data, "rss_delta_kb"),
+      pss_delta_kb: optionalNumericField(data, "pss_delta_kb"),
     });
     perfStarts.delete(operationId);
-    connectPerfSidecar();
-  }
-
-  function connectPerfSidecar() {
-    if (perfSource || perfConnection === "connecting" || perfConnection === "connected") return;
-    perfConnection = "connecting";
-    const configured = window.localStorage.getItem("turin.perfEndpoint")?.trim();
-    const endpoint = (configured || "http://127.0.0.1:4779").replace(/\/$/, "");
-    const source = new EventSource(`${endpoint}/events`);
-    perfSource = source;
-    source.onopen = () => {
-      perfConnection = "connected";
-    };
-    source.onerror = () => {
-      perfConnection = "unavailable";
-      source.close();
-      if (perfSource === source) perfSource = null;
-    };
-    source.addEventListener("perf.snapshot", raw => {
-      const snapshot = parsePerfEvent<PerfLiveSnapshot>(raw);
-      if (!snapshot) return;
-      for (const operation of snapshot.completed) upsertPerfOperation(operation);
-      perfSamples = snapshot.samples.slice(-500);
-    });
-    source.addEventListener("perf.summary", raw => {
-      const operation = parsePerfEvent<PerfOperationSummary>(raw);
-      if (operation) upsertPerfOperation(operation);
-    });
-    source.addEventListener("perf.memory.sample", raw => {
-      const sample = parsePerfEvent<PerfProcessSample>(raw);
-      if (sample) perfSamples = [...perfSamples, sample].slice(-500);
-    });
   }
 
   function upsertPerfOperation(operation: PerfOperationSummary) {
@@ -391,14 +354,6 @@
       return;
     }
     perfOperations = perfOperations.map((item, index) => index === existing ? operation : item);
-  }
-
-  function parsePerfEvent<T>(raw: Event): T | null {
-    try {
-      return JSON.parse((raw as MessageEvent<string>).data) as T;
-    } catch {
-      return null;
-    }
   }
 
   function objectField(data: Record<string, JsonValue>, key: string): Record<string, JsonValue> {
@@ -418,6 +373,14 @@
 
   function numericField(data: Record<string, JsonValue>, key: string): number {
     return typeof data[key] === "number" ? data[key] : 0;
+  }
+
+  function optionalNumericField(data: Record<string, JsonValue>, key: string): number | null {
+    return typeof data[key] === "number" ? data[key] : null;
+  }
+
+  function processMemoryField(data: Record<string, JsonValue>, key: string): PerfProcessMemory {
+    return objectField(data, key) as PerfProcessMemory;
   }
 
   function formatPerfTime(microseconds?: number | null): string {
@@ -1059,7 +1022,7 @@
               <section class="efficiency-section live-perf">
                 <div class="efficiency-heading">
                   <div><strong>Live retrieval</strong><span>Feature-gated internal measurements</span></div>
-                  <b class:connected={perfConnection === "connected"}>{latestRetrieval?.build_profile ?? "diagnostic"}</b>
+                  <b>{latestRetrieval?.build_profile ?? "diagnostic"}</b>
                 </div>
                 {#if latestRetrieval}
                   <div class="live-perf-grid">
@@ -1069,7 +1032,8 @@
                     <div><span>Turn lookups</span><strong>{latestTurnLookups.toLocaleString()}</strong></div>
                     <div><span>Path connections</span><strong>{latestPathConnections.toLocaleString()}</strong></div>
                     <div><span>Tool queries</span><strong>{latestToolQueries.toLocaleString()}</strong></div>
-                    <div><span>Current PSS</span><strong>{formatMemorySize(latestProcessSample?.memory.pss_kb)}</strong></div>
+                    <div><span>Current PSS</span><strong>{formatMemorySize(latestRetrieval.memory_end?.pss_kb)}</strong></div>
+                    <div><span>Peak PSS</span><strong>{formatMemorySize(latestRetrieval.memory_peak?.pss_kb)}</strong></div>
                     <div><span>PSS retained</span><strong>{formatMemory(latestRetrieval.pss_delta_kb)}</strong></div>
                   </div>
                   {#if latestSlowStages.length}
@@ -1083,10 +1047,8 @@
                     </div>
                   {/if}
                   <p class="efficiency-note">
-                    Internal timings are exact for this {latestRetrieval.build_profile ?? "diagnostic"} build.
-                    {perfConnection === "connected"
-                      ? "Memory is sampled externally by the perf sidecar; deltas show trends, not allocation ownership."
-                      : "Start the perf sidecar to add process-memory trends."}
+                    Internal timings are directly measured in this instrumented {latestRetrieval.build_profile ?? "diagnostic"} build.
+                    Memory is sampled by the feature-enabled daemon; deltas show process trends, not allocation ownership.
                   </p>
                 {:else}
                   <p class="efficiency-empty">Diagnostics are enabled. Waiting for this session projection to complete.</p>

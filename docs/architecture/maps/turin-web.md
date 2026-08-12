@@ -90,9 +90,9 @@ session state, invent renderer-specific harness APIs, or bypass
     and error disclosure remains observational; lifecycle SSE events only
     invalidate and reconcile that durable projection.
 25. When the daemon advertises feature-gated perf events, the Assistant
-    Efficiency panel can display exact retrieval timings and query counters. It
-    then opportunistically connects to the loopback perf-suite sidecar for
-    process-memory trends; normal sessions never probe or display this surface.
+    Efficiency panel displays directly measured retrieval timings, exact query
+    counters, and daemon-process memory trends from the existing session event
+    stream; normal sessions never display this surface.
 
 ## Invariants
 
@@ -173,8 +173,9 @@ session state, invent renderer-specific harness APIs, or bypass
   must not fetch the raw event history, retain a second task ledger in browser
   memory, or treat SSE delivery as durable execution truth.
 - Live perf diagnostics are a development overlay, not durable session data.
-  Internal timings may be called exact, but sidecar RSS/PSS deltas must be
-  described as process-level trends rather than allocation attribution.
+  Internal timings must be described as instrumented measurements, while query
+  counters may be called exact. Daemon RSS/PSS deltas are process-level
+  correlations rather than allocation attribution.
 - Live response indicators should participate in normal chat layout. They must
   not use absolute-positioned cursors that can escape the response bubble.
 - Frontend source lives under `frontend/`; `static/` is generated and checked in

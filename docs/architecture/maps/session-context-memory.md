@@ -68,8 +68,8 @@ Full materialization:
 2. The session hot window is replaced by the full active context.
 3. Later turn completion applies hot-history pruning again.
 4. A `perf-diagnostics` build scopes resume, refresh, and per-turn
-   rematerialization stages to the public session id so an external sidecar can
-   measure the unchanged retrieval path.
+   rematerialization stages to the public session id and correlates them with
+   daemon-process memory while leaving the retrieval path unchanged.
 
 ## Invariants
 
@@ -156,8 +156,8 @@ The current module split is deliberate:
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
 - `LiveSessionSnapshot.history` answers "how much hot history is currently resident in a live runtime?"
 - `perf-diagnostics` answers "which current retrieval stages and query counts
-  produced this observation?" while the external perf sidecar answers "how did
-  process memory trend around it?"
+  produced this observation, and how did daemon process memory trend around
+  it?"
 
 Likely future cleanup areas:
 

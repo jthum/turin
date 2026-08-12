@@ -215,18 +215,6 @@ export interface PerfOperationSummary {
   pss_delta_kb?: number | null;
 }
 
-export interface PerfProcessSample {
-  sampled_at_ms: number;
-  pid: number;
-  active_operations: number;
-  memory: PerfProcessMemory;
-}
-
-export interface PerfLiveSnapshot {
-  completed: PerfOperationSummary[];
-  samples: PerfProcessSample[];
-}
-
 export interface TaskStatus {
   request_id: string;
   agent_id: string;

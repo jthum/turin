@@ -35,10 +35,8 @@ use turin_channel_runner::{
     ChannelDriver, ChannelProgressUpdate, ChannelRunner, RunnerConfig, TaskSnapshot,
 };
 
-mod live_diagnostics;
 mod session_diagnostics;
 
-use live_diagnostics::LiveDiagnosticsArgs;
 use session_diagnostics::{SessionInspectArgs, SessionLabArgs};
 
 #[derive(Parser)]
@@ -71,8 +69,6 @@ enum Command {
     SessionLab(SessionLabArgs),
     /// Inspect and benchmark one session from an offline state-store copy.
     SessionInspect(SessionInspectArgs),
-    /// Watch feature-gated daemon operations and correlate them with process memory.
-    LiveDiagnostics(LiveDiagnosticsArgs),
 }
 
 #[derive(Parser)]
@@ -670,7 +666,6 @@ async fn main() -> Result<()> {
         Command::IdleRuntime(args) => run_idle_runtime(args).await,
         Command::SessionLab(args) => session_diagnostics::run_session_lab(args).await,
         Command::SessionInspect(args) => session_diagnostics::run_session_inspect(args).await,
-        Command::LiveDiagnostics(args) => live_diagnostics::run_live_diagnostics(args).await,
     }
 }
 

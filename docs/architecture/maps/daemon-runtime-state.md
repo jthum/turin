@@ -29,8 +29,8 @@ This subsystem should preserve three guarantees:
 - `src/daemon/server/events/scope.rs`
   - Scoped runtime snapshot projection and registry issue filtering.
 - `src/perf_diagnostics.rs`
-  - Compile-time optional operation stages, session scope propagation, and
-    daemon event-sink emission for external development diagnostics.
+  - Compile-time optional operation stages, session scope propagation,
+    daemon-process memory sampling, and enriched event emission.
 - `src/kernel/agent_manager/operations.rs`
   - Live runtime/session/task operations called by this layer.
 - `src/persistence/state/*`
@@ -81,8 +81,9 @@ Persisted session detail:
    execution context, terminal outcomes, branch outcomes, and errors without
    exposing the raw event log to clients.
 8. With `perf-diagnostics` enabled, the projection emits nested operation
-   timings and row/query counters through the existing daemon event broadcast.
-   Normal builds compile those hooks away.
+   timings, row/query counters, and correlated daemon RSS/PSS observations
+   through the existing event broadcast. Normal builds compile those hooks
+   away.
 
 Branch activation/checkout:
 
@@ -172,9 +173,11 @@ Peer runtime idle shutdown supports an opt-in allocator diagnostic: when `TURIN_
 Heap attribution is also opt-in. Build the daemon with `--profile profiling --features heap-profile` when a perf pass needs `dhat` heap data; normal release builds do not enable the feature, do not replace the allocator, and keep the stripped size-optimized release profile.
 
 Live retrieval diagnostics are separately opt-in through `perf-diagnostics`.
-They publish precise internal stages on the existing daemon event channel; the
-standalone `tools/perf-suite live-diagnostics` sidecar owns `/proc` sampling,
-bounded history, JSONL output, and the loopback browser stream. The normal
-daemon does not sample process memory or run a telemetry service.
+The feature-enabled daemon publishes precise internal stages on its existing
+event channel and samples its own Linux `/proc/self` memory at stage boundaries
+and while root retrieval operations remain active. Nested stages retain timing
+and counters without their own `/proc` reads. There is no diagnostics sidecar
+or separate HTTP service. Normal builds compile the collector and call-site
+macros away.
 
 For low-memory deployments on Linux/glibc, allocator environment settings such as `MALLOC_TRIM_THRESHOLD_=0` and `MALLOC_ARENA_MAX=1` can materially reduce retained PSS after long channel/task runs. They are not enabled by Turin itself because they trade retained memory for allocator/syscall overhead and may reduce throughput under some concurrent workloads.

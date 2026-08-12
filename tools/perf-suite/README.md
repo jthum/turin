@@ -141,11 +141,8 @@ that restarting a process still does not guarantee the OS page cache was cleared
 
 ## Live Development Diagnostics
 
-`live-diagnostics` correlates precise, feature-gated daemon operation timings
-with externally sampled process memory. It is a development sidecar: neither
-the hooks nor the collector are included in a normal Turin build.
-
-Start a diagnostics-enabled daemon:
+Live retrieval diagnostics are owned by the feature-gated Turin daemon, not by
+this perf-suite binary. Start a diagnostics-enabled daemon:
 
 ```bash
 cargo run --features perf-diagnostics --bin turin -- \
@@ -154,32 +151,31 @@ cargo run --features perf-diagnostics --bin turin -- \
 
 Stop an already-running normal daemon before restarting it with the feature.
 
-Then start the sidecar in another terminal before opening a session in the web
-client:
+Internal stage timings are directly measured and query counters are exact for
+the instrumented build.
+On Linux, the daemon samples its own `/proc/self/smaps_rollup` at root retrieval
+boundaries and every 50 ms while measured root work remains active. Nested
+stages retain timings and counters without repeatedly sampling `/proc`. RSS/PSS
+start, end, peak, and delta values are process-level correlations suitable for
+trends; they do not attribute allocations to one operation. Unsupported
+platforms keep the timing and query counters while reporting memory as
+unavailable.
 
-```bash
-CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
-  live-diagnostics \
-  --config .turin/config.toml
-```
-
-The sidecar subscribes to the daemon's event stream, samples known Turin PIDs
-from `/proc`, appends JSONL to
-`.workspace/perf-reports/live-diagnostics.jsonl`, and exposes a loopback-only
-browser stream at `http://127.0.0.1:4779/events`. The Assistant Efficiency
-panel discovers that stream after it sees a diagnostic event. Override the
-browser endpoint with the `turin.perfEndpoint` local-storage key when needed.
-
-Internal stage timings and query counters are exact for the instrumented build.
-RSS/PSS start, end, peak, and delta values are process-level samples suitable
-for trends; they do not attribute allocations to one operation. Active sampling
-defaults to 50 ms and idle sampling to one second. Use `--pid` to include another
-process, such as `turin-web`, and `--quiet` to suppress terminal summaries.
+The Assistant Efficiency panel receives these measurements through the existing
+daemon event stream. No sidecar, additional HTTP listener, or diagnostics
+service is required. Use the same build profile, workload, and feature setting
+for before/after comparisons so the collector's controlled overhead remains
+part of both observations.
 
 Current retrieval diagnostics cover bounded session projection, runtime session
 resume/refresh, per-turn full-history rematerialization, branch-path turn-row
 lookups, and per-turn tool queries. They intentionally measure the current
 implementation without changing its query shape.
+
+The entire live path is isolated behind the root `perf-diagnostics` feature and
+`src/perf_diagnostics.rs`; normal builds compile the call-site macros away. This
+is the deliberate removal boundary if live diagnostics no longer justify their
+maintenance cost.
 
 Runtime scenarios suppress streamed turn output by default so long runs do not
 flood the terminal. Add `--verbose-turn-output` to hot-history, fake-channel,
