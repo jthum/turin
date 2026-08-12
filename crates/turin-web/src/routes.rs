@@ -21,9 +21,9 @@ use turin_control_client::{
 };
 use turin_daemon_protocol::{
     DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, MemoryList,
-    MemoryListParams, RuntimeEventsSubscribeParams, SidestepContextTargetParams,
-    SidestepModeParams, SubmitTaskParams, WorkItemList, WorklistDetail, WorklistItemsParams,
-    WorklistListParams,
+    MemoryListParams, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
+    ScheduleJobRunList, SidestepContextTargetParams, SidestepModeParams, SubmitTaskParams,
+    WorkItemList, WorklistDetail, WorklistItemsParams, WorklistListParams,
 };
 use turin_ui_core::{
     DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
@@ -40,6 +40,8 @@ const EVENT_KEEPALIVE: Duration = Duration::from_secs(15);
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const APP_CSS: &str = include_str!("../static/assets/app.css");
 const APP_JS: &str = include_str!("../static/assets/app.js");
+const HARNESS_STUDIO_JS: &str = include_str!("../static/assets/HarnessStudio.js");
+const WORK_OPERATIONS_JS: &str = include_str!("../static/assets/WorkOperations.js");
 
 pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 
@@ -139,6 +141,32 @@ struct WebHarnessDeletedResponse {
 #[derive(Debug, Deserialize)]
 struct WebHarnessRequest {
     id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSchedulesResponse {
+    schedules: Vec<ScheduleJobDetail>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebScheduleResponse {
+    schedule: ScheduleJobDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct WebScheduleRunsResponse {
+    runs: ScheduleJobRunList,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebScheduleToggleRequest {
+    id: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebTaskCancelRequest {
+    request_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -332,6 +360,16 @@ async fn route_request(
             "application/javascript; charset=utf-8",
             APP_JS,
         )),
+        (Method::GET, "/assets/HarnessStudio.js") => Ok(static_response(
+            StatusCode::OK,
+            "application/javascript; charset=utf-8",
+            HARNESS_STUDIO_JS,
+        )),
+        (Method::GET, "/assets/WorkOperations.js") => Ok(static_response(
+            StatusCode::OK,
+            "application/javascript; charset=utf-8",
+            WORK_OPERATIONS_JS,
+        )),
         (Method::GET, "/api/healthz") => Ok(json_response(
             StatusCode::OK,
             &WebHealthz {
@@ -357,6 +395,14 @@ async fn route_request(
         (Method::POST, "/api/harnesses/validate") => handle_harness_validate(req, &state).await,
         (Method::POST, "/api/harnesses/reload") => handle_harness_reload(req, &state).await,
         (Method::DELETE, "/api/harnesses/delete") => handle_harness_delete(req, &state).await,
+        (Method::GET, "/api/operations/schedules") => handle_schedules(&state).await,
+        (Method::GET, "/api/operations/schedule-runs") => handle_schedule_runs(req, &state).await,
+        (Method::POST, "/api/operations/schedules") => handle_schedule_create(req, &state).await,
+        (Method::POST, "/api/operations/schedules/toggle") => {
+            handle_schedule_toggle(req, &state).await
+        }
+        (Method::DELETE, "/api/operations/schedules") => handle_schedule_delete(req, &state).await,
+        (Method::POST, "/api/operations/tasks/cancel") => handle_task_cancel(req, &state).await,
         (Method::GET, "/api/apps") => handle_apps(&state).await,
         (Method::POST, "/api/ui/list") => handle_ui_list(req, &state).await,
         (Method::POST, "/api/actions/run") => handle_action_run(req, &state).await,
@@ -371,6 +417,106 @@ async fn route_request(
             path
         ))),
     }
+}
+
+async fn handle_schedules(state: &WebState) -> std::result::Result<Response<WebBody>, WebError> {
+    let schedules = state
+        .client
+        .list_schedules()
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list schedules: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSchedulesResponse { schedules },
+    ))
+}
+
+async fn handle_schedule_runs(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let (id, limit) = parse_schedule_runs_query(req.uri().query())?;
+    let runs = state
+        .client
+        .list_schedule_runs(id, false, Some(limit))
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list schedule runs: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebScheduleRunsResponse { runs },
+    ))
+}
+
+async fn handle_schedule_create(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: ScheduleCreateParams = read_json(req).await?;
+    if params.agent_id.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_agent_id",
+            "Scheduled agent id must not be empty",
+        ));
+    }
+    let schedule = state
+        .client
+        .create_schedule(params)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to create schedule: {err}")))?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &WebScheduleResponse { schedule },
+    ))
+}
+
+async fn handle_schedule_toggle(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebScheduleToggleRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "schedule")?;
+    let result = if params.enabled {
+        state.client.enable_schedule(id).await
+    } else {
+        state.client.disable_schedule(id).await
+    };
+    let schedule =
+        result.map_err(|err| WebError::upstream(format!("Failed to update schedule: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebScheduleResponse { schedule },
+    ))
+}
+
+async fn handle_schedule_delete(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebHarnessRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "schedule")?;
+    let schedule = state
+        .client
+        .delete_schedule(id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to delete schedule: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebScheduleResponse { schedule },
+    ))
+}
+
+async fn handle_task_cancel(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebTaskCancelRequest = read_json(req).await?;
+    let request_id = validate_entity_id(&params.request_id, "task request")?;
+    let task = state
+        .client
+        .cancel_task(request_id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to cancel task: {err}")))?;
+    Ok(json_response(StatusCode::OK, &WebTaskResponse { task }))
 }
 
 async fn handle_harnesses(state: &WebState) -> std::result::Result<Response<WebBody>, WebError> {
@@ -1214,6 +1360,26 @@ fn parse_entity_id_query(
         WebError::bad_request("missing_entity_id", format!("{entity} id is required"))
     })?;
     Ok(validate_entity_id(&id, entity)?.to_string())
+}
+
+fn parse_schedule_runs_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {
+    let mut id = None;
+    let mut limit = 50;
+    for (key, value) in form_urlencoded::parse(query.unwrap_or_default().as_bytes()) {
+        match key.as_ref() {
+            "id" => id = Some(value.into_owned()),
+            "limit" => limit = parse_data_limit(&value)?,
+            other => {
+                return Err(WebError::bad_request(
+                    "invalid_query",
+                    format!("Unknown query parameter '{other}'"),
+                ));
+            }
+        }
+    }
+    let id =
+        id.ok_or_else(|| WebError::bad_request("missing_entity_id", "schedule id is required"))?;
+    Ok((validate_entity_id(&id, "schedule")?.to_string(), limit))
 }
 
 fn parse_worklist_items_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {

@@ -59,6 +59,62 @@ export interface HarnessValidation {
   valid: boolean;
 }
 
+export interface ScheduleAction {
+  name: string;
+  params?: JsonValue;
+}
+
+export interface ScheduleJob {
+  id: number;
+  public_id: string;
+  agent_id: string;
+  kind: "prompt" | "action" | string;
+  prompt?: string | null;
+  action?: ScheduleAction | null;
+  next_run_unix_ms: number;
+  interval_seconds?: number | null;
+  recurring_pattern?: string | null;
+  overlap_policy: string;
+  work_key?: string | null;
+  max_concurrency?: number | null;
+  enabled: boolean;
+  slot_id: string;
+  running_task_id?: string | null;
+  active_run_count: number;
+  pending_rerun: boolean;
+  last_run_unix_ms?: number | null;
+  last_status?: string | null;
+  last_error_code?: string | null;
+  failure_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleRun {
+  id: number;
+  task_id: string;
+  started_unix_ms: number;
+  finished_unix_ms?: number | null;
+  duration_ms?: number | null;
+  last_status?: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduleCreateInput {
+  agent_id: string;
+  prompt?: string;
+  action?: ScheduleAction;
+  next_run_unix_ms: number;
+  interval_seconds?: number;
+  recurring_pattern?: "daily" | "weekly";
+  overlap_policy?: "skip" | "queue" | "parallel";
+  work_key?: string;
+  max_concurrency?: number;
+  enabled: boolean;
+}
+
 export interface LiveExecution {
   execution_id: string;
   context_target: JsonValue;
@@ -458,11 +514,20 @@ export interface WorklistItem {
   parent_id?: string | null;
   title: string;
   kind: string;
+  prompt?: string | null;
+  action?: ScheduleAction | null;
   status: string;
   paused: boolean;
+  pause_reason?: string | null;
+  pause_until_unix_ms?: number | null;
   priority: number;
+  after?: string[];
   metadata?: JsonValue;
   claim_agent_id?: string | null;
+  claim_session_id?: string | null;
+  claim_execution_id?: string | null;
+  claim_heartbeat_unix_ms?: number | null;
+  claimed_at?: string | null;
   completed_at?: string | null;
   failure_reason?: string | null;
   created_at: string;

@@ -18,6 +18,9 @@ import type {
   HarnessIssue,
   HarnessRuntime,
   HarnessValidation,
+  ScheduleCreateInput,
+  ScheduleJob,
+  ScheduleRun,
 } from "./types";
 
 interface ErrorEnvelope {
@@ -223,6 +226,51 @@ export class HttpTurinClient implements TurinClient {
     });
   }
 
+  async schedules(): Promise<ScheduleJob[]> {
+    const result = await this.request<{ schedules: ScheduleJob[] }>("/api/operations/schedules");
+    return result.schedules;
+  }
+
+  async scheduleRuns(id: string, limit = 50): Promise<ScheduleRun[]> {
+    const params = new URLSearchParams({ id, limit: String(limit) });
+    const result = await this.request<{ runs: { runs: ScheduleRun[] } }>(
+      `/api/operations/schedule-runs?${params}`,
+    );
+    return result.runs.runs;
+  }
+
+  async createSchedule(input: ScheduleCreateInput): Promise<ScheduleJob> {
+    const result = await this.request<{ schedule: ScheduleJob }>("/api/operations/schedules", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.schedule;
+  }
+
+  async toggleSchedule(id: string, enabled: boolean): Promise<ScheduleJob> {
+    const result = await this.request<{ schedule: ScheduleJob }>("/api/operations/schedules/toggle", {
+      method: "POST",
+      body: JSON.stringify({ id, enabled }),
+    });
+    return result.schedule;
+  }
+
+  async deleteSchedule(id: string): Promise<ScheduleJob> {
+    const result = await this.request<{ schedule: ScheduleJob }>("/api/operations/schedules", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    });
+    return result.schedule;
+  }
+
+  async cancelTask(requestId: string): Promise<TaskStatus> {
+    const result = await this.request<{ task: TaskStatus }>("/api/operations/tasks/cancel", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    });
+    return result.task;
+  }
+
   runAction(input: {
     action: string;
     harness_id?: string;
@@ -266,6 +314,11 @@ export class HttpTurinClient implements TurinClient {
       "tool_result",
       "perf.operation.started",
       "perf.operation.completed",
+      "schedule.created",
+      "schedule.updated",
+      "schedule.enabled",
+      "schedule.disabled",
+      "schedule.deleted",
     ];
     for (const type of eventTypes) {
       source.addEventListener(type, raw => {

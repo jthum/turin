@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use futures::StreamExt;
@@ -221,6 +221,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert!(css.contains(".data-explorer"));
     assert!(css.contains(".graph-workspace"));
     assert!(css.contains(".studio-layout"));
+    assert!(css.contains(".operations-view"));
 
     let js = client
         .get(format!("{base_url}/assets/app.js"))
@@ -231,6 +232,16 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .await?;
     assert!(!js.is_empty());
     assert!(js.len() < 300_000, "frontend bootstrap unexpectedly grew");
+    assert!(js.contains("WorkOperations.js"));
+
+    let operations_js = client
+        .get(format!("{base_url}/assets/WorkOperations.js"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(operations_js.contains("Work Operations"));
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -874,6 +885,79 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .json()
         .await?;
     assert_eq!(deleted["deleted"], "studio-contract");
+
+    let next_run_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_millis()
+        .saturating_add(86_400_000) as i64;
+    let created_schedule: Value = client
+        .post(format!("{base_url}/api/operations/schedules"))
+        .json(&json!({
+            "agent_id": "default",
+            "prompt": "Review tomorrow's work",
+            "next_run_unix_ms": next_run_unix_ms,
+            "overlap_policy": "skip",
+            "enabled": false
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let schedule_id = created_schedule["schedule"]["public_id"]
+        .as_str()
+        .context("created schedule should expose a public id")?;
+    assert_eq!(created_schedule["schedule"]["enabled"], false);
+
+    let schedules: Value = client
+        .get(format!("{base_url}/api/operations/schedules"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        schedules["schedules"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["public_id"] == schedule_id))
+    );
+
+    let runs: Value = client
+        .get(format!("{base_url}/api/operations/schedule-runs"))
+        .query(&[("id", schedule_id), ("limit", "50")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(runs["runs"]["runs"].as_array().is_some_and(Vec::is_empty));
+
+    let enabled_schedule: Value = client
+        .post(format!("{base_url}/api/operations/schedules/toggle"))
+        .json(&json!({ "id": schedule_id, "enabled": true }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(enabled_schedule["schedule"]["enabled"], true);
+
+    let deleted_schedule: Value = client
+        .delete(format!("{base_url}/api/operations/schedules"))
+        .json(&json!({ "id": schedule_id }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(deleted_schedule["schedule"]["public_id"], schedule_id);
+
+    let invalid_cancel = client
+        .post(format!("{base_url}/api/operations/tasks/cancel"))
+        .json(&json!({ "request_id": "" }))
+        .send()
+        .await?;
+    assert_eq!(invalid_cancel.status(), reqwest::StatusCode::BAD_REQUEST);
 
     Ok(())
 }

@@ -4,7 +4,6 @@
   import AssistantView from "./components/AssistantView.svelte";
   import DataExplorer from "./components/DataExplorer.svelte";
   import HarnessView from "./components/HarnessView.svelte";
-  import HarnessStudio from "./components/HarnessStudio.svelte";
   import Icon from "./components/Icon.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import { HttpTurinClient } from "./lib/HttpTurinClient";
@@ -22,6 +21,8 @@
   let eventRevision = 0;
   let latestUiIntent: JsonValue = null;
   let refreshTimer: number | undefined;
+  let HarnessStudioComponent: typeof import("./components/HarnessStudio.svelte").default | null = null;
+  let WorkOperationsComponent: typeof import("./components/WorkOperations.svelte").default | null = null;
 
   $: activeApp = status?.ui.apps[activeView] as UiApp | undefined;
   $: if (status && !["assistant", "data", "harnesses", "operations"].includes(activeView)) connectGlobalEvents();
@@ -73,6 +74,16 @@
   function navigate(view: string) {
     activeView = view;
     sidebarOpen = false;
+    void loadViewComponent(view);
+  }
+
+  async function loadViewComponent(view: string) {
+    if (view === "harnesses" && !HarnessStudioComponent) {
+      HarnessStudioComponent = (await import("./components/HarnessStudio.svelte")).default;
+    }
+    if (view === "operations" && !WorkOperationsComponent) {
+      WorkOperationsComponent = (await import("./components/WorkOperations.svelte")).default;
+    }
   }
 
   function selectSession(sessionId: string) {
@@ -134,7 +145,17 @@
       {:else if activeView === "orchestration"}
         <AgentOrchestration {status} onSession={selectSession} onRefresh={refreshStatus} />
       {:else if activeView === "harnesses"}
-        <HarnessStudio {client} {status} onOpenApp={navigate} onStatusChanged={refreshStatus} />
+        {#if HarnessStudioComponent}
+          <HarnessStudioComponent {client} {status} onOpenApp={navigate} onStatusChanged={refreshStatus} />
+        {:else}
+          <main class="boot-screen"><span class="brand-mark"><Icon name="code" /></span><strong>Opening Harness Studio</strong><i></i></main>
+        {/if}
+      {:else if activeView === "operations"}
+        {#if WorkOperationsComponent}
+          <WorkOperationsComponent {client} {status} onSession={selectSession} onStatusChanged={refreshStatus} />
+        {:else}
+          <main class="boot-screen"><span class="brand-mark"><Icon name="clock" /></span><strong>Opening Work Operations</strong><i></i></main>
+        {/if}
       {:else if activeApp}
         <HarnessView {client} app={activeApp} {eventRevision} {latestUiIntent} />
       {/if}

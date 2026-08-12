@@ -17,6 +17,9 @@ import type {
   HarnessIssue,
   HarnessRuntime,
   HarnessValidation,
+  ScheduleCreateInput,
+  ScheduleJob,
+  ScheduleRun,
 } from "./types";
 
 export interface EventSubscription {
@@ -76,6 +79,12 @@ export interface TurinClient {
   validateHarness(id: string): Promise<HarnessValidation>;
   reloadHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
   deleteHarness(id: string): Promise<void>;
+  schedules(): Promise<ScheduleJob[]>;
+  scheduleRuns(id: string, limit?: number): Promise<ScheduleRun[]>;
+  createSchedule(input: ScheduleCreateInput): Promise<ScheduleJob>;
+  toggleSchedule(id: string, enabled: boolean): Promise<ScheduleJob>;
+  deleteSchedule(id: string): Promise<ScheduleJob>;
+  cancelTask(requestId: string): Promise<TaskStatus>;
   runAction(input: {
     action: string;
     harness_id?: string;
