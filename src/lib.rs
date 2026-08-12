@@ -3,6 +3,7 @@ pub mod display;
 pub mod harness;
 pub mod inference;
 pub mod kernel;
+pub(crate) mod perf_diagnostics;
 pub mod persistence;
 pub mod remote;
 pub(crate) mod schedule_support;

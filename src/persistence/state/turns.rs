@@ -3,6 +3,7 @@ mod branch_heads;
 use anyhow::{Context, Result, anyhow};
 
 use super::{StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
+use crate::perf_diagnostics::{perf_stage, perf_stage_finish};
 
 const TURN_SELECT_BY_ID: &str = concat!(
     "SELECT id, public_id, session_id, parent_turn_id, branch_depth, created_at ",
@@ -191,12 +192,32 @@ impl StateStore {
         session_id: i64,
         branch_head_id: Option<i64>,
     ) -> Result<Vec<TurnRow>> {
+        perf_stage!(
+            path_stage,
+            "persistence.branch_path",
+            None,
+            serde_json::json!({
+                "internal_session_id": session_id,
+                "branch_head_id": branch_head_id,
+            })
+        );
         let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
+            perf_stage_finish!(
+                path_stage,
+                "empty",
+                serde_json::json!({
+                    "turns_visited": 0,
+                    "turn_row_queries": 0,
+                    "connection_setups": 1,
+                })
+            );
             return Ok(Vec::new());
         };
         let mut current_turn_id = branch.head_turn_id;
         let mut turns = Vec::new();
+        let mut turn_row_queries = 0usize;
         while let Some(turn_id) = current_turn_id {
+            turn_row_queries = turn_row_queries.saturating_add(1);
             let Some(turn) = self.get_turn_row(turn_id).await? else {
                 anyhow::bail!("Turn {} on active branch path could not be loaded", turn_id);
             };
@@ -204,6 +225,15 @@ impl StateStore {
             turns.push(turn);
         }
         turns.reverse();
+        perf_stage_finish!(
+            path_stage,
+            "ok",
+            serde_json::json!({
+                "turns_visited": turns.len(),
+                "turn_row_queries": turn_row_queries,
+                "connection_setups": turn_row_queries.saturating_add(1),
+            })
+        );
         Ok(turns)
     }
 

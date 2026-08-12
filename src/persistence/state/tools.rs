@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::{Context, Result};
 
 use super::{SessionReadTarget, StateStore, ToolExecutionRow, TurnWriteTarget};
+use crate::perf_diagnostics::{perf_stage, perf_stage_finish};
 
 impl StateStore {
     #[allow(clippy::too_many_arguments)]
@@ -59,6 +60,15 @@ impl StateStore {
         target: &SessionReadTarget,
         turn_indexes: Option<&HashSet<u32>>,
     ) -> Result<Vec<ToolExecutionRow>> {
+        perf_stage!(
+            tool_query_stage,
+            "persistence.tools.query",
+            None,
+            serde_json::json!({
+                "internal_session_id": session_id,
+                "visible_turns": turn_indexes.map(HashSet::len),
+            })
+        );
         let conn = self.connect().await?;
         let mut execs = Vec::new();
         let turns = match target {
@@ -75,10 +85,13 @@ impl StateStore {
                     .await?
             }
         };
-        for turn in turns
+        let _path_turns = turns.len();
+        let selected_turns = turns
             .into_iter()
             .filter(|turn| turn_indexes.is_none_or(|indexes| indexes.contains(&turn.branch_depth)))
-        {
+            .collect::<Vec<_>>();
+        let _tool_queries = selected_turns.len();
+        for turn in selected_turns {
             let mut rows = conn
                 .query(
                     "SELECT id, tool_call_id, tool_name, args, output, is_error, duration_ms, verdict, created_at FROM tool_executions WHERE turn_id = ?1 ORDER BY id",
@@ -101,6 +114,15 @@ impl StateStore {
                 });
             }
         }
+        perf_stage_finish!(
+            tool_query_stage,
+            "ok",
+            serde_json::json!({
+                "path_turns": _path_turns,
+                "turn_queries": _tool_queries,
+                "rows": execs.len(),
+            })
+        );
         Ok(execs)
     }
 }

@@ -126,16 +126,20 @@ pub(super) async fn get(
     params: SessionGetParams,
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
+    use crate::perf_diagnostics::perf_session_scope;
+
     let guard = ctx.state.read().await;
-    let result = guard
-        .get_session_projection(
+    let result = perf_session_scope!(
+        &params.session_id,
+        guard.get_session_projection(
             &params.session_id,
             params.message_limit,
             params.message_offset,
             params.include_events.unwrap_or(true),
             params.include_efficiency.unwrap_or(false),
         )
-        .await;
+    )
+    .await;
     optional_response(
         id,
         result,

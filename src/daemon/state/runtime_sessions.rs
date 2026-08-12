@@ -21,6 +21,7 @@ use crate::kernel::session::ExecutionStatusSnapshot;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
+use crate::perf_diagnostics::{perf_stage, perf_stage_finish};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{BranchHeadRow, SessionRow};
 use crate::persistence::state::{SessionReadTarget, StateStore};
@@ -129,8 +130,35 @@ impl DaemonState {
             message_offset.is_none() || message_limit.is_some(),
             "message_offset requires message_limit"
         );
-        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
-        else {
+        perf_stage!(
+            projection_stage,
+            "session.projection",
+            Some(session_id),
+            serde_json::json!({
+                "message_limit": message_limit,
+                "message_offset": message_offset,
+                "include_events": include_events,
+                "include_efficiency": include_efficiency,
+            })
+        );
+        perf_stage!(
+            resolve_stage,
+            "session.resolve",
+            Some(session_id),
+            serde_json::json!({})
+        );
+        let resolved = self.resolve_persisted_session(session_id).await?;
+        perf_stage_finish!(
+            resolve_stage,
+            if resolved.is_some() {
+                "ok"
+            } else {
+                "not_found"
+            },
+            serde_json::json!({})
+        );
+        let Some((store_selector, store, row)) = resolved else {
+            perf_stage_finish!(projection_stage, "not_found", serde_json::json!({}));
             return Ok(None);
         };
         debug!(
@@ -140,9 +168,18 @@ impl DaemonState {
         let active_branch = SessionReadTarget::ActiveBranch;
 
         let events = if include_events {
-            store
-                .get_events(row.id, &active_branch)
-                .await?
+            perf_stage!(
+                events_stage,
+                "session.events",
+                Some(session_id),
+                serde_json::json!({ "internal_session_id": row.id })
+            );
+            let persisted_events = store.get_events(row.id, &active_branch).await?;
+            let _payload_bytes = persisted_events
+                .iter()
+                .map(|event| event.payload.len())
+                .sum::<usize>();
+            let events = persisted_events
                 .into_iter()
                 .map(|event| SessionEventDetail {
                     id: event.id,
@@ -150,11 +187,30 @@ impl DaemonState {
                     payload: super::helpers::parse_json_or_string(&event.payload),
                     created_at: event.created_at,
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            perf_stage_finish!(
+                events_stage,
+                "ok",
+                serde_json::json!({
+                    "rows": events.len(),
+                    "payload_bytes": _payload_bytes,
+                })
+            );
+            events
         } else {
             Vec::new()
         };
 
+        perf_stage!(
+            messages_stage,
+            "session.messages",
+            Some(session_id),
+            serde_json::json!({
+                "internal_session_id": row.id,
+                "message_limit": message_limit,
+                "message_offset": message_offset,
+            })
+        );
         let (persisted_messages, total_messages, message_offset) =
             match (message_limit, message_offset) {
                 (Some(limit), Some(offset)) => {
@@ -176,6 +232,27 @@ impl DaemonState {
                 }
                 (None, Some(_)) => unreachable!("message offset was validated above"),
             };
+        let _message_payload_bytes = persisted_messages
+            .iter()
+            .map(|message| message.content.len())
+            .sum::<usize>();
+        let _loaded_message_count = persisted_messages.len();
+        perf_stage_finish!(
+            messages_stage,
+            "ok",
+            serde_json::json!({
+                "rows": _loaded_message_count,
+                "total_rows": total_messages,
+                "resolved_offset": message_offset,
+                "payload_bytes": _message_payload_bytes,
+            })
+        );
+        perf_stage!(
+            message_projection_stage,
+            "session.messages.project",
+            Some(session_id),
+            serde_json::json!({ "rows": _loaded_message_count })
+        );
         let messages = persisted_messages
             .into_iter()
             .map(|message| {
@@ -193,6 +270,11 @@ impl DaemonState {
                 }
             })
             .collect::<Vec<_>>();
+        perf_stage_finish!(
+            message_projection_stage,
+            "ok",
+            serde_json::json!({ "rows": messages.len() })
+        );
 
         let visible_turn_indexes = message_limit.map(|_| {
             messages
@@ -201,13 +283,26 @@ impl DaemonState {
                 .collect::<HashSet<_>>()
         });
 
-        let tool_executions = store
+        perf_stage!(
+            tools_stage,
+            "session.tools",
+            Some(session_id),
+            serde_json::json!({
+                "visible_turns": visible_turn_indexes.as_ref().map(HashSet::len),
+            })
+        );
+        let persisted_tool_executions = store
             .get_tool_executions_for_turn_indexes(
                 row.id,
                 &active_branch,
                 visible_turn_indexes.as_ref(),
             )
-            .await?
+            .await?;
+        let _tool_payload_bytes = persisted_tool_executions
+            .iter()
+            .map(|execution| execution.args.len() + execution.output.as_deref().map_or(0, str::len))
+            .sum::<usize>();
+        let tool_executions = persisted_tool_executions
             .into_iter()
             .map(|execution| SessionToolExecutionDetail {
                 id: execution.id,
@@ -224,16 +319,42 @@ impl DaemonState {
                 verdict: execution.verdict,
                 created_at: execution.created_at,
             })
-            .collect();
+            .collect::<Vec<_>>();
+        perf_stage_finish!(
+            tools_stage,
+            "ok",
+            serde_json::json!({
+                "rows": tool_executions.len(),
+                "payload_bytes": _tool_payload_bytes,
+                "visible_turns": visible_turn_indexes.as_ref().map(HashSet::len),
+            })
+        );
 
+        perf_stage!(
+            branches_stage,
+            "session.branches",
+            Some(session_id),
+            serde_json::json!({})
+        );
         let branches = store
             .list_branch_heads(row.id)
             .await?
             .into_iter()
             .map(branch_detail_from_row)
-            .collect();
+            .collect::<Vec<_>>();
+        perf_stage_finish!(
+            branches_stage,
+            "ok",
+            serde_json::json!({ "rows": branches.len() })
+        );
 
         let efficiency = if include_efficiency {
+            perf_stage!(
+                efficiency_stage,
+                "session.efficiency",
+                Some(session_id),
+                serde_json::json!({})
+            );
             let events = store
                 .get_events_by_types(
                     row.id,
@@ -241,14 +362,27 @@ impl DaemonState {
                     &["inference_request", "message_end", "context_compaction"],
                 )
                 .await?;
-            Some(session_efficiency_from_events(
-                events,
-                visible_turn_indexes.as_ref(),
-            ))
+            let _event_count = events.len();
+            let efficiency = session_efficiency_from_events(events, visible_turn_indexes.as_ref());
+            perf_stage_finish!(
+                efficiency_stage,
+                "ok",
+                serde_json::json!({
+                    "event_rows": _event_count,
+                    "request_rows": efficiency.total_request_count,
+                })
+            );
+            Some(efficiency)
         } else {
             None
         };
 
+        perf_stage!(
+            execution_stage,
+            "session.execution",
+            Some(session_id),
+            serde_json::json!({ "event_limit": SESSION_EXECUTION_EVENT_LIMIT })
+        );
         let mut execution_events = store
             .get_recent_events_by_types(
                 row.id,
@@ -263,13 +397,24 @@ impl DaemonState {
                 SESSION_EXECUTION_EVENT_LIMIT + 1,
             )
             .await?;
+        let _execution_event_count = execution_events.len();
         let execution_truncated = execution_events.len() > SESSION_EXECUTION_EVENT_LIMIT;
         if execution_truncated {
             execution_events.remove(0);
         }
         let execution = session_execution_from_events(execution_events, execution_truncated);
+        perf_stage_finish!(
+            execution_stage,
+            "ok",
+            serde_json::json!({
+                "event_rows": _execution_event_count,
+                "truncated": execution_truncated,
+                "tasks": execution.tasks.len(),
+                "plans": execution.plans.len(),
+            })
+        );
 
-        Ok(Some(SessionDetail {
+        let detail = SessionDetail {
             session: session_summary_from_row_and_selector(&row, &store_selector),
             branches,
             events,
@@ -281,7 +426,19 @@ impl DaemonState {
                 offset: message_offset,
                 total: total_messages,
             }),
-        }))
+        };
+        perf_stage_finish!(
+            projection_stage,
+            "ok",
+            serde_json::json!({
+                "message_rows": detail.messages.len(),
+                "total_message_rows": total_messages,
+                "event_rows": detail.events.len(),
+                "tool_rows": detail.tool_executions.len(),
+                "branch_rows": detail.branches.len(),
+            })
+        );
+        Ok(Some(detail))
     }
 
     pub async fn set_session_title(

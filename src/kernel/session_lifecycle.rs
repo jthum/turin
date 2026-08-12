@@ -16,8 +16,8 @@ use crate::kernel::session::{
     SessionStatus,
 };
 use crate::kernel::session_lifecycle::materialization::{
-    materialize_execution_target, rebuild_context_checkpoint, rebuild_history,
-    rebuild_session_counters,
+    MaterializedExecutionTarget, materialize_execution_target, rebuild_context_checkpoint,
+    rebuild_history, rebuild_session_counters,
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::{
@@ -27,9 +27,53 @@ use crate::kernel::session_metadata::{
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
+use crate::perf_diagnostics::{perf_session_scope, perf_stage, perf_stage_finish};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::SessionRow;
 use crate::persistence::state::StateStore;
+
+#[cfg_attr(not(feature = "perf-diagnostics"), allow(unused_variables))]
+async fn materialize_session_target(
+    host: &ExecutionHost,
+    store: &StateStore,
+    store_selector: &StoreSelector,
+    row: &SessionRow,
+    context_target: &ExecutionContextTarget,
+    session_id: &str,
+    operation: &'static str,
+) -> Result<MaterializedExecutionTarget> {
+    perf_session_scope!(session_id, async {
+        perf_stage!(
+            materialize_stage,
+            operation,
+            Some(session_id),
+            serde_json::json!({
+                "internal_session_id": row.id,
+                "context_target": format!("{context_target:?}"),
+            })
+        );
+        let materialized =
+            materialize_execution_target(host, store, store_selector, row, context_target).await;
+        match materialized {
+            Ok(materialized) => {
+                perf_stage_finish!(
+                    materialize_stage,
+                    "ok",
+                    serde_json::json!({
+                        "message_rows": materialized.messages.len(),
+                        "active_event_rows": materialized.active_events.len(),
+                    })
+                );
+                Ok(materialized)
+            }
+            Err(error) => {
+                perf_stage_finish!(materialize_stage, "error", serde_json::json!({}));
+                Err(error)
+            }
+        }
+    })
+    .await
+}
 
 impl ExecutionHost {
     /// Create a new session.
@@ -132,9 +176,16 @@ impl ExecutionHost {
         let context_target = ExecutionContextTarget::BranchHead {
             branch_head_id: row.active_branch_head_id,
         };
-        let materialized =
-            materialize_execution_target(self, &store, &store_selector, &row, &context_target)
-                .await?;
+        let materialized = materialize_session_target(
+            self,
+            &store,
+            &store_selector,
+            &row,
+            &context_target,
+            session_id,
+            "session.resume.materialize",
+        )
+        .await?;
         let events = store.get_all_events(row.id).await?;
         let (history, turn_index) = rebuild_history(&materialized.messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
@@ -177,12 +228,15 @@ impl ExecutionHost {
             .await?;
 
         let context_target = resolved_execution_context_target(session.context_target(), &row);
-        let materialized = materialize_execution_target(
+        let session_reference = self.session_reference(session);
+        let materialized = materialize_session_target(
             self,
             &store,
             &session.store_selector,
             &row,
             &context_target,
+            &session_reference,
+            "session.refresh.materialize",
         )
         .await?;
         let events = store.get_all_events(row.id).await?;
@@ -226,12 +280,15 @@ impl ExecutionHost {
             )
             .await?;
         let context_target = resolved_execution_context_target(session.context_target(), &row);
-        let materialized = materialize_execution_target(
+        let session_reference = self.session_reference(session);
+        let materialized = materialize_session_target(
             self,
             &store,
             &session.store_selector,
             &row,
             &context_target,
+            &session_reference,
+            "session.history.materialize",
         )
         .await?;
         let (history, _) = rebuild_history(&materialized.messages)?;

@@ -67,6 +67,9 @@ Full materialization:
 1. `ensure_full_history_materialized` reloads persisted messages when a full-history consumer needs them.
 2. The session hot window is replaced by the full active context.
 3. Later turn completion applies hot-history pruning again.
+4. A `perf-diagnostics` build scopes resume, refresh, and per-turn
+   rematerialization stages to the public session id so an external sidecar can
+   measure the unchanged retrieval path.
 
 ## Invariants
 
@@ -91,6 +94,8 @@ Full materialization:
   read/write counters.
 - Harness `on_turn_prepare` may see full history and may replace it, so pruning happens after turn execution, not before the hook.
 - Debug hot-history profile can opt out of bounds; default profile should remain memory-safe.
+- Feature-gated live diagnostics must not change materialization semantics or
+  introduce prompt/history copies. Normal builds must compile the hooks away.
 
 ## Common Changes
 
@@ -150,6 +155,9 @@ The current module split is deliberate:
   compaction, and how close was that request to its input budget?"
 - `session_lifecycle.rs` answers "when do we restore, materialize, and re-prune persisted history?"
 - `LiveSessionSnapshot.history` answers "how much hot history is currently resident in a live runtime?"
+- `perf-diagnostics` answers "which current retrieval stages and query counts
+  produced this observation?" while the external perf sidecar answers "how did
+  process memory trend around it?"
 
 Likely future cleanup areas:
 

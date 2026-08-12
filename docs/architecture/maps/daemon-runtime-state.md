@@ -28,6 +28,9 @@ This subsystem should preserve three guarantees:
   - Event subscription filters for agent/session/slot scoped streams.
 - `src/daemon/server/events/scope.rs`
   - Scoped runtime snapshot projection and registry issue filtering.
+- `src/perf_diagnostics.rs`
+  - Compile-time optional operation stages, session scope propagation, and
+    daemon event-sink emission for external development diagnostics.
 - `src/kernel/agent_manager/operations.rs`
   - Live runtime/session/task operations called by this layer.
 - `src/persistence/state/*`
@@ -77,6 +80,9 @@ Persisted session detail:
    lifecycle records into a typed execution summary. This projection retains
    execution context, terminal outcomes, branch outcomes, and errors without
    exposing the raw event log to clients.
+8. With `perf-diagnostics` enabled, the projection emits nested operation
+   timings and row/query counters through the existing daemon event broadcast.
+   Normal builds compile those hooks away.
 
 Branch activation/checkout:
 
@@ -96,6 +102,9 @@ Branch activation/checkout:
 - Cache-read and cache-creation counts remain optional provider measurements;
   absence must not be rendered as a measured zero or inferred from Turin's
   reusable-prefix estimate.
+- Development diagnostic events must remain payload-sparse and observational.
+  They may contain ids, counts, byte sizes, outcomes, and elapsed times, but not
+  message, prompt, event-payload, or tool-output content.
 - Execution detail is a durable read projection, not live client state. Its
   lifecycle-event query must remain independently capped and report when older
   execution records were omitted.
@@ -161,5 +170,11 @@ The task event poller compares lightweight task fingerprints first, then fetches
 Peer runtime idle shutdown supports an opt-in allocator diagnostic: when `TURIN_TRIM_ALLOCATOR_ON_PEER_IDLE` is truthy, Linux builds call `malloc_trim(0)` after the peer runtime has ended its session and shut down MCP clients. This is deliberately environment-gated so normal daemon behavior does not pay the trim cost unless a deployment or perf run asks for the lower retained-RSS profile.
 
 Heap attribution is also opt-in. Build the daemon with `--profile profiling --features heap-profile` when a perf pass needs `dhat` heap data; normal release builds do not enable the feature, do not replace the allocator, and keep the stripped size-optimized release profile.
+
+Live retrieval diagnostics are separately opt-in through `perf-diagnostics`.
+They publish precise internal stages on the existing daemon event channel; the
+standalone `tools/perf-suite live-diagnostics` sidecar owns `/proc` sampling,
+bounded history, JSONL output, and the loopback browser stream. The normal
+daemon does not sample process memory or run a telemetry service.
 
 For low-memory deployments on Linux/glibc, allocator environment settings such as `MALLOC_TRIM_THRESHOLD_=0` and `MALLOC_ARENA_MAX=1` can materially reduce retained PSS after long channel/task runs. They are not enabled by Turin itself because they trade retained memory for allocator/syscall overhead and may reduce throughput under some concurrent workloads.

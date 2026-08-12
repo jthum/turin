@@ -139,6 +139,48 @@ Warm timings are suitable for live before/after implementation comparisons.
 For cold-cache comparisons, run the command in separate processes and remember
 that restarting a process still does not guarantee the OS page cache was cleared.
 
+## Live Development Diagnostics
+
+`live-diagnostics` correlates precise, feature-gated daemon operation timings
+with externally sampled process memory. It is a development sidecar: neither
+the hooks nor the collector are included in a normal Turin build.
+
+Start a diagnostics-enabled daemon:
+
+```bash
+cargo run --features perf-diagnostics --bin turin -- \
+  daemon start --config .turin/config.toml
+```
+
+Stop an already-running normal daemon before restarting it with the feature.
+
+Then start the sidecar in another terminal before opening a session in the web
+client:
+
+```bash
+CARGO_TARGET_DIR=target cargo run --manifest-path tools/perf-suite/Cargo.toml -- \
+  live-diagnostics \
+  --config .turin/config.toml
+```
+
+The sidecar subscribes to the daemon's event stream, samples known Turin PIDs
+from `/proc`, appends JSONL to
+`.workspace/perf-reports/live-diagnostics.jsonl`, and exposes a loopback-only
+browser stream at `http://127.0.0.1:4779/events`. The Assistant Efficiency
+panel discovers that stream after it sees a diagnostic event. Override the
+browser endpoint with the `turin.perfEndpoint` local-storage key when needed.
+
+Internal stage timings and query counters are exact for the instrumented build.
+RSS/PSS start, end, peak, and delta values are process-level samples suitable
+for trends; they do not attribute allocations to one operation. Active sampling
+defaults to 50 ms and idle sampling to one second. Use `--pid` to include another
+process, such as `turin-web`, and `--quiet` to suppress terminal summaries.
+
+Current retrieval diagnostics cover bounded session projection, runtime session
+resume/refresh, per-turn full-history rematerialization, branch-path turn-row
+lookups, and per-turn tool queries. They intentionally measure the current
+implementation without changing its query shape.
+
 Runtime scenarios suppress streamed turn output by default so long runs do not
 flood the terminal. Add `--verbose-turn-output` to hot-history, fake-channel,
 channel-scale, or idle-runtime when debugging the mocked conversation itself.

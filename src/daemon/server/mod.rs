@@ -59,6 +59,8 @@ pub async fn serve(config_path: &Path) -> Result<()> {
 
     let (shutdown_tx, mut shutdown_rx) = watch_channel::channel(false);
     let (event_tx, _) = broadcast::channel(512);
+    #[cfg(feature = "perf-diagnostics")]
+    crate::perf_diagnostics::install_event_sink(event_tx.clone());
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
     let channel_runtimes = Arc::new(ChannelRuntimeManager::new(
         endpoint.clone(),

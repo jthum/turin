@@ -45,6 +45,7 @@ path = "src/lib.rs"
 
 [features]
 heap-profile = ["dep:dhat"]
+perf-diagnostics = []
 
 [dependencies]
 # CLI
