@@ -5,7 +5,9 @@ use turin_daemon_protocol::{
 };
 
 use crate::client::ControlClient;
-use crate::models::{HarnessDetail, HarnessRuntime, HarnessRuntimeList};
+use crate::models::{
+    HarnessDetail, HarnessRuntime, HarnessRuntimeList, HarnessValidation, Issue, IssueList,
+};
 
 impl ControlClient {
     pub async fn list_harnesses(&self) -> Result<Vec<HarnessRuntime>> {
@@ -23,6 +25,63 @@ impl ControlClient {
             }),
         )
         .await
+    }
+
+    pub async fn create_harness(&self, harness_id: impl Into<String>) -> Result<HarnessDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessCreate(EntityIdParams {
+                id: harness_id.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn list_harness_issues(&self, harness_id: impl Into<String>) -> Result<Vec<Issue>> {
+        let response: IssueList = self
+            .request_ok(
+                None,
+                DaemonRequest::HarnessIssues(EntityIdParams {
+                    id: harness_id.into(),
+                }),
+            )
+            .await?;
+        Ok(response.issues)
+    }
+
+    pub async fn reload_harness(&self, harness_id: impl Into<String>) -> Result<HarnessDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessReload(EntityIdParams {
+                id: harness_id.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn validate_harness(
+        &self,
+        harness_id: impl Into<String>,
+    ) -> Result<HarnessValidation> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessValidate(EntityIdParams {
+                id: harness_id.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn delete_harness(&self, harness_id: impl Into<String>) -> Result<()> {
+        let _: serde_json::Value = self
+            .request_ok(
+                None,
+                DaemonRequest::HarnessDelete(EntityIdParams {
+                    id: harness_id.into(),
+                }),
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn list_harness_ui_intents(

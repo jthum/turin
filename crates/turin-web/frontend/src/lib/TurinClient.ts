@@ -13,6 +13,10 @@ import type {
   MemoryList,
   WorklistDetail,
   WorklistItem,
+  HarnessDetail,
+  HarnessIssue,
+  HarnessRuntime,
+  HarnessValidation,
 } from "./types";
 
 export interface EventSubscription {
@@ -66,6 +70,12 @@ export interface TurinClient {
     limit?: number;
     offset?: number;
   }): Promise<MemoryList>;
+  harnesses(): Promise<HarnessRuntime[]>;
+  harness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
+  createHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
+  validateHarness(id: string): Promise<HarnessValidation>;
+  reloadHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
+  deleteHarness(id: string): Promise<void>;
   runAction(input: {
     action: string;
     harness_id?: string;

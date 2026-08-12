@@ -35,6 +35,30 @@ export interface InferenceContextStatus {
   is_default: boolean;
 }
 
+export interface HarnessRuntime {
+  harness_id: string;
+  bound_agents: string[];
+  watched_roots: string[];
+  loaded_scripts: string[];
+  ui_intents: JsonValue[];
+}
+
+export interface HarnessDetail extends HarnessRuntime {
+  directory: string;
+}
+
+export interface HarnessIssue {
+  path: string;
+  message: string;
+}
+
+export interface HarnessValidation {
+  harness_id: string;
+  directory: string;
+  script_count: number;
+  valid: boolean;
+}
+
 export interface LiveExecution {
   execution_id: string;
   context_target: JsonValue;

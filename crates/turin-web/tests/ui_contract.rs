@@ -220,6 +220,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert!(css.contains(".harness-view"));
     assert!(css.contains(".data-explorer"));
     assert!(css.contains(".graph-workspace"));
+    assert!(css.contains(".studio-layout"));
 
     let js = client
         .get(format!("{base_url}/assets/app.js"))
@@ -229,7 +230,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .text()
         .await?;
     assert!(!js.is_empty());
-    assert!(js.len() < 275_000, "frontend bootstrap unexpectedly grew");
+    assert!(js.len() < 300_000, "frontend bootstrap unexpectedly grew");
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -819,6 +820,60 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert_eq!(data_memories["list"]["total"], 0);
     assert!(data_memories["list"]["memories"].is_array());
     assert!(data_memories["list"]["scopes"].is_array());
+
+    let harnesses: Value = client
+        .get(format!("{base_url}/api/harnesses"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        harnesses["harnesses"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["harness_id"] == "default"))
+    );
+
+    let default_harness: Value = client
+        .get(format!("{base_url}/api/harness"))
+        .query(&[("id", "default")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(default_harness["harness"]["harness_id"], "default");
+    assert!(default_harness["issues"].is_array());
+
+    let validation: Value = client
+        .post(format!("{base_url}/api/harnesses/validate"))
+        .json(&json!({ "id": "default" }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(validation["validation"]["valid"], true);
+
+    let created: Value = client
+        .post(format!("{base_url}/api/harnesses/create"))
+        .json(&json!({ "id": "studio-contract" }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(created["harness"]["harness_id"], "studio-contract");
+
+    let deleted: Value = client
+        .delete(format!("{base_url}/api/harnesses/delete"))
+        .json(&json!({ "id": "studio-contract" }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(deleted["deleted"], "studio-contract");
 
     Ok(())
 }

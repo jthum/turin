@@ -4,6 +4,7 @@
   import AssistantView from "./components/AssistantView.svelte";
   import DataExplorer from "./components/DataExplorer.svelte";
   import HarnessView from "./components/HarnessView.svelte";
+  import HarnessStudio from "./components/HarnessStudio.svelte";
   import Icon from "./components/Icon.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import { HttpTurinClient } from "./lib/HttpTurinClient";
@@ -23,8 +24,8 @@
   let refreshTimer: number | undefined;
 
   $: activeApp = status?.ui.apps[activeView] as UiApp | undefined;
-  $: if (status && activeView !== "assistant" && activeView !== "data") connectGlobalEvents();
-  $: if (activeView === "assistant" || activeView === "data") closeGlobalEvents();
+  $: if (status && !["assistant", "data", "harnesses", "operations"].includes(activeView)) connectGlobalEvents();
+  $: if (["assistant", "data", "harnesses", "operations"].includes(activeView)) closeGlobalEvents();
 
   onMount(async () => {
     await refreshStatus();
@@ -40,7 +41,7 @@
       const next = await client.status();
       status = next;
       error = "";
-      if (!["assistant", "data", "orchestration"].includes(activeView) && !next.ui.apps[activeView]) activeView = "assistant";
+      if (!["assistant", "data", "orchestration", "harnesses", "operations"].includes(activeView) && !next.ui.apps[activeView]) activeView = "assistant";
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -132,6 +133,8 @@
         <DataExplorer {client} {status} onSession={selectSession} />
       {:else if activeView === "orchestration"}
         <AgentOrchestration {status} onSession={selectSession} onRefresh={refreshStatus} />
+      {:else if activeView === "harnesses"}
+        <HarnessStudio {client} {status} onOpenApp={navigate} onStatusChanged={refreshStatus} />
       {:else if activeApp}
         <HarnessView {client} app={activeApp} {eventRevision} {latestUiIntent} />
       {/if}

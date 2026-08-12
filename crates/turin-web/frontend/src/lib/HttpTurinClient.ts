@@ -14,6 +14,10 @@ import type {
   MemoryList,
   WorklistDetail,
   WorklistItem,
+  HarnessDetail,
+  HarnessIssue,
+  HarnessRuntime,
+  HarnessValidation,
 } from "./types";
 
 interface ErrorEnvelope {
@@ -178,6 +182,45 @@ export class HttpTurinClient implements TurinClient {
     if (input.includeSuperseded) params.set("include_superseded", "true");
     const result = await this.request<{ list: MemoryList }>(`/api/data/memories?${params}`);
     return result.list;
+  }
+
+  async harnesses(): Promise<HarnessRuntime[]> {
+    const result = await this.request<{ harnesses: HarnessRuntime[] }>("/api/harnesses");
+    return result.harnesses;
+  }
+
+  harness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }> {
+    const params = new URLSearchParams({ id });
+    return this.request(`/api/harness?${params}`);
+  }
+
+  createHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }> {
+    return this.request("/api/harnesses/create", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  async validateHarness(id: string): Promise<HarnessValidation> {
+    const result = await this.request<{ validation: HarnessValidation }>("/api/harnesses/validate", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+    return result.validation;
+  }
+
+  reloadHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }> {
+    return this.request("/api/harnesses/reload", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  async deleteHarness(id: string): Promise<void> {
+    await this.request("/api/harnesses/delete", {
+      method: "DELETE",
+      body: JSON.stringify({ id }),
+    });
   }
 
   runAction(input: {

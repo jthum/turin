@@ -39,6 +39,12 @@
       <Icon name="route" /><span>Orchestration</span>
       {#if status.snapshot.health.active_task_count}<i class="nav-count">{status.snapshot.health.active_task_count}</i>{/if}
     </button>
+    <button class:active={activeView === "harnesses"} onclick={() => onNavigate("harnesses")}>
+      <Icon name="code" /><span>Harness Studio</span>
+    </button>
+    <button class:active={activeView === "operations"} onclick={() => onNavigate("operations")}>
+      <Icon name="clock" /><span>Work Operations</span>
+    </button>
     <button class:active={activeView === "data"} onclick={() => onNavigate("data")}>
       <Icon name="database" /><span>Data Explorer</span>
     </button>

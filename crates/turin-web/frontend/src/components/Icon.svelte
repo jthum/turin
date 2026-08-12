@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let name: "spark" | "chat" | "grid" | "database" | "branch" | "route" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" | "edit" = "spark";
+  export let name: "spark" | "chat" | "grid" | "database" | "branch" | "route" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" | "edit" | "code" | "check" | "clock" = "spark";
   export let size = 18;
 </script>
 
@@ -45,5 +45,11 @@
     <rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
   {:else if name === "edit"}
     <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+  {:else if name === "code"}
+    <path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" />
+  {:else if name === "check"}
+    <path d="m5 12 4 4L19 6" />
+  {:else if name === "clock"}
+    <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
   {/if}
 </svg>

@@ -87,6 +87,14 @@ pub struct HarnessDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarnessValidation {
+    pub harness_id: String,
+    pub directory: String,
+    pub script_count: usize,
+    pub valid: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceContextStatus {
     pub id: String,
     pub provider: String,

@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::time::{MissedTickBehavior, interval};
 use turin_control_client::{
-    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionBranchDetail,
-    SessionDetail, SessionGraphDetail, SessionSummary, TaskStatus,
+    ControlClient, DaemonStatus, HarnessDetail, HarnessRuntime, HarnessValidation, Issue,
+    LiveSession, ManagedEventStream, SessionBranchDetail, SessionDetail, SessionGraphDetail,
+    SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
     DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, MemoryList,
@@ -112,6 +113,32 @@ struct WebMemoriesResponse {
 #[derive(Debug, Serialize)]
 struct WebActionResponse {
     result: HarnessActionRunResult,
+}
+
+#[derive(Debug, Serialize)]
+struct WebHarnessesResponse {
+    harnesses: Vec<HarnessRuntime>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebHarnessResponse {
+    harness: HarnessDetail,
+    issues: Vec<Issue>,
+}
+
+#[derive(Debug, Serialize)]
+struct WebHarnessValidationResponse {
+    validation: HarnessValidation,
+}
+
+#[derive(Debug, Serialize)]
+struct WebHarnessDeletedResponse {
+    deleted: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebHarnessRequest {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +351,12 @@ async fn route_request(
         (Method::GET, "/api/data/worklists") => handle_data_worklists(&state).await,
         (Method::GET, "/api/data/worklist-items") => handle_data_worklist_items(req, &state).await,
         (Method::GET, "/api/data/memories") => handle_data_memories(req, &state).await,
+        (Method::GET, "/api/harnesses") => handle_harnesses(&state).await,
+        (Method::GET, "/api/harness") => handle_harness(req, &state).await,
+        (Method::POST, "/api/harnesses/create") => handle_harness_create(req, &state).await,
+        (Method::POST, "/api/harnesses/validate") => handle_harness_validate(req, &state).await,
+        (Method::POST, "/api/harnesses/reload") => handle_harness_reload(req, &state).await,
+        (Method::DELETE, "/api/harnesses/delete") => handle_harness_delete(req, &state).await,
         (Method::GET, "/api/apps") => handle_apps(&state).await,
         (Method::POST, "/api/ui/list") => handle_ui_list(req, &state).await,
         (Method::POST, "/api/actions/run") => handle_action_run(req, &state).await,
@@ -338,6 +371,125 @@ async fn route_request(
             path
         ))),
     }
+}
+
+async fn handle_harnesses(state: &WebState) -> std::result::Result<Response<WebBody>, WebError> {
+    let harnesses = state
+        .client
+        .list_harnesses()
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list harnesses: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebHarnessesResponse { harnesses },
+    ))
+}
+
+async fn handle_harness(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let id = parse_entity_id_query(req.uri().query(), "harness")?;
+    let harness = state
+        .client
+        .get_harness(&id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to inspect harness: {err}")))?;
+    let issues =
+        state.client.list_harness_issues(&id).await.map_err(|err| {
+            WebError::upstream(format!("Failed to inspect harness issues: {err}"))
+        })?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebHarnessResponse { harness, issues },
+    ))
+}
+
+async fn handle_harness_create(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebHarnessRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "harness")?;
+    let harness = state
+        .client
+        .create_harness(id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to create harness: {err}")))?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &WebHarnessResponse {
+            harness,
+            issues: Vec::new(),
+        },
+    ))
+}
+
+async fn handle_harness_validate(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebHarnessRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "harness")?;
+    let validation = state
+        .client
+        .validate_harness(id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Harness validation failed: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebHarnessValidationResponse { validation },
+    ))
+}
+
+async fn handle_harness_reload(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebHarnessRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "harness")?;
+    let harness = state
+        .client
+        .reload_harness(id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Harness reload failed: {err}")))?;
+    let issues = state
+        .client
+        .list_harness_issues(&harness.harness_id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to inspect harness issues: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebHarnessResponse { harness, issues },
+    ))
+}
+
+async fn handle_harness_delete(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebHarnessRequest = read_json(req).await?;
+    let id = validate_entity_id(&params.id, "harness")?.to_string();
+    state
+        .client
+        .delete_harness(&id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to delete harness: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebHarnessDeletedResponse { deleted: id },
+    ))
+}
+
+fn validate_entity_id<'a>(id: &'a str, entity: &str) -> std::result::Result<&'a str, WebError> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_entity_id",
+            format!("{entity} id must not be empty"),
+        ));
+    }
+    Ok(id)
 }
 
 async fn handle_session_title(
@@ -1040,6 +1192,28 @@ fn parse_session_id_query(query: Option<&str>) -> std::result::Result<String, We
             "session_id query parameter is required",
         )
     })
+}
+
+fn parse_entity_id_query(
+    query: Option<&str>,
+    entity: &str,
+) -> std::result::Result<String, WebError> {
+    let mut id = None;
+    for (key, value) in form_urlencoded::parse(query.unwrap_or_default().as_bytes()) {
+        match key.as_ref() {
+            "id" => id = Some(value.into_owned()),
+            other => {
+                return Err(WebError::bad_request(
+                    "invalid_query",
+                    format!("Unknown query parameter '{other}'"),
+                ));
+            }
+        }
+    }
+    let id = id.ok_or_else(|| {
+        WebError::bad_request("missing_entity_id", format!("{entity} id is required"))
+    })?;
+    Ok(validate_entity_id(&id, entity)?.to_string())
 }
 
 fn parse_worklist_items_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {
