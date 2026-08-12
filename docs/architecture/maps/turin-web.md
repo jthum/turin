@@ -23,7 +23,8 @@ session state, invent renderer-specific harness APIs, or bypass
     first-party static routes.
 - `crates/turin-web/frontend/`
   - Svelte/TypeScript client source, typed `TurinClient` transport boundary,
-    custom CSS, assistant surface, built-in Data Explorer, and semantic harness renderer.
+    custom CSS, assistant surface, built-in Data Explorer, Agent Orchestration,
+    Harness Studio, Work Operations, and semantic harness renderer.
 - `crates/turin-web/static/`
   - Checked-in Vite build output embedded by the Rust binary. Cargo builds do
     not require Node; regenerate these assets after frontend changes.
@@ -125,6 +126,16 @@ session state, invent renderer-specific harness APIs, or bypass
 34. Assistant routing controls keep durable session ownership fixed. Selecting
     another agent starts a new conversation, while selecting a named inference
     context changes the route for subsequent tasks in the current conversation.
+35. Harness Studio calls typed harness lifecycle helpers through the control
+    client. Inventory and detail cover bootstrap, shared, and agent-local
+    harnesses; create/delete apply only to managed shared harnesses, while
+    validation and atomic reload retain daemon ownership of runtime state.
+36. Work Operations joins bounded worklist inspection, durable schedule
+    lifecycle, bounded schedule run history, retained task snapshots, and safe
+    task cancellation. It does not add a browser-owned work ledger.
+37. Harness Studio and Work Operations are deterministic lazy-loaded chunks.
+    Rust embeds and serves those explicit chunk paths while ordinary assistant
+    startup loads only the main browser bootstrap.
 
 ## Invariants
 
@@ -232,6 +243,18 @@ session state, invent renderer-specific harness APIs, or bypass
 - Agent Orchestration must refresh from dashboard snapshots after runtime and
   task events. Event payloads are invalidation hints; configured agents, live
   slots, and task state remain daemon-owned truth.
+- Harness Studio must use daemon validation, reload, scaffold, and guarded
+  deletion operations. It must not become an arbitrary filesystem editor or
+  classify bootstrap/agent-local harnesses as managed shared harnesses.
+- Worklist inspection in Work Operations is observational. Generic browser
+  mutations must not bypass harness actions, claims, dependency rules, or
+  governance policy.
+- Scheduled work creation may expose every field supported by the current
+  typed create contract. Do not expose recurrence-family editing until the
+  update protocol can explicitly clear existing optional recurrence fields.
+- Task cancellation is cooperative and daemon-owned. The browser may request
+  cancellation and reconcile status, but must not present it as an immediate
+  process kill.
 - Live perf diagnostics are a development overlay, not durable session data.
   Internal timings must be described as instrumented measurements, while query
   counters may be called exact. Daemon RSS/PSS deltas are process-level
@@ -240,6 +263,9 @@ session state, invent renderer-specific harness APIs, or bypass
   not use absolute-positioned cursors that can escape the response bubble.
 - Frontend source lives under `frontend/`; `static/` is generated and checked in
   so Rust-only builds remain reproducible without installing Node dependencies.
+- Lazy browser chunks use deterministic names and must have matching embedded
+  Rust routes. The UI contract smoke should fetch them so a successful frontend
+  build cannot leave production dynamic imports returning `404`.
 - The browser shell should keep semantic list constraints such as named
   filter/sort/limit metadata visible when rendering list nodes and mark sorted
   columns, including advisory direction when declared, in table headers. Those

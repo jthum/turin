@@ -56,6 +56,16 @@ Start with a small API that mirrors what the current clients already need.
 | `GET /api/apps/{app_id}` | Implemented. One app's screens, menus, panes, and declared surfaces. |
 | `POST /api/ui/list` | Implemented for semantic worklist sources such as `worklists.release`. |
 | `POST /api/actions/run` | Implemented. Runs a harness action with typed daemon params. |
+| `GET /api/harnesses` / `GET /api/harness` | Implemented. Loaded harness inventory, source map, bindings, UI declarations, and diagnostics. |
+| `POST /api/harnesses/create` | Implemented. Scaffolds and loads a managed shared harness. |
+| `POST /api/harnesses/validate` / `POST /api/harnesses/reload` | Implemented. Validates scripts and performs atomic runtime reload. |
+| `DELETE /api/harnesses/delete` | Implemented. Guarded deletion for unbound shared harnesses. |
+| `GET /api/operations/schedules` | Implemented. Durable scheduled job inventory. |
+| `POST /api/operations/schedules` | Implemented. Creates prompt or action schedules. |
+| `GET /api/operations/schedule-runs` | Implemented. Bounded run history for one schedule. |
+| `POST /api/operations/schedules/toggle` | Implemented. Enables or disables a schedule. |
+| `DELETE /api/operations/schedules` | Implemented. Deletes a schedule when the daemon permits it. |
+| `POST /api/operations/tasks/cancel` | Implemented. Requests cancellation at a safe runtime boundary. |
 | `GET /api/events` | Implemented. SSE stream of runtime and UI intent events for invalidation. |
 | `GET /api/healthz` | Implemented. Web process liveness. |
 | `GET /` | Implemented. Minimal same-origin browser shell. |
@@ -69,8 +79,9 @@ new daemon operations.
 
 Svelte source lives in `crates/turin-web/frontend`. Vite emits deterministic
 asset names into `crates/turin-web/static`, and those built assets are checked
-in and embedded by `turin-web`. This means a normal Cargo build does not require
-Node.
+in and embedded by `turin-web`. Harness Studio and Work Operations are separate
+on-demand chunks, so the assistant bootstrap does not pay their JavaScript cost
+until they are opened. A normal Cargo build does not require Node.
 
 After changing frontend source, run:
 
@@ -84,6 +95,38 @@ npm run build
 The temporary client uses custom components and CSS rather than Dashbase. Its
 transport and state boundaries are intended to survive the later visual-system
 replacement; its CSS is not a compatibility contract.
+
+## Built-In Operator Surfaces
+
+The browser shell remains useful without a harness-authored `ui.app(...)`.
+Alongside Assistant, Data Explorer, Session Graph, and Agent Orchestration, it
+provides two runtime-wide operational surfaces.
+
+**Harness Studio** shows every loaded bootstrap, shared, and agent-local
+harness. It exposes bindings, watched roots, loaded scripts, semantic UI apps,
+runtime issues, validation, and atomic reload. It can scaffold shared harnesses
+and delete an unbound shared harness after confirmation. It deliberately does
+not provide arbitrary source-file editing: edits should continue through normal
+workspace tooling until Turin has a validated atomic edit contract.
+
+**Work Operations** joins three related views:
+
+- Worklists expose bounded item tables and full operational drill-down,
+  including claims, pauses, dependencies, payload kind, action/prompt,
+  failures, and identifiers. Worklist mutation remains harness policy rather
+  than a generic browser database operation.
+- Schedules expose prompt and named-action creation, first-run time, fixed or
+  daily/weekly recurrence, overlap policy, work-key concurrency, enable/disable,
+  bounded run history, and guarded deletion.
+- Executions expose the daemon's retained task snapshots, execution policy,
+  trace identifiers, linked conversations, results/errors, and safe
+  cancellation requests.
+
+Schedule creation is complete for the current protocol. Generic recurrence
+editing is intentionally absent because `ScheduleUpdateParams` cannot yet
+explicitly clear an existing optional recurrence field. The UI should not imply
+that switching recurrence families is reliable until the protocol gains
+explicit clear semantics.
 
 ## Conversation Windowing
 
@@ -124,8 +167,9 @@ provider from estimates Turin can derive before serialization:
   structural compaction counts.
 - **Reusable prefix:** the stable request prefix that could be eligible for a
   provider prompt cache. It is an opportunity estimate, not a cache hit or
-  billing measurement. Turin's current inference boundary does not expose
-  provider cache-read or cache-write counters.
+  billing measurement. Provider-reported cache-read and cache-creation counters
+  are shown separately when an adapter supplies them; missing counters remain
+  unavailable rather than being inferred.
 
 The normalized request estimate is intentionally not described as exact HTTP
 body size. Provider adapters may add serialization overhead or tokenize content

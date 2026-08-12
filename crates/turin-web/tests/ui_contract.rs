@@ -243,6 +243,15 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .await?;
     assert!(operations_js.contains("Work Operations"));
 
+    let harness_studio_js = client
+        .get(format!("{base_url}/assets/HarnessStudio.js"))
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    assert!(harness_studio_js.contains("Harness Studio"));
+
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
         .send()
