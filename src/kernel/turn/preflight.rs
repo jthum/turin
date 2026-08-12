@@ -83,7 +83,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> Result<TurnPreflight> {
-        let mut req = self.default_turn_request_state(session)?;
+        let mut req = self.default_turn_request_state(session, turn_ctx)?;
 
         if self.emit_turn_start_and_gate(session, turn_ctx) {
             return Ok(TurnPreflight::Rejected);
@@ -104,10 +104,14 @@ impl ExecutionHost {
         Ok(TurnPreflight::Ready(prepared))
     }
 
-    fn default_turn_request_state(&self, session: &SessionState) -> Result<TurnRequestState> {
+    fn default_turn_request_state(
+        &self,
+        session: &SessionState,
+        turn_ctx: &TurnContext,
+    ) -> Result<TurnRequestState> {
         let agent = self.agent_config_for_session(session)?;
         Ok(TurnRequestState {
-            inference_context: None,
+            inference_context: turn_ctx.inference_context.clone(),
             model: agent.model.clone(),
             provider_name: agent.provider.clone(),
             system_prompt: agent.system_prompt.clone(),

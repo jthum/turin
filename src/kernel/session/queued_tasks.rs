@@ -11,6 +11,8 @@ pub struct QueuedTask {
     pub title: Option<String>,
     pub prompt: String,
     #[serde(default)]
+    pub inference_context: Option<String>,
+    #[serde(default)]
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,
@@ -31,6 +33,7 @@ impl QueuedTask {
             plan_id: None,
             title: None,
             prompt: prompt.into(),
+            inference_context: None,
             content: None,
             tools: None,
             conflict_policy: None,
@@ -50,6 +53,7 @@ impl QueuedTask {
             plan_id: Some(plan_id.into()),
             title,
             prompt: prompt.into(),
+            inference_context: None,
             content: None,
             tools: None,
             conflict_policy: None,

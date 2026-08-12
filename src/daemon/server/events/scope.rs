@@ -248,6 +248,10 @@ mod tests {
             agent_runtimes: vec![
                 AgentStatusSnapshot {
                     agent_id: "default".into(),
+                    provider: "mock".into(),
+                    model: "mock-model".into(),
+                    harness_id: "default".into(),
+                    inference_contexts: Vec::new(),
                     running: true,
                     active_tasks: 0,
                     queued_tasks: 0,
@@ -257,6 +261,10 @@ mod tests {
                 },
                 AgentStatusSnapshot {
                     agent_id: "writer".into(),
+                    provider: "mock".into(),
+                    model: "mock-model".into(),
+                    harness_id: "reviewer".into(),
+                    inference_contexts: Vec::new(),
                     running: true,
                     active_tasks: 1,
                     queued_tasks: 0,

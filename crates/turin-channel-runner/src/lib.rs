@@ -232,6 +232,7 @@ impl ChannelRunner {
                     session_id: Some(binding.session_id.clone()),
                     slot_id: Some(binding.slot_id.clone()),
                     prompt: task_prompt_for_submission(event),
+                    inference_context: None,
                     content: (!content.is_empty()).then_some(content),
                     tools: (!self.tools.is_empty()).then_some(self.tools.clone()),
                     conflict_policy: None,

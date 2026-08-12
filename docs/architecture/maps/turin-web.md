@@ -122,12 +122,18 @@ session state, invent renderer-specific harness APIs, or bypass
 33. Browser agent inventory comes from effective `agent_runtimes`. Filesystem
     registry entries enrich peer agents with provider, model, and harness metadata
     but do not contain the bootstrap agent and therefore cannot define the roster.
+34. Assistant routing controls keep durable session ownership fixed. Selecting
+    another agent starts a new conversation, while selecting a named inference
+    context changes the route for subsequent tasks in the current conversation.
 
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
 - Agent selectors must include every effective runtime status. They may join
   registry metadata by id, but must not treat registry peers as the full agent set.
+- Browser model controls submit configured inference-context ids, never raw
+  provider URLs or unvalidated model overrides. Harness turn policy remains able
+  to replace that requested route.
 - Opening the Assistant starts from a browser-local fresh-conversation draft. Persisted or live
   sessions are selected explicitly rather than adopting an unrelated channel runtime by default.
 - Browser matching between persisted summaries and live sessions must compare bare and

@@ -48,6 +48,8 @@
   let titleDraft = "";
   let titleSaving = false;
   let titleError = "";
+  let draftAgentId = "default";
+  let inferenceContext = "";
   let graphOpen = false;
   let graphTurnId: number | null = null;
   let graphMode: "inspect" | "compare" | "explore" = "inspect";
@@ -93,6 +95,19 @@
   $: selectedSummary = status.snapshot.sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: selectedLive = status.snapshot.live_sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: agents = effectiveAgents(status);
+  $: owningAgentId = selectedSummary?.agent_id ?? selectedLive?.agent_id ?? null;
+  $: activeAgentId = owningAgentId ?? draftAgentId;
+  $: activeAgent = agents.find(agent => agent.id === activeAgentId) ?? agents[0];
+  $: activeRuntime = status.snapshot.status.agent_runtimes.find(runtime => runtime.agent_id === activeAgentId);
+  $: inferenceContexts = activeRuntime?.inference_contexts ?? [];
+  $: defaultInferenceContext = inferenceContexts.find(context => context.is_default);
+  $: selectableInferenceContexts = inferenceContexts.filter(context => !context.is_default);
+  $: if (!owningAgentId && !agents.some(agent => agent.id === draftAgentId)) {
+    draftAgentId = agents.find(agent => agent.id === "default")?.id ?? agents[0]?.id ?? "default";
+  }
+  $: if (inferenceContext && !inferenceContexts.some(context => context.id === inferenceContext)) {
+    inferenceContext = "";
+  }
   $: sessionReference = detail?.session.session_id ?? selectedSessionId;
   $: efficiency = detail?.efficiency;
   $: execution = detail?.execution;
@@ -458,7 +473,8 @@
       let sessionId = selectedSessionId;
       let live = selectedLive;
       if (!sessionId) {
-        const agentId = agents.find(agent => agent.id === "default")?.id
+        const agentId = activeAgentId
+          ?? agents.find(agent => agent.id === "default")?.id
           ?? agents[0]?.id
           ?? status.snapshot.live_sessions[0]?.agent_id
           ?? "default";
@@ -489,6 +505,7 @@
         session_id: sessionId,
         slot_id: live.slot_id,
         prompt: value,
+        ...(inferenceContext ? { inference_context: inferenceContext } : {}),
       });
       await onStatusChanged();
       scheduleDetailRefresh(120);
@@ -504,6 +521,15 @@
       await tick();
       composer?.focus();
     }
+  }
+
+  function changeAgent(event: Event) {
+    const next = (event.currentTarget as HTMLSelectElement).value;
+    if (!next || next === activeAgentId) return;
+    draftAgentId = next;
+    inferenceContext = "";
+    if (selectedSessionId) onNewConversation();
+    requestAnimationFrame(() => composer?.focus());
   }
 
   function startResponseStatus() {
@@ -1353,7 +1379,26 @@
         onkeydown={onComposerKeydown}
       ></textarea>
       <div class="composer-footer">
-        <span>Enter to send · Shift Enter for a new line</span>
+        <div class="composer-routing">
+          <label title={selectedSessionId ? "Changing agent starts a new conversation" : "Choose the agent for this conversation"}>
+            <span>Agent</span>
+            <select value={activeAgentId} onchange={changeAgent} aria-label="Conversation agent">
+              {#each agents as agent (agent.id)}
+                <option value={agent.id}>{humanize(agent.id)}</option>
+              {/each}
+            </select>
+          </label>
+          <label title="Choose the inference route for the next task">
+            <span>Model</span>
+            <select bind:value={inferenceContext} aria-label="Inference model">
+              <option value="">Automatic · {defaultInferenceContext?.model ?? activeAgent?.model ?? "Configured model"}</option>
+              {#each selectableInferenceContexts as context (context.id)}
+                <option value={context.id}>{humanize(context.id)} · {context.model}</option>
+              {/each}
+            </select>
+          </label>
+          {#if selectedSessionId}<small>Changing agent starts a new conversation</small>{/if}
+        </div>
         <button class="send-button" aria-label="Send message" disabled={!prompt.trim() || sending} onclick={submit}>
           <Icon name="send" size={17} />
         </button>

@@ -11,6 +11,7 @@ fn request_envelope_round_trips_typed_shape() {
             session_id: None,
             slot_id: None,
             prompt: "review this".to_string(),
+            inference_context: Some("fast".to_string()),
             content: None,
             tools: Default::default(),
             conflict_policy: Some("detached".to_string()),
@@ -22,6 +23,7 @@ fn request_envelope_round_trips_typed_shape() {
     assert_eq!(value["op"], "task.submit");
     assert_eq!(value["params"]["agent_id"], "writer");
     assert_eq!(value["params"]["prompt"], "review this");
+    assert_eq!(value["params"]["inference_context"], "fast");
     assert_eq!(value["params"]["conflict_policy"], "detached");
 
     let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
@@ -30,6 +32,7 @@ fn request_envelope_round_trips_typed_shape() {
             assert_eq!(params.agent_id.as_deref(), Some("writer"));
             assert!(params.session_id.is_none());
             assert_eq!(params.prompt, "review this");
+            assert_eq!(params.inference_context.as_deref(), Some("fast"));
             assert_eq!(params.conflict_policy.as_deref(), Some("detached"));
         }
         other => panic!("unexpected request variant: {other:?}"),

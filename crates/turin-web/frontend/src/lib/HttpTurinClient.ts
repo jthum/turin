@@ -84,6 +84,7 @@ export class HttpTurinClient implements TurinClient {
     session_id?: string;
     slot_id?: string;
     prompt: string;
+    inference_context?: string;
   }): Promise<TaskStatus> {
     const result = await this.request<{ task: TaskStatus }>("/api/tasks/submit", {
       method: "POST",

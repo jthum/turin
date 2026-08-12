@@ -168,6 +168,7 @@ impl ExecutionHost {
                 trace_id: task.trace_id.clone(),
                 plan_id: task.plan_id.clone(),
                 task_turn_index: task_turn_count,
+                inference_context: task.inference_context.clone(),
                 allowed_native_tools: Arc::clone(&tool_ctx.allowed_native_tools),
             };
             let completed_turn = match self.execute_turn(session, tool_ctx, &turn_ctx).await {

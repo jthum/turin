@@ -58,8 +58,20 @@ pub struct PeerAgentTaskResult {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct InferenceContextStatusSnapshot {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentStatusSnapshot {
     pub agent_id: String,
+    pub provider: String,
+    pub model: String,
+    pub harness_id: String,
+    pub inference_contexts: Vec<InferenceContextStatusSnapshot>,
     pub running: bool,
     pub active_tasks: usize,
     pub queued_tasks: usize,

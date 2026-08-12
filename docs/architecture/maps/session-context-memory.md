@@ -61,6 +61,8 @@ Turn preflight:
    `inference_request` event with normalized token and payload estimates,
    context-budget provenance, compaction counts, and route identity.
 6. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
+7. A queued task may seed the requested inference context for all of its turns;
+   `on_turn_prepare` remains authoritative and may retain or replace it.
 
 Full materialization:
 

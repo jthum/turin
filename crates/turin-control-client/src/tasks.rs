@@ -46,6 +46,7 @@ impl ControlClient {
                 session_id,
                 slot_id,
                 prompt,
+                inference_context: None,
                 content: None,
                 tools: None,
                 conflict_policy,

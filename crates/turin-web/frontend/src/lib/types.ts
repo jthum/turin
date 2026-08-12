@@ -16,12 +16,23 @@ export interface AgentSummary {
 
 export interface AgentRuntime {
   agent_id: string;
+  provider: string;
+  model: string;
+  harness_id: string;
+  inference_contexts: InferenceContextStatus[];
   running: boolean;
   active_tasks: number;
   queued_tasks: number;
   awaiting_results: number;
   current_session_id?: string | null;
   current_request_id?: string | null;
+}
+
+export interface InferenceContextStatus {
+  id: string;
+  provider: string;
+  model: string;
+  is_default: boolean;
 }
 
 export interface LiveExecution {

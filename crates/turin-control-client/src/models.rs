@@ -87,8 +87,24 @@ pub struct HarnessDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InferenceContextStatus {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRuntime {
     pub agent_id: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub harness_id: String,
+    #[serde(default)]
+    pub inference_contexts: Vec<InferenceContextStatus>,
     pub running: bool,
     pub active_tasks: usize,
     pub queued_tasks: usize,

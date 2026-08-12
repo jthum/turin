@@ -33,6 +33,7 @@ export interface TurinClient {
     session_id?: string;
     slot_id?: string;
     prompt: string;
+    inference_context?: string;
   }): Promise<TaskStatus>;
   createBranch(input: {
     session_id: string;

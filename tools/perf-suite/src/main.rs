@@ -1588,6 +1588,7 @@ async fn run_blackbox_task_scale(args: BlackboxTaskScaleArgs) -> Result<()> {
                         session_id: Some(opened.session_id.clone()),
                         slot_id: Some(opened.slot_id.clone()),
                         prompt: prompt.clone(),
+                        inference_context: None,
                         content: None,
                         tools: None,
                         conflict_policy: None,

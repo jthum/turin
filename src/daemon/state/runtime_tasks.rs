@@ -30,6 +30,7 @@ struct TaskSubmissionRequest<'a> {
     session_id: Option<&'a str>,
     slot_id: Option<&'a str>,
     prompt: String,
+    inference_context: Option<String>,
     content: Option<Vec<TaskInputContent>>,
     tools: Option<ToolsConfig>,
     conflict_policy: Option<&'a str>,
@@ -65,6 +66,7 @@ impl DaemonState {
             session_id,
             slot_id,
             prompt,
+            inference_context: None,
             content,
             tools,
             conflict_policy: None,
@@ -83,6 +85,7 @@ impl DaemonState {
             session_id: params.session_id.as_deref(),
             slot_id: params.slot_id.as_deref(),
             prompt: params.prompt,
+            inference_context: params.inference_context,
             content: params.content,
             tools: params.tools,
             conflict_policy: params.conflict_policy.as_deref(),
@@ -117,6 +120,7 @@ impl DaemonState {
                 session_id: Some(&session_id),
                 slot_id: Some(&sidestep_slot_id),
                 prompt: params.prompt,
+                inference_context: None,
                 content: params.content,
                 tools: params.tools,
                 conflict_policy: Some(conflict_policy.as_str()),
@@ -155,6 +159,12 @@ impl DaemonState {
             anyhow::bail!("task.submit slot_id requires session_id");
         }
         let mut task = QueuedTask::ad_hoc(request.prompt);
+        task.inference_context = request
+            .inference_context
+            .as_deref()
+            .map(str::trim)
+            .filter(|context| !context.is_empty())
+            .map(str::to_string);
         task.content = request.content;
         if let Some(tools) = request.tools
             && !tools.is_empty()
@@ -389,6 +399,10 @@ impl DaemonState {
             .map(|agent_id| {
                 live.remove(&agent_id).unwrap_or(AgentStatusSnapshot {
                     agent_id,
+                    provider: String::new(),
+                    model: String::new(),
+                    harness_id: String::new(),
+                    inference_contexts: Vec::new(),
                     running: false,
                     active_tasks: 0,
                     queued_tasks: 0,

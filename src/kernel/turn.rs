@@ -26,6 +26,7 @@ pub(crate) struct TurnContext {
     pub trace_id: String,
     pub plan_id: Option<String>,
     pub task_turn_index: u32,
+    pub inference_context: Option<String>,
     pub allowed_native_tools: Arc<BTreeSet<String>>,
 }
 

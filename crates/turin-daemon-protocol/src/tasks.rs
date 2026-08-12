@@ -12,6 +12,9 @@ pub struct SubmitTaskParams {
     pub prompt: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_context: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<Vec<TaskInputContent>>,
     #[serde(default)]
     pub tools: Option<ToolsConfig>,

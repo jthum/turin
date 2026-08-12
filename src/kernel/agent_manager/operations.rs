@@ -372,6 +372,29 @@ impl AgentManager {
 
         ids.into_iter()
             .map(|agent_id| {
+                let agent = if agent_id == self.config.agent.id {
+                    &self.config.agent
+                } else {
+                    self.config
+                        .agents
+                        .get(&agent_id)
+                        .expect("configured agent id remains resolvable")
+                };
+                let effective_inference = self
+                    .config
+                    .effective_inference_config_for_agent(&agent_id, None)
+                    .expect("validated agent inference configuration remains resolvable");
+                let mut inference_contexts: Vec<_> = effective_inference
+                    .contexts
+                    .iter()
+                    .map(|(id, context)| super::InferenceContextStatusSnapshot {
+                        id: id.clone(),
+                        provider: context.provider.clone(),
+                        model: context.model.clone(),
+                        is_default: effective_inference.default_context_name() == id,
+                    })
+                    .collect();
+                inference_contexts.sort_by(|left, right| left.id.cmp(&right.id));
                 let matching: Vec<_> = runtimes
                     .iter()
                     .filter(|(key, _)| key.agent_id == agent_id)
@@ -396,6 +419,13 @@ impl AgentManager {
                 let display_snapshot = display_handle.map(|h| h.control.snapshot());
                 AgentStatusSnapshot {
                     agent_id,
+                    provider: agent.provider.clone(),
+                    model: agent.model.clone(),
+                    harness_id: agent
+                        .harness
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string()),
+                    inference_contexts,
                     running,
                     active_tasks,
                     queued_tasks,

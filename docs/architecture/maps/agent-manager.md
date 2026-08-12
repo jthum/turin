@@ -44,6 +44,8 @@ Task submission:
 6. Pending and completed status retain an optional title plus a normalized,
    240-character prompt preview so operator surfaces can identify work without
    duplicating full prompts in the runtime task ledger.
+7. An optional task inference context seeds each turn's requested route. The
+   harness may still replace that context during `on_turn_prepare`.
 
 Session targeting:
 
@@ -62,6 +64,8 @@ Session targeting:
 - Task title and prompt preview must survive queued, running, terminal,
   cancellation, and kill snapshots. The preview stays bounded before entering
   pending or completed task state.
+- A task inference context is a configured route name, not a raw model endpoint.
+  It must not bypass agent/session inference overrides or harness turn policy.
 
 ## Common Changes
 
