@@ -47,6 +47,8 @@
   let titleSaving = false;
   let titleError = "";
   let graphOpen = false;
+  let graphTurnIndex: number | null = null;
+  let graphMode: "inspect" | "compare" | "explore" = "inspect";
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
@@ -792,6 +794,18 @@
     await onStatusChanged();
   }
 
+  function openGraph(turnIndex: number | null = null, mode: "inspect" | "compare" | "explore" = "inspect") {
+    graphTurnIndex = turnIndex;
+    graphMode = mode;
+    graphOpen = true;
+  }
+
+  function openGraphFromTurn(event: MouseEvent, turnIndex: number, mode: "inspect" | "compare" | "explore") {
+    const menu = (event.currentTarget as HTMLElement).closest("details") as HTMLDetailsElement | null;
+    if (menu) menu.open = false;
+    openGraph(turnIndex, mode);
+  }
+
   function onTitleKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -1074,7 +1088,7 @@
         <button class="new-conversation-header" onclick={onNewConversation}><Icon name="plus" size={15} />New conversation</button>
       {/if}
       {#if selectedSessionId}
-        <button class="graph-button" onclick={() => graphOpen = true}>
+        <button class="graph-button" onclick={() => openGraph()}>
           <Icon name="branch" size={16} />
           <span>{detail?.branches.find(branch => branch.active)?.name ?? "Paths"}</span>
           {#if detail?.branches.length}<small>{detail.branches.length}</small>{/if}
@@ -1141,6 +1155,21 @@
               <div class="message-metrics" title="Provider usage is measured; message context weight is estimated by Turin before provider-specific tokenization.">
                 {#if message.estimated_token_count}<span>~{formatTokens(message.estimated_token_count)} message tokens</span>{/if}
               </div>
+              {#if isFinalAssistantMessageInTurn(message)}
+                <div class="turn-controls">
+                  <details class="turn-path-menu" name="turn-path-actions">
+                    <summary title={`Actions for Turn ${message.turn_index}`}><Icon name="branch" size={13} /><span>Turn {message.turn_index}</span><Icon name="chevron" size={11} /></summary>
+                    <div class="turn-path-popover">
+                      <span>Continue from Turn {message.turn_index}</span>
+                      <button onclick={event => openGraphFromTurn(event, message.turn_index, "inspect")}><Icon name="chat" size={14} /><div><strong>Inspect path</strong><small>See the durable history selected for continuation.</small></div></button>
+                      <button onclick={event => openGraphFromTurn(event, message.turn_index, "explore")}><Icon name="branch" size={14} /><div><strong>Fork or explore</strong><small>Create a path or ask a private aside from here.</small></div></button>
+                      {#if (detail?.branches.length ?? 0) > 1}
+                        <button onclick={event => openGraphFromTurn(event, message.turn_index, "compare")}><Icon name="activity" size={14} /><div><strong>Compare paths</strong><small>Review differences between durable branch heads.</small></div></button>
+                      {/if}
+                    </div>
+                  </details>
+                </div>
+              {/if}
               {#if turn && isFinalAssistantMessageInTurn(message)}
                 <details class="turn-accounting">
                   <summary><span>{formatTokens(turn.input_tokens)} input · {formatTokens(turn.output_tokens)} output</span><small>{turn.requests.length} provider {turn.requests.length === 1 ? "call" : "calls"}</small></summary>
@@ -1230,6 +1259,8 @@
       {client}
       sessionId={selectedSessionId}
       slotId={selectedLive?.slot_id}
+      initialTurnIndex={graphTurnIndex}
+      initialMode={graphMode}
       onClose={() => graphOpen = false}
       onChanged={refreshAfterGraphChange}
     />

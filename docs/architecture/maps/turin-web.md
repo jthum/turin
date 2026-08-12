@@ -109,6 +109,9 @@ session state, invent renderer-specific harness APIs, or bypass
     the exact shared ancestor and divergent turn counts from durable topology,
     then composes two bounded exact-turn projections for recent branch-only
     message and tool previews.
+30. Completed assistant turns expose browser-local contextual entry points into
+    the Session Graph. The selected active-path turn and initial inspector mode
+    are presentation state; mutation still requires an explicit graph action.
 
 ## Invariants
 
@@ -190,6 +193,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Branch comparison must not imply merge or context-transfer semantics. Exact
   divergence comes from durable turn topology; bounded transcript previews must
   identify branch-only rows omitted by their message window.
+- Per-turn chat menus may open inspection, comparison, or exploration at an
+  active-path turn, but must not fork, checkout, or submit work merely by
+  opening the menu or graph.
 - Graph forks must use exact turn ids. A path-relative turn index is not a
   stable source once sibling branches exist.
 - Request-efficiency UI must label provider-reported usage as measured and

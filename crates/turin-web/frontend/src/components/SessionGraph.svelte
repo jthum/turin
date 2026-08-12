@@ -6,6 +6,7 @@
     SessionDetail,
     SessionGraph as SessionGraphModel,
     SessionGraphTurn,
+    SessionMessage,
     TaskStatus,
   } from "../lib/types";
   import { fullDate, humanize, messageText } from "../lib/format";
@@ -15,6 +16,8 @@
   export let client: TurinClient;
   export let sessionId: string;
   export let slotId: string | undefined = undefined;
+  export let initialTurnIndex: number | null = null;
+  export let initialMode: "inspect" | "compare" | "explore" = "inspect";
   export let onClose: () => void;
   export let onChanged: () => void | Promise<void>;
 
@@ -34,7 +37,8 @@
   let sidestepMode: "ephemeral" | "fork_sibling" = "ephemeral";
   let sidestepResult: TaskStatus | null = null;
   let promotionName = "";
-  let inspectorMode: "inspect" | "compare" | "explore" = "inspect";
+  let inspectorMode: "inspect" | "compare" | "explore" = initialMode;
+  let initialSelectionApplied = false;
   let pathDetail: SessionDetail | null = null;
   let pathLoading = false;
   let pathError = "";
@@ -70,6 +74,7 @@
     const role = message.role.toLowerCase();
     return role === "user" || role === "assistant";
   });
+  $: pathTurns = groupContextTurns(pathMessages);
   $: pathTools = pathDetail?.tool_executions ?? [];
   $: omittedPathMessages = pathDetail?.message_window?.offset ?? 0;
   $: sidestepOutput = sidestepResult
@@ -91,11 +96,19 @@
       graph = await client.sessionGraph(sessionId);
       const retained = graph.turns.some(turn => turn.turn_id === selectedTurnId);
       if (!retained) {
-        selectedTurnId = graph.branches.find(branch => branch.active)?.head_turn_id
+        const requestedTurn = !initialSelectionApplied && initialTurnIndex !== null
+          ? activePathTurnAtIndex(graph, initialTurnIndex)
+          : null;
+        selectedTurnId = requestedTurn?.turn_id
+          ?? graph.branches.find(branch => branch.active)?.head_turn_id
           ?? graph.turns[graph.turns.length - 1]?.turn_id
           ?? null;
         const initialTurn = graph.turns.find(turn => turn.turn_id === selectedTurnId);
         forkName = initialTurn ? `fork-turn-${initialTurn.turn_index}` : "";
+      }
+      if (!initialSelectionApplied) {
+        inspectorMode = initialMode;
+        initialSelectionApplied = true;
       }
       syncComparisonSelection();
       if (inspectorMode === "compare") {
@@ -442,6 +455,35 @@
     return (detail?.tool_executions ?? []).filter(tool => indexes.has(tool.turn_index));
   }
 
+  interface ContextTurnGroup {
+    turnIndex: number;
+    messages: SessionMessage[];
+  }
+
+  function groupContextTurns(messages: SessionMessage[]): ContextTurnGroup[] {
+    const groups: ContextTurnGroup[] = [];
+    for (const message of messages) {
+      const current = groups[groups.length - 1];
+      if (current?.turnIndex === message.turn_index) current.messages.push(message);
+      else groups.push({ turnIndex: message.turn_index, messages: [message] });
+    }
+    return groups;
+  }
+
+  function activePathTurnAtIndex(model: SessionGraphModel, turnIndex: number): SessionGraphTurn | null {
+    const turnById = new Map(model.turns.map(turn => [turn.turn_id, turn]));
+    let turnId = model.branches.find(branch => branch.active)?.head_turn_id;
+    const visited = new Set<number>();
+    while (turnId !== null && turnId !== undefined && !visited.has(turnId)) {
+      visited.add(turnId);
+      const turn = turnById.get(turnId);
+      if (!turn) return null;
+      if (turn.turn_index === turnIndex) return turn;
+      turnId = turn.parent_turn_id;
+    }
+    return null;
+  }
+
   function branchSource(branch: SessionBranch): string | null {
     if (branch.source_turn_id === null || branch.source_turn_id === undefined) return null;
     const source = graph?.turns.find(turn => turn.turn_id === branch.source_turn_id);
@@ -551,8 +593,8 @@
     <header class="graph-header">
       <div>
         <span class="eyebrow">Conversation topology</span>
-        <h2 id="session-graph-title">Session Graph</h2>
-        <p>Inspect durable paths, fork exact turns, or explore an idea without moving the active conversation.</p>
+        <h2 id="session-graph-title">{inspectorMode === "compare" ? "Compare Paths" : "Session Graph"}</h2>
+        <p>{inspectorMode === "compare" ? "Review two branch histories without checking either one out." : "Inspect durable paths, fork exact turns, or explore an idea without moving the active conversation."}</p>
       </div>
       <div class="graph-header-actions">
         <span>{graph?.turns.length ?? 0} turns · {graph?.branches.length ?? 0} paths</span>
@@ -632,7 +674,7 @@
           {:else}
             <header class="turn-heading">
               <div>
-                <span>Inspecting exact context</span>
+                <span>Inspecting durable path</span>
                 <h3>Turn {selectedTurn.turn_index}</h3>
                 <time title={fullDate(selectedTurn.created_at)}>{fullDate(selectedTurn.created_at)}</time>
               </div>
@@ -676,7 +718,7 @@
 
             <section class="inspector-section context-section">
               <div class="context-heading">
-                <span class="section-label">Context ending here</span>
+                <span class="section-label">Conversation path through this turn</span>
                 <button disabled={pathLoading} onclick={() => loadPath(selectedTurn.turn_id, true)}><Icon name="refresh" size={12} />Refresh</button>
               </div>
               {#if pathLoading}
@@ -684,26 +726,35 @@
               {:else if pathError}
                 <div class="path-error"><strong>Path unavailable</strong><span>{pathError}</span><button onclick={() => loadPath(selectedTurn.turn_id, true)}>Retry</button></div>
               {:else if pathDetail}
+                <div class="context-explainer">
+                  <Icon name="branch" size={14} />
+                  <div><strong>Continuation path at Turn {selectedTurn.turn_index}</strong><span>A fork or aside starts from this durable history. Compaction and context-window policy may reduce what reaches the model.</span></div>
+                </div>
                 <div class="context-summary">
                   <span>{pathDetail.message_window?.total ?? pathDetail.messages.length} message rows</span>
                   <span>{pathTools.length} tool runs in window</span>
                 </div>
                 {#if omittedPathMessages > 0}<p class="path-omitted">{omittedPathMessages} earlier rows are outside this preview.</p>{/if}
-                <div class="path-transcript">
-                  {#each pathMessages as message (message.id)}
-                    {@const body = messageText(message.content)}
-                    {#if body}
-                      <article class:user={message.role.toLowerCase() === "user"}>
-                        <header><strong>{message.role.toLowerCase() === "user" ? "You" : humanize(graph?.session.agent_id ?? "assistant")}</strong><span>Turn {message.turn_index}</span></header>
-                        {#if message.role.toLowerCase() === "assistant"}
-                          <div class="path-markdown"><Markdown source={body} /></div>
-                        {:else}
-                          <p>{body}</p>
+                <div class="context-turns">
+                  {#each pathTurns as turn (turn.turnIndex)}
+                    <section class:current={turn.turnIndex === selectedTurn.turn_index} class="context-turn">
+                      <header><span>Turn {turn.turnIndex}</span>{#if turn.turnIndex === selectedTurn.turn_index}<b>Selected point</b>{/if}</header>
+                      {#each turn.messages as message (message.id)}
+                        {@const body = messageText(message.content)}
+                        {#if body}
+                          <article class:user={message.role.toLowerCase() === "user"} class="context-entry">
+                            <strong>{message.role.toLowerCase() === "user" ? "Your message" : `Assistant response · ${humanize(graph?.session.agent_id ?? "assistant")}`}</strong>
+                            {#if message.role.toLowerCase() === "assistant"}
+                              <div class="path-markdown"><Markdown source={body} /></div>
+                            {:else}
+                              <p>{body}</p>
+                            {/if}
+                          </article>
                         {/if}
-                      </article>
-                    {/if}
+                      {/each}
+                    </section>
                   {/each}
-                  {#if !pathMessages.length}<p class="path-empty">No conversational messages are stored on this path yet.</p>{/if}
+                  {#if !pathTurns.length}<p class="path-empty">No conversational messages are stored on this path yet.</p>{/if}
                 </div>
                 {#if pathTools.length}
                   <details class="path-tools">
@@ -900,7 +951,7 @@
 <style>
   .graph-overlay { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 22px; }
   .graph-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: color-mix(in srgb, var(--ink) 32%, transparent); backdrop-filter: blur(5px); cursor: default; }
-  .graph-workspace { position: relative; display: flex; flex-direction: column; width: min(1240px, 100%); height: min(850px, 100%); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
+  .graph-workspace { position: relative; display: flex; flex-direction: column; width: min(1480px, 100%); height: min(920px, 100%); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
   .graph-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 24px; min-height: 92px; padding: 18px 20px 17px 23px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 92%, transparent); }
   .eyebrow, .section-label { color: var(--faint); font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
   .graph-header h2 { margin: 1px 0 0; font-size: 20px; font-weight: 690; letter-spacing: -.035em; }
@@ -913,8 +964,10 @@
   .graph-alert.error { background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); }
   .graph-alert.success { background: color-mix(in srgb, var(--success) 8%, var(--surface)); color: var(--success); }
   .graph-alert span { color: var(--muted); }
-  .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 410px; min-height: 0; flex: 1; }
-  .graph-body.comparison-open { grid-template-columns: minmax(400px, 1fr) minmax(560px, .9fr); }
+  .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 450px; min-height: 0; flex: 1; }
+  .graph-body.comparison-open { grid-template-columns: minmax(0, 1fr); }
+  .graph-body.comparison-open .map-panel { display: none; }
+  .graph-body.comparison-open .graph-inspector { padding: 22px 26px 26px; border-left: 0; }
   .map-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: radial-gradient(circle at 18% 5%, color-mix(in srgb, var(--accent-soft) 48%, transparent), transparent 28%), var(--surface-muted); }
   .map-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 42px; padding: 8px 15px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 10px; }
   .map-toolbar > div { display: flex; align-items: center; gap: 6px; }
@@ -977,12 +1030,21 @@
   .context-summary { display: flex; align-items: center; gap: 6px; }
   .context-summary span { padding: 3px 6px; border-radius: 99px; background: var(--surface-muted); color: var(--faint); font-size: 9px; }
   .path-omitted { margin: -1px 0 0; color: var(--faint); font-size: 9px; }
-  .path-transcript { display: grid; gap: 7px; max-height: 330px; padding-right: 3px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
-  .path-transcript article { margin-right: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-  .path-transcript article.user { margin-right: 0; margin-left: 24px; border-color: color-mix(in srgb, var(--blue) 22%, var(--line)); background: color-mix(in srgb, var(--blue) 4%, var(--surface)); }
-  .path-transcript article > header { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 9px; }
-  .path-transcript article > header strong { color: var(--muted); font-size: 9px; }
-  .path-transcript article > p, .path-markdown { margin: 0; padding: 8px 9px; color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+  .context-explainer { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--blue) 4%, var(--surface)); }
+  .context-explainer > :global(.icon) { flex: 0 0 auto; margin-top: 1px; color: var(--blue); }
+  .context-explainer > div { display: grid; gap: 1px; }
+  .context-explainer strong { color: var(--ink); font-size: 10px; }
+  .context-explainer span { color: var(--muted); font-size: 9px; line-height: 1.4; }
+  .context-turns { display: grid; gap: 8px; max-height: 390px; padding-right: 3px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
+  .context-turn { position: relative; display: grid; gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .context-turn.current { border-color: color-mix(in srgb, var(--blue) 32%, var(--line)); box-shadow: inset 3px 0 var(--blue); }
+  .context-turn > header { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 5px 9px; border-bottom: 1px solid var(--line); background: var(--surface-muted); color: var(--faint); font-size: 9px; font-weight: 700; }
+  .context-turn > header b { color: var(--blue); font-size: 8px; }
+  .context-entry { display: grid; gap: 4px; padding: 8px 9px; border-bottom: 1px solid var(--line); }
+  .context-entry:last-child { border-bottom: 0; }
+  .context-entry.user { background: color-mix(in srgb, var(--blue) 3%, var(--surface)); }
+  .context-entry > strong { color: var(--faint); font-size: 8px; font-weight: 720; letter-spacing: .05em; text-transform: uppercase; }
+  .context-entry > p, .context-entry .path-markdown { margin: 0; padding: 0; color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
   .path-empty { margin: 0; padding: 18px; border: 1px dashed var(--line); border-radius: 9px; color: var(--faint); text-align: center; font-size: 10px; }
   .path-tools { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
   .path-tools summary { padding: 8px 9px; color: var(--muted); cursor: pointer; font-size: 10px; font-weight: 650; }
@@ -1017,7 +1079,7 @@
   .comparison-stats span:last-child { border-right: 0; }
   .comparison-stats strong { color: var(--ink); font-size: 11px; }
   .comparison-clipped { margin: 0; padding: 6px 7px; border-radius: 7px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); color: var(--muted); font-size: 8px; line-height: 1.4; }
-  .comparison-transcript { display: grid; align-content: start; gap: 6px; max-height: 310px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
+  .comparison-transcript { display: grid; align-content: start; gap: 7px; max-height: min(54vh, 570px); overflow: auto; scrollbar-color: var(--line-strong) transparent; }
   .comparison-transcript article { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); }
   .comparison-transcript article.user { border-color: color-mix(in srgb, var(--blue) 18%, var(--line)); background: color-mix(in srgb, var(--blue) 3%, var(--surface)); }
   .comparison-transcript article > header { display: flex; justify-content: space-between; gap: 6px; padding: 5px 7px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 8px; }
