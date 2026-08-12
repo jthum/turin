@@ -4,6 +4,9 @@
   import type {
     InferenceRequestMetrics,
     JsonValue,
+    PerfLiveSnapshot,
+    PerfOperationSummary,
+    PerfProcessSample,
     SessionDetail,
     SessionMessage,
     SessionTaskExecution,
@@ -56,6 +59,11 @@
   let composer: HTMLTextAreaElement;
   let titleInput: HTMLInputElement;
   let subscription: EventSubscription | null = null;
+  let perfSource: EventSource | null = null;
+  let perfDetected = false;
+  let perfConnection: "idle" | "connecting" | "connected" | "unavailable" = "idle";
+  let perfOperations: PerfOperationSummary[] = [];
+  let perfSamples: PerfProcessSample[] = [];
   let refreshTimer: number | undefined;
   let deltaFrame: number | undefined;
   let requestVersion = 0;
@@ -66,6 +74,14 @@
   let topSpacerHeight = 0;
   let bottomSpacerHeight = 0;
   const measuredHeights = new Map<number, number>();
+  const perfStarts = new Map<string, {
+    operation: string;
+    sessionId?: string | null;
+    pid: number;
+    buildProfile?: string | null;
+    startedAt: number;
+    fields: Record<string, JsonValue>;
+  }>();
 
   $: selectedSummary = status.snapshot.sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: selectedLive = status.snapshot.live_sessions.find(item => sameSession(item.session_id, selectedSessionId));
@@ -88,6 +104,32 @@
   $: transcriptMessages = (detail?.messages ?? []).filter(isTranscriptMessage);
   $: renderEnd = Math.min(renderStart + RENDER_WINDOW_SIZE, transcriptMessages.length);
   $: renderedMessages = transcriptMessages.slice(renderStart, renderEnd);
+  $: sessionPerfOperations = perfOperations.filter(operation => sameSession(operation.session_id, selectedSessionId));
+  $: latestRetrieval = [...sessionPerfOperations].reverse().find(operation => [
+    "session.projection",
+    "session.resume.materialize",
+    "session.refresh.materialize",
+    "session.history.materialize",
+  ].includes(operation.operation));
+  $: latestRetrievalStages = latestRetrieval
+    ? sessionPerfOperations.filter(operation =>
+        operation.operation_id !== latestRetrieval?.operation_id
+        && operation.started_at_ms >= latestRetrieval.started_at_ms
+        && operation.completed_at_ms <= latestRetrieval.completed_at_ms)
+    : [];
+  $: latestPathStages = latestRetrievalStages.filter(operation => operation.operation === "persistence.branch_path");
+  $: latestTurnLookups = latestPathStages.reduce((total, operation) => total + numericField(operation.fields, "turn_row_queries"), 0);
+  $: latestPathConnections = latestPathStages.reduce((total, operation) => total + numericField(operation.fields, "connection_setups"), 0);
+  $: latestToolQueries = latestRetrievalStages
+    .filter(operation => operation.operation === "persistence.tools.query")
+    .reduce((total, operation) => total + numericField(operation.fields, "turn_queries"), 0);
+  $: latestSlowStages = [...latestRetrievalStages]
+    .filter(operation => operation.operation !== "persistence.branch_path")
+    .sort((left, right) => right.elapsed_us - left.elapsed_us)
+    .slice(0, 6);
+  $: latestProcessSample = latestRetrieval
+    ? [...perfSamples].reverse().find(sample => sample.pid === latestRetrieval?.pid)
+    : undefined;
   $: {
     heightRevision;
     topSpacerHeight = estimatedHeight(transcriptMessages.slice(0, renderStart));
@@ -97,6 +139,7 @@
 
   onDestroy(() => {
     subscription?.close();
+    perfSource?.close();
     if (refreshTimer) window.clearTimeout(refreshTimer);
     if (deltaFrame) window.cancelAnimationFrame(deltaFrame);
     if (copyTimer) window.clearTimeout(copyTimer);
@@ -111,6 +154,10 @@
     optimisticPrompt = "";
     optimisticCreatedAt = "";
     liveRequestMetrics = null;
+    perfDetected = false;
+    perfOperations = [];
+    perfSamples = [];
+    perfStarts.clear();
     stopResponseStatus();
     messageOffset = undefined;
     followLatest = true;
@@ -204,6 +251,14 @@
   }
 
   function handleEvent(event: TurinEvent) {
+    if (event.type === "perf.operation.started") {
+      recordPerfStart(event.data);
+      return;
+    }
+    if (event.type === "perf.operation.completed") {
+      recordPerfCompletion(event.data);
+      return;
+    }
     if (event.type === "inference_request") {
       liveRequestMetrics = requestMetricsFromEvent(event.data);
       responsePhase = liveRequestMetrics
@@ -253,6 +308,143 @@
       }
       void onStatusChanged();
     }
+  }
+
+  function recordPerfStart(data: Record<string, JsonValue>) {
+    const operationId = stringField(data, "operation_id");
+    const operation = stringField(data, "operation");
+    const pid = numericField(data, "pid");
+    if (!operationId || !operation || !pid) return;
+    perfDetected = true;
+    perfStarts.set(operationId, {
+      operation,
+      sessionId: optionalStringField(data, "session_id"),
+      pid,
+      buildProfile: optionalStringField(data, "build_profile"),
+      startedAt: Date.now(),
+      fields: objectField(data, "fields"),
+    });
+    connectPerfSidecar();
+  }
+
+  function recordPerfCompletion(data: Record<string, JsonValue>) {
+    const operationId = stringField(data, "operation_id");
+    const operation = stringField(data, "operation");
+    const pid = numericField(data, "pid");
+    if (!operationId || !operation || !pid) return;
+    perfDetected = true;
+    const started = perfStarts.get(operationId);
+    const elapsedUs = numericField(data, "elapsed_us");
+    const completedAt = Date.now();
+    upsertPerfOperation({
+      operation_id: operationId,
+      operation,
+      session_id: optionalStringField(data, "session_id") ?? started?.sessionId ?? null,
+      pid,
+      build_profile: optionalStringField(data, "build_profile") ?? started?.buildProfile ?? null,
+      started_at_ms: started?.startedAt ?? completedAt - Math.ceil(elapsedUs / 1000),
+      completed_at_ms: completedAt,
+      elapsed_us: elapsedUs,
+      outcome: optionalStringField(data, "outcome") ?? "unknown",
+      start_fields: started?.fields ?? {},
+      fields: objectField(data, "fields"),
+    });
+    perfStarts.delete(operationId);
+    connectPerfSidecar();
+  }
+
+  function connectPerfSidecar() {
+    if (perfSource || perfConnection === "connecting" || perfConnection === "connected") return;
+    perfConnection = "connecting";
+    const configured = window.localStorage.getItem("turin.perfEndpoint")?.trim();
+    const endpoint = (configured || "http://127.0.0.1:4779").replace(/\/$/, "");
+    const source = new EventSource(`${endpoint}/events`);
+    perfSource = source;
+    source.onopen = () => {
+      perfConnection = "connected";
+    };
+    source.onerror = () => {
+      perfConnection = "unavailable";
+      source.close();
+      if (perfSource === source) perfSource = null;
+    };
+    source.addEventListener("perf.snapshot", raw => {
+      const snapshot = parsePerfEvent<PerfLiveSnapshot>(raw);
+      if (!snapshot) return;
+      for (const operation of snapshot.completed) upsertPerfOperation(operation);
+      perfSamples = snapshot.samples.slice(-500);
+    });
+    source.addEventListener("perf.summary", raw => {
+      const operation = parsePerfEvent<PerfOperationSummary>(raw);
+      if (operation) upsertPerfOperation(operation);
+    });
+    source.addEventListener("perf.memory.sample", raw => {
+      const sample = parsePerfEvent<PerfProcessSample>(raw);
+      if (sample) perfSamples = [...perfSamples, sample].slice(-500);
+    });
+  }
+
+  function upsertPerfOperation(operation: PerfOperationSummary) {
+    const existing = perfOperations.findIndex(item => item.operation_id === operation.operation_id);
+    if (existing < 0) {
+      perfOperations = [...perfOperations, operation].slice(-500);
+      return;
+    }
+    perfOperations = perfOperations.map((item, index) => index === existing ? operation : item);
+  }
+
+  function parsePerfEvent<T>(raw: Event): T | null {
+    try {
+      return JSON.parse((raw as MessageEvent<string>).data) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  function objectField(data: Record<string, JsonValue>, key: string): Record<string, JsonValue> {
+    const value = data[key];
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, JsonValue>
+      : {};
+  }
+
+  function stringField(data: Record<string, JsonValue>, key: string): string {
+    return typeof data[key] === "string" ? data[key] : "";
+  }
+
+  function optionalStringField(data: Record<string, JsonValue>, key: string): string | null {
+    return typeof data[key] === "string" ? data[key] : null;
+  }
+
+  function numericField(data: Record<string, JsonValue>, key: string): number {
+    return typeof data[key] === "number" ? data[key] : 0;
+  }
+
+  function formatPerfTime(microseconds?: number | null): string {
+    if (microseconds === undefined || microseconds === null) return "Unavailable";
+    if (microseconds < 1000) return `${Math.round(microseconds)} µs`;
+    if (microseconds < 1_000_000) return `${(microseconds / 1000).toFixed(microseconds < 10_000 ? 2 : 1)} ms`;
+    return `${(microseconds / 1_000_000).toFixed(2)} s`;
+  }
+
+  function retrievalLabel(operation: string): string {
+    if (operation === "session.history.materialize") return "Turn materialization";
+    if (operation === "session.resume.materialize") return "Session resume";
+    if (operation === "session.refresh.materialize") return "Session refresh";
+    return "Session projection";
+  }
+
+  function formatMemory(kilobytes?: number | null): string {
+    if (kilobytes === undefined || kilobytes === null) return "Unavailable";
+    const sign = kilobytes > 0 ? "+" : "";
+    if (Math.abs(kilobytes) < 1024) return `${sign}${kilobytes.toFixed(0)} KiB`;
+    return `${sign}${(kilobytes / 1024).toFixed(1)} MiB`;
+  }
+
+  function formatMemorySize(kilobytes?: number | null): string {
+    if (kilobytes === undefined || kilobytes === null) return "Unavailable";
+    if (kilobytes < 1024) return `${kilobytes.toFixed(0)} KiB`;
+    return `${(kilobytes / 1024).toFixed(1)} MiB`;
   }
 
   function queueDelta(delta: string) {
@@ -862,6 +1054,45 @@
               <div><span>Mounted chat</span><strong>{renderedMessages.length} messages</strong></div>
               <div><span>Runtime hot history</span><strong>{selectedLive?.history?.len ?? "idle"}</strong><small>{selectedLive?.history ? `${selectedLive.history.message_offset} older rows` : "not resident"}</small></div>
             </section>
+
+            {#if perfDetected}
+              <section class="efficiency-section live-perf">
+                <div class="efficiency-heading">
+                  <div><strong>Live retrieval</strong><span>Feature-gated internal measurements</span></div>
+                  <b class:connected={perfConnection === "connected"}>{latestRetrieval?.build_profile ?? "diagnostic"}</b>
+                </div>
+                {#if latestRetrieval}
+                  <div class="live-perf-grid">
+                    <div><span>{retrievalLabel(latestRetrieval.operation)}</span><strong>{formatPerfTime(latestRetrieval.elapsed_us)}</strong></div>
+                    <div><span>Message rows</span><strong>{numericField(latestRetrieval.fields, "message_rows").toLocaleString()}</strong></div>
+                    <div><span>Path walks</span><strong>{latestPathStages.length}</strong></div>
+                    <div><span>Turn lookups</span><strong>{latestTurnLookups.toLocaleString()}</strong></div>
+                    <div><span>Path connections</span><strong>{latestPathConnections.toLocaleString()}</strong></div>
+                    <div><span>Tool queries</span><strong>{latestToolQueries.toLocaleString()}</strong></div>
+                    <div><span>Current PSS</span><strong>{formatMemorySize(latestProcessSample?.memory.pss_kb)}</strong></div>
+                    <div><span>PSS retained</span><strong>{formatMemory(latestRetrieval.pss_delta_kb)}</strong></div>
+                  </div>
+                  {#if latestSlowStages.length}
+                    <div class="live-perf-stages">
+                      {#each latestSlowStages as stage (stage.operation_id)}
+                        <div>
+                          <span>{humanize(stage.operation.replace(/^session\./, ""))}</span>
+                          <strong>{formatPerfTime(stage.elapsed_us)}</strong>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <p class="efficiency-note">
+                    Internal timings are exact for this {latestRetrieval.build_profile ?? "diagnostic"} build.
+                    {perfConnection === "connected"
+                      ? "Memory is sampled externally by the perf sidecar; deltas show trends, not allocation ownership."
+                      : "Start the perf sidecar to add process-memory trends."}
+                  </p>
+                {:else}
+                  <p class="efficiency-empty">Diagnostics are enabled. Waiting for this session projection to complete.</p>
+                {/if}
+              </section>
+            {/if}
 
             {#if efficiency?.latest_compaction}
               <p class="efficiency-note">Latest semantic checkpoint covers {efficiency.latest_compaction.covered_message_count} messages at turn {efficiency.latest_compaction.generated_at_turn_index}.</p>

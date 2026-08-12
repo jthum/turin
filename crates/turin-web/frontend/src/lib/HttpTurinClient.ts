@@ -153,6 +153,8 @@ export class HttpTurinClient implements TurinClient {
       "message_end",
       "tool_call",
       "tool_result",
+      "perf.operation.started",
+      "perf.operation.completed",
     ];
     for (const type of eventTypes) {
       source.addEventListener(type, raw => {

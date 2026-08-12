@@ -188,6 +188,45 @@ export interface SessionDetail {
   message_window?: { offset: number; total: number } | null;
 }
 
+export interface PerfProcessMemory {
+  rss_kb?: number | null;
+  pss_kb?: number | null;
+  pss_anon_kb?: number | null;
+  pss_file_kb?: number | null;
+  pss_shmem_kb?: number | null;
+}
+
+export interface PerfOperationSummary {
+  operation_id: string;
+  operation: string;
+  session_id?: string | null;
+  pid: number;
+  build_profile?: string | null;
+  started_at_ms: number;
+  completed_at_ms: number;
+  elapsed_us: number;
+  outcome: string;
+  start_fields: Record<string, JsonValue>;
+  fields: Record<string, JsonValue>;
+  memory_start?: PerfProcessMemory | null;
+  memory_end?: PerfProcessMemory | null;
+  memory_peak?: PerfProcessMemory | null;
+  rss_delta_kb?: number | null;
+  pss_delta_kb?: number | null;
+}
+
+export interface PerfProcessSample {
+  sampled_at_ms: number;
+  pid: number;
+  active_operations: number;
+  memory: PerfProcessMemory;
+}
+
+export interface PerfLiveSnapshot {
+  completed: PerfOperationSummary[];
+  samples: PerfProcessSample[];
+}
+
 export interface TaskStatus {
   request_id: string;
   agent_id: string;
