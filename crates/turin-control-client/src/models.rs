@@ -315,6 +315,8 @@ pub struct SessionToolExecutionDetail {
 pub struct SessionBranchDetail {
     pub branch_id: String,
     pub name: String,
+    #[serde(default)]
+    pub head_turn_id: Option<i64>,
     pub head_turn_index: Option<u32>,
     pub source_turn_id: Option<i64>,
     #[serde(default)]
@@ -326,6 +328,28 @@ pub struct SessionBranchDetail {
     #[serde(default)]
     pub origin_metadata: Option<Value>,
     pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionGraphDetail {
+    pub session: SessionSummary,
+    #[serde(default)]
+    pub turns: Vec<SessionGraphTurnDetail>,
+    #[serde(default)]
+    pub branches: Vec<SessionBranchDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionGraphTurnDetail {
+    pub turn_id: i64,
+    pub turn_public_id: String,
+    pub parent_turn_id: Option<i64>,
+    pub turn_index: u32,
+    pub message_count: usize,
+    pub tool_execution_count: usize,
+    #[serde(default)]
+    pub preview: Option<String>,
     pub created_at: String,
 }
 

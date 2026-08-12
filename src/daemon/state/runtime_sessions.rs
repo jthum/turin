@@ -9,9 +9,10 @@ use uuid::Uuid;
 use super::{
     DaemonState, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
     SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
-    SessionExecutionDetail, SessionMessageDetail, SessionMessageWindow, SessionPlanExecutionDetail,
-    SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionTaskExecutionDetail,
-    SessionTaskTurnDetail, SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
+    SessionExecutionDetail, SessionGraphDetail, SessionGraphTurnDetail, SessionMessageDetail,
+    SessionMessageWindow, SessionPlanExecutionDetail, SessionRequestEfficiencyDetail,
+    SessionSearchHit, SessionSummary, SessionTaskExecutionDetail, SessionTaskTurnDetail,
+    SessionToolExecutionDetail, SessionTurnEfficiencyDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
 use crate::kernel::event::{
@@ -481,6 +482,42 @@ impl DaemonState {
         Ok(Some(branches))
     }
 
+    #[instrument(skip(self), fields(session_id = %session_id))]
+    pub async fn get_session_graph(&self, session_id: &str) -> Result<Option<SessionGraphDetail>> {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
+            return Ok(None);
+        };
+        let turns = store
+            .list_session_graph_turns(row.id)
+            .await?
+            .into_iter()
+            .map(|graph_turn| SessionGraphTurnDetail {
+                turn_id: graph_turn.turn.id,
+                turn_public_id: super::helpers::format_uuid_bytes_simple(
+                    &graph_turn.turn.public_id,
+                ),
+                parent_turn_id: graph_turn.turn.parent_turn_id,
+                turn_index: graph_turn.turn.branch_depth,
+                message_count: graph_turn.message_count,
+                tool_execution_count: graph_turn.tool_execution_count,
+                preview: graph_turn.preview.as_deref().and_then(graph_turn_preview),
+                created_at: graph_turn.turn.created_at,
+            })
+            .collect();
+        let branches = store
+            .list_branch_heads(row.id)
+            .await?
+            .into_iter()
+            .map(branch_detail_from_row)
+            .collect();
+        Ok(Some(SessionGraphDetail {
+            session: session_summary_from_row_and_selector(&row, &store_selector),
+            turns,
+            branches,
+        }))
+    }
+
     #[instrument(skip(self), fields(session_id = %session_id, source_turn_id = source_turn_id))]
     pub async fn list_session_branch_siblings(
         &self,
@@ -553,6 +590,55 @@ impl DaemonState {
             activate = activate,
             reloaded_live_session = live_snapshot.is_some(),
             "Created session branch"
+        );
+        Ok(Some(branch_detail_from_row(branch)))
+    }
+
+    #[instrument(
+        skip(self),
+        fields(
+            session_id = %session_id,
+            branch = %name,
+            slot_id = ?slot_id,
+            from_turn_id = from_turn_id,
+            activate = activate
+        )
+    )]
+    pub async fn create_session_branch_from_turn_id(
+        &self,
+        session_id: &str,
+        name: &str,
+        slot_id: Option<&str>,
+        from_turn_id: i64,
+        activate: bool,
+    ) -> Result<Option<SessionBranchDetail>> {
+        let Some((store_selector, store, row)) = self.resolve_persisted_session(session_id).await?
+        else {
+            return Ok(None);
+        };
+        let live_snapshot = if activate {
+            self.resolve_live_branch_target(session_id, &row.public_id, slot_id, "activate branch")
+                .await?
+        } else {
+            None
+        };
+        let branch = store
+            .create_branch_head_from_turn_id(row.id, name, from_turn_id, activate)
+            .await?;
+        if activate && let Some(live_snapshot) = live_snapshot.as_ref() {
+            self.kernel
+                .agent_manager()
+                .reload_session(session_id, Some(&live_snapshot.slot_id))
+                .await?;
+        }
+        info!(
+            session_id = %session_id,
+            store = %describe_store_selector(&store_selector),
+            branch = %branch.name,
+            from_turn_id = from_turn_id,
+            activate = activate,
+            reloaded_live_session = live_snapshot.is_some(),
+            "Created session branch from exact turn"
         );
         Ok(Some(branch_detail_from_row(branch)))
     }
@@ -1115,6 +1201,7 @@ fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {
     SessionBranchDetail {
         branch_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
         name: row.name,
+        head_turn_id: row.head_turn_id,
         head_turn_index: row.head_turn_depth,
         source_turn_id: row.created_from_turn_id,
         origin_kind: row.origin_kind,
@@ -1127,6 +1214,38 @@ fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {
         active: row.is_active,
         created_at: row.created_at,
     }
+}
+
+fn graph_turn_preview(raw: &str) -> Option<String> {
+    let value = super::helpers::parse_json_or_string(raw);
+    let text = match value {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| {
+                part.as_object()
+                    .and_then(|part| part.get("text").or_else(|| part.get("content")))
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        serde_json::Value::Object(object) => object
+            .get("text")
+            .or_else(|| object.get("content"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        _ => String::new(),
+    };
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    let mut preview = collapsed.chars().take(180).collect::<String>();
+    if collapsed.chars().count() > 180 {
+        preview.push_str("...");
+    }
+    Some(preview)
 }
 
 fn summarize_search_hit(text: &str, query: &str) -> String {

@@ -2601,6 +2601,34 @@ async fn session_branches_can_be_created_listed_and_checked_out() -> Result<()> 
     assert!(rendered.contains("third branch turn"));
     assert!(!rendered.contains("second branch turn"));
 
+    let graph = state
+        .get_session_graph(&session_id)
+        .await?
+        .expect("session graph visible");
+    assert_eq!(graph.turns.len(), 3);
+    assert_eq!(graph.branches.len(), 2);
+    let inactive_main_turn = graph
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.preview
+                .as_deref()
+                .is_some_and(|preview| preview.contains("second branch turn"))
+        })
+        .expect("inactive main turn remains in graph");
+    let exact = state
+        .create_session_branch_from_turn_id(
+            &session_id,
+            "exact-main-fork",
+            None,
+            inactive_main_turn.turn_id,
+            false,
+        )
+        .await?
+        .expect("exact turn branch created");
+    assert_eq!(exact.source_turn_id, Some(inactive_main_turn.turn_id));
+    assert_eq!(exact.head_turn_id, Some(inactive_main_turn.turn_id));
+
     Ok(())
 }
 

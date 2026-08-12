@@ -19,7 +19,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `crates/turin-control-client/src/schedules.rs`
   - Schedule convenience methods.
 - `crates/turin-control-client/src/sessions.rs`
-  - Live and persisted session convenience methods.
+  - Live and persisted session convenience methods, on-demand turn topology,
+    exact-turn branch creation, branch listing, and checkout.
 - `crates/turin-control-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
 - `crates/turin-control-client/src/harnesses.rs`
@@ -49,6 +50,10 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `get_session` preserves the complete persisted diagnostic view, while
   `get_session_window` requests a bounded recent transcript without persisted
   events for interactive clients.
+- `get_session_graph` is an explicit on-demand topology read. Normal session
+  detail must not absorb its complete turn-tree cost.
+- Exact-turn branch creation uses an internal turn id because turn indexes are
+  path-relative and can repeat across sibling branches.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - UI/manager presentation formatting does not belong in this crate.

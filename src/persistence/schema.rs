@@ -351,6 +351,15 @@ pub struct TurnRow {
     pub created_at: String,
 }
 
+/// A compact turn-tree row used by on-demand session graph projections.
+#[derive(Debug, Clone)]
+pub struct SessionGraphTurnRow {
+    pub turn: TurnRow,
+    pub message_count: usize,
+    pub tool_execution_count: usize,
+    pub preview: Option<String>,
+}
+
 /// A row from the `branch_heads` table.
 #[derive(Debug, Clone)]
 pub struct BranchHeadRow {

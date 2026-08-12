@@ -15,7 +15,9 @@ This subsystem should preserve three guarantees:
 - `src/daemon/state/runtime_tasks.rs`
   - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, channel persistence/inference lookup, and live-session filtering.
 - `src/daemon/state/runtime_sessions.rs`
-  - Persisted session list/search/detail/title, branch listing/sibling lookup/create/checkout, persisted-session target resolution, and live branch target guards.
+  - Persisted session list/search/detail/title, on-demand turn-topology projection,
+    branch listing/sibling lookup/create/checkout, persisted-session target
+    resolution, and live branch target guards.
 - `src/daemon/state/harness_actions.rs`
   - Harness action runtime targeting, agent execution identity resolution, and action result collection.
 - `src/daemon/server/dispatch/task.rs`
@@ -85,12 +87,27 @@ Persisted session detail:
    through the existing event broadcast. Normal builds compile those hooks
    away.
 
+Session graph:
+
+1. `session.graph_get` resolves the persisted session and store in the same way
+   as session detail.
+2. One on-demand query loads every durable turn with its parent id, depth,
+   compact user preview, and message/tool counts.
+3. Branch heads are projected separately and carry exact internal head/source
+   turn ids for typed lifecycle operations.
+4. This projection is the conversation turn tree. It does not read or imply the
+   optional harness-authored `runtime.graph.*` semantic overlay.
+
 Branch activation/checkout:
 
 1. The persisted session is resolved first.
 2. Live attached runtime slots are checked for ambiguity and busy state.
 3. The branch operation is applied in persistence.
 4. If a live slot was targeted, the matching runtime is reloaded.
+
+Exact-turn branch creation follows the same live-slot rules when activation is
+requested. Non-activating forks may target a turn on any path; the store
+validates that the turn belongs to the resolved session.
 
 ## Invariants
 
@@ -118,6 +135,10 @@ Branch activation/checkout:
 - Unbound shared harness actions use the primary agent identity, while multi-agent harness actions remain explicit.
 - Branch activation/checkout must reject busy live sessions.
 - Branch activation/checkout must reject slot-agnostic requests when multiple runtime slots are attached.
+- Graph projection must remain on demand and must not make ordinary session
+  detail load the complete turn tree.
+- Exact-turn branch creation must validate session ownership and must not
+  silently resolve the same numeric depth on the active path.
 
 ## Common Changes
 

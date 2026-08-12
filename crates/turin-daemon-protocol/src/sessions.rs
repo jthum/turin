@@ -103,6 +103,8 @@ pub struct SessionBranchCreateParams {
     #[serde(default)]
     pub from_turn_index: Option<u32>,
     #[serde(default)]
+    pub from_turn_id: Option<i64>,
+    #[serde(default)]
     pub activate: bool,
 }
 

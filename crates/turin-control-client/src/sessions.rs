@@ -9,10 +9,21 @@ use turin_daemon_protocol::{
 use crate::client::ControlClient;
 use crate::models::{
     LiveSession, LiveSessionList, SessionActionResult, SessionBranchDetail, SessionBranchList,
-    SessionDetail, SessionList, SessionSearchHit, SessionSearchResultList, SessionSummary,
+    SessionDetail, SessionGraphDetail, SessionList, SessionSearchHit, SessionSearchResultList,
+    SessionSummary,
 };
 
 impl ControlClient {
+    pub async fn get_session_graph(&self, session_id: &str) -> Result<SessionGraphDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGraphGet(SessionIdParams {
+                session_id: session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
     pub async fn list_live_sessions(&self) -> Result<Vec<LiveSession>> {
         let response: LiveSessionList = self
             .request_ok(None, DaemonRequest::SessionListLive(NoParams::default()))
@@ -179,6 +190,29 @@ impl ControlClient {
                 name: name.to_string(),
                 slot_id,
                 from_turn_index,
+                from_turn_id: None,
+                activate,
+            }),
+        )
+        .await
+    }
+
+    pub async fn create_session_branch_from_turn_id(
+        &self,
+        session_id: &str,
+        slot_id: Option<String>,
+        name: &str,
+        from_turn_id: i64,
+        activate: bool,
+    ) -> Result<SessionBranchDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionBranchCreate(SessionBranchCreateParams {
+                session_id: session_id.to_string(),
+                name: name.to_string(),
+                slot_id,
+                from_turn_index: None,
+                from_turn_id: Some(from_turn_id),
                 activate,
             }),
         )

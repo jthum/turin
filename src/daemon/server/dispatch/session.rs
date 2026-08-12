@@ -149,6 +149,21 @@ pub(super) async fn get(
     )
 }
 
+pub(super) async fn graph_get(
+    id: Option<String>,
+    params: SessionIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    optional_response(
+        id,
+        guard.get_session_graph(&params.session_id).await,
+        "session graph",
+        ErrorCode::SessionNotFound,
+        || format!("Session '{}' not found", params.session_id),
+    )
+}
+
 pub(super) async fn set_title(
     id: Option<String>,
     params: SessionTitleParams,
@@ -192,15 +207,36 @@ pub(super) async fn branch_create(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    let result = guard
-        .create_session_branch(
-            &params.session_id,
-            &params.name,
-            params.slot_id.as_deref(),
-            params.from_turn_index,
-            params.activate,
-        )
-        .await;
+    let result = match (params.from_turn_index, params.from_turn_id) {
+        (Some(_), Some(_)) => {
+            return validation_error(
+                id,
+                anyhow::anyhow!("Only one of from_turn_index or from_turn_id may be supplied"),
+            );
+        }
+        (_, Some(turn_id)) => {
+            guard
+                .create_session_branch_from_turn_id(
+                    &params.session_id,
+                    &params.name,
+                    params.slot_id.as_deref(),
+                    turn_id,
+                    params.activate,
+                )
+                .await
+        }
+        (from_turn_index, None) => {
+            guard
+                .create_session_branch(
+                    &params.session_id,
+                    &params.name,
+                    params.slot_id.as_deref(),
+                    from_turn_index,
+                    params.activate,
+                )
+                .await
+        }
+    };
     optional_response_with_event(
         id,
         result,

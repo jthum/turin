@@ -2,7 +2,7 @@ mod branch_heads;
 
 use anyhow::{Context, Result, anyhow};
 
-use super::{StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
+use super::{SessionGraphTurnRow, StateStore, TurnRow, TurnWriteError, TurnWriteTarget};
 use crate::perf_diagnostics::{perf_stage, perf_stage_finish};
 
 const TURN_SELECT_BY_ID: &str = concat!(
@@ -11,6 +11,48 @@ const TURN_SELECT_BY_ID: &str = concat!(
 );
 
 impl StateStore {
+    pub async fn list_session_graph_turns(
+        &self,
+        session_id: i64,
+    ) -> Result<Vec<SessionGraphTurnRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT t.id,
+                       t.public_id,
+                       t.session_id,
+                       t.parent_turn_id,
+                       t.branch_depth,
+                       t.created_at,
+                       (SELECT COUNT(*) FROM messages m WHERE m.turn_id = t.id),
+                       (SELECT COUNT(*) FROM tool_executions te WHERE te.turn_id = t.id),
+                       (
+                           SELECT substr(m.content, 1, 320)
+                           FROM messages m
+                           WHERE m.turn_id = t.id AND m.role = 'user'
+                           ORDER BY m.id
+                           LIMIT 1
+                       )
+                FROM turns t
+                WHERE t.session_id = ?1
+                ORDER BY t.branch_depth, t.created_at, t.id
+                "#,
+                [session_id],
+            )
+            .await?;
+        let mut turns = Vec::new();
+        while let Some(row) = rows.next().await? {
+            turns.push(SessionGraphTurnRow {
+                turn: turn_row_from_row(&row)?,
+                message_count: row.get::<i64>(6)? as usize,
+                tool_execution_count: row.get::<i64>(7)? as usize,
+                preview: row.get::<Option<String>>(8)?,
+            });
+        }
+        Ok(turns)
+    }
+
     pub async fn active_branch_turn_count(&self, session_id: i64) -> Result<u32> {
         Ok(self.branch_path_turns(session_id, None).await?.len() as u32)
     }

@@ -103,6 +103,7 @@ pub(super) async fn dispatch(
         DaemonRequest::SessionOpen(params) => session::open(id, params, &context).await,
         DaemonRequest::SessionResume(params) => session::resume(id, params, &context).await,
         DaemonRequest::SessionGet(params) => session::get(id, params, &context).await,
+        DaemonRequest::SessionGraphGet(params) => session::graph_get(id, params, &context).await,
         DaemonRequest::SessionSetTitle(params) => session::set_title(id, params, &context).await,
         DaemonRequest::SessionBranchList(params) => {
             session::branch_list(id, params, &context).await

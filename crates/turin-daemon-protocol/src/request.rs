@@ -105,6 +105,8 @@ pub enum DaemonRequest {
     SessionResume(ResumeSessionParams),
     #[serde(rename = "session.get")]
     SessionGet(SessionGetParams),
+    #[serde(rename = "session.graph_get")]
+    SessionGraphGet(SessionIdParams),
     #[serde(rename = "session.set_title")]
     SessionSetTitle(SessionTitleParams),
     #[serde(rename = "session.branch_list")]

@@ -72,6 +72,44 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
 }
 
 #[test]
+fn session_graph_and_exact_turn_branch_requests_round_trip() {
+    let graph = RequestEnvelope::new(
+        Some("req_graph".to_string()),
+        DaemonRequest::SessionGraphGet(SessionIdParams {
+            session_id: "sess_123".to_string(),
+        }),
+    );
+    let graph_value = serde_json::to_value(graph).expect("serialize graph request");
+    assert_eq!(graph_value["op"], "session.graph_get");
+    assert_eq!(graph_value["params"]["session_id"], "sess_123");
+
+    let branch = RequestEnvelope::new(
+        Some("req_branch".to_string()),
+        DaemonRequest::SessionBranchCreate(SessionBranchCreateParams {
+            session_id: "sess_123".to_string(),
+            name: "alternate".to_string(),
+            slot_id: None,
+            from_turn_index: None,
+            from_turn_id: Some(42),
+            activate: false,
+        }),
+    );
+    let branch_value = serde_json::to_value(branch).expect("serialize branch request");
+    assert_eq!(branch_value["op"], "session.branch_create");
+    assert_eq!(branch_value["params"]["from_turn_id"], 42);
+
+    let decoded: RequestEnvelope =
+        serde_json::from_value(branch_value).expect("deserialize branch request");
+    match decoded.request {
+        DaemonRequest::SessionBranchCreate(params) => {
+            assert_eq!(params.from_turn_id, Some(42));
+            assert!(params.from_turn_index.is_none());
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+}
+
+#[test]
 fn memory_list_round_trips_filters_and_window() {
     let request = RequestEnvelope::new(
         Some("req_memory".to_string()),

@@ -218,6 +218,7 @@ pub struct SessionMessageWindow {
 pub struct SessionBranchDetail {
     pub branch_id: String,
     pub name: String,
+    pub head_turn_id: Option<i64>,
     pub head_turn_index: Option<u32>,
     pub source_turn_id: Option<i64>,
     pub origin_kind: String,
@@ -225,6 +226,26 @@ pub struct SessionBranchDetail {
     pub origin_execution_id: Option<String>,
     pub origin_metadata: Option<serde_json::Value>,
     pub active: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionGraphDetail {
+    pub session: SessionSummary,
+    pub turns: Vec<SessionGraphTurnDetail>,
+    pub branches: Vec<SessionBranchDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionGraphTurnDetail {
+    pub turn_id: i64,
+    pub turn_public_id: String,
+    pub parent_turn_id: Option<i64>,
+    pub turn_index: u32,
+    pub message_count: usize,
+    pub tool_execution_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
     pub created_at: String,
 }
 
