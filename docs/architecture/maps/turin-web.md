@@ -101,6 +101,10 @@ session state, invent renderer-specific harness APIs, or bypass
     sidestep from that context, and promote an eligible ephemeral result. Branch
     checkout and activation remain daemon operations and therefore retain live
     runtime ambiguity/busy guards.
+28. Selecting a graph node loads a bounded exact-turn transcript projection.
+    The browser caches that path locally, highlights the inspected ancestry
+    separately from the active path, and keeps mutation under an explicit
+    exploration mode.
 
 ## Invariants
 
@@ -176,6 +180,9 @@ session state, invent renderer-specific harness APIs, or bypass
   `runtime.graph.*` semantic nodes and edges.
 - Selecting a graph node is browser-local inspection. Persisted active-branch
   state changes only through explicit checkout or activating-fork actions.
+- Exact-turn path previews must use the bounded daemon projection rather than
+  filtering the currently active transcript in the browser. Preview loading
+  and errors remain local to the selected graph node.
 - Graph forks must use exact turn ids. A path-relative turn index is not a
   stable source once sibling branches exist.
 - Request-efficiency UI must label provider-reported usage as measured and

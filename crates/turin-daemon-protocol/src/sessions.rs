@@ -24,6 +24,11 @@ pub struct SessionIdParams {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionGetParams {
     pub session_id: String,
+    /// Project the session path ending at this exact durable turn.
+    ///
+    /// When omitted, the persisted active branch remains the read target.
+    #[serde(default)]
+    pub target_turn_id: Option<i64>,
     #[serde(default)]
     pub message_limit: Option<usize>,
     #[serde(default)]

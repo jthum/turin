@@ -61,6 +61,7 @@ impl ControlClient {
             None,
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
+                target_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -89,10 +90,35 @@ impl ControlClient {
             None,
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
+                target_turn_id: None,
                 message_limit: Some(message_limit),
                 message_offset,
                 include_events: Some(false),
                 include_efficiency: Some(true),
+            }),
+        )
+        .await
+    }
+
+    /// Load a bounded transcript projection ending at an exact durable turn.
+    ///
+    /// This is a read-only path inspection and does not activate a branch or
+    /// change any live session target.
+    pub async fn get_session_turn_window(
+        &self,
+        session_id: &str,
+        turn_id: i64,
+        message_limit: usize,
+    ) -> Result<SessionDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.to_string(),
+                target_turn_id: Some(turn_id),
+                message_limit: Some(message_limit),
+                message_offset: None,
+                include_events: Some(false),
+                include_efficiency: Some(false),
             }),
         )
         .await

@@ -52,6 +52,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   events for interactive clients.
 - `get_session_graph` is an explicit on-demand topology read. Normal session
   detail must not absorb its complete turn-tree cost.
+- `get_session_turn_window` is a bounded, read-only projection ending at an
+  exact durable turn. It must not activate a branch or retarget a live session.
 - Exact-turn branch creation uses an internal turn id because turn indexes are
   path-relative and can repeat across sibling branches.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.

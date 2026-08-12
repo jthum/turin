@@ -212,6 +212,23 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .all(|message| message.turn_index == final_turn)
     );
 
+    let graph = client.get_session_graph(&opened.session_id).await?;
+    let first_turn = graph
+        .turns
+        .iter()
+        .min_by_key(|turn| turn.turn_index)
+        .context("session graph should expose a turn")?;
+    let inspected = client
+        .get_session_turn_window(&opened.session_id, first_turn.turn_id, 24)
+        .await?;
+    assert!(!inspected.messages.is_empty());
+    assert!(
+        inspected
+            .messages
+            .iter()
+            .all(|message| message.turn_index <= first_turn.turn_index)
+    );
+
     Ok(())
 }
 

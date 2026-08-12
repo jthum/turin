@@ -86,6 +86,9 @@ Persisted session detail:
    timings, row/query counters, and correlated daemon RSS/PSS observations
    through the existing event broadcast. Normal builds compile those hooks
    away.
+9. An optional exact-turn target applies the same bounded message/tool
+   projection to the ancestral path ending at that turn. This is a read-only
+   projection and does not alter the persisted active branch head.
 
 Session graph:
 
@@ -128,6 +131,9 @@ validates that the turn belongs to the resolved session.
   execution records were omitted.
 - Offset session windows are indexed from the oldest active-branch message and
   may contain slightly more than the requested limit to preserve complete turns.
+- Exact-turn session projections validate turn ownership through the same
+  `SessionReadTarget::TurnId` path used by persistence materialization and must
+  remain observational.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
 - Channel-bound session open/resume should reuse channel persistence and inference overrides.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.

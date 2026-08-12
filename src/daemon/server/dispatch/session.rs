@@ -133,6 +133,7 @@ pub(super) async fn get(
         &params.session_id,
         guard.get_session_projection(
             &params.session_id,
+            params.target_turn_id,
             params.message_limit,
             params.message_offset,
             params.include_events.unwrap_or(true),

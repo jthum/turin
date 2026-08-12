@@ -1879,8 +1879,55 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert!(!full.events.is_empty());
     assert!(full.message_window.is_none());
 
+    let graph = state
+        .get_session_graph(&live.session_id)
+        .await?
+        .expect("session graph");
+    let first_turn = graph
+        .turns
+        .iter()
+        .min_by_key(|turn| turn.turn_index)
+        .expect("first durable turn");
+    let active_branch_before = graph
+        .branches
+        .iter()
+        .find(|branch| branch.active)
+        .map(|branch| branch.branch_id.clone());
+    let inspected = state
+        .get_session_projection(
+            &live.session_id,
+            Some(first_turn.turn_id),
+            Some(24),
+            None,
+            false,
+            false,
+        )
+        .await?
+        .expect("exact-turn session projection");
+    assert!(!inspected.messages.is_empty());
+    assert!(
+        inspected
+            .messages
+            .iter()
+            .all(|message| message.turn_index <= first_turn.turn_index)
+    );
+    assert!(
+        inspected
+            .message_window
+            .as_ref()
+            .is_some_and(|window| window.total < full.messages.len())
+    );
+    assert_eq!(
+        inspected
+            .branches
+            .iter()
+            .find(|branch| branch.active)
+            .map(|branch| branch.branch_id.clone()),
+        active_branch_before
+    );
+
     let windowed = state
-        .get_session_projection(&live.session_id, Some(2), None, false, true)
+        .get_session_projection(&live.session_id, None, Some(2), None, false, true)
         .await?
         .expect("windowed session detail");
     assert_eq!(windowed.messages.len(), 2);
@@ -1930,7 +1977,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert_eq!(window.offset, full.messages.len() - 2);
 
     let first_window = state
-        .get_session_projection(&live.session_id, Some(2), Some(0), false, false)
+        .get_session_projection(&live.session_id, None, Some(2), Some(0), false, false)
         .await?
         .expect("offset session detail");
     let first_window_meta = first_window.message_window.expect("offset metadata");

@@ -314,6 +314,7 @@ async fn route_request(
         )),
         (Method::GET, "/api/status") => handle_status(&state).await,
         (Method::GET, "/api/session") => handle_session_detail(req, &state).await,
+        (Method::GET, "/api/session/path") => handle_session_path(req, &state).await,
         (Method::GET, "/api/session/graph") => handle_session_graph(req, &state).await,
         (Method::PUT, "/api/session/title") => handle_session_title(req, &state).await,
         (Method::POST, "/api/session/branches") => handle_branch_create(req, &state).await,
@@ -447,6 +448,22 @@ async fn handle_session_detail(
         .get_session_window_at(&session_id, message_limit, message_offset)
         .await
         .map_err(|err| WebError::upstream(format!("Failed to load session: {}", err)))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionDetailResponse { detail },
+    ))
+}
+
+async fn handle_session_path(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let (session_id, turn_id, message_limit) = parse_session_path_query(req.uri().query())?;
+    let detail = state
+        .client
+        .get_session_turn_window(&session_id, turn_id, message_limit)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to inspect session path: {err}")))?;
     Ok(json_response(
         StatusCode::OK,
         &WebSessionDetailResponse { detail },
@@ -950,6 +967,57 @@ fn parse_session_detail_query(
     Ok((session_id, message_limit, message_offset))
 }
 
+fn parse_session_path_query(
+    query: Option<&str>,
+) -> std::result::Result<(String, i64, usize), WebError> {
+    let mut session_id = None;
+    let mut turn_id = None;
+    let mut message_limit = DEFAULT_MESSAGE_LIMIT;
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "session_id" if !value.is_empty() => session_id = Some(value.into_owned()),
+                "session_id" => {}
+                "turn_id" => {
+                    turn_id = Some(value.parse::<i64>().map_err(|_| {
+                        WebError::bad_request(
+                            "invalid_turn_id",
+                            "turn_id must be a positive integer",
+                        )
+                    })?);
+                }
+                "message_limit" => {
+                    message_limit = value.parse::<usize>().map_err(|_| {
+                        WebError::bad_request(
+                            "invalid_message_limit",
+                            "message_limit must be a positive integer",
+                        )
+                    })?;
+                }
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{other}'"),
+                    ));
+                }
+            }
+        }
+    }
+    if message_limit == 0 || message_limit > MAX_MESSAGE_LIMIT {
+        return Err(WebError::bad_request(
+            "invalid_message_limit",
+            format!("message_limit must be between 1 and {MAX_MESSAGE_LIMIT}"),
+        ));
+    }
+    let session_id = session_id.ok_or_else(|| {
+        WebError::bad_request("invalid_session_id", "session_id must not be empty")
+    })?;
+    let turn_id = turn_id
+        .filter(|turn_id| *turn_id > 0)
+        .ok_or_else(|| WebError::bad_request("invalid_turn_id", "turn_id must be positive"))?;
+    Ok((session_id, turn_id, message_limit))
+}
+
 fn parse_session_id_query(query: Option<&str>) -> std::result::Result<String, WebError> {
     let mut session_id = None;
     if let Some(query) = query {
@@ -1322,6 +1390,28 @@ mod tests {
             "session-1"
         );
         assert!(parse_session_id_query(Some("session_id=session-1&offset=1")).is_err());
+    }
+
+    #[test]
+    fn session_path_query_requires_exact_turn_and_bounds_window() {
+        assert!(parse_session_path_query(None).is_err());
+        assert_eq!(
+            parse_session_path_query(Some("session_id=session-1&turn_id=42"))
+                .expect("path query parses"),
+            ("session-1".to_string(), 42, DEFAULT_MESSAGE_LIMIT)
+        );
+        assert_eq!(
+            parse_session_path_query(Some("session_id=session-1&turn_id=42&message_limit=24"))
+                .expect("bounded path query parses")
+                .2,
+            24
+        );
+        assert!(parse_session_path_query(Some("session_id=session-1&turn_id=0")).is_err());
+        assert!(parse_session_path_query(Some("session_id=session-1&turn_id=nope")).is_err());
+        assert!(
+            parse_session_path_query(Some("session_id=session-1&turn_id=42&message_limit=257"))
+                .is_err()
+        );
     }
 
     #[test]

@@ -46,6 +46,7 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
     match full.request {
         DaemonRequest::SessionGet(params) => {
             assert_eq!(params.session_id, "sess_123");
+            assert!(params.target_turn_id.is_none());
             assert!(params.message_limit.is_none());
             assert!(params.message_offset.is_none());
             assert!(params.include_events.is_none());
@@ -58,6 +59,7 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
         Some("req_session".to_string()),
         DaemonRequest::SessionGet(SessionGetParams {
             session_id: "sess_123".to_string(),
+            target_turn_id: Some(42),
             message_limit: Some(48),
             message_offset: Some(96),
             include_events: Some(false),
@@ -66,6 +68,7 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
     );
     let value = serde_json::to_value(windowed).expect("serialize windowed request");
     assert_eq!(value["params"]["message_limit"], 48);
+    assert_eq!(value["params"]["target_turn_id"], 42);
     assert_eq!(value["params"]["message_offset"], 96);
     assert_eq!(value["params"]["include_events"], false);
     assert_eq!(value["params"]["include_efficiency"], true);

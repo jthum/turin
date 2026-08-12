@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { TurinClient } from "../lib/TurinClient";
   import type {
     SessionBranch,
+    SessionDetail,
     SessionGraph as SessionGraphModel,
     SessionGraphTurn,
     TaskStatus,
@@ -16,6 +17,8 @@
   export let slotId: string | undefined = undefined;
   export let onClose: () => void;
   export let onChanged: () => void | Promise<void>;
+
+  const PATH_MESSAGE_LIMIT = 24;
 
   let graph: SessionGraphModel | null = null;
   let loading = true;
@@ -31,15 +34,37 @@
   let sidestepMode: "ephemeral" | "fork_sibling" = "ephemeral";
   let sidestepResult: TaskStatus | null = null;
   let promotionName = "";
+  let inspectorMode: "inspect" | "explore" = "inspect";
+  let pathDetail: SessionDetail | null = null;
+  let pathLoading = false;
+  let pathError = "";
+  let pathRequestVersion = 0;
+  let workspace: HTMLElement;
+  let closeButton: HTMLButtonElement;
+  let previouslyFocused: HTMLElement | null = null;
+  const pathCache = new Map<number, SessionDetail>();
 
-  $: layout = buildLayout(graph, compact);
+  $: layout = buildLayout(graph, compact, selectedTurnId);
   $: selectedTurn = graph?.turns.find(turn => turn.turn_id === selectedTurnId) ?? null;
   $: selectedHeads = graph?.branches.filter(branch => branch.head_turn_id === selectedTurnId) ?? [];
+  $: selectedOnActivePath = layout.nodes.find(node => node.turn.turn_id === selectedTurnId)?.activePath ?? false;
+  $: pathMessages = (pathDetail?.messages ?? []).filter(message => {
+    const role = message.role.toLowerCase();
+    return role === "user" || role === "assistant";
+  });
+  $: pathTools = pathDetail?.tool_executions ?? [];
+  $: omittedPathMessages = pathDetail?.message_window?.offset ?? 0;
   $: sidestepOutput = sidestepResult
     ? sidestepResult.output ?? messageText(sidestepResult.assistant_content ?? [])
     : "";
 
   void loadGraph(true);
+
+  onMount(() => {
+    previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    void tick().then(() => closeButton?.focus());
+    return () => previouslyFocused?.focus();
+  });
 
   async function loadGraph(centerActive = false) {
     loading = !graph;
@@ -54,6 +79,7 @@
         const initialTurn = graph.turns.find(turn => turn.turn_id === selectedTurnId);
         forkName = initialTurn ? `fork-turn-${initialTurn.turn_index}` : "";
       }
+      if (selectedTurnId !== null) void loadPath(selectedTurnId);
       await tick();
       if (centerActive) centerSelected();
     } catch (reason) {
@@ -68,6 +94,34 @@
     forkName = `fork-turn-${turn.turn_index}`;
     sidestepResult = null;
     notice = "";
+    inspectorMode = "inspect";
+    void loadPath(turn.turn_id);
+  }
+
+  async function loadPath(turnId: number, force = false) {
+    const requestVersion = ++pathRequestVersion;
+    pathError = "";
+    if (!force) {
+      const cached = pathCache.get(turnId);
+      if (cached) {
+        pathDetail = cached;
+        pathLoading = false;
+        return;
+      }
+    }
+    pathLoading = true;
+    pathDetail = null;
+    try {
+      const detail = await client.sessionPath(sessionId, turnId, PATH_MESSAGE_LIMIT);
+      if (requestVersion !== pathRequestVersion) return;
+      pathCache.set(turnId, detail);
+      pathDetail = detail;
+    } catch (reason) {
+      if (requestVersion !== pathRequestVersion) return;
+      pathError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      if (requestVersion === pathRequestVersion) pathLoading = false;
+    }
   }
 
   function centerSelected() {
@@ -170,7 +224,24 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") onClose();
+    if (event.key === "Escape") {
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab" || !workspace) return;
+    const focusable = [...workspace.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )];
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function nodeForBranch(branch: SessionBranch): LayoutNode | undefined {
@@ -187,15 +258,17 @@
     x: number;
     y: number;
     activePath: boolean;
+    inspectedPath: boolean;
   }
 
   interface LayoutEdge {
     source: LayoutNode;
     target: LayoutNode;
     activePath: boolean;
+    inspectedPath: boolean;
   }
 
-  function buildLayout(model: SessionGraphModel | null, dense: boolean) {
+  function buildLayout(model: SessionGraphModel | null, dense: boolean, inspectedTurnId: number | null) {
     if (!model?.turns.length) return { nodes: [] as LayoutNode[], edges: [] as LayoutEdge[], width: 720, height: 480 };
     const turnById = new Map(model.turns.map(turn => [turn.turn_id, turn]));
     const children = new Map<number, SessionGraphTurn[]>();
@@ -215,6 +288,13 @@
       if (activePath.has(activeTurnId)) break;
       activePath.add(activeTurnId);
       activeTurnId = turnById.get(activeTurnId)?.parent_turn_id;
+    }
+    const inspectedPath = new Set<number>();
+    let inspectedId: number | null | undefined = inspectedTurnId;
+    while (inspectedId !== null && inspectedId !== undefined) {
+      if (inspectedPath.has(inspectedId)) break;
+      inspectedPath.add(inspectedId);
+      inspectedId = turnById.get(inspectedId)?.parent_turn_id;
     }
     const laneById = new Map<number, number>();
     let nextLane = 1;
@@ -237,6 +317,7 @@
       x: 62 + (laneById.get(turn.turn_id) ?? 0) * xStep,
       y: 62 + turn.turn_index * yStep,
       activePath: activePath.has(turn.turn_id),
+      inspectedPath: inspectedPath.has(turn.turn_id),
     }));
     const layoutById = new Map(nodes.map(node => [node.turn.turn_id, node]));
     const edges: LayoutEdge[] = [];
@@ -244,7 +325,12 @@
       const source = target.turn.parent_turn_id === null || target.turn.parent_turn_id === undefined
         ? undefined
         : layoutById.get(target.turn.parent_turn_id);
-      if (source) edges.push({ source, target, activePath: source.activePath && target.activePath });
+      if (source) edges.push({
+        source,
+        target,
+        activePath: source.activePath && target.activePath,
+        inspectedPath: source.inspectedPath && target.inspectedPath,
+      });
     }
     const maxLane = Math.max(...laneById.values(), 0);
     const maxDepth = Math.max(...model.turns.map(turn => turn.turn_index), 0);
@@ -264,20 +350,20 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="graph-overlay" role="dialog" aria-modal="true" aria-label="Session graph">
+<div class="graph-overlay" role="dialog" aria-modal="true" aria-labelledby="session-graph-title">
   <button class="graph-backdrop" aria-label="Close session graph" onclick={onClose}></button>
-  <section class="graph-workspace">
+  <section class="graph-workspace" bind:this={workspace}>
     <header class="graph-header">
       <div>
         <span class="eyebrow">Conversation topology</span>
-        <h2>Session Graph</h2>
+        <h2 id="session-graph-title">Session Graph</h2>
         <p>Inspect durable paths, fork exact turns, or explore an idea without moving the active conversation.</p>
       </div>
       <div class="graph-header-actions">
         <span>{graph?.turns.length ?? 0} turns · {graph?.branches.length ?? 0} paths</span>
         <button class:active={compact} onclick={() => compact = !compact}>{compact ? "Expanded" : "Compact"}</button>
         <button title="Center selected turn" aria-label="Center selected turn" onclick={centerSelected}><Icon name="refresh" size={15} /></button>
-        <button title="Close session graph" aria-label="Close session graph" onclick={onClose}><Icon name="close" size={16} /></button>
+        <button bind:this={closeButton} title="Close session graph" aria-label="Close session graph" onclick={onClose}><Icon name="close" size={16} /></button>
       </div>
     </header>
 
@@ -287,8 +373,8 @@
     <div class="graph-body">
       <section class="map-panel">
         <div class="map-toolbar">
-          <div><i class="active-line"></i>Active path <i></i>Other paths</div>
-          <span>Every node is a durable turn</span>
+          <div><i class="active-line"></i>Active <i class="inspected-line"></i>Inspected <i></i>Other</div>
+          <span>Selection does not change the active path</span>
         </div>
         <div class="graph-scroll" bind:this={graphScroll}>
           {#if loading}
@@ -297,13 +383,14 @@
             <div class="graph-canvas" style={`width:${layout.width}px;height:${layout.height}px`}>
               <svg width={layout.width} height={layout.height} aria-hidden="true">
                 {#each layout.edges as edge (`${edge.source.turn.turn_id}:${edge.target.turn.turn_id}`)}
-                  <path class:active={edge.activePath} d={edgePath(edge)} />
+                  <path class:active={edge.activePath} class:inspected={edge.inspectedPath && !edge.activePath} d={edgePath(edge)} />
                 {/each}
               </svg>
               {#each layout.nodes as node (node.turn.turn_id)}
                 <button
                   class="turn-node"
                   class:active-path={node.activePath}
+                  class:inspected-path={node.inspectedPath && !node.activePath}
                   class:selected={node.turn.turn_id === selectedTurnId}
                   class:has-tools={node.turn.tool_execution_count > 0}
                   data-turn-id={node.turn.turn_id}
@@ -322,7 +409,7 @@
                       class="branch-tag"
                       class:active={branch.active}
                       style={`left:${node.x + 23}px;top:${node.y - 13 + branchOffset(branch) * 24}px`}
-                      onclick={() => { selectedTurnId = node.turn.turn_id; }}
+                      onclick={() => selectTurn(node.turn)}
                     >
                       <Icon name="branch" size={12} />{branch.name}{branch.active ? " · active" : ""}
                     </button>
@@ -339,73 +426,124 @@
       <aside class="graph-inspector">
         {#if selectedTurn}
           <header class="turn-heading">
-            <span>Selected node</span>
-            <h3>Turn {selectedTurn.turn_index}</h3>
-            <time title={fullDate(selectedTurn.created_at)}>{fullDate(selectedTurn.created_at)}</time>
+            <div>
+              <span>Inspecting exact context</span>
+              <h3>Turn {selectedTurn.turn_index}</h3>
+              <time title={fullDate(selectedTurn.created_at)}>{fullDate(selectedTurn.created_at)}</time>
+            </div>
+            <span class:active={selectedOnActivePath} class="path-state">{selectedOnActivePath ? "On active path" : "Active path unchanged"}</span>
           </header>
           <div class="turn-stats">
             <div><strong>{selectedTurn.message_count}</strong><span>messages</span></div>
             <div><strong>{selectedTurn.tool_execution_count}</strong><span>tools</span></div>
             <div><strong>{selectedHeads.length}</strong><span>heads</span></div>
           </div>
-          {#if selectedTurn.preview}<p class="turn-preview">{selectedTurn.preview}</p>{/if}
+          <nav class="inspector-tabs" aria-label="Turn inspector mode">
+            <button class:active={inspectorMode === "inspect"} onclick={() => inspectorMode = "inspect"}>Inspect</button>
+            <button class:active={inspectorMode === "explore"} onclick={() => inspectorMode = "explore"}>Explore from here</button>
+          </nav>
 
-          {#if selectedHeads.length}
-            <section class="inspector-section">
-              <span class="section-label">Paths at this turn</span>
-              <div class="path-list">
-                {#each selectedHeads as branch (branch.branch_id)}
-                  <div class:active={branch.active}>
-                    <span><Icon name="branch" size={13} /><strong>{branch.name}</strong><small>{humanize(branch.origin_kind)}</small></span>
-                    {#if branch.active}
-                      <b>Active</b>
-                    {:else}
-                      <button disabled={Boolean(action)} onclick={() => checkout(branch)}>{action === `checkout:${branch.branch_id}` ? "Switching" : "Check out"}</button>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            </section>
-          {/if}
-
-          <section class="inspector-section">
-            <span class="section-label">Create a durable path</span>
-            <form class="fork-form" onsubmit={event => { event.preventDefault(); void createFork(); }}>
-              <input bind:value={forkName} placeholder={`fork-turn-${selectedTurn.turn_index}`} aria-label="New branch name" />
-              <label><input type="checkbox" bind:checked={activateFork} />Check out after creating</label>
-              <button class="primary-action" disabled={!forkName.trim() || Boolean(action)}>{action === "fork" ? "Creating path..." : "Fork from this turn"}</button>
-            </form>
-          </section>
-
-          <section class="inspector-section aside-section">
-            <span class="section-label">Ask from here</span>
-            <div class="mode-picker">
-              <button class:active={sidestepMode === "ephemeral"} onclick={() => sidestepMode = "ephemeral"}>
-                <strong>Private aside</strong><span>Explore first; promote only if useful.</span>
-              </button>
-              <button class:active={sidestepMode === "fork_sibling"} onclick={() => sidestepMode = "fork_sibling"}>
-                <strong>Sibling path</strong><span>Retain the answer as a durable branch.</span>
-              </button>
-            </div>
-            <textarea bind:value={sidestepPrompt} rows="3" placeholder="What should Turin explore from this point?" aria-label="Sidestep prompt"></textarea>
-            <button class="primary-action" disabled={!sidestepPrompt.trim() || Boolean(action)} onclick={runSidestep}>
-              {action === "sidestep" ? "Exploring..." : sidestepMode === "ephemeral" ? "Run private aside" : "Create sibling exploration"}
-            </button>
-          </section>
-
-          {#if sidestepResult}
-            <section class="sidestep-result">
-              <header><span>Aside result</span><b>{humanize(sidestepResult.state)}</b></header>
-              {#if sidestepOutput}<div class="result-body"><Markdown source={sidestepOutput} /></div>{/if}
-              {#if sidestepResult.promotion_candidate && !sidestepResult.promoted_branch}
-                <div class="promote-row">
-                  <input bind:value={promotionName} placeholder="Branch name" aria-label="Promotion branch name" />
-                  <button disabled={Boolean(action)} onclick={promoteSidestep}>{action === "promote" ? "Keeping..." : "Keep as branch"}</button>
+          {#if inspectorMode === "inspect"}
+            {#if selectedHeads.length}
+              <section class="inspector-section">
+                <span class="section-label">Branch heads here</span>
+                <div class="path-list">
+                  {#each selectedHeads as branch (branch.branch_id)}
+                    <div class:active={branch.active}>
+                      <span><Icon name="branch" size={13} /><strong>{branch.name}</strong><small>{humanize(branch.origin_kind)}</small></span>
+                      {#if branch.active}
+                        <b>Active</b>
+                      {:else}
+                        <button disabled={Boolean(action)} onclick={() => checkout(branch)}>{action === `checkout:${branch.branch_id}` ? "Switching" : "Check out"}</button>
+                      {/if}
+                    </div>
+                  {/each}
                 </div>
-              {:else if sidestepResult.promoted_branch}
-                <p class="promoted-note"><Icon name="branch" size={13} />Kept as {sidestepResult.promoted_branch.name}</p>
+              </section>
+            {/if}
+
+            <section class="inspector-section context-section">
+              <div class="context-heading">
+                <span class="section-label">Context ending here</span>
+                <button disabled={pathLoading} onclick={() => loadPath(selectedTurn.turn_id, true)}><Icon name="refresh" size={12} />Refresh</button>
+              </div>
+              {#if pathLoading}
+                <div class="path-loading"><i></i><span>Loading this path...</span></div>
+              {:else if pathError}
+                <div class="path-error"><strong>Path unavailable</strong><span>{pathError}</span><button onclick={() => loadPath(selectedTurn.turn_id, true)}>Retry</button></div>
+              {:else if pathDetail}
+                <div class="context-summary">
+                  <span>{pathDetail.message_window?.total ?? pathDetail.messages.length} message rows</span>
+                  <span>{pathTools.length} tool runs in window</span>
+                </div>
+                {#if omittedPathMessages > 0}<p class="path-omitted">{omittedPathMessages} earlier rows are outside this preview.</p>{/if}
+                <div class="path-transcript">
+                  {#each pathMessages as message (message.id)}
+                    {@const body = messageText(message.content)}
+                    {#if body}
+                      <article class:user={message.role.toLowerCase() === "user"}>
+                        <header><strong>{message.role.toLowerCase() === "user" ? "You" : humanize(graph?.session.agent_id ?? "assistant")}</strong><span>Turn {message.turn_index}</span></header>
+                        {#if message.role.toLowerCase() === "assistant"}
+                          <div class="path-markdown"><Markdown source={body} /></div>
+                        {:else}
+                          <p>{body}</p>
+                        {/if}
+                      </article>
+                    {/if}
+                  {/each}
+                  {#if !pathMessages.length}<p class="path-empty">No conversational messages are stored on this path yet.</p>{/if}
+                </div>
+                {#if pathTools.length}
+                  <details class="path-tools">
+                    <summary>{pathTools.length} tool {pathTools.length === 1 ? "execution" : "executions"}</summary>
+                    {#each pathTools as tool (tool.id)}
+                      <div><Icon name="activity" size={12} /><span>{humanize(tool.tool_name)}</span><small>Turn {tool.turn_index}{tool.duration_ms !== null && tool.duration_ms !== undefined ? ` · ${tool.duration_ms} ms` : ""}</small></div>
+                    {/each}
+                  </details>
+                {/if}
               {/if}
             </section>
+          {:else}
+            <p class="explore-note"><Icon name="branch" size={14} />Both operations start from Turn {selectedTurn.turn_index}. Only checkout changes the active conversation.</p>
+            <section class="inspector-section">
+              <span class="section-label">Create a durable path</span>
+              <form class="fork-form" onsubmit={event => { event.preventDefault(); void createFork(); }}>
+                <input bind:value={forkName} placeholder={`fork-turn-${selectedTurn.turn_index}`} aria-label="New branch name" />
+                <label><input type="checkbox" bind:checked={activateFork} />Check out after creating</label>
+                <button class="primary-action" disabled={!forkName.trim() || Boolean(action)}>{action === "fork" ? "Creating path..." : "Fork from this turn"}</button>
+              </form>
+            </section>
+
+            <section class="inspector-section aside-section">
+              <span class="section-label">Ask from this context</span>
+              <div class="mode-picker">
+                <button class:active={sidestepMode === "ephemeral"} onclick={() => sidestepMode = "ephemeral"}>
+                  <strong>Private aside</strong><span>Explore first; promote only if useful.</span>
+                </button>
+                <button class:active={sidestepMode === "fork_sibling"} onclick={() => sidestepMode = "fork_sibling"}>
+                  <strong>Sibling path</strong><span>Retain the answer as a durable branch.</span>
+                </button>
+              </div>
+              <textarea bind:value={sidestepPrompt} rows="3" placeholder="What should Turin explore from this point?" aria-label="Sidestep prompt"></textarea>
+              <button class="primary-action" disabled={!sidestepPrompt.trim() || Boolean(action)} onclick={runSidestep}>
+                {action === "sidestep" ? "Exploring..." : sidestepMode === "ephemeral" ? "Run private aside" : "Create sibling exploration"}
+              </button>
+            </section>
+
+            {#if sidestepResult}
+              <section class="sidestep-result">
+                <header><span>Aside result</span><b>{humanize(sidestepResult.state)}</b></header>
+                {#if sidestepOutput}<div class="result-body"><Markdown source={sidestepOutput} /></div>{/if}
+                {#if sidestepResult.promotion_candidate && !sidestepResult.promoted_branch}
+                  <div class="promote-row">
+                    <input bind:value={promotionName} placeholder="Branch name" aria-label="Promotion branch name" />
+                    <button disabled={Boolean(action)} onclick={promoteSidestep}>{action === "promote" ? "Keeping..." : "Keep as branch"}</button>
+                  </div>
+                {:else if sidestepResult.promoted_branch}
+                  <p class="promoted-note"><Icon name="branch" size={13} />Kept as {sidestepResult.promoted_branch.name}</p>
+                {/if}
+              </section>
+            {/if}
           {/if}
         {:else}
           <div class="inspector-empty"><Icon name="branch" size={22} /><strong>Select a turn</strong><span>Inspect its context and available paths.</span></div>
@@ -420,77 +558,112 @@
   .graph-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: color-mix(in srgb, var(--ink) 32%, transparent); backdrop-filter: blur(5px); cursor: default; }
   .graph-workspace { position: relative; display: flex; flex-direction: column; width: min(1240px, 100%); height: min(850px, 100%); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: var(--shadow-lg); }
   .graph-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 24px; min-height: 92px; padding: 18px 20px 17px 23px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 92%, transparent); }
-  .eyebrow, .section-label { color: var(--faint); font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+  .eyebrow, .section-label { color: var(--faint); font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
   .graph-header h2 { margin: 1px 0 0; font-size: 20px; font-weight: 690; letter-spacing: -.035em; }
-  .graph-header p { margin: 2px 0 0; color: var(--muted); font-size: 10px; }
+  .graph-header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
   .graph-header-actions { display: flex; align-items: center; gap: 7px; }
-  .graph-header-actions > span { margin-right: 5px; color: var(--faint); font-size: 9px; }
-  .graph-header-actions button { display: grid; place-items: center; min-width: 32px; height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); color: var(--muted); font-size: 9px; font-weight: 650; }
+  .graph-header-actions > span { margin-right: 5px; color: var(--faint); font-size: 10px; }
+  .graph-header-actions button { display: grid; place-items: center; min-width: 32px; height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); color: var(--muted); font-size: 10px; font-weight: 650; }
   .graph-header-actions button:hover, .graph-header-actions button.active { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); color: var(--accent-strong); }
-  .graph-alert { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 35px; padding: 7px 22px; border-bottom: 1px solid var(--line); font-size: 9px; }
+  .graph-alert { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 35px; padding: 7px 22px; border-bottom: 1px solid var(--line); font-size: 10px; }
   .graph-alert.error { background: color-mix(in srgb, var(--danger) 8%, var(--surface)); color: var(--danger); }
   .graph-alert.success { background: color-mix(in srgb, var(--success) 8%, var(--surface)); color: var(--success); }
   .graph-alert span { color: var(--muted); }
-  .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 350px; min-height: 0; flex: 1; }
+  .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 410px; min-height: 0; flex: 1; }
   .map-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: radial-gradient(circle at 18% 5%, color-mix(in srgb, var(--accent-soft) 48%, transparent), transparent 28%), var(--surface-muted); }
-  .map-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 42px; padding: 8px 15px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 9px; }
+  .map-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 42px; padding: 8px 15px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 10px; }
   .map-toolbar > div { display: flex; align-items: center; gap: 6px; }
   .map-toolbar i { display: inline-block; width: 16px; height: 2px; margin-left: 7px; background: var(--line-strong); }
-  .map-toolbar i:first-child { margin-left: 0; background: var(--accent); }
+  .map-toolbar i:first-child { margin-left: 0; }
+  .map-toolbar i.active-line { background: var(--accent); }
+  .map-toolbar i.inspected-line { background: var(--blue); }
   .graph-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
   .graph-canvas { position: relative; min-width: 100%; min-height: 100%; background-image: radial-gradient(circle, color-mix(in srgb, var(--faint) 25%, transparent) .8px, transparent .8px); background-size: 18px 18px; }
   .graph-canvas svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
   .graph-canvas path { fill: none; stroke: var(--line-strong); stroke-width: 2; }
+  .graph-canvas path.inspected { stroke: var(--blue); stroke-dasharray: 5 4; }
   .graph-canvas path.active { stroke: var(--accent); stroke-width: 2.5; }
-  .turn-node { position: absolute; z-index: 2; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface-raised); color: var(--muted); box-shadow: 0 2px 7px color-mix(in srgb, var(--ink) 10%, transparent); font-size: 8px; font-weight: 750; font-variant-numeric: tabular-nums; transform: translate(-50%, -50%); }
+  .turn-node { position: absolute; z-index: 2; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface-raised); color: var(--muted); box-shadow: 0 2px 7px color-mix(in srgb, var(--ink) 10%, transparent); font-size: 9px; font-weight: 750; font-variant-numeric: tabular-nums; transform: translate(-50%, -50%); }
   .turn-node::after { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border: 2px solid var(--surface-raised); border-radius: 50%; background: transparent; content: ""; }
   .turn-node.has-tools::after { background: var(--warning); }
   .turn-node.active-path { border-color: var(--accent); color: var(--accent-strong); }
+  .turn-node.inspected-path { border-color: var(--blue); color: var(--blue); }
   .turn-node.selected { outline: 4px solid color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); background: var(--accent); color: white; transform: translate(-50%, -50%) scale(1.12); }
-  .branch-tag { position: absolute; z-index: 3; display: flex; align-items: center; gap: 5px; max-width: 145px; height: 24px; padding: 3px 7px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface-raised) 95%, transparent); color: var(--muted); box-shadow: var(--shadow-sm); font-size: 8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+  .branch-tag { position: absolute; z-index: 3; display: flex; align-items: center; gap: 5px; max-width: 155px; height: 25px; padding: 3px 8px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface-raised) 95%, transparent); color: var(--muted); box-shadow: var(--shadow-sm); font-size: 9px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
   .branch-tag.active { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--accent-soft); color: var(--accent-strong); }
   .graph-loading, .graph-empty, .inspector-empty { display: grid; height: 100%; place-content: center; justify-items: center; color: var(--faint); text-align: center; }
   .graph-loading i { width: 26px; height: 26px; margin-bottom: 8px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
-  .graph-loading span, .graph-empty span, .inspector-empty span { margin-top: 4px; font-size: 9px; }
-  .graph-empty strong, .inspector-empty strong { margin-top: 8px; color: var(--ink); font-size: 11px; }
+  .graph-loading span, .graph-empty span, .inspector-empty span { margin-top: 4px; font-size: 10px; }
+  .graph-empty strong, .inspector-empty strong { margin-top: 8px; color: var(--ink); font-size: 12px; }
   .graph-inspector { min-height: 0; padding: 19px; overflow: auto; border-left: 1px solid var(--line); background: var(--surface-raised); }
-  .turn-heading > span { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .turn-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .turn-heading > div > span { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .turn-heading h3 { margin: 2px 0 0; font-size: 21px; letter-spacing: -.035em; }
-  .turn-heading time { color: var(--faint); font-size: 9px; }
+  .turn-heading time { color: var(--faint); font-size: 10px; }
+  .path-state { flex: 0 0 auto; margin-top: 2px; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--blue) 30%, var(--line)); border-radius: 99px; background: color-mix(in srgb, var(--blue) 7%, var(--surface)); color: var(--blue); font-size: 9px; font-weight: 680; }
+  .path-state.active { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); background: var(--accent-soft); color: var(--accent-strong); }
   .turn-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 14px 0 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
   .turn-stats > div { display: grid; gap: 1px; padding: 9px 10px; border-right: 1px solid var(--line); }
   .turn-stats > div:last-child { border-right: 0; }
   .turn-stats strong { font-size: 15px; }
-  .turn-stats span { color: var(--faint); font-size: 8px; text-transform: uppercase; }
-  .turn-preview { margin: 11px 0 0; padding: 10px 11px; border-left: 2px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--surface-muted); color: var(--muted); font-size: 10px; line-height: 1.55; }
+  .turn-stats span { color: var(--faint); font-size: 9px; text-transform: uppercase; }
+  .inspector-tabs { display: grid; grid-template-columns: .8fr 1.2fr; gap: 4px; margin-top: 14px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+  .inspector-tabs button { min-height: 31px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 680; }
+  .inspector-tabs button.active { background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow-sm); }
   .inspector-section { display: grid; gap: 8px; margin-top: 18px; }
   .path-list { display: grid; gap: 5px; }
   .path-list > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 6px 7px 6px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
   .path-list > div.active { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); background: var(--accent-soft); }
   .path-list span { display: flex; min-width: 0; align-items: center; gap: 6px; }
-  .path-list strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-  .path-list small { color: var(--faint); font-size: 8px; }
-  .path-list b { color: var(--accent-strong); font-size: 8px; }
-  .path-list button, .promote-row button { padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-raised); color: var(--muted); font-size: 8px; font-weight: 650; }
+  .path-list strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .path-list small { color: var(--faint); font-size: 9px; }
+  .path-list b { color: var(--accent-strong); font-size: 9px; }
+  .path-list button, .promote-row button { padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-raised); color: var(--muted); font-size: 9px; font-weight: 650; }
+  .context-section { padding-top: 2px; }
+  .context-heading { display: flex; align-items: center; justify-content: space-between; }
+  .context-heading button { display: flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--faint); font-size: 9px; }
+  .context-heading button:hover { color: var(--ink); }
+  .path-loading { display: flex; align-items: center; gap: 7px; min-height: 46px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--faint); font-size: 10px; }
+  .path-loading i { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+  .path-error { display: grid; gap: 3px; padding: 10px; border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--danger) 5%, var(--surface)); color: var(--danger); font-size: 10px; }
+  .path-error span { color: var(--muted); }
+  .path-error button { justify-self: start; margin-top: 4px; border: 0; background: transparent; color: var(--danger); font-size: 9px; font-weight: 700; }
+  .context-summary { display: flex; align-items: center; gap: 6px; }
+  .context-summary span { padding: 3px 6px; border-radius: 99px; background: var(--surface-muted); color: var(--faint); font-size: 9px; }
+  .path-omitted { margin: -1px 0 0; color: var(--faint); font-size: 9px; }
+  .path-transcript { display: grid; gap: 7px; max-height: 330px; padding-right: 3px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
+  .path-transcript article { margin-right: 18px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .path-transcript article.user { margin-right: 0; margin-left: 24px; border-color: color-mix(in srgb, var(--blue) 22%, var(--line)); background: color-mix(in srgb, var(--blue) 4%, var(--surface)); }
+  .path-transcript article > header { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 9px; }
+  .path-transcript article > header strong { color: var(--muted); font-size: 9px; }
+  .path-transcript article > p, .path-markdown { margin: 0; padding: 8px 9px; color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
+  .path-empty { margin: 0; padding: 18px; border: 1px dashed var(--line); border-radius: 9px; color: var(--faint); text-align: center; font-size: 10px; }
+  .path-tools { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+  .path-tools summary { padding: 8px 9px; color: var(--muted); cursor: pointer; font-size: 10px; font-weight: 650; }
+  .path-tools > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 7px 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
+  .path-tools > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .path-tools > div small { color: var(--faint); }
+  .explore-note { display: flex; align-items: flex-start; gap: 7px; margin: 13px 0 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--blue) 4%, var(--surface)); color: var(--muted); font-size: 10px; line-height: 1.45; }
+  .explore-note :global(.icon) { flex: 0 0 auto; margin-top: 1px; color: var(--blue); }
   .fork-form { display: grid; gap: 7px; }
-  .fork-form > input, .aside-section textarea, .promote-row input { width: 100%; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: var(--surface); color: var(--ink); font-size: 10px; }
+  .fork-form > input, .aside-section textarea, .promote-row input { width: 100%; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: var(--surface); color: var(--ink); font-size: 11px; }
   .fork-form > input, .promote-row input { height: 34px; padding: 7px 9px; }
   .aside-section textarea { min-height: 72px; padding: 9px; resize: vertical; line-height: 1.5; }
   .fork-form input:focus, .aside-section textarea:focus, .promote-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
-  .fork-form label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 9px; }
-  .primary-action { min-height: 34px; border: 1px solid var(--ink); border-radius: 8px; background: var(--ink); color: var(--surface-raised); font-size: 9px; font-weight: 680; }
+  .fork-form label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+  .primary-action { min-height: 35px; border: 1px solid var(--ink); border-radius: 8px; background: var(--ink); color: var(--surface-raised); font-size: 10px; font-weight: 680; }
   .primary-action:hover { background: color-mix(in srgb, var(--ink) 88%, var(--accent)); }
   .mode-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .mode-picker button { display: grid; gap: 2px; min-height: 58px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--muted); text-align: left; }
   .mode-picker button.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); color: var(--accent-strong); }
-  .mode-picker strong { font-size: 9px; }
-  .mode-picker span { color: var(--faint); font-size: 8px; line-height: 1.35; }
+  .mode-picker strong { font-size: 10px; }
+  .mode-picker span { color: var(--faint); font-size: 9px; line-height: 1.4; }
   .sidestep-result { margin-top: 17px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line)); border-radius: 11px; background: var(--surface); }
-  .sidestep-result > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--accent-soft); color: var(--accent-strong); font-size: 9px; font-weight: 700; }
-  .sidestep-result > header b { font-size: 8px; }
-  .result-body { max-height: 230px; padding: 11px; overflow: auto; font-size: 10px; }
+  .sidestep-result > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--accent-soft); color: var(--accent-strong); font-size: 10px; font-weight: 700; }
+  .sidestep-result > header b { font-size: 9px; }
+  .result-body { max-height: 230px; padding: 11px; overflow: auto; font-size: 11px; }
   .promote-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
-  .promoted-note { display: flex; align-items: center; gap: 6px; margin: 0; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--success); font-size: 9px; font-weight: 650; }
+  .promoted-note { display: flex; align-items: center; gap: 6px; margin: 0; padding: 9px 10px; border-top: 1px solid var(--line); color: var(--success); font-size: 10px; font-weight: 650; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (max-width: 900px) {
     .graph-overlay { padding: 0; }

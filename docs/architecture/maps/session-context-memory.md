@@ -79,6 +79,8 @@ Full materialization:
 - Client transcript windows are independent read projections over durable
   history. They must not be confused with, or used to configure, the runtime
   hot-history window.
+- Exact-turn client windows materialize an ancestral read path without changing
+  the persisted active branch or the live execution context.
 - Tool-result messages at the hot-window boundary should keep their preceding assistant/tool-use context.
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.

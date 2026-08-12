@@ -107,7 +107,7 @@ impl DaemonState {
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        self.get_session_projection(session_id, None, None, true, true)
+        self.get_session_projection(session_id, None, None, None, true, true)
             .await
     }
 
@@ -122,6 +122,7 @@ impl DaemonState {
     pub async fn get_session_projection(
         &self,
         session_id: &str,
+        target_turn_id: Option<i64>,
         message_limit: Option<usize>,
         message_offset: Option<usize>,
         include_events: bool,
@@ -138,6 +139,7 @@ impl DaemonState {
             serde_json::json!({
                 "message_limit": message_limit,
                 "message_offset": message_offset,
+                "target_turn_id": target_turn_id,
                 "include_events": include_events,
                 "include_efficiency": include_efficiency,
             })
@@ -166,7 +168,8 @@ impl DaemonState {
             store = %describe_store_selector(&store_selector),
             "Resolved persisted session detail target"
         );
-        let active_branch = SessionReadTarget::ActiveBranch;
+        let read_target =
+            target_turn_id.map_or(SessionReadTarget::ActiveBranch, SessionReadTarget::TurnId);
 
         let events = if include_events {
             perf_stage!(
@@ -175,7 +178,7 @@ impl DaemonState {
                 Some(session_id),
                 serde_json::json!({ "internal_session_id": row.id })
             );
-            let persisted_events = store.get_events(row.id, &active_branch).await?;
+            let persisted_events = store.get_events(row.id, &read_target).await?;
             let _payload_bytes = persisted_events
                 .iter()
                 .map(|event| event.payload.len())
@@ -216,18 +219,18 @@ impl DaemonState {
             match (message_limit, message_offset) {
                 (Some(limit), Some(offset)) => {
                     store
-                        .get_message_window(row.id, &active_branch, offset, limit)
+                        .get_message_window(row.id, &read_target, offset, limit)
                         .await?
                 }
                 (Some(limit), None) => {
                     let (messages, total) = store
-                        .get_recent_messages(row.id, &active_branch, limit)
+                        .get_recent_messages(row.id, &read_target, limit)
                         .await?;
                     let offset = total.saturating_sub(messages.len());
                     (messages, total, offset)
                 }
                 (None, None) => {
-                    let messages = store.get_messages(row.id, &active_branch).await?;
+                    let messages = store.get_messages(row.id, &read_target).await?;
                     let total = messages.len();
                     (messages, total, 0)
                 }
@@ -295,7 +298,7 @@ impl DaemonState {
         let persisted_tool_executions = store
             .get_tool_executions_for_turn_indexes(
                 row.id,
-                &active_branch,
+                &read_target,
                 visible_turn_indexes.as_ref(),
             )
             .await?;
@@ -359,7 +362,7 @@ impl DaemonState {
             let events = store
                 .get_events_by_types(
                     row.id,
-                    &active_branch,
+                    &read_target,
                     &["inference_request", "message_end", "context_compaction"],
                 )
                 .await?;
@@ -387,7 +390,7 @@ impl DaemonState {
         let mut execution_events = store
             .get_recent_events_by_types(
                 row.id,
-                &active_branch,
+                &read_target,
                 &[
                     "task_start",
                     "task_complete",

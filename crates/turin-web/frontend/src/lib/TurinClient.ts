@@ -23,6 +23,7 @@ export interface EventSubscription {
 export interface TurinClient {
   status(): Promise<TurinStatus>;
   session(sessionId: string, messageLimit: number, messageOffset?: number): Promise<SessionDetail>;
+  sessionPath(sessionId: string, turnId: number, messageLimit?: number): Promise<SessionDetail>;
   sessionGraph(sessionId: string): Promise<SessionGraph>;
   openSession(agentId: string): Promise<LiveSession>;
   resumeSession(sessionId: string, slotId?: string): Promise<LiveSession>;

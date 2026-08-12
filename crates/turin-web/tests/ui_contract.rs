@@ -332,6 +332,29 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .context("session graph turn should expose exact id")?;
     assert_eq!(graph["graph"]["branches"][0]["name"], "main");
 
+    let path: Value = client
+        .get(format!("{base_url}/api/session/path"))
+        .query(&[
+            ("session_id", session_id),
+            ("turn_id", &source_turn_id.to_string()),
+            ("message_limit", "24"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        path["detail"]["messages"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert_eq!(
+        path["detail"]["efficiency"],
+        Value::Null,
+        "path inspection should stay a lean transcript projection"
+    );
+
     let branch: Value = client
         .post(format!("{base_url}/api/session/branches"))
         .json(&json!({

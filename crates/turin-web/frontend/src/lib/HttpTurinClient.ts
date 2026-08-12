@@ -39,6 +39,16 @@ export class HttpTurinClient implements TurinClient {
     return result.detail;
   }
 
+  async sessionPath(sessionId: string, turnId: number, messageLimit = 24): Promise<SessionDetail> {
+    const params = new URLSearchParams({
+      session_id: sessionId,
+      turn_id: String(turnId),
+      message_limit: String(messageLimit),
+    });
+    const result = await this.request<{ detail: SessionDetail }>(`/api/session/path?${params}`);
+    return result.detail;
+  }
+
   async sessionGraph(sessionId: string): Promise<SessionGraph> {
     const params = new URLSearchParams({ session_id: sessionId });
     const result = await this.request<{ graph: SessionGraph }>(`/api/session/graph?${params}`);
