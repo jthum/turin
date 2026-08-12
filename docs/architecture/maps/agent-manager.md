@@ -41,6 +41,9 @@ Task submission:
 3. The task is enqueued into the runtime handle queue.
 4. `peer_runtime.rs` executes the task and reports a `PeerAgentTaskResult`.
 5. `tasks.rs` removes pending state and moves completed results into the bounded completed-result cache.
+6. Pending and completed status retain an optional title plus a normalized,
+   240-character prompt preview so operator surfaces can identify work without
+   duplicating full prompts in the runtime task ledger.
 
 Session targeting:
 
@@ -56,6 +59,9 @@ Session targeting:
 - `LiveSessionSnapshot` fields should be derived consistently from the runtime key, handle, and effective session id.
 - Pending task records should be removed when a result is recorded or a submission fails.
 - Timed-out `await_result` calls must put the receiver back so the result can still be awaited later.
+- Task title and prompt preview must survive queued, running, terminal,
+  cancellation, and kill snapshots. The preview stays bounded before entering
+  pending or completed task state.
 
 ## Common Changes
 

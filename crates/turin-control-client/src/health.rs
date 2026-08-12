@@ -69,7 +69,7 @@ pub(crate) fn build_health(
         transport: handshake.transport,
         wire_format: handshake.wire_format,
         issue_count: status.registry.issues.len(),
-        agent_count: status.registry.agents.len(),
+        agent_count: status.agent_runtimes.len(),
         harness_count: status.registry.shared_harnesses.len(),
         channel_count: status.registry.channels.len(),
         running_agent_count,

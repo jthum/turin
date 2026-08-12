@@ -16,6 +16,7 @@ use turin_types::TaskInputContent;
 use super::{
     AgentManager, ExecutionStatusSnapshot, LiveSessionHistorySnapshot, PeerAgentTaskEnvelope,
     PeerAgentTaskResult, RuntimeControl, SessionContextOverrides, TaskPromotionCandidate,
+    task_prompt_preview,
 };
 
 pub(super) struct PeerRuntime {
@@ -104,6 +105,8 @@ impl PeerRuntime {
         let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
         let request_id = envelope.request_id.clone();
         let trace_id = envelope.task.trace_id.clone();
+        let title = envelope.task.title.clone();
+        let prompt_preview = task_prompt_preview(&envelope.task.prompt);
         self.prepare_task_execution(request_id.clone(), runtime_task_id);
         let result = self
             .run_queued_task(envelope.task, envelope.delegated_capabilities)
@@ -119,6 +122,8 @@ impl PeerRuntime {
                     agent_id: self.agent_id.clone(),
                     slot_id: self.slot_id.clone(),
                     trace_id,
+                    title,
+                    prompt_preview,
                     runtime_task_id: ok.runtime_task_id,
                     execution: ok.execution,
                     status: ok.status,
@@ -136,6 +141,8 @@ impl PeerRuntime {
                     agent_id: self.agent_id.clone(),
                     slot_id: self.slot_id.clone(),
                     trace_id,
+                    title,
+                    prompt_preview,
                     runtime_task_id: String::new(),
                     execution: ExecutionStatusSnapshot::from_session(&self.session),
                     status: TaskTerminalStatus::Error,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let name: "spark" | "chat" | "grid" | "database" | "branch" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" | "edit" = "spark";
+  export let name: "spark" | "chat" | "grid" | "database" | "branch" | "route" | "refresh" | "send" | "chevron" | "menu" | "close" | "plus" | "activity" | "copy" | "edit" = "spark";
   export let size = 18;
 </script>
 
@@ -25,6 +25,8 @@
     <ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
   {:else if name === "branch"}
     <circle cx="6" cy="5" r="2" /><circle cx="18" cy="7" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 10h5a5 5 0 0 0 5-5" />
+  {:else if name === "route"}
+    <circle cx="5" cy="6" r="2" /><circle cx="19" cy="18" r="2" /><path d="M7 6h5a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H9a3 3 0 0 0-3 3v1M17 18h-4" />
   {:else if name === "refresh"}
     <path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 8a7 7 0 0 1 11.3-2.2L20 8M4 16l2.6 2.2A7 7 0 0 0 17.9 16" />
   {:else if name === "send"}

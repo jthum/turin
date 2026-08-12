@@ -109,17 +109,25 @@ session state, invent renderer-specific harness APIs, or bypass
     the exact shared ancestor and divergent turn counts from durable topology,
     then composes two bounded exact-turn projections for recent branch-only
     message and tool previews.
-30. Completed assistant turns expose browser-local contextual entry points into
-    the Session Graph. The selected active-path turn and initial inspector mode
-    are presentation state; mutation still requires an explicit graph action.
-31. The assistant uses each projected message's exact turn id to reveal a
-    minimal inline fork form and durable branches created from that point.
-    Checking out a branch chip is explicit; ordinary turn controls remain
-    visually subordinate until hover or keyboard focus.
+30. Completed assistant turns expose browser-local, hover-disclosed entry points
+    for exact-turn inspection and forking without inserting persistent action
+    rows into the transcript. The selected turn and dialog draft remain local.
+31. The assistant uses each projected message's exact turn id to mark only real
+    branch points. Their collapsed path switcher can reveal direct checkout and
+    graph inspection, while fork naming stays in a focused modal dialog.
+32. Agent Orchestration is a runtime-wide read surface over configured agents,
+    aggregate runtime status, independent live slots, and bounded peer-task
+    snapshots. It groups related work by stable trace id and links attached
+    slots back to their conversations without maintaining a browser task ledger.
+33. Browser agent inventory comes from effective `agent_runtimes`. Filesystem
+    registry entries enrich peer agents with provider, model, and harness metadata
+    but do not contain the bootstrap agent and therefore cannot define the roster.
 
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
+- Agent selectors must include every effective runtime status. They may join
+  registry metadata by id, but must not treat registry peers as the full agent set.
 - Opening the Assistant starts from a browser-local fresh-conversation draft. Persisted or live
   sessions are selected explicitly rather than adopting an unrelated channel runtime by default.
 - Browser matching between persisted summaries and live sessions must compare bare and
@@ -197,9 +205,10 @@ session state, invent renderer-specific harness APIs, or bypass
 - Branch comparison must not imply merge or context-transfer semantics. Exact
   divergence comes from durable turn topology; bounded transcript previews must
   identify branch-only rows omitted by their message window.
-- Per-turn chat controls may open inspection or reveal a local fork form at an
+- Per-turn chat controls may open inspection or a local fork dialog at an
   active-path turn, but must not fork, checkout, or submit work merely by
-  revealing those controls or opening the graph.
+  revealing those controls or opening the graph. Ordinary turns should not
+  reserve transcript space for hidden controls.
 - Inline forks and branch-point chips must use exact message `turn_id` and
   branch `source_turn_id` values. Repeated path-relative turn indexes are not
   sufficient identity once branches diverge.
@@ -214,6 +223,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - The Run Center must use the daemon's bounded typed execution projection. It
   must not fetch the raw event history, retain a second task ledger in browser
   memory, or treat SSE delivery as durable execution truth.
+- Agent Orchestration must refresh from dashboard snapshots after runtime and
+  task events. Event payloads are invalidation hints; configured agents, live
+  slots, and task state remain daemon-owned truth.
 - Live perf diagnostics are a development overlay, not durable session data.
   Internal timings must be described as instrumented measurements, while query
   counters may be called exact. Daemon RSS/PSS deltas are process-level

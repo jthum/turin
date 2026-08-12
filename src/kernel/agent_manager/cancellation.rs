@@ -8,7 +8,7 @@ use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, Executio
 
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskResult, PendingTaskState, RuntimeSlotKey,
-    TaskStatusSnapshot,
+    TaskStatusSnapshot, task_prompt_preview,
 };
 
 fn default_execution_snapshot() -> ExecutionStatusSnapshot {
@@ -105,6 +105,8 @@ impl AgentManager {
             agent_id: pending.runtime_key.agent_id.clone(),
             slot_id: pending.runtime_key.slot_id.clone(),
             trace_id: pending.trace_id.clone(),
+            title: pending.title.clone(),
+            prompt_preview: pending.prompt_preview.clone(),
             runtime_task_id: String::new(),
             execution: pending.execution,
             status: TaskTerminalStatus::Cancelled,
@@ -129,6 +131,8 @@ impl AgentManager {
             agent_id: completed.agent_id,
             slot_id: completed.slot_id,
             trace_id: completed.trace_id,
+            title: completed.title,
+            prompt_preview: completed.prompt_preview,
             state: "completed".to_string(),
             runtime_task_id: Some(completed.runtime_task_id),
             execution: completed.execution,
@@ -219,6 +223,8 @@ impl AgentManager {
                 agent_id: runtime_key.agent_id.clone(),
                 slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
+                title: envelope.task.title.clone(),
+                prompt_preview: task_prompt_preview(&envelope.task.prompt),
                 runtime_task_id: String::new(),
                 execution: handle
                     .control
@@ -265,6 +271,8 @@ impl AgentManager {
                 agent_id: runtime_key.agent_id.clone(),
                 slot_id: runtime_key.slot_id.clone(),
                 trace_id: envelope.task.trace_id.clone(),
+                title: envelope.task.title.clone(),
+                prompt_preview: task_prompt_preview(&envelope.task.prompt),
                 runtime_task_id: String::new(),
                 execution: handle
                     .control
@@ -287,18 +295,26 @@ impl AgentManager {
         }
 
         if let Some(request_id) = handle.control.current_request_id() {
-            let trace_id = self
+            let description = self
                 .pending_task_states
                 .read()
                 .await
                 .get(&request_id)
-                .map(|pending| pending.trace_id.clone())
+                .map(|pending| {
+                    (
+                        pending.trace_id.clone(),
+                        pending.title.clone(),
+                        pending.prompt_preview.clone(),
+                    )
+                })
                 .unwrap_or_default();
             let completed = PeerAgentTaskResult {
                 request_id: request_id.clone(),
                 agent_id: runtime_key.agent_id.clone(),
                 slot_id: runtime_key.slot_id.clone(),
-                trace_id,
+                trace_id: description.0,
+                title: description.1,
+                prompt_preview: description.2,
                 runtime_task_id: handle.control.current_runtime_task_id().unwrap_or_default(),
                 execution: handle
                     .control

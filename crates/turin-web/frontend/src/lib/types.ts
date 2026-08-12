@@ -14,6 +14,24 @@ export interface AgentSummary {
   harness_ref: string;
 }
 
+export interface AgentRuntime {
+  agent_id: string;
+  running: boolean;
+  active_tasks: number;
+  queued_tasks: number;
+  awaiting_results: number;
+  current_session_id?: string | null;
+  current_request_id?: string | null;
+}
+
+export interface LiveExecution {
+  execution_id: string;
+  context_target: JsonValue;
+  visibility: string;
+  durability: string;
+  write_policy: string;
+}
+
 export interface LiveSession {
   agent_id: string;
   slot_id: string;
@@ -22,6 +40,8 @@ export interface LiveSession {
   active_tasks: number;
   queued_tasks: number;
   current_request_id?: string | null;
+  execution: LiveExecution;
+  conflict_policy: string;
   history?: { len: number; message_offset: number } | null;
 }
 
@@ -241,7 +261,14 @@ export interface TaskStatus {
   request_id: string;
   agent_id: string;
   slot_id: string;
+  trace_id: string;
+  title?: string | null;
+  prompt_preview: string;
   state: string;
+  runtime_task_id?: string | null;
+  execution: LiveExecution;
+  status?: string | null;
+  task_turn_count?: number | null;
   branch_outcome?: JsonValue | null;
   promotion_candidate?: { session_id: string; source_turn_id: number } | null;
   promoted_branch?: SessionBranch | null;
@@ -342,10 +369,15 @@ export interface TurinStatus {
       ready: boolean;
       version: string;
       issue_count: number;
+      agent_count: number;
+      running_agent_count: number;
       active_task_count: number;
+      queued_task_count: number;
+      awaiting_result_count: number;
     };
     status: {
       registry: { agents: AgentSummary[]; issues: Array<{ path: string; message: string }> };
+      agent_runtimes: AgentRuntime[];
     };
     live_sessions: LiveSession[];
     sessions: SessionSummary[];

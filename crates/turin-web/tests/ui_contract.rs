@@ -229,7 +229,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .text()
         .await?;
     assert!(!js.is_empty());
-    assert!(js.len() < 250_000, "frontend bootstrap unexpectedly grew");
+    assert!(js.len() < 275_000, "frontend bootstrap unexpectedly grew");
 
     let health: Value = client
         .get(format!("{base_url}/api/healthz"))
@@ -320,6 +320,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .json()
         .await?;
     assert_eq!(submitted["task"]["agent_id"], "default");
+    assert_eq!(submitted["task"]["prompt_preview"], "Reply with PONG");
     assert!(submitted["task"]["request_id"].as_str().is_some());
 
     let graph = wait_for_session_graph_turn(base_url, client, session_id).await?;

@@ -203,6 +203,10 @@ pub struct TaskStatus {
     pub agent_id: String,
     pub slot_id: String,
     pub trace_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub prompt_preview: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
     pub execution: LiveExecution,

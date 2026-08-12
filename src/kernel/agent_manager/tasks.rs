@@ -12,6 +12,7 @@ use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, PeerAgentTaskResult,
     PendingTaskRecord, PendingTaskState, PromotedTaskBranch, PromotedTaskBranchFingerprint,
     RuntimeSlotKey, TaskBranchOutcomeFingerprint, TaskStatusFingerprint, TaskStatusSnapshot,
+    task_prompt_preview,
 };
 
 fn intended_task_execution_snapshot(
@@ -52,6 +53,8 @@ fn pending_task_snapshot(request_id: &str, pending: &PendingTaskRecord) -> TaskS
         agent_id: pending.runtime_key.agent_id.clone(),
         slot_id: pending.runtime_key.slot_id.clone(),
         trace_id: pending.trace_id.clone(),
+        title: pending.title.clone(),
+        prompt_preview: pending.prompt_preview.clone(),
         state: match pending.state {
             PendingTaskState::Queued => "queued".to_string(),
             PendingTaskState::Running => "running".to_string(),
@@ -76,6 +79,8 @@ fn completed_task_snapshot(result: &PeerAgentTaskResult) -> TaskStatusSnapshot {
         agent_id: result.agent_id.clone(),
         slot_id: result.slot_id.clone(),
         trace_id: result.trace_id.clone(),
+        title: result.title.clone(),
+        prompt_preview: result.prompt_preview.clone(),
         state: "completed".to_string(),
         runtime_task_id: Some(result.runtime_task_id.clone()),
         execution: result.execution.clone(),
@@ -254,6 +259,8 @@ impl AgentManager {
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
         let trace_id = task.trace_id.clone();
+        let title = task.title.clone();
+        let prompt_preview = task_prompt_preview(&task.prompt);
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
         let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
@@ -268,6 +275,8 @@ impl AgentManager {
                 PendingTaskRecord {
                     runtime_key: runtime_key.clone(),
                     trace_id,
+                    title,
+                    prompt_preview,
                     state: PendingTaskState::Queued,
                     runtime_task_id: None,
                     execution: intended_task_execution_snapshot(&handle, &task)?,

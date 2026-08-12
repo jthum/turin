@@ -41,6 +41,8 @@ pub struct PeerAgentTaskResult {
     pub agent_id: String,
     pub slot_id: String,
     pub trace_id: String,
+    pub title: Option<String>,
+    pub prompt_preview: String,
     pub runtime_task_id: String,
     pub execution: ExecutionStatusSnapshot,
     pub status: TaskTerminalStatus,
@@ -72,6 +74,8 @@ pub struct TaskStatusSnapshot {
     pub agent_id: String,
     pub slot_id: String,
     pub trace_id: String,
+    pub title: Option<String>,
+    pub prompt_preview: String,
     pub state: String,
     pub runtime_task_id: Option<String>,
     pub execution: ExecutionStatusSnapshot,
@@ -187,9 +191,24 @@ enum PendingTaskState {
 struct PendingTaskRecord {
     runtime_key: RuntimeSlotKey,
     trace_id: String,
+    title: Option<String>,
+    prompt_preview: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
     execution: ExecutionStatusSnapshot,
+}
+
+fn task_prompt_preview(prompt: &str) -> String {
+    const MAX_CHARS: usize = 240;
+
+    let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= MAX_CHARS {
+        return normalized;
+    }
+
+    let mut preview = normalized.chars().take(MAX_CHARS - 3).collect::<String>();
+    preview.push_str("...");
+    preview
 }
 
 pub(crate) struct RuntimeControl {

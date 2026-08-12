@@ -13,6 +13,17 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
+#[test]
+fn task_status_prompt_preview_is_normalized_and_bounded() {
+    assert_eq!(
+        task_prompt_preview("  inspect\nthis   change  "),
+        "inspect this change"
+    );
+    let preview = task_prompt_preview(&"x".repeat(300));
+    assert_eq!(preview.chars().count(), 240);
+    assert!(preview.ends_with("..."));
+}
+
 struct TestTool;
 
 #[async_trait]
@@ -282,6 +293,8 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
             trace_id: "tr_cancelled".to_string(),
+            title: None,
+            prompt_preview: "cancel me".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
             execution: test_execution_snapshot(),
@@ -363,6 +376,8 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
             trace_id: "tr_running".to_string(),
+            title: None,
+            prompt_preview: "running".to_string(),
             state: PendingTaskState::Running,
             runtime_task_id: Some("t_1".to_string()),
             execution: test_execution_snapshot(),
@@ -413,6 +428,8 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
             trace_id: "tr_session_cancel".to_string(),
+            title: None,
+            prompt_preview: "queued".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
             execution: test_execution_snapshot(),
@@ -492,6 +509,8 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
             trace_id: "tr_running_kill".to_string(),
+            title: None,
+            prompt_preview: "running".to_string(),
             state: PendingTaskState::Running,
             runtime_task_id: Some("t_running".to_string()),
             execution: test_execution_snapshot(),
@@ -502,6 +521,8 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
             trace_id: "tr_queued_kill".to_string(),
+            title: None,
+            prompt_preview: "queued".to_string(),
             state: PendingTaskState::Queued,
             runtime_task_id: None,
             execution: test_execution_snapshot(),

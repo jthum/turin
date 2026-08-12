@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import AgentOrchestration from "./components/AgentOrchestration.svelte";
   import AssistantView from "./components/AssistantView.svelte";
   import DataExplorer from "./components/DataExplorer.svelte";
   import HarnessView from "./components/HarnessView.svelte";
@@ -39,7 +40,7 @@
       const next = await client.status();
       status = next;
       error = "";
-      if (activeView !== "assistant" && activeView !== "data" && !next.ui.apps[activeView]) activeView = "assistant";
+      if (!["assistant", "data", "orchestration"].includes(activeView) && !next.ui.apps[activeView]) activeView = "assistant";
     } catch (reason) {
       error = reason instanceof Error ? reason.message : String(reason);
     } finally {
@@ -62,7 +63,7 @@
       latestUiIntent = event.data;
       eventRevision += 1;
     }
-    if (["runtime.rescanned", "runtime.snapshot", "ui.intent"].includes(event.type)) {
+    if (["runtime.rescanned", "runtime.snapshot", "task.submitted", "task.updated", "ui.intent"].includes(event.type)) {
       if (refreshTimer) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => void refreshStatus(), 180);
     }
@@ -129,6 +130,8 @@
         />
       {:else if activeView === "data"}
         <DataExplorer {client} {status} onSession={selectSession} />
+      {:else if activeView === "orchestration"}
+        <AgentOrchestration {status} onSession={selectSession} onRefresh={refreshStatus} />
       {:else if activeApp}
         <HarnessView {client} app={activeApp} {eventRevision} {latestUiIntent} />
       {/if}

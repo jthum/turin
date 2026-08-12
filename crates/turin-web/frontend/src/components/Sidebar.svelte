@@ -35,6 +35,10 @@
     <button class:active={activeView === "assistant"} onclick={() => onNavigate("assistant")}>
       <Icon name="chat" /><span>Assistant</span>
     </button>
+    <button class:active={activeView === "orchestration"} onclick={() => onNavigate("orchestration")}>
+      <Icon name="route" /><span>Orchestration</span>
+      {#if status.snapshot.health.active_task_count}<i class="nav-count">{status.snapshot.health.active_task_count}</i>{/if}
+    </button>
     <button class:active={activeView === "data"} onclick={() => onNavigate("data")}>
       <Icon name="database" /><span>Data Explorer</span>
     </button>

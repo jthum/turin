@@ -15,6 +15,7 @@
     TurinEvent,
     TurinStatus,
   } from "../lib/types";
+  import { effectiveAgents } from "../lib/agents";
   import { fullDate, humanize, messageText, messageTimestamp, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
@@ -50,8 +51,8 @@
   let graphOpen = false;
   let graphTurnId: number | null = null;
   let graphMode: "inspect" | "compare" | "explore" = "inspect";
-  let inlineForkTurnId: number | null = null;
-  let inlineForkName = "";
+  let forkDialogMessage: SessionMessage | null = null;
+  let forkName = "";
   let branchAction = "";
   let branchActionError = "";
   let branchActionTurnId: number | null = null;
@@ -91,7 +92,7 @@
 
   $: selectedSummary = status.snapshot.sessions.find(item => sameSession(item.session_id, selectedSessionId));
   $: selectedLive = status.snapshot.live_sessions.find(item => sameSession(item.session_id, selectedSessionId));
-  $: agents = status.snapshot.status.registry.agents.filter(agent => agent.enabled);
+  $: agents = effectiveAgents(status);
   $: sessionReference = detail?.session.session_id ?? selectedSessionId;
   $: efficiency = detail?.efficiency;
   $: execution = detail?.execution;
@@ -168,7 +169,7 @@
     resumeFailed = false;
     editingTitle = false;
     graphOpen = false;
-    inlineForkTurnId = null;
+    forkDialogMessage = null;
     branchAction = "";
     branchActionError = "";
     branchActionTurnId = null;
@@ -457,7 +458,10 @@
       let sessionId = selectedSessionId;
       let live = selectedLive;
       if (!sessionId) {
-        const agentId = agents[0]?.id ?? status.snapshot.live_sessions[0]?.agent_id ?? "default";
+        const agentId = agents.find(agent => agent.id === "default")?.id
+          ?? agents[0]?.id
+          ?? status.snapshot.live_sessions[0]?.agent_id
+          ?? "default";
         live = await client.openSession(agentId);
         sessionId = live.session_id;
         onSessionSelected(sessionId);
@@ -823,17 +827,28 @@
     return `${base}-${suffix}`;
   }
 
-  async function revealInlineFork(message: SessionMessage) {
-    inlineForkTurnId = message.turn_id;
-    inlineForkName = defaultForkName(message.turn_index);
+  async function openForkDialog(message: SessionMessage) {
+    forkDialogMessage = message;
+    forkName = defaultForkName(message.turn_index);
     branchActionError = "";
     branchActionTurnId = null;
     await tick();
-    document.querySelector<HTMLInputElement>(`[data-fork-turn-id="${message.turn_id}"]`)?.select();
+    document.querySelector<HTMLInputElement>("[data-fork-name]")?.select();
   }
 
-  async function createInlineFork(message: SessionMessage) {
-    const name = inlineForkName.trim();
+  function closeForkDialog() {
+    if (branchAction.startsWith("fork:")) return;
+    forkDialogMessage = null;
+    branchActionError = "";
+    branchActionTurnId = null;
+  }
+
+  function onForkDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") closeForkDialog();
+  }
+
+  async function createFork(message: SessionMessage) {
+    const name = forkName.trim();
     if (!selectedSessionId || !name || branchAction) return;
     branchAction = `fork:${message.turn_id}`;
     branchActionError = "";
@@ -846,7 +861,7 @@
         from_turn_id: message.turn_id,
         activate: true,
       });
-      inlineForkTurnId = null;
+      forkDialogMessage = null;
       await loadDetail(false, true);
       await onStatusChanged();
       await scrollToLatest();
@@ -857,7 +872,7 @@
     }
   }
 
-  async function checkoutInlineBranch(message: SessionMessage, branch: SessionBranch) {
+  async function checkoutBranchFromTurn(message: SessionMessage, branch: SessionBranch) {
     if (!selectedSessionId || branch.active || branchAction) return;
     branchAction = `checkout:${branch.branch_id}`;
     branchActionError = "";
@@ -868,7 +883,7 @@
         ...(selectedLive?.slot_id ? { slot_id: selectedLive.slot_id } : {}),
         branch: branch.branch_id,
       });
-      inlineForkTurnId = null;
+      forkDialogMessage = null;
       await loadDetail(false, true);
       await onStatusChanged();
       await scrollToLatest();
@@ -889,6 +904,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={onForkDialogKeydown} />
 
 <section class="assistant-view">
   <header class="view-header assistant-header">
@@ -1196,6 +1213,7 @@
           {@const tools = toolsFor(message)}
           {@const turn = turnFor(message)}
           {@const splitBranches = branchesFrom(message)}
+          {@const finalAssistantTurn = isFinalAssistantMessageInTurn(message)}
           {#if isTranscriptMessage(message) && (body || tools.length)}
             <article
               class:user={message.role.toLowerCase() === "user"}
@@ -1206,6 +1224,12 @@
               <div class="message-author">
                 <span>{message.role.toLowerCase() === "user" ? "You" : humanize(selectedSummary?.agent_id ?? message.role)}</span>
                 <time datetime={message.created_at} title={fullDate(message.created_at)}>{messageTimestamp(message.created_at)}</time>
+                {#if finalAssistantTurn}
+                  <div class="turn-tools" aria-label={`Turn ${message.turn_index} actions`}>
+                    <button title={`Inspect Turn ${message.turn_index}`} aria-label={`Inspect Turn ${message.turn_index}`} onclick={() => openGraph(message.turn_id, "inspect")}><Icon name="activity" size={13} /></button>
+                    <button title={`Fork from Turn ${message.turn_index}`} aria-label={`Fork from Turn ${message.turn_index}`} onclick={() => openForkDialog(message)}><Icon name="branch" size={13} /></button>
+                  </div>
+                {/if}
               </div>
               {#if body}
                 <div class="message-body">
@@ -1229,43 +1253,31 @@
               <div class="message-metrics" title="Provider usage is measured; message context weight is estimated by Turin before provider-specific tokenization.">
                 {#if message.estimated_token_count}<span>~{formatTokens(message.estimated_token_count)} message tokens</span>{/if}
               </div>
-              {#if isFinalAssistantMessageInTurn(message)}
-                <div class="turn-context">
-                  <div class="turn-action-row">
-                    <span>Turn {message.turn_index}</span>
-                    {#if splitBranches.length}<b><Icon name="branch" size={11} />{splitBranches.length} {splitBranches.length === 1 ? "path" : "paths"} from here</b>{/if}
-                    <i></i>
-                    <button onclick={() => openGraph(message.turn_id, "inspect")}>Inspect</button>
-                    <button onclick={() => revealInlineFork(message)}><Icon name="branch" size={11} />Fork</button>
+              {#if finalAssistantTurn && splitBranches.length}
+                <details class="branch-switcher">
+                  <summary>
+                    <span class="branch-switcher-mark"><Icon name="branch" size={13} /></span>
+                    <span><strong>{splitBranches.length} alternate {splitBranches.length === 1 ? "path" : "paths"}</strong><small>Branch point at Turn {message.turn_index}</small></span>
+                    <Icon name="chevron" size={13} />
+                  </summary>
+                  <div class="branch-options">
+                    {#each splitBranches as branch (branch.branch_id)}
+                      <button
+                        class:active={branch.active}
+                        disabled={branch.active || Boolean(branchAction)}
+                        title={branch.active ? `${branch.name} is active` : `Switch to ${branch.name}`}
+                        onclick={() => checkoutBranchFromTurn(message, branch)}
+                      >
+                        <span><i></i><strong>{branch.name}</strong></span>
+                        {#if branchAction === `checkout:${branch.branch_id}`}<small>Switching...</small>{:else if branch.active}<small>Current path</small>{:else if branch.head_turn_index !== null && branch.head_turn_index !== undefined}<small>Turn {branch.head_turn_index}</small>{:else}<small>Switch</small>{/if}
+                      </button>
+                    {/each}
+                    <button class="branch-map-link" onclick={() => openGraph(message.turn_id, "inspect")}><span>View in session graph</span><Icon name="chevron" size={12} /></button>
                   </div>
-                  {#if splitBranches.length}
-                    <div class="branch-point">
-                      <span><Icon name="branch" size={12} />Paths created here</span>
-                      <div>
-                        {#each splitBranches as branch (branch.branch_id)}
-                          <button
-                            class:active={branch.active}
-                            disabled={branch.active || Boolean(branchAction)}
-                            title={branch.active ? `${branch.name} is active` : `Check out ${branch.name}`}
-                            onclick={() => checkoutInlineBranch(message, branch)}
-                          >
-                            <i></i><strong>{branch.name}</strong>
-                            {#if branchAction === `checkout:${branch.branch_id}`}<small>Switching</small>{:else if branch.active}<small>Active</small>{:else if branch.head_turn_index !== null && branch.head_turn_index !== undefined}<small>Turn {branch.head_turn_index}</small>{/if}
-                          </button>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if inlineForkTurnId === message.turn_id}
-                    <form class="inline-fork" onsubmit={event => { event.preventDefault(); void createInlineFork(message); }}>
-                      <label><span>New path from Turn {message.turn_index}</span><input data-fork-turn-id={message.turn_id} bind:value={inlineForkName} maxlength="80" aria-label={`New path name from Turn ${message.turn_index}`} /></label>
-                      <div><button type="button" onclick={() => inlineForkTurnId = null}>Cancel</button><button class="primary" disabled={!inlineForkName.trim() || Boolean(branchAction)}>{branchAction === `fork:${message.turn_id}` ? "Creating..." : "Create & switch"}</button></div>
-                    </form>
-                  {/if}
                   {#if branchActionError && branchActionTurnId === message.turn_id}<p class="branch-action-error">{branchActionError}</p>{/if}
-                </div>
+                </details>
               {/if}
-              {#if turn && isFinalAssistantMessageInTurn(message)}
+              {#if turn && finalAssistantTurn}
                 <details class="turn-accounting">
                   <summary><span>{formatTokens(turn.input_tokens)} input · {formatTokens(turn.output_tokens)} output</span><small>{turn.requests.length} provider {turn.requests.length === 1 ? "call" : "calls"}</small></summary>
                   <div class="turn-request-list">
@@ -1348,6 +1360,35 @@
       </div>
     </div>
   </footer>
+
+  {#if forkDialogMessage}
+    <div class="overlay confirm-overlay">
+      <div
+        class="confirm-dialog fork-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fork-dialog-title"
+      >
+        <header>
+          <span class="dialog-mark"><Icon name="branch" size={18} /></span>
+          <button type="button" class="dialog-close" aria-label="Close fork dialog" onclick={closeForkDialog}><Icon name="close" size={16} /></button>
+        </header>
+        <h2 id="fork-dialog-title">Start a new path</h2>
+        <p>Continue from Turn {forkDialogMessage.turn_index} without changing the conversation that led here.</p>
+        <form onsubmit={event => { event.preventDefault(); void createFork(forkDialogMessage!); }}>
+          <label class="fork-name-field">
+            <span>Path name</span>
+            <input data-fork-name bind:value={forkName} maxlength="80" autocomplete="off" aria-label="Path name" />
+          </label>
+          {#if branchActionError && branchActionTurnId === forkDialogMessage.turn_id}<p class="fork-dialog-error">{branchActionError}</p>{/if}
+          <div class="dialog-actions">
+            <button type="button" onclick={closeForkDialog}>Cancel</button>
+            <button class="primary" disabled={!forkName.trim() || Boolean(branchAction)}>{branchAction === `fork:${forkDialogMessage.turn_id}` ? "Creating path..." : "Create and open"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {/if}
 
   {#if graphOpen && selectedSessionId}
     <SessionGraph

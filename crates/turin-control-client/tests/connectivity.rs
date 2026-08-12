@@ -172,9 +172,11 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
         .await?;
     assert_eq!(submitted.agent_id, "default");
     assert_eq!(submitted.state, "queued");
+    assert_eq!(submitted.prompt_preview, "hello from control client");
 
     let waited = client.wait_task(&submitted.request_id, Some(5_000)).await?;
     assert_eq!(waited.status.as_deref(), Some("success"));
+    assert_eq!(waited.prompt_preview, "hello from control client");
 
     let tasks = client.list_tasks().await?;
     assert!(
@@ -678,6 +680,7 @@ async fn control_client_local_health_and_events_work() -> Result<()> {
 
     let health = client.health().await?;
     assert!(health.ready);
+    assert_eq!(health.agent_count, 1);
     assert_eq!(
         health.connection_kind,
         turin_control_client::ConnectionKind::Local
@@ -705,6 +708,7 @@ async fn control_client_remote_health_and_events_work() -> Result<()> {
 
     let health = client.health().await?;
     assert!(health.ready);
+    assert_eq!(health.agent_count, 1);
     assert_eq!(health.connection_kind, ConnectionKind::Remote);
 
     let mut stream = client
