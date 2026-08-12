@@ -119,11 +119,32 @@ export interface ToolExecution {
 export interface SessionBranch {
   branch_id: string;
   name: string;
+  head_turn_id?: number | null;
   head_turn_index?: number | null;
   source_turn_id?: number | null;
   origin_kind: string;
+  origin_task_id?: string | null;
+  origin_execution_id?: string | null;
+  origin_metadata?: JsonValue | null;
   active: boolean;
   created_at: string;
+}
+
+export interface SessionGraphTurn {
+  turn_id: number;
+  turn_public_id: string;
+  parent_turn_id?: number | null;
+  turn_index: number;
+  message_count: number;
+  tool_execution_count: number;
+  preview?: string | null;
+  created_at: string;
+}
+
+export interface SessionGraph {
+  session: SessionSummary;
+  turns: SessionGraphTurn[];
+  branches: SessionBranch[];
 }
 
 export interface SessionExecutionContext {
@@ -220,7 +241,11 @@ export interface TaskStatus {
   agent_id: string;
   slot_id: string;
   state: string;
+  branch_outcome?: JsonValue | null;
+  promotion_candidate?: { session_id: string; source_turn_id: number } | null;
+  promoted_branch?: SessionBranch | null;
   output?: string | null;
+  assistant_content?: JsonValue[] | null;
   error?: string | null;
 }
 

@@ -18,8 +18,9 @@ session state, invent renderer-specific harness APIs, or bypass
   - Hyper HTTP/1 server startup, shutdown, bind policy, and shared state setup.
 - `crates/turin-web/src/routes.rs`
   - JSON route handling for status, bounded session detail, session lifecycle,
-    task submission, app registry, UI list loading, action runs, liveness, SSE
-    event streaming, and first-party static routes.
+    task submission, turn topology, branch/sidestep/promotion workflows, app
+    registry, UI list loading, action runs, liveness, SSE event streaming, and
+    first-party static routes.
 - `crates/turin-web/frontend/`
   - Svelte/TypeScript client source, typed `TurinClient` transport boundary,
     custom CSS, assistant surface, built-in Data Explorer, and semantic harness renderer.
@@ -93,6 +94,13 @@ session state, invent renderer-specific harness APIs, or bypass
     Efficiency panel displays directly measured retrieval timings, exact query
     counters, and daemon-process memory trends from the existing session event
     stream; normal sessions never display this surface.
+26. The Session Graph is loaded only when opened. It renders the daemon's
+    durable turn-parent topology and branch heads while keeping selected nodes,
+    compact/expanded layout, drafts, and action results browser-local.
+27. A graph node may fork by exact turn id, run an ephemeral or fork-sibling
+    sidestep from that context, and promote an eligible ephemeral result. Branch
+    checkout and activation remain daemon operations and therefore retain live
+    runtime ambiguity/busy guards.
 
 ## Invariants
 
@@ -163,6 +171,13 @@ session state, invent renderer-specific harness APIs, or bypass
   encoded `session_id` query/body value; do not place them in URL path segments.
 - Session detail requests must remain bounded. The web boundary rejects zero or
   excessively large message windows rather than exposing unbounded history.
+- Session Graph reads must remain explicit and on demand. The turn tree is
+  durable conversation topology and must not be conflated with harness-authored
+  `runtime.graph.*` semantic nodes and edges.
+- Selecting a graph node is browser-local inspection. Persisted active-branch
+  state changes only through explicit checkout or activating-fork actions.
+- Graph forks must use exact turn ids. A path-relative turn index is not a
+  stable source once sibling branches exist.
 - Request-efficiency UI must label provider-reported usage as measured and
   Turin-derived request/message counts as estimated. A reusable prefix is not
   evidence that a provider cache accepted or billed it differently.

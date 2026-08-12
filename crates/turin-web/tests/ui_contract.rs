@@ -219,6 +219,7 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert!(css.contains(".assistant-view"));
     assert!(css.contains(".harness-view"));
     assert!(css.contains(".data-explorer"));
+    assert!(css.contains(".graph-workspace"));
 
     let js = client
         .get(format!("{base_url}/assets/app.js"))
@@ -320,6 +321,87 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .await?;
     assert_eq!(submitted["task"]["agent_id"], "default");
     assert!(submitted["task"]["request_id"].as_str().is_some());
+
+    let graph = wait_for_session_graph_turn(base_url, client, session_id).await?;
+    let turns = graph["graph"]["turns"]
+        .as_array()
+        .context("session graph should include turns")?;
+    let source_turn_id = turns
+        .last()
+        .and_then(|turn| turn["turn_id"].as_i64())
+        .context("session graph turn should expose exact id")?;
+    assert_eq!(graph["graph"]["branches"][0]["name"], "main");
+
+    let branch: Value = client
+        .post(format!("{base_url}/api/session/branches"))
+        .json(&json!({
+            "session_id": session_id,
+            "slot_id": slot_id,
+            "name": "web-exact-fork",
+            "from_turn_id": source_turn_id,
+            "activate": false
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(branch["branch"]["source_turn_id"], source_turn_id);
+    assert_eq!(branch["branch"]["head_turn_id"], source_turn_id);
+    let branch_id = branch["branch"]["branch_id"]
+        .as_str()
+        .context("created branch should expose public id")?;
+
+    let checked_out: Value = client
+        .post(format!("{base_url}/api/session/branches/checkout"))
+        .json(&json!({
+            "session_id": session_id,
+            "slot_id": slot_id,
+            "branch": branch_id
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(checked_out["branch"]["active"], true);
+
+    let sidestep: Value = client
+        .post(format!("{base_url}/api/tasks/sidestep"))
+        .json(&json!({
+            "session_id": session_id,
+            "prompt": "Explore this exact turn",
+            "mode": "ephemeral",
+            "turn_id": source_turn_id,
+            "timeout_ms": 2_000
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(sidestep["task"]["state"], "completed");
+    assert_eq!(
+        sidestep["task"]["promotion_candidate"]["source_turn_id"],
+        source_turn_id
+    );
+    let sidestep_request_id = sidestep["task"]["request_id"]
+        .as_str()
+        .context("sidestep should expose request id")?;
+
+    let promoted: Value = client
+        .post(format!("{base_url}/api/tasks/promote"))
+        .json(&json!({
+            "request_id": sidestep_request_id,
+            "branch_name": "web-kept-aside"
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(promoted["branch"]["name"], "web-kept-aside");
+    assert_eq!(promoted["branch"]["origin_kind"], "promotion");
 
     let event_response = client
         .get(format!("{base_url}/api/events"))
@@ -708,6 +790,49 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
     assert!(data_memories["list"]["scopes"].is_array());
 
     Ok(())
+}
+
+async fn wait_for_session_graph_turn(
+    base_url: &str,
+    client: &reqwest::Client,
+    session_id: &str,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let graph: Value = client
+            .get(format!("{base_url}/api/session/graph"))
+            .query(&[("session_id", session_id)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let status: Value = client
+            .get(format!("{base_url}/api/status"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let session_idle = status["snapshot"]["live_sessions"]
+            .as_array()
+            .is_some_and(|sessions| {
+                sessions.iter().any(|session| {
+                    session["session_id"] == session_id && session["active_tasks"] == 0
+                })
+            });
+        if session_idle
+            && graph["graph"]["turns"]
+                .as_array()
+                .is_some_and(|turns| !turns.is_empty())
+        {
+            return Ok(graph);
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow!("timed out waiting for session graph turn"));
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 fn assert_action_notice_and_refresh(intents: &[Value], label: &str, title: &str, level: &str) {

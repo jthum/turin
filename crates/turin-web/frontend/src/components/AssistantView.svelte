@@ -17,6 +17,7 @@
   import { fullDate, humanize, messageText, messageTimestamp, sameSession, titleForSession } from "../lib/format";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
+  import SessionGraph from "./SessionGraph.svelte";
 
   const DATA_WINDOW_SIZE = 100;
   const DATA_WINDOW_OVERLAP = 30;
@@ -45,6 +46,7 @@
   let titleDraft = "";
   let titleSaving = false;
   let titleError = "";
+  let graphOpen = false;
   let prompt = "";
   let streamText = "";
   let pendingDelta = "";
@@ -157,6 +159,7 @@
     error = "";
     resumeFailed = false;
     editingTitle = false;
+    graphOpen = false;
     titleError = "";
     subscription?.close();
     subscription = null;
@@ -784,6 +787,11 @@
     }
   }
 
+  async function refreshAfterGraphChange() {
+    await loadDetail(false, true);
+    await onStatusChanged();
+  }
+
   function onTitleKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -1065,19 +1073,12 @@
       {#if selectedSessionId}
         <button class="new-conversation-header" onclick={onNewConversation}><Icon name="plus" size={15} />New conversation</button>
       {/if}
-      {#if detail?.branches.length}
-        <details class="branch-menu">
-          <summary><Icon name="branch" size={16} />{detail.branches.find(branch => branch.active)?.name ?? "Branches"}</summary>
-          <div class="branch-popover">
-            <span class="popover-label">Conversation paths</span>
-            {#each detail.branches as branch (branch.branch_id)}
-              <div class:active={branch.active} class="branch-row">
-                <span>{branch.name}</span>
-                <small>{branch.head_turn_index === null ? "empty" : `turn ${branch.head_turn_index}`}</small>
-              </div>
-            {/each}
-          </div>
-        </details>
+      {#if selectedSessionId}
+        <button class="graph-button" onclick={() => graphOpen = true}>
+          <Icon name="branch" size={16} />
+          <span>{detail?.branches.find(branch => branch.active)?.name ?? "Paths"}</span>
+          {#if detail?.branches.length}<small>{detail.branches.length}</small>{/if}
+        </button>
       {/if}
     </div>
   </header>
@@ -1223,4 +1224,14 @@
       </div>
     </div>
   </footer>
+
+  {#if graphOpen && selectedSessionId}
+    <SessionGraph
+      {client}
+      sessionId={selectedSessionId}
+      slotId={selectedLive?.slot_id}
+      onClose={() => graphOpen = false}
+      onChanged={refreshAfterGraphChange}
+    />
+  {/if}
 </section>

@@ -15,13 +15,14 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::time::{MissedTickBehavior, interval};
 use turin_control_client::{
-    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionDetail, SessionSummary,
-    TaskStatus,
+    ControlClient, DaemonStatus, LiveSession, ManagedEventStream, SessionBranchDetail,
+    SessionDetail, SessionGraphDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
     DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, MemoryList,
-    MemoryListParams, RuntimeEventsSubscribeParams, SubmitTaskParams, WorkItemList, WorklistDetail,
-    WorklistItemsParams, WorklistListParams,
+    MemoryListParams, RuntimeEventsSubscribeParams, SidestepContextTargetParams,
+    SidestepModeParams, SubmitTaskParams, WorkItemList, WorklistDetail, WorklistItemsParams,
+    WorklistListParams,
 };
 use turin_ui_core::{
     DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
@@ -133,6 +134,45 @@ struct WebSessionTitleRequest {
     title: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct WebBranchCreateRequest {
+    session_id: String,
+    #[serde(default)]
+    slot_id: Option<String>,
+    name: String,
+    from_turn_id: i64,
+    #[serde(default)]
+    activate: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebBranchCheckoutRequest {
+    session_id: String,
+    #[serde(default)]
+    slot_id: Option<String>,
+    branch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebSidestepRequest {
+    session_id: String,
+    #[serde(default)]
+    slot_id: Option<String>,
+    prompt: String,
+    #[serde(default)]
+    mode: SidestepModeParams,
+    turn_id: i64,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebPromoteRequest {
+    request_id: String,
+    #[serde(default)]
+    branch_name: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct WebSessionResponse {
     session: LiveSession,
@@ -141,6 +181,16 @@ struct WebSessionResponse {
 #[derive(Debug, Serialize)]
 struct WebSessionDetailResponse {
     detail: SessionDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionGraphResponse {
+    graph: SessionGraphDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionBranchResponse {
+    branch: SessionBranchDetail,
 }
 
 #[derive(Debug, Serialize)]
@@ -264,7 +314,12 @@ async fn route_request(
         )),
         (Method::GET, "/api/status") => handle_status(&state).await,
         (Method::GET, "/api/session") => handle_session_detail(req, &state).await,
+        (Method::GET, "/api/session/graph") => handle_session_graph(req, &state).await,
         (Method::PUT, "/api/session/title") => handle_session_title(req, &state).await,
+        (Method::POST, "/api/session/branches") => handle_branch_create(req, &state).await,
+        (Method::POST, "/api/session/branches/checkout") => {
+            handle_branch_checkout(req, &state).await
+        }
         (Method::GET, "/api/data/worklists") => handle_data_worklists(&state).await,
         (Method::GET, "/api/data/worklist-items") => handle_data_worklist_items(req, &state).await,
         (Method::GET, "/api/data/memories") => handle_data_memories(req, &state).await,
@@ -274,6 +329,8 @@ async fn route_request(
         (Method::POST, "/api/sessions/open") => handle_session_open(req, &state).await,
         (Method::POST, "/api/sessions/resume") => handle_session_resume(req, &state).await,
         (Method::POST, "/api/tasks/submit") => handle_task_submit(req, &state).await,
+        (Method::POST, "/api/tasks/sidestep") => handle_task_sidestep(req, &state).await,
+        (Method::POST, "/api/tasks/promote") => handle_task_promote(req, &state).await,
         (Method::GET, "/api/events") => handle_sse_events(req, &state).await,
         _ => Err(WebError::not_found(format!(
             "No turin-web route matches '{}'",
@@ -394,6 +451,134 @@ async fn handle_session_detail(
         StatusCode::OK,
         &WebSessionDetailResponse { detail },
     ))
+}
+
+async fn handle_session_graph(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let session_id = parse_session_id_query(req.uri().query())?;
+    let graph = state
+        .client
+        .get_session_graph(&session_id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to load session graph: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionGraphResponse { graph },
+    ))
+}
+
+async fn handle_branch_create(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebBranchCreateRequest = read_json(req).await?;
+    validate_session_and_name(&params.session_id, &params.name, "branch name")?;
+    let branch = state
+        .client
+        .create_session_branch_from_turn_id(
+            params.session_id.trim(),
+            params.slot_id,
+            params.name.trim(),
+            params.from_turn_id,
+            params.activate,
+        )
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to create branch: {err}")))?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &WebSessionBranchResponse { branch },
+    ))
+}
+
+async fn handle_branch_checkout(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebBranchCheckoutRequest = read_json(req).await?;
+    validate_session_and_name(&params.session_id, &params.branch, "branch")?;
+    let branch = state
+        .client
+        .checkout_session_branch_in_slot(
+            params.session_id.trim(),
+            params.slot_id,
+            params.branch.trim(),
+        )
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to check out branch: {err}")))?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionBranchResponse { branch },
+    ))
+}
+
+async fn handle_task_sidestep(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebSidestepRequest = read_json(req).await?;
+    if params.session_id.trim().is_empty() || params.prompt.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_sidestep",
+            "Session id and sidestep prompt must not be empty",
+        ));
+    }
+    let task = state
+        .client
+        .sidestep_task(
+            params.session_id.trim().to_string(),
+            params.slot_id,
+            params.prompt.trim().to_string(),
+            params.mode,
+            Some(SidestepContextTargetParams::TurnId {
+                turn_id: params.turn_id,
+            }),
+            params.timeout_ms,
+        )
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to run sidestep: {err}")))?;
+    Ok(json_response(StatusCode::OK, &WebTaskResponse { task }))
+}
+
+async fn handle_task_promote(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebPromoteRequest = read_json(req).await?;
+    if params.request_id.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_request_id",
+            "Task request id must not be empty",
+        ));
+    }
+    let branch_name = params
+        .branch_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty());
+    let branch = state
+        .client
+        .promote_task(params.request_id.trim(), branch_name)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to promote sidestep: {err}")))?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &WebSessionBranchResponse { branch },
+    ))
+}
+
+fn validate_session_and_name(
+    session_id: &str,
+    name: &str,
+    label: &str,
+) -> std::result::Result<(), WebError> {
+    if session_id.trim().is_empty() || name.trim().is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_branch_request",
+            format!("Session id and {label} must not be empty"),
+        ));
+    }
+    Ok(())
 }
 
 async fn handle_session_open(
@@ -765,6 +950,30 @@ fn parse_session_detail_query(
     Ok((session_id, message_limit, message_offset))
 }
 
+fn parse_session_id_query(query: Option<&str>) -> std::result::Result<String, WebError> {
+    let mut session_id = None;
+    if let Some(query) = query {
+        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "session_id" if !value.is_empty() => session_id = Some(value.into_owned()),
+                "session_id" => {}
+                other => {
+                    return Err(WebError::bad_request(
+                        "invalid_query",
+                        format!("Unsupported query parameter '{other}'"),
+                    ));
+                }
+            }
+        }
+    }
+    session_id.ok_or_else(|| {
+        WebError::bad_request(
+            "missing_session_id",
+            "session_id query parameter is required",
+        )
+    })
+}
+
 fn parse_worklist_items_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {
     let mut id = None;
     let mut limit = DEFAULT_DATA_LIMIT;
@@ -1103,6 +1312,16 @@ mod tests {
         assert!(
             parse_session_detail_query(Some("session_id=session-1&message_offset=old")).is_err()
         );
+    }
+
+    #[test]
+    fn session_graph_query_requires_only_session_id() {
+        assert!(parse_session_id_query(None).is_err());
+        assert_eq!(
+            parse_session_id_query(Some("session_id=session-1")).unwrap(),
+            "session-1"
+        );
+        assert!(parse_session_id_query(Some("session_id=session-1&offset=1")).is_err());
     }
 
     #[test]

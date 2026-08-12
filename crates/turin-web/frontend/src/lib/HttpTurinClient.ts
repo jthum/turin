@@ -2,6 +2,8 @@ import type { EventSubscription, TurinClient } from "./TurinClient";
 import type {
   LiveSession,
   SessionDetail,
+  SessionBranch,
+  SessionGraph,
   SessionSummary,
   TaskStatus,
   TurinEvent,
@@ -35,6 +37,12 @@ export class HttpTurinClient implements TurinClient {
       `/api/session?${params}`,
     );
     return result.detail;
+  }
+
+  async sessionGraph(sessionId: string): Promise<SessionGraph> {
+    const params = new URLSearchParams({ session_id: sessionId });
+    const result = await this.request<{ graph: SessionGraph }>(`/api/session/graph?${params}`);
+    return result.graph;
   }
 
   async openSession(agentId: string): Promise<LiveSession> {
@@ -72,6 +80,55 @@ export class HttpTurinClient implements TurinClient {
       body: JSON.stringify(input),
     });
     return result.task;
+  }
+
+  async createBranch(input: {
+    session_id: string;
+    slot_id?: string;
+    name: string;
+    from_turn_id: number;
+    activate?: boolean;
+  }): Promise<SessionBranch> {
+    const result = await this.request<{ branch: SessionBranch }>("/api/session/branches", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.branch;
+  }
+
+  async checkoutBranch(input: {
+    session_id: string;
+    slot_id?: string;
+    branch: string;
+  }): Promise<SessionBranch> {
+    const result = await this.request<{ branch: SessionBranch }>("/api/session/branches/checkout", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.branch;
+  }
+
+  async sidestep(input: {
+    session_id: string;
+    slot_id?: string;
+    prompt: string;
+    mode: "ephemeral" | "fork_sibling";
+    turn_id: number;
+    timeout_ms?: number;
+  }): Promise<TaskStatus> {
+    const result = await this.request<{ task: TaskStatus }>("/api/tasks/sidestep", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.task;
+  }
+
+  async promoteTask(input: { request_id: string; branch_name?: string }): Promise<SessionBranch> {
+    const result = await this.request<{ branch: SessionBranch }>("/api/tasks/promote", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return result.branch;
   }
 
   loadList(request: UiListRequest): Promise<UiListResult> {

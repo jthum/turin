@@ -122,6 +122,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .working-badge i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted); box-shadow: var(--shadow-sm); }
 .icon-button:hover { border-color: var(--line-strong); color: var(--ink); }
+.graph-button { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted); box-shadow: var(--shadow-sm); font-size: 11px; font-weight: 620; }
+.graph-button:hover { border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); color: var(--ink); }
+.graph-button small { min-width: 17px; padding: 1px 5px; border-radius: 99px; background: var(--surface-muted); color: var(--faint); font-size: 8px; text-align: center; }
 .branch-menu { position: relative; }
 .branch-menu summary { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); color: var(--muted); font-size: 11px; font-weight: 620; cursor: pointer; list-style: none; }
 .branch-menu summary::-webkit-details-marker { display: none; }
