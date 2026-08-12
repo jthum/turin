@@ -105,6 +105,10 @@ session state, invent renderer-specific harness APIs, or bypass
     The browser caches that path locally, highlights the inspected ancestry
     separately from the active path, and keeps mutation under an explicit
     exploration mode.
+29. Branch-head comparison is browser-local and read-only. The browser derives
+    the exact shared ancestor and divergent turn counts from durable topology,
+    then composes two bounded exact-turn projections for recent branch-only
+    message and tool previews.
 
 ## Invariants
 
@@ -183,6 +187,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Exact-turn path previews must use the bounded daemon projection rather than
   filtering the currently active transcript in the browser. Preview loading
   and errors remain local to the selected graph node.
+- Branch comparison must not imply merge or context-transfer semantics. Exact
+  divergence comes from durable turn topology; bounded transcript previews must
+  identify branch-only rows omitted by their message window.
 - Graph forks must use exact turn ids. A path-relative turn index is not a
   stable source once sibling branches exist.
 - Request-efficiency UI must label provider-reported usage as measured and

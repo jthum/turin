@@ -34,20 +34,38 @@
   let sidestepMode: "ephemeral" | "fork_sibling" = "ephemeral";
   let sidestepResult: TaskStatus | null = null;
   let promotionName = "";
-  let inspectorMode: "inspect" | "explore" = "inspect";
+  let inspectorMode: "inspect" | "compare" | "explore" = "inspect";
   let pathDetail: SessionDetail | null = null;
   let pathLoading = false;
   let pathError = "";
   let pathRequestVersion = 0;
+  let comparisonLeftBranchId = "";
+  let comparisonRightBranchId = "";
+  let comparisonLeftDetail: SessionDetail | null = null;
+  let comparisonRightDetail: SessionDetail | null = null;
+  let comparisonLoading = false;
+  let comparisonError = "";
+  let comparisonRequestVersion = 0;
   let workspace: HTMLElement;
   let closeButton: HTMLButtonElement;
   let previouslyFocused: HTMLElement | null = null;
   const pathCache = new Map<number, SessionDetail>();
+  const pathRequests = new Map<number, Promise<SessionDetail>>();
 
   $: layout = buildLayout(graph, compact, selectedTurnId);
   $: selectedTurn = graph?.turns.find(turn => turn.turn_id === selectedTurnId) ?? null;
   $: selectedHeads = graph?.branches.filter(branch => branch.head_turn_id === selectedTurnId) ?? [];
   $: selectedOnActivePath = layout.nodes.find(node => node.turn.turn_id === selectedTurnId)?.activePath ?? false;
+  $: branchHeads = graph?.branches.filter(branch => branch.head_turn_id !== null && branch.head_turn_id !== undefined) ?? [];
+  $: comparisonLeftBranch = branchHeads.find(branch => branch.branch_id === comparisonLeftBranchId) ?? null;
+  $: comparisonRightBranch = branchHeads.find(branch => branch.branch_id === comparisonRightBranchId) ?? null;
+  $: comparison = buildBranchComparison(graph, comparisonLeftBranch, comparisonRightBranch);
+  $: comparisonLeftMessages = comparisonMessages(comparisonLeftDetail, comparison?.leftTurns ?? []);
+  $: comparisonRightMessages = comparisonMessages(comparisonRightDetail, comparison?.rightTurns ?? []);
+  $: comparisonLeftTools = comparisonTools(comparisonLeftDetail, comparison?.leftTurns ?? []);
+  $: comparisonRightTools = comparisonTools(comparisonRightDetail, comparison?.rightTurns ?? []);
+  $: comparisonLeftLoadedRows = comparisonRows(comparisonLeftDetail, comparison?.leftTurns ?? []);
+  $: comparisonRightLoadedRows = comparisonRows(comparisonRightDetail, comparison?.rightTurns ?? []);
   $: pathMessages = (pathDetail?.messages ?? []).filter(message => {
     const role = message.role.toLowerCase();
     return role === "user" || role === "assistant";
@@ -79,7 +97,12 @@
         const initialTurn = graph.turns.find(turn => turn.turn_id === selectedTurnId);
         forkName = initialTurn ? `fork-turn-${initialTurn.turn_index}` : "";
       }
-      if (selectedTurnId !== null) void loadPath(selectedTurnId);
+      syncComparisonSelection();
+      if (inspectorMode === "compare") {
+        void loadComparison();
+      } else if (selectedTurnId !== null) {
+        void loadPath(selectedTurnId);
+      }
       await tick();
       if (centerActive) centerSelected();
     } catch (reason) {
@@ -101,26 +124,122 @@
   async function loadPath(turnId: number, force = false) {
     const requestVersion = ++pathRequestVersion;
     pathError = "";
-    if (!force) {
-      const cached = pathCache.get(turnId);
-      if (cached) {
-        pathDetail = cached;
-        pathLoading = false;
-        return;
-      }
+    const cached = !force ? pathCache.get(turnId) : undefined;
+    if (cached) {
+      pathDetail = cached;
+      pathLoading = false;
+      return;
     }
     pathLoading = true;
     pathDetail = null;
     try {
-      const detail = await client.sessionPath(sessionId, turnId, PATH_MESSAGE_LIMIT);
+      const detail = await getPathDetail(turnId, force);
       if (requestVersion !== pathRequestVersion) return;
-      pathCache.set(turnId, detail);
       pathDetail = detail;
     } catch (reason) {
       if (requestVersion !== pathRequestVersion) return;
       pathError = reason instanceof Error ? reason.message : String(reason);
     } finally {
       if (requestVersion === pathRequestVersion) pathLoading = false;
+    }
+  }
+
+  async function getPathDetail(turnId: number, force = false): Promise<SessionDetail> {
+    if (force) pathCache.delete(turnId);
+    const cached = pathCache.get(turnId);
+    if (cached) return cached;
+    const pending = pathRequests.get(turnId);
+    if (pending) return pending;
+    const request = client.sessionPath(sessionId, turnId, PATH_MESSAGE_LIMIT);
+    pathRequests.set(turnId, request);
+    try {
+      const detail = await request;
+      pathCache.set(turnId, detail);
+      return detail;
+    } finally {
+      if (pathRequests.get(turnId) === request) pathRequests.delete(turnId);
+    }
+  }
+
+  function syncComparisonSelection() {
+    const heads = graph?.branches.filter(branch => branch.head_turn_id !== null && branch.head_turn_id !== undefined) ?? [];
+    if (!heads.length) {
+      comparisonLeftBranchId = "";
+      comparisonRightBranchId = "";
+      return;
+    }
+    if (!heads.some(branch => branch.branch_id === comparisonLeftBranchId)) {
+      comparisonLeftBranchId = heads.find(branch => branch.active)?.branch_id ?? heads[0]!.branch_id;
+    }
+    if (!heads.some(branch => branch.branch_id === comparisonRightBranchId) || comparisonRightBranchId === comparisonLeftBranchId) {
+      comparisonRightBranchId = heads.find(branch => branch.head_turn_id === selectedTurnId && branch.branch_id !== comparisonLeftBranchId)?.branch_id
+        ?? heads.find(branch => branch.branch_id !== comparisonLeftBranchId)?.branch_id
+        ?? "";
+    }
+  }
+
+  function showComparison() {
+    syncComparisonSelection();
+    inspectorMode = "compare";
+    focusComparedHead();
+    void loadComparison();
+  }
+
+  function showInspection() {
+    inspectorMode = "inspect";
+    if (selectedTurnId !== null) void loadPath(selectedTurnId);
+  }
+
+  function selectComparisonBranch(side: "left" | "right", event: Event) {
+    const branchId = (event.currentTarget as HTMLSelectElement).value;
+    if (side === "left") comparisonLeftBranchId = branchId;
+    else comparisonRightBranchId = branchId;
+    focusComparedHead();
+    void loadComparison();
+  }
+
+  function swapComparison() {
+    const left = comparisonLeftBranchId;
+    comparisonLeftBranchId = comparisonRightBranchId;
+    comparisonRightBranchId = left;
+    focusComparedHead();
+    void loadComparison();
+  }
+
+  function focusComparedHead() {
+    const branch = graph?.branches.find(candidate => candidate.branch_id === comparisonRightBranchId);
+    if (branch?.head_turn_id === null || branch?.head_turn_id === undefined) return;
+    selectedTurnId = branch.head_turn_id;
+    void tick().then(centerSelected);
+  }
+
+  async function loadComparison(force = false) {
+    const left = graph?.branches.find(branch => branch.branch_id === comparisonLeftBranchId);
+    const right = graph?.branches.find(branch => branch.branch_id === comparisonRightBranchId);
+    const leftTurnId = left?.head_turn_id;
+    const rightTurnId = right?.head_turn_id;
+    const requestVersion = ++comparisonRequestVersion;
+    comparisonError = "";
+    comparisonLeftDetail = null;
+    comparisonRightDetail = null;
+    if (leftTurnId === null || leftTurnId === undefined || rightTurnId === null || rightTurnId === undefined) {
+      comparisonLoading = false;
+      return;
+    }
+    comparisonLoading = true;
+    try {
+      const [leftDetail, rightDetail] = await Promise.all([
+        getPathDetail(leftTurnId, force),
+        getPathDetail(rightTurnId, force),
+      ]);
+      if (requestVersion !== comparisonRequestVersion) return;
+      comparisonLeftDetail = leftDetail;
+      comparisonRightDetail = rightDetail;
+    } catch (reason) {
+      if (requestVersion !== comparisonRequestVersion) return;
+      comparisonError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      if (requestVersion === comparisonRequestVersion) comparisonLoading = false;
     }
   }
 
@@ -230,7 +349,7 @@
     }
     if (event.key !== "Tab" || !workspace) return;
     const focusable = [...workspace.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )];
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -251,6 +370,82 @@
   function branchOffset(branch: SessionBranch): number {
     if (!graph || branch.head_turn_id === null || branch.head_turn_id === undefined) return 0;
     return graph.branches.filter(candidate => candidate.head_turn_id === branch.head_turn_id).indexOf(branch);
+  }
+
+  interface BranchComparison {
+    commonAncestor: SessionGraphTurn | null;
+    leftTurns: SessionGraphTurn[];
+    rightTurns: SessionGraphTurn[];
+    leftMessageRows: number;
+    rightMessageRows: number;
+    leftToolRuns: number;
+    rightToolRuns: number;
+  }
+
+  function buildBranchComparison(
+    model: SessionGraphModel | null,
+    left: SessionBranch | null,
+    right: SessionBranch | null,
+  ): BranchComparison | null {
+    if (!model || left?.head_turn_id === null || left?.head_turn_id === undefined
+      || right?.head_turn_id === null || right?.head_turn_id === undefined) return null;
+    const turnById = new Map(model.turns.map(turn => [turn.turn_id, turn]));
+    const leftPath = ancestry(turnById, left.head_turn_id);
+    const rightPath = ancestry(turnById, right.head_turn_id);
+    let sharedIndex = -1;
+    const sharedLength = Math.min(leftPath.length, rightPath.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+      if (leftPath[index]?.turn_id !== rightPath[index]?.turn_id) break;
+      sharedIndex = index;
+    }
+    const leftTurns = leftPath.slice(sharedIndex + 1);
+    const rightTurns = rightPath.slice(sharedIndex + 1);
+    return {
+      commonAncestor: sharedIndex >= 0 ? leftPath[sharedIndex] ?? null : null,
+      leftTurns,
+      rightTurns,
+      leftMessageRows: leftTurns.reduce((total, turn) => total + turn.message_count, 0),
+      rightMessageRows: rightTurns.reduce((total, turn) => total + turn.message_count, 0),
+      leftToolRuns: leftTurns.reduce((total, turn) => total + turn.tool_execution_count, 0),
+      rightToolRuns: rightTurns.reduce((total, turn) => total + turn.tool_execution_count, 0),
+    };
+  }
+
+  function ancestry(turnById: Map<number, SessionGraphTurn>, headTurnId: number): SessionGraphTurn[] {
+    const path: SessionGraphTurn[] = [];
+    const visited = new Set<number>();
+    let turnId: number | null | undefined = headTurnId;
+    while (turnId !== null && turnId !== undefined && !visited.has(turnId)) {
+      visited.add(turnId);
+      const turn = turnById.get(turnId);
+      if (!turn) break;
+      path.push(turn);
+      turnId = turn.parent_turn_id;
+    }
+    return path.reverse();
+  }
+
+  function comparisonRows(detail: SessionDetail | null, turns: SessionGraphTurn[]) {
+    const indexes = new Set(turns.map(turn => turn.turn_index));
+    return (detail?.messages ?? []).filter(message => indexes.has(message.turn_index));
+  }
+
+  function comparisonMessages(detail: SessionDetail | null, turns: SessionGraphTurn[]) {
+    return comparisonRows(detail, turns).filter(message => {
+      const role = message.role.toLowerCase();
+      return role === "user" || role === "assistant";
+    });
+  }
+
+  function comparisonTools(detail: SessionDetail | null, turns: SessionGraphTurn[]) {
+    const indexes = new Set(turns.map(turn => turn.turn_index));
+    return (detail?.tool_executions ?? []).filter(tool => indexes.has(tool.turn_index));
+  }
+
+  function branchSource(branch: SessionBranch): string | null {
+    if (branch.source_turn_id === null || branch.source_turn_id === undefined) return null;
+    const source = graph?.turns.find(turn => turn.turn_id === branch.source_turn_id);
+    return source ? `Turn ${source.turn_index}` : `Turn id ${branch.source_turn_id}`;
   }
 
   interface LayoutNode {
@@ -370,7 +565,7 @@
     {#if error}<div class="graph-alert error"><strong>Action failed</strong><span>{error}</span></div>{/if}
     {#if notice}<div class="graph-alert success"><strong>Graph updated</strong><span>{notice}</span></div>{/if}
 
-    <div class="graph-body">
+    <div class="graph-body" class:comparison-open={inspectorMode === "compare"}>
       <section class="map-panel">
         <div class="map-toolbar">
           <div><i class="active-line"></i>Active <i class="inspected-line"></i>Inspected <i></i>Other</div>
@@ -425,21 +620,38 @@
 
       <aside class="graph-inspector">
         {#if selectedTurn}
-          <header class="turn-heading">
-            <div>
-              <span>Inspecting exact context</span>
-              <h3>Turn {selectedTurn.turn_index}</h3>
-              <time title={fullDate(selectedTurn.created_at)}>{fullDate(selectedTurn.created_at)}</time>
+          {#if inspectorMode === "compare"}
+            <header class="turn-heading comparison-heading">
+              <div>
+                <span>Read-only comparison</span>
+                <h3>Branch heads</h3>
+                <time>No path will be activated or changed.</time>
+              </div>
+              <span class="path-state">Active path unchanged</span>
+            </header>
+          {:else}
+            <header class="turn-heading">
+              <div>
+                <span>Inspecting exact context</span>
+                <h3>Turn {selectedTurn.turn_index}</h3>
+                <time title={fullDate(selectedTurn.created_at)}>{fullDate(selectedTurn.created_at)}</time>
+              </div>
+              <span class:active={selectedOnActivePath} class="path-state">{selectedOnActivePath ? "On active path" : "Active path unchanged"}</span>
+            </header>
+            <div class="turn-stats">
+              <div><strong>{selectedTurn.message_count}</strong><span>messages</span></div>
+              <div><strong>{selectedTurn.tool_execution_count}</strong><span>tools</span></div>
+              <div><strong>{selectedHeads.length}</strong><span>heads</span></div>
             </div>
-            <span class:active={selectedOnActivePath} class="path-state">{selectedOnActivePath ? "On active path" : "Active path unchanged"}</span>
-          </header>
-          <div class="turn-stats">
-            <div><strong>{selectedTurn.message_count}</strong><span>messages</span></div>
-            <div><strong>{selectedTurn.tool_execution_count}</strong><span>tools</span></div>
-            <div><strong>{selectedHeads.length}</strong><span>heads</span></div>
-          </div>
+          {/if}
           <nav class="inspector-tabs" aria-label="Turn inspector mode">
-            <button class:active={inspectorMode === "inspect"} onclick={() => inspectorMode = "inspect"}>Inspect</button>
+            <button class:active={inspectorMode === "inspect"} onclick={showInspection}>Inspect</button>
+            <button
+              class:active={inspectorMode === "compare"}
+              disabled={branchHeads.length < 2}
+              title={branchHeads.length < 2 ? "Create another branch to compare paths" : "Compare two branch heads"}
+              onclick={showComparison}
+            >Compare</button>
             <button class:active={inspectorMode === "explore"} onclick={() => inspectorMode = "explore"}>Explore from here</button>
           </nav>
 
@@ -503,6 +715,138 @@
                 {/if}
               {/if}
             </section>
+          {:else if inspectorMode === "compare"}
+            <section class="comparison-controls">
+              <div class="context-heading">
+                <span class="section-label">Choose two durable heads</span>
+                <button disabled={comparisonLoading} onclick={() => loadComparison(true)}><Icon name="refresh" size={12} />Refresh</button>
+              </div>
+              <div class="comparison-pickers">
+                <label>
+                  <span>Reference</span>
+                  <select value={comparisonLeftBranchId} onchange={event => selectComparisonBranch("left", event)}>
+                    {#each branchHeads as branch (branch.branch_id)}
+                      <option value={branch.branch_id} disabled={branch.branch_id === comparisonRightBranchId}>{branch.name}{branch.active ? " · active" : ""}</option>
+                    {/each}
+                  </select>
+                </label>
+                <button class="swap-button" aria-label="Swap compared branches" title="Swap compared branches" onclick={swapComparison}>Swap</button>
+                <label>
+                  <span>Candidate</span>
+                  <select value={comparisonRightBranchId} onchange={event => selectComparisonBranch("right", event)}>
+                    {#each branchHeads as branch (branch.branch_id)}
+                      <option value={branch.branch_id} disabled={branch.branch_id === comparisonLeftBranchId}>{branch.name}{branch.active ? " · active" : ""}</option>
+                    {/each}
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            {#if comparisonLoading}
+              <div class="path-loading comparison-state"><i></i><span>Reading both exact paths...</span></div>
+            {:else if comparisonError}
+              <div class="path-error comparison-state"><strong>Comparison unavailable</strong><span>{comparisonError}</span><button onclick={() => loadComparison(true)}>Retry</button></div>
+            {:else if comparison && comparisonLeftBranch && comparisonRightBranch}
+              <div class="common-ancestor">
+                <Icon name="branch" size={15} />
+                <div>
+                  <strong>{comparison.leftTurns.length === 0 && comparison.rightTurns.length === 0
+                    ? "Both labels point to the same head"
+                    : comparison.commonAncestor
+                      ? `Shared through Turn ${comparison.commonAncestor.turn_index}`
+                      : "No shared ancestor found"}</strong>
+                  <span>{comparison.commonAncestor
+                    ? fullDate(comparison.commonAncestor.created_at)
+                    : "The loaded topology contains separate roots."}</span>
+                </div>
+              </div>
+
+              <div class="comparison-columns">
+                <section class="comparison-branch">
+                  <header>
+                    <div><span>Reference</span><strong title={comparisonLeftBranch.name}>{comparisonLeftBranch.name}</strong></div>
+                    {#if comparisonLeftBranch.active}<b>Active</b>{/if}
+                  </header>
+                  <div class="branch-provenance">
+                    <span>{humanize(comparisonLeftBranch.origin_kind)}</span>
+                    {#if branchSource(comparisonLeftBranch)}<span>from {branchSource(comparisonLeftBranch)}</span>{/if}
+                    {#if comparisonLeftBranch.origin_task_id}<span title={comparisonLeftBranch.origin_task_id}>task {comparisonLeftBranch.origin_task_id}</span>{/if}
+                    {#if comparisonLeftBranch.origin_execution_id}<span title={comparisonLeftBranch.origin_execution_id}>run {comparisonLeftBranch.origin_execution_id}</span>{/if}
+                  </div>
+                  <div class="comparison-stats">
+                    <span><strong>{comparison.leftTurns.length}</strong> unique turns</span>
+                    <span><strong>{comparison.leftMessageRows}</strong> message rows</span>
+                    <span><strong>{comparison.leftToolRuns}</strong> tool runs</span>
+                  </div>
+                  {#if comparison.leftMessageRows > comparisonLeftLoadedRows.length}
+                    <p class="comparison-clipped">Latest bounded preview. {comparison.leftMessageRows - comparisonLeftLoadedRows.length} earlier branch-only rows are not shown.</p>
+                  {/if}
+                  <div class="comparison-transcript">
+                    {#each comparisonLeftMessages as message (message.id)}
+                      {@const body = messageText(message.content)}
+                      {#if body}
+                        <article class:user={message.role.toLowerCase() === "user"}>
+                          <header><strong>{message.role.toLowerCase() === "user" ? "You" : humanize(graph?.session.agent_id ?? "assistant")}</strong><span>Turn {message.turn_index}</span></header>
+                          {#if message.role.toLowerCase() === "assistant"}<div class="comparison-markdown"><Markdown source={body} /></div>{:else}<p>{body}</p>{/if}
+                        </article>
+                      {/if}
+                    {/each}
+                    {#if !comparisonLeftMessages.length}<p class="path-empty">{comparison.leftTurns.length ? "No conversational messages in this bounded preview." : "No unique turns after the shared head."}</p>{/if}
+                  </div>
+                  {#if comparisonLeftTools.length}
+                    <details class="path-tools comparison-tools">
+                      <summary>{comparisonLeftTools.length}{comparison.leftToolRuns > comparisonLeftTools.length ? ` of ${comparison.leftToolRuns}` : ""} branch-only tool runs</summary>
+                      {#each comparisonLeftTools as tool (tool.id)}
+                        <div><Icon name="activity" size={12} /><span>{humanize(tool.tool_name)}</span><small>Turn {tool.turn_index}</small></div>
+                      {/each}
+                    </details>
+                  {/if}
+                </section>
+
+                <section class="comparison-branch candidate">
+                  <header>
+                    <div><span>Candidate</span><strong title={comparisonRightBranch.name}>{comparisonRightBranch.name}</strong></div>
+                    {#if comparisonRightBranch.active}<b>Active</b>{/if}
+                  </header>
+                  <div class="branch-provenance">
+                    <span>{humanize(comparisonRightBranch.origin_kind)}</span>
+                    {#if branchSource(comparisonRightBranch)}<span>from {branchSource(comparisonRightBranch)}</span>{/if}
+                    {#if comparisonRightBranch.origin_task_id}<span title={comparisonRightBranch.origin_task_id}>task {comparisonRightBranch.origin_task_id}</span>{/if}
+                    {#if comparisonRightBranch.origin_execution_id}<span title={comparisonRightBranch.origin_execution_id}>run {comparisonRightBranch.origin_execution_id}</span>{/if}
+                  </div>
+                  <div class="comparison-stats">
+                    <span><strong>{comparison.rightTurns.length}</strong> unique turns</span>
+                    <span><strong>{comparison.rightMessageRows}</strong> message rows</span>
+                    <span><strong>{comparison.rightToolRuns}</strong> tool runs</span>
+                  </div>
+                  {#if comparison.rightMessageRows > comparisonRightLoadedRows.length}
+                    <p class="comparison-clipped">Latest bounded preview. {comparison.rightMessageRows - comparisonRightLoadedRows.length} earlier branch-only rows are not shown.</p>
+                  {/if}
+                  <div class="comparison-transcript">
+                    {#each comparisonRightMessages as message (message.id)}
+                      {@const body = messageText(message.content)}
+                      {#if body}
+                        <article class:user={message.role.toLowerCase() === "user"}>
+                          <header><strong>{message.role.toLowerCase() === "user" ? "You" : humanize(graph?.session.agent_id ?? "assistant")}</strong><span>Turn {message.turn_index}</span></header>
+                          {#if message.role.toLowerCase() === "assistant"}<div class="comparison-markdown"><Markdown source={body} /></div>{:else}<p>{body}</p>{/if}
+                        </article>
+                      {/if}
+                    {/each}
+                    {#if !comparisonRightMessages.length}<p class="path-empty">{comparison.rightTurns.length ? "No conversational messages in this bounded preview." : "No unique turns after the shared head."}</p>{/if}
+                  </div>
+                  {#if comparisonRightTools.length}
+                    <details class="path-tools comparison-tools">
+                      <summary>{comparisonRightTools.length}{comparison.rightToolRuns > comparisonRightTools.length ? ` of ${comparison.rightToolRuns}` : ""} branch-only tool runs</summary>
+                      {#each comparisonRightTools as tool (tool.id)}
+                        <div><Icon name="activity" size={12} /><span>{humanize(tool.tool_name)}</span><small>Turn {tool.turn_index}</small></div>
+                      {/each}
+                    </details>
+                  {/if}
+                </section>
+              </div>
+            {:else}
+              <p class="path-empty comparison-state">Create a second durable branch to compare paths.</p>
+            {/if}
           {:else}
             <p class="explore-note"><Icon name="branch" size={14} />Both operations start from Turn {selectedTurn.turn_index}. Only checkout changes the active conversation.</p>
             <section class="inspector-section">
@@ -570,6 +914,7 @@
   .graph-alert.success { background: color-mix(in srgb, var(--success) 8%, var(--surface)); color: var(--success); }
   .graph-alert span { color: var(--muted); }
   .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 410px; min-height: 0; flex: 1; }
+  .graph-body.comparison-open { grid-template-columns: minmax(400px, 1fr) minmax(560px, .9fr); }
   .map-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; background: radial-gradient(circle at 18% 5%, color-mix(in srgb, var(--accent-soft) 48%, transparent), transparent 28%), var(--surface-muted); }
   .map-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 42px; padding: 8px 15px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 10px; }
   .map-toolbar > div { display: flex; align-items: center; gap: 6px; }
@@ -607,9 +952,10 @@
   .turn-stats > div:last-child { border-right: 0; }
   .turn-stats strong { font-size: 15px; }
   .turn-stats span { color: var(--faint); font-size: 9px; text-transform: uppercase; }
-  .inspector-tabs { display: grid; grid-template-columns: .8fr 1.2fr; gap: 4px; margin-top: 14px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+  .inspector-tabs { display: grid; grid-template-columns: .8fr .85fr 1.2fr; gap: 4px; margin-top: 14px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
   .inspector-tabs button { min-height: 31px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 680; }
   .inspector-tabs button.active { background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow-sm); }
+  .inspector-tabs button:disabled { color: var(--faint); cursor: not-allowed; opacity: .55; }
   .inspector-section { display: grid; gap: 8px; margin-top: 18px; }
   .path-list { display: grid; gap: 5px; }
   .path-list > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 6px 7px 6px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
@@ -643,6 +989,42 @@
   .path-tools > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 7px 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; }
   .path-tools > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .path-tools > div small { color: var(--faint); }
+  .comparison-controls { display: grid; gap: 8px; margin-top: 16px; }
+  .comparison-pickers { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 7px; }
+  .comparison-pickers label { display: grid; min-width: 0; gap: 4px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .comparison-pickers select { min-width: 0; height: 34px; padding: 0 28px 0 8px; border: 1px solid var(--line); border-radius: 8px; outline: 0; background: var(--surface); color: var(--ink); font: inherit; font-size: 10px; font-weight: 650; text-transform: none; }
+  .comparison-pickers select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 10%, transparent); }
+  .swap-button { height: 34px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); color: var(--muted); font-size: 9px; font-weight: 700; }
+  .swap-button:hover { border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); color: var(--blue); }
+  .comparison-state { margin-top: 12px; }
+  .common-ancestor { display: flex; align-items: center; gap: 9px; margin-top: 12px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--blue) 20%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--blue) 4%, var(--surface)); }
+  .common-ancestor :global(.icon) { flex: 0 0 auto; color: var(--blue); }
+  .common-ancestor div { display: grid; min-width: 0; gap: 1px; }
+  .common-ancestor strong { color: var(--ink); font-size: 10px; }
+  .common-ancestor span { color: var(--faint); font-size: 9px; }
+  .comparison-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 9px; }
+  .comparison-branch { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+  .comparison-branch.candidate { border-color: color-mix(in srgb, var(--blue) 23%, var(--line)); }
+  .comparison-branch > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .comparison-branch > header div { display: grid; min-width: 0; gap: 1px; }
+  .comparison-branch > header span { color: var(--faint); font-size: 8px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+  .comparison-branch > header strong { overflow: hidden; color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .comparison-branch > header b { flex: 0 0 auto; padding: 3px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-strong); font-size: 8px; }
+  .branch-provenance { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; }
+  .branch-provenance span { max-width: 100%; padding: 3px 5px; overflow: hidden; border-radius: 5px; background: var(--surface-muted); color: var(--faint); font-family: var(--font-mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+  .comparison-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+  .comparison-stats span { display: grid; gap: 1px; padding: 6px; border-right: 1px solid var(--line); color: var(--faint); font-size: 8px; line-height: 1.25; }
+  .comparison-stats span:last-child { border-right: 0; }
+  .comparison-stats strong { color: var(--ink); font-size: 11px; }
+  .comparison-clipped { margin: 0; padding: 6px 7px; border-radius: 7px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); color: var(--muted); font-size: 8px; line-height: 1.4; }
+  .comparison-transcript { display: grid; align-content: start; gap: 6px; max-height: 310px; overflow: auto; scrollbar-color: var(--line-strong) transparent; }
+  .comparison-transcript article { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); }
+  .comparison-transcript article.user { border-color: color-mix(in srgb, var(--blue) 18%, var(--line)); background: color-mix(in srgb, var(--blue) 3%, var(--surface)); }
+  .comparison-transcript article > header { display: flex; justify-content: space-between; gap: 6px; padding: 5px 7px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 8px; }
+  .comparison-transcript article > header strong { color: var(--muted); font-size: 8px; }
+  .comparison-transcript article > p, .comparison-markdown { max-height: 116px; margin: 0; padding: 7px 8px; overflow: auto; color: var(--muted); font-size: 9px; line-height: 1.48; white-space: pre-wrap; }
+  .comparison-tools { margin-top: auto; }
+  .comparison-tools summary { font-size: 9px; }
   .explore-note { display: flex; align-items: flex-start; gap: 7px; margin: 13px 0 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--blue) 4%, var(--surface)); color: var(--muted); font-size: 10px; line-height: 1.45; }
   .explore-note :global(.icon) { flex: 0 0 auto; margin-top: 1px; color: var(--blue); }
   .fork-form { display: grid; gap: 7px; }
@@ -669,7 +1051,8 @@
     .graph-overlay { padding: 0; }
     .graph-workspace { width: 100%; height: 100%; border: 0; border-radius: 0; }
     .graph-header p, .graph-header-actions > span { display: none; }
-    .graph-body { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 48%) minmax(0, 1fr); }
+    .graph-body, .graph-body.comparison-open { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 48%) minmax(0, 1fr); }
     .graph-inspector { border-top: 1px solid var(--line); border-left: 0; }
+    .comparison-columns { grid-template-columns: 1fr; }
   }
 </style>
