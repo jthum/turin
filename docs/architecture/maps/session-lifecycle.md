@@ -66,6 +66,14 @@ End session:
 3. Close the durability channel and await the background persistence task.
 4. Cancel the session token and clear the harness engine.
 
+Delete persisted session:
+
+1. Resolve the session reference and its state store.
+2. Refuse deletion while any runtime slot still has the session open.
+3. In one transaction, remove the turn graph, transcript, tools, events,
+   semantic graph, and session-scoped KV/memory before removing the session row.
+4. Leave unrelated worklists intact while clearing stale session claim references.
+
 ## Invariants
 
 - A resumed session must belong to the requested agent.
@@ -77,6 +85,9 @@ End session:
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
+- Deleting a session must never race an open runtime or leave a partial graph.
+- Session deletion owns session-scoped KV and memory, including namespaced scope
+  keys, but must not delete agent/user/global memory or worklist records.
 - Fork-sibling sidesteps must not mutate the persisted active head.
 - The background durability lane should reuse its event writer/connection for sequential event writes, but must recreate it after a write error so connection-local failures do not poison the lane.
 

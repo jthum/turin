@@ -141,6 +141,9 @@ session state, invent renderer-specific harness APIs, or bypass
     as separate views. Its multi-file editor lazily reads source, keeps additions,
     replacements, and deletions in browser-local buffers, and enables batch save
     only when the exact current candidate has passed daemon validation.
+40. Conversation deletion is an explicit destructive action backed by the typed
+    daemon lifecycle operation. The browser confirms scope, refuses while the
+    session remains live, and returns to a fresh draft after durable deletion.
 
 ## Invariants
 
@@ -164,6 +167,9 @@ session state, invent renderer-specific harness APIs, or bypass
   the session because the daemon may have evicted its idle runtime slot.
 - Automatic title generation belongs to the active harness. Browser clients
   must not race that policy with their own persisted first-prompt title.
+- Conversation deletion must remain daemon-owned and transactional. The browser
+  must not hide a session locally as a substitute for deleting its persisted
+  graph, and an active runtime must block deletion.
 - Parsed assistant Markdown must be sanitized before using Svelte's raw-HTML rendering.
   Remote images and generated inline styles remain disabled in the transcript.
 - Raw persisted tool-result messages remain diagnostic data, not chat bubbles.

@@ -48,6 +48,9 @@
   let titleDraft = "";
   let titleSaving = false;
   let titleError = "";
+  let deleteOpen = false;
+  let deleting = false;
+  let deleteError = "";
   let draftAgentId = "default";
   let inferenceContext = "";
   let graphOpen = false;
@@ -189,6 +192,9 @@
     branchActionError = "";
     branchActionTurnId = null;
     titleError = "";
+    deleteOpen = false;
+    deleting = false;
+    deleteError = "";
     subscription?.close();
     subscription = null;
     if (!sessionId) return;
@@ -829,6 +835,22 @@
     }
   }
 
+  async function deleteConversation() {
+    if (!selectedSessionId || deleting || selectedLive) return;
+    deleting = true;
+    deleteError = "";
+    try {
+      await client.deleteSession(selectedSessionId);
+      deleteOpen = false;
+      onNewConversation();
+      await onStatusChanged();
+    } catch (reason) {
+      deleteError = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      deleting = false;
+    }
+  }
+
   async function refreshAfterGraphChange() {
     await loadDetail(false, true);
     await onStatusChanged();
@@ -947,6 +969,7 @@
           <h1>{selectedSummary ? titleForSession(selectedSummary) : "Assistant"}</h1>
           {#if selectedSummary}
             <button class="title-edit-button" aria-label="Rename conversation" title="Rename conversation" onclick={startTitleEdit}><Icon name="edit" size={13} /></button>
+            <button class="title-edit-button title-delete-button" aria-label="Delete conversation" title="Delete conversation" onclick={() => { deleteOpen = true; deleteError = ""; }}><Icon name="trash" size={13} /></button>
           {/if}
         {/if}
         {#if selectedLive?.active_tasks}
@@ -1431,6 +1454,19 @@
             <button class="primary" disabled={!forkName.trim() || Boolean(branchAction)}>{branchAction === `fork:${forkDialogMessage.turn_id}` ? "Creating path..." : "Create and open"}</button>
           </div>
         </form>
+      </div>
+    </div>
+  {/if}
+
+  {#if deleteOpen && selectedSummary}
+    <div class="overlay confirm-overlay" role="presentation" onclick={(event) => { if (event.target === event.currentTarget && !deleting) deleteOpen = false; }}>
+      <div class="confirm-dialog conversation-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-conversation-title">
+        <header><span class="dialog-mark danger"><Icon name="trash" size={18} /></span><button class="dialog-close" aria-label="Close" disabled={deleting} onclick={() => deleteOpen = false}><Icon name="close" size={16} /></button></header>
+        <h2 id="delete-conversation-title">Delete this conversation?</h2>
+        <p><strong>{titleForSession(selectedSummary)}</strong> and its complete branch history, messages, tool records, and session-scoped data will be permanently removed.</p>
+        {#if selectedLive}<div class="delete-session-warning"><Icon name="activity" size={14} /><span>This conversation is still open in a Turin runtime. Wait for the runtime to close before deleting it.</span></div>{/if}
+        {#if deleteError}<div class="delete-session-error">{deleteError}</div>{/if}
+        <div class="dialog-actions"><button disabled={deleting} onclick={() => deleteOpen = false}>Keep conversation</button><button class="danger-confirm" disabled={deleting || Boolean(selectedLive)} onclick={deleteConversation}>{deleting ? "Deleting..." : "Delete permanently"}</button></div>
       </div>
     </div>
   {/if}

@@ -1989,6 +1989,21 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
 }
 
 #[tokio::test]
+async fn session_delete_rejects_a_live_runtime() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let live = state
+        .open_session("default", Some("delete-guard"), None)
+        .await?;
+
+    let error = state.delete_session(&live.session_id).await.unwrap_err();
+    assert!(error.downcast_ref::<SessionDeleteBusy>().is_some());
+    assert!(state.get_session(&live.session_id).await?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
 async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

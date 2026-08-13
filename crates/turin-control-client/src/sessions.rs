@@ -175,6 +175,18 @@ impl ControlClient {
         .await
     }
 
+    pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        let _: serde_json::Value = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionDelete(SessionIdParams {
+                    session_id: session_id.to_string(),
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn list_session_branches(
         &self,
         session_id: &str,

@@ -32,6 +32,7 @@ use crate::kernel::config::{ThinkingConfig, TurinConfig};
 use crate::persistence::state::StateStore;
 
 pub(crate) use harness_sources::HarnessSourceConflict;
+pub(crate) use runtime_sessions::SessionDeleteBusy;
 pub(crate) use runtime_sessions::session_store_selector_from_filters;
 pub(crate) use scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,

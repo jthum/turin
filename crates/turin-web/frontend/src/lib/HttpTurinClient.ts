@@ -92,6 +92,13 @@ export class HttpTurinClient implements TurinClient {
     return result.session;
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.request<{ deleted: string }>("/api/session", {
+      method: "DELETE",
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+  }
+
   async submitTask(input: {
     agent_id?: string;
     session_id?: string;

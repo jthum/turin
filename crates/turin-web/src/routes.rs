@@ -192,6 +192,11 @@ struct WebSessionTitleRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct WebSessionDeleteRequest {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct WebBranchCreateRequest {
     session_id: String,
     #[serde(default)]
@@ -253,6 +258,11 @@ struct WebSessionBranchResponse {
 #[derive(Debug, Serialize)]
 struct WebSessionTitleResponse {
     session: SessionSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct WebSessionDeletedResponse {
+    deleted: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -384,6 +394,7 @@ async fn route_request(
         (Method::GET, "/api/session/path") => handle_session_path(req, &state).await,
         (Method::GET, "/api/session/graph") => handle_session_graph(req, &state).await,
         (Method::PUT, "/api/session/title") => handle_session_title(req, &state).await,
+        (Method::DELETE, "/api/session") => handle_session_delete(req, &state).await,
         (Method::POST, "/api/session/branches") => handle_branch_create(req, &state).await,
         (Method::POST, "/api/session/branches/checkout") => {
             handle_branch_checkout(req, &state).await
@@ -726,6 +737,42 @@ async fn handle_session_title(
         StatusCode::OK,
         &WebSessionTitleResponse { session },
     ))
+}
+
+async fn handle_session_delete(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: WebSessionDeleteRequest = read_json(req).await?;
+    let session_id = params.session_id.trim();
+    if session_id.is_empty() {
+        return Err(WebError::bad_request(
+            "invalid_session_id",
+            "Session id must not be empty",
+        ));
+    }
+    state
+        .client
+        .delete_session(session_id)
+        .await
+        .map_err(session_delete_error)?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSessionDeletedResponse {
+            deleted: session_id.to_string(),
+        },
+    ))
+}
+
+fn session_delete_error(err: anyhow::Error) -> WebError {
+    let message = err.to_string();
+    if let Some(message) = message.strip_prefix("resource_busy: ") {
+        WebError::new(StatusCode::CONFLICT, "session_active", message)
+    } else if let Some(message) = message.strip_prefix("session_not_found: ") {
+        WebError::new(StatusCode::NOT_FOUND, "session_not_found", message)
+    } else {
+        WebError::upstream(format!("Failed to delete session: {message}"))
+    }
 }
 
 fn validate_session_title(params: &WebSessionTitleRequest) -> std::result::Result<(), WebError> {

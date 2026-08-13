@@ -41,6 +41,7 @@ export interface TurinClient {
   openSession(agentId: string): Promise<LiveSession>;
   resumeSession(sessionId: string, slotId?: string): Promise<LiveSession>;
   setSessionTitle(sessionId: string, title: string): Promise<SessionSummary>;
+  deleteSession(sessionId: string): Promise<void>;
   submitTask(input: {
     agent_id?: string;
     session_id?: string;

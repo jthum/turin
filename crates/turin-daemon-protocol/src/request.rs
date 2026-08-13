@@ -110,6 +110,8 @@ pub enum DaemonRequest {
     SessionGraphGet(SessionIdParams),
     #[serde(rename = "session.set_title")]
     SessionSetTitle(SessionTitleParams),
+    #[serde(rename = "session.delete")]
+    SessionDelete(SessionIdParams),
     #[serde(rename = "session.branch_list")]
     SessionBranchList(SessionIdParams),
     #[serde(rename = "session.branch_create")]

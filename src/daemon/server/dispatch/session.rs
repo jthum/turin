@@ -7,9 +7,10 @@ use crate::daemon::state::session_store_selector_from_filters;
 
 use super::{
     DispatchContext, emit_event, not_found_error, optional_response, optional_response_with_event,
-    serialize_response_with_event, validation_error,
+    resource_busy_error, serialize_response_with_event, validation_error,
 };
 use crate::daemon::protocol::ErrorCode;
+use crate::daemon::state::SessionDeleteBusy;
 
 pub(super) async fn list(
     id: Option<String>,
@@ -183,6 +184,30 @@ pub(super) async fn set_title(
         ErrorCode::SessionNotFound,
         || format!("Session '{}' not found", params.session_id),
     )
+}
+
+pub(super) async fn delete(
+    id: Option<String>,
+    params: SessionIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.write().await;
+    match guard.delete_session(&params.session_id).await {
+        Ok(true) => {
+            let result = serde_json::json!({ "deleted": params.session_id });
+            emit_event(&ctx.event_tx, "session.deleted", result.clone());
+            ResponseEnvelope::ok(id, result)
+        }
+        Ok(false) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!("Session '{}' not found", params.session_id),
+        ),
+        Err(err) if err.downcast_ref::<SessionDeleteBusy>().is_some() => {
+            resource_busy_error(id, err)
+        }
+        Err(err) => validation_error(id, err),
+    }
 }
 
 pub(super) async fn branch_list(

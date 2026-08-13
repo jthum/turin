@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The daemon runtime state surface bridges daemon protocol handlers to the kernel agent manager and persisted session stores. It owns runtime task submission, live session control, sidestep execution, session listing/search/detail, and branch operations.
+The daemon runtime state surface bridges daemon protocol handlers to the kernel agent manager and persisted session stores. It owns runtime task submission, live session control, sidestep execution, session listing/search/detail/deletion, and branch operations.
 
 This subsystem should preserve three guarantees:
 
@@ -16,8 +16,8 @@ This subsystem should preserve three guarantees:
   - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, channel persistence/inference lookup, and live-session filtering.
 - `src/daemon/state/runtime_sessions.rs`
   - Persisted session list/search/detail/title, on-demand turn-topology projection,
-    branch listing/sibling lookup/create/checkout, persisted-session target
-    resolution, and live branch target guards.
+    branch listing/sibling lookup/create/checkout, durable deletion,
+    persisted-session target resolution, and live mutation guards.
 - `src/daemon/state/harness_actions.rs`
   - Harness action runtime targeting, agent execution identity resolution, and action result collection.
 - `src/daemon/state/harness_sources.rs`
@@ -127,6 +127,17 @@ Exact-turn branch creation follows the same live-slot rules when activation is
 requested. Non-activating forks may target a turn on any path; the store
 validates that the turn belongs to the resolved session.
 
+Persisted session deletion:
+
+1. `runtime_sessions.rs` resolves the session reference and checks every live
+   runtime slot before opening the selected store.
+2. Any attached live slot rejects deletion with `resource_busy`; clients must
+   explicitly end that runtime first.
+3. Persistence removes the session-owned transcript, branches, events, tool
+   executions, semantic graph, and session-scoped data in one transaction.
+4. Work items survive deletion but any claim owned by the deleted session is
+   released.
+
 ## Invariants
 
 - Bare persisted session references use `StoreSelector::Alias("state")`.
@@ -166,6 +177,9 @@ validates that the turn belongs to the resolved session.
   detail load the complete turn tree.
 - Exact-turn branch creation must validate session ownership and must not
   silently resolve the same numeric depth on the active path.
+- Session deletion must reject any attached live runtime, regardless of slot.
+- Session deletion must be transactional and must not delete durable work
+  items merely because the session claimed them.
 
 ## Common Changes
 
@@ -186,6 +200,13 @@ Change persisted session/branch behavior:
 1. Update `runtime_sessions.rs`.
 2. Preserve store-qualified session references and live-slot ambiguity handling.
 3. Run `cargo test -p turin --lib session_branch`.
+
+Change persisted session deletion:
+
+1. Update `runtime_sessions.rs` and the persistence session transaction.
+2. Preserve live-runtime rejection and release rather than delete work claims.
+3. Run `cargo test -p turin --lib deleting_session` and the control-client
+   connectivity tests.
 
 ## Tests
 

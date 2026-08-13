@@ -236,6 +236,20 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
         Some(first_turn.turn_id)
     );
 
+    let delete_error = client
+        .delete_session(&opened.session_id)
+        .await
+        .expect_err("a live session must not be deleted");
+    assert!(delete_error.to_string().starts_with("resource_busy: "));
+
+    client.kill_session(&opened.session_id).await?;
+    client.delete_session(&opened.session_id).await?;
+    let missing_error = client
+        .get_session(&opened.session_id)
+        .await
+        .expect_err("a deleted session must not remain readable");
+    assert!(missing_error.to_string().starts_with("session_not_found: "));
+
     Ok(())
 }
 

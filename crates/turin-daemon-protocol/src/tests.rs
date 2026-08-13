@@ -154,6 +154,19 @@ fn session_graph_and_exact_turn_branch_requests_round_trip() {
 }
 
 #[test]
+fn session_delete_request_round_trips() {
+    let request = RequestEnvelope::new(
+        Some("req_delete_session".to_string()),
+        DaemonRequest::SessionDelete(SessionIdParams {
+            session_id: "019f-session".to_string(),
+        }),
+    );
+    let value = serde_json::to_value(request).expect("serialize session deletion");
+    assert_eq!(value["op"], "session.delete");
+    assert_eq!(value["params"]["session_id"], "019f-session");
+}
+
+#[test]
 fn memory_list_round_trips_filters_and_window() {
     let request = RequestEnvelope::new(
         Some("req_memory".to_string()),

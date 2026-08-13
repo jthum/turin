@@ -27,7 +27,7 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 - `crates/turin-daemon-protocol/src/worklists.rs`
   - Worklist and work item query/detail DTOs.
 - `crates/turin-daemon-protocol/src/sessions.rs`
-  - Session open/resume/list/search/title/branch/live-target DTOs.
+  - Session open/resume/list/search/title/delete/branch/live-target DTOs.
 - `crates/turin-daemon-protocol/src/request.rs`
   - `DaemonRequest` operation enum and op-name serde mapping.
 - `crates/turin-daemon-protocol/src/envelopes.rs`
@@ -39,6 +39,8 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 
 - Public DTOs remain re-exported from the crate root.
 - `DaemonRequest` variant serde names are the daemon wire contract.
+- `session.delete` uses the shared session-id shape and remains transport
+  independent; deletion semantics belong to daemon state and persistence.
 - Response error codes serialize as snake_case.
 - Default values must stay explicit where they affect wire behavior.
 - Domain DTO modules should not depend on daemon server, manager, or control-client code.

@@ -142,6 +142,194 @@ async fn test_events_isolated_by_session() {
 }
 
 #[tokio::test]
+async fn deleting_session_removes_owned_graph_and_scoped_data_transactionally() {
+    let store = StateStore::open_memory().await.unwrap();
+    let public_id = uuid::Uuid::now_v7();
+    let session = store
+        .create_session(public_id, "default", Some(r#"{"title":"Delete me"}"#))
+        .await
+        .unwrap();
+    let retained_session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_event(session, None, "session_start", &json!({}))
+        .await
+        .unwrap();
+    store
+        .insert_event(retained_session, None, "session_start", &json!({}))
+        .await
+        .unwrap();
+    store
+        .insert_message(session, turn(0), "user", &json!("hello"), Some(1))
+        .await
+        .unwrap();
+    store
+        .insert_tool_execution(
+            session,
+            turn(0),
+            "call-1",
+            "lookup",
+            &json!({}),
+            Some("done"),
+            false,
+            Some(1),
+            "allow",
+        )
+        .await
+        .unwrap();
+    let bare_id = public_id.simple().to_string();
+    store
+        .kv_set("session", &bare_id, "draft", "value")
+        .await
+        .unwrap();
+    store
+        .kv_set(
+            "session",
+            &json!({ "namespace": "notes", "key": bare_id }).to_string(),
+            "draft",
+            "value",
+        )
+        .await
+        .unwrap();
+
+    let conn = store.get_connection().await.unwrap();
+    conn.execute(
+        "INSERT INTO graph_nodes (public_id, session_id, kind) VALUES (?1, ?2, 'note')",
+        turso::params![uuid::Uuid::now_v7().into_bytes().to_vec(), session],
+    )
+    .await
+    .unwrap();
+    let memory_public_id = uuid::Uuid::now_v7();
+    conn.execute(
+        "INSERT INTO memories (public_id, scope_kind, scope_key, content) VALUES (?1, 'session', ?2, 'remember')",
+        turso::params![memory_public_id.into_bytes().to_vec(), bare_id.clone()],
+    )
+    .await
+    .unwrap();
+    store
+        .apply_memory_feedback(
+            "session",
+            &bare_id,
+            memory_public_id,
+            0.1,
+            0.0,
+            2.0,
+            Some("useful"),
+            None,
+        )
+        .await
+        .unwrap();
+    let worklist = store.open_worklist("retained", "", None).await.unwrap();
+    let item = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Survive session deletion",
+            item_kind: "prompt",
+            prompt: Some("continue"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .try_claim_work_item(
+                item.id,
+                "default",
+                Some(&format!("{}@state", bare_id)),
+                Some("execution"),
+                1_700_000_000_000,
+            )
+            .await
+            .unwrap()
+    );
+
+    assert!(store.delete_session_by_public_id(public_id).await.unwrap());
+    assert!(!store.delete_session_by_public_id(public_id).await.unwrap());
+    assert!(store.get_session_row(session).await.unwrap().is_none());
+    assert!(
+        store
+            .get_session_row(retained_session)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let conn = store.get_connection().await.unwrap();
+    for table in ["events", "turns", "branch_heads", "graph_nodes"] {
+        let mut rows = conn
+            .query(
+                &format!("SELECT COUNT(*) FROM {table} WHERE session_id = ?1"),
+                [session],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0
+        );
+    }
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM kv WHERE scope_kind = 'session' AND (scope_key = ?1 OR (json_valid(scope_key) AND json_extract(scope_key, '$.key') = ?1))",
+            [bare_id.clone()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        0
+    );
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM memories WHERE scope_kind = 'session' AND scope_key = ?1",
+            [bare_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        0
+    );
+    let mut rows = conn
+        .query("SELECT COUNT(*) FROM memory_feedback_events", ())
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        0
+    );
+    let retained_item = store
+        .get_work_item_by_id(item.id)
+        .await
+        .unwrap()
+        .expect("work item must survive session deletion");
+    assert_eq!(retained_item.status, "pending");
+    assert!(retained_item.claim_agent_id.is_none());
+    assert!(retained_item.claim_session_id.is_none());
+    assert!(retained_item.claim_execution_id.is_none());
+    assert_eq!(
+        store
+            .get_events(retained_session, &active_branch())
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn test_scheduled_job_run_bookkeeping_tracks_parallel_active_runs() {
     let store = StateStore::open_memory().await.unwrap();
     let job_id = store

@@ -29,6 +29,13 @@ use crate::persistence::state::{SessionReadTarget, StateStore};
 
 const SESSION_EXECUTION_EVENT_LIMIT: usize = 400;
 
+#[derive(Debug, thiserror::Error)]
+#[error("Session '{session_id}' is still open in {runtime_count} runtime slot(s)")]
+pub(crate) struct SessionDeleteBusy {
+    session_id: String,
+    runtime_count: usize,
+}
+
 impl DaemonState {
     #[instrument(skip(self), fields(store = %store_selector_label_opt(store_selector.as_ref())))]
     pub async fn list_sessions(
@@ -462,6 +469,29 @@ impl DaemonState {
         Ok(updated
             .as_ref()
             .map(|row| session_summary_from_row_and_selector(row, &store_selector)))
+    }
+
+    pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
+        let (store_selector, public_id) = persisted_session_target(session_id)?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        let live = self.live_session_snapshots(&public_id_bytes).await;
+        if !live.is_empty() {
+            return Err(SessionDeleteBusy {
+                session_id: session_id.to_string(),
+                runtime_count: live.len(),
+            }
+            .into());
+        }
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let deleted = store.delete_session_by_public_id(public_id).await?;
+        if deleted {
+            info!(
+                session_id = %session_id,
+                store = %describe_store_selector(&store_selector),
+                "Deleted persisted session"
+            );
+        }
+        Ok(deleted)
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
