@@ -54,6 +54,34 @@ fn full_input_schema_passthrough_is_supported() {
 }
 
 #[test]
+fn required_virtual_tool_args_are_checked_before_lua_invocation() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "title": { "type": "string" }
+        },
+        "required": ["title"]
+    });
+
+    validate_required_virtual_tool_args(
+        "set_conversation_title",
+        &schema,
+        &json!({
+            "title": "Memory investigation"
+        }),
+    )
+    .unwrap();
+
+    let error = validate_required_virtual_tool_args(
+        "set_conversation_title",
+        &schema,
+        &json!({ "name": "Memory investigation" }),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "required argument 'title' is missing");
+}
+
+#[test]
 fn handler_plan_supports_single_and_sequence_shapes() {
     let single = parse_handler_plan(&json!({
         "__kind": "tool_call",

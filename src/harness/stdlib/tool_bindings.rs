@@ -5,6 +5,7 @@ use crate::harness::stdlib::system_globals::ensure_load_time;
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
     normalize_tool_declaration, parse_handler_output, parse_result_handler_output, shell_quote,
+    validate_required_virtual_tool_args,
 };
 
 const DECLARED_TOOL_REGISTRY_KEY: &str = "__harness_declared_tools";
@@ -177,6 +178,9 @@ pub(crate) fn invoke_declared_virtual_tool(
     };
 
     let handler: Function = entry.get("handler")?;
+    let input_schema = entry.get::<Value>("input_schema")?;
+    let input_schema = lua.from_value::<serde_json::Value>(input_schema)?;
+    validate_required_virtual_tool_args(name, &input_schema, &args)?;
     let lua_args = lua.to_value(&args)?;
     let result = handler.call::<Value>(lua_args)?;
     let result = lua.from_value::<serde_json::Value>(result).map_err(|err| {

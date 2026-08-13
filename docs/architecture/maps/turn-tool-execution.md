@@ -36,11 +36,12 @@ Normal tool call:
 
 Virtual tool call:
 
-1. The main executor asks the harness engine for a virtual tool plan.
-2. `virtual_tools.rs` expands the plan into synthetic pending calls.
-3. Nested calls run hidden from provider history until the outer virtual tool is finalized.
-4. Result handlers may return final output or another virtual plan.
-5. Recursion and nesting-depth checks apply before each virtual expansion.
+1. The main executor asks the harness engine to invoke the declared tool.
+2. Required arguments from the declaration schema are checked before entering Lua.
+3. `virtual_tools.rs` expands a returned plan into synthetic pending calls.
+4. Nested calls run hidden from provider history until the outer virtual tool is finalized.
+5. Result handlers may return final output or another virtual plan.
+6. Recursion and nesting-depth checks apply before each virtual expansion.
 
 Plan submission:
 
@@ -54,6 +55,9 @@ Plan submission:
 - Governance capability checks apply to native registered tools before execution.
 - Virtual tool expansion must reject direct or indirect recursion.
 - Virtual tool nesting must stay under `MAX_VIRTUAL_TOOL_DEPTH`.
+- Provider calls missing declaration-required virtual-tool arguments must fail
+  before invoking the Lua handler, so malformed calls produce stable tool errors
+  rather than incidental Lua conversion traces.
 - Nested virtual calls should not publish intermediate tool messages to provider history.
 - `on_tool_result` applies after execution and before persistence/history publication.
 - Tool execution audit start/end and tool result rows should remain paired where possible.

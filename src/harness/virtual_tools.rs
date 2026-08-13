@@ -130,6 +130,32 @@ pub fn normalize_tool_declaration(
     })
 }
 
+pub fn validate_required_virtual_tool_args(
+    tool_name: &str,
+    input_schema: &Value,
+    args: &Value,
+) -> Result<()> {
+    let Some(required) = input_schema.get("required").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if required.is_empty() {
+        return Ok(());
+    }
+
+    let args = args.as_object().with_context(|| {
+        format!(
+            "arguments for virtual tool '{}' must be a JSON object",
+            tool_name
+        )
+    })?;
+    for field in required.iter().filter_map(Value::as_str) {
+        if args.get(field).is_none_or(Value::is_null) {
+            bail!("required argument '{}' is missing", field);
+        }
+    }
+    Ok(())
+}
+
 fn params_to_input_schema(tool_name: &str, params: Value) -> Result<Value> {
     let params = params
         .as_object()

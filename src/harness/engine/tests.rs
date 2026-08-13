@@ -2403,6 +2403,37 @@ fn test_engine_invokes_direct_virtual_tool_output() {
 }
 
 #[test]
+fn test_engine_rejects_missing_required_virtual_tool_argument_before_handler() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("main.lua"),
+        r#"
+            tool.declare("set_conversation_title", {
+                description = "Set the conversation title",
+                params = {
+                    title = { type = "string", required = true }
+                },
+                handler = function(args)
+                    error("handler should not run")
+                end
+            })
+            "#,
+    )
+    .unwrap();
+
+    let mut engine = HarnessEngine::new(test_app_data()).unwrap();
+    engine.load_dir(dir.path()).unwrap();
+
+    let error = engine
+        .invoke_virtual_tool(
+            "set_conversation_title",
+            serde_json::json!({ "name": "Wrong field" }),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "required argument 'title' is missing");
+}
+
+#[test]
 fn test_engine_invokes_declared_action_handler() {
     let dir = TempDir::new().unwrap();
     std::fs::write(

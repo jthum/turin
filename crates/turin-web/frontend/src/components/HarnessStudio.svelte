@@ -34,7 +34,7 @@
       title: "Lifecycle hooks",
       description: "Shape prompts and react to every stage of an agent turn.",
       docs: "docs/reference/hooks.md",
-      code: `function on_turn_prepare(turn)\n  if turn.session.is_first_user_message then\n    turn.tools:include("set_session_title")\n  else\n    turn.tools:exclude("set_session_title")\n  end\n  return ALLOW\nend`,
+      code: `function on_turn_prepare(turn)\n  if turn.session.is_first_user_message then\n    turn.tools:include("set_conversation_title")\n  else\n    turn.tools:exclude("set_conversation_title")\n  end\n  return ALLOW\nend`,
     },
     {
       title: "Actions and tools",
