@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use tracing::error;
 
@@ -93,37 +93,52 @@ impl HarnessEngine {
     /// no scripts are loaded (harness-free operation).
     pub fn load_dir(&mut self, dir: &Path) -> Result<()> {
         set_loading_phase(&self.lua, true);
-        if !dir.exists() {
+        let source_overlay = self
+            .lua
+            .app_data_ref::<HarnessAppData>()
+            .and_then(|app_data| app_data.source_overlay.clone());
+        if !dir.exists() && source_overlay.is_none() {
             set_loading_phase(&self.lua, false);
             return Ok(());
         }
 
         clear_active_modules(&self.lua);
 
-        let mut entries: Vec<_> = std::fs::read_dir(dir)
-            .with_context(|| format!("Failed to read harness directory: {}", dir.display()))?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "lua")
-                    .unwrap_or(false)
-            })
-            .collect();
+        let mut paths = BTreeSet::new();
+        if dir.exists() {
+            for entry in std::fs::read_dir(dir)
+                .with_context(|| format!("Failed to read harness directory: {}", dir.display()))?
+                .filter_map(|entry| entry.ok())
+            {
+                let path = entry.path();
+                if path.extension().is_some_and(|extension| extension == "lua") {
+                    paths.insert(PathBuf::from(entry.file_name()));
+                }
+            }
+        }
+        if let Some(overlay) = &source_overlay {
+            for (path, present) in overlay.root_lua_paths() {
+                if present {
+                    paths.insert(path.to_path_buf());
+                } else {
+                    paths.remove(path);
+                }
+            }
+        }
 
-        // Sort alphabetically for deterministic evaluation order
-        entries.sort_by_key(|e| e.file_name());
-
-        for entry in entries {
-            let path = entry.path();
+        for relative_path in paths {
+            let path = dir.join(&relative_path);
             let name = path
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
 
-            let source = std::fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read harness script: {}", path.display()))?;
+            let source = match &source_overlay {
+                Some(overlay) => overlay.read_to_string(dir, &path),
+                None => std::fs::read_to_string(&path),
+            }
+            .with_context(|| format!("Failed to read harness script: {}", path.display()))?;
 
             self.load_script(&name, &source, &path)?;
         }

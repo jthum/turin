@@ -227,7 +227,7 @@ impl DaemonState {
     }
 
     pub fn harness_issues(&self, harness_id: &str) -> Result<Option<Vec<RegistryIssue>>> {
-        let Some(harness_dir) = self.resolve_harness_issue_root(harness_id) else {
+        let Some(harness_dir) = self.resolve_harness_root(harness_id) else {
             return Ok(None);
         };
         Ok(Some(
@@ -302,7 +302,7 @@ impl DaemonState {
         self.watch_paths().channels_dir.join(channel_id)
     }
 
-    fn resolve_harness_issue_root(&self, harness_id: &str) -> Option<PathBuf> {
+    pub(super) fn resolve_harness_root(&self, harness_id: &str) -> Option<PathBuf> {
         if harness_id == "default" {
             return Some(PathBuf::from(&self.bootstrap_config.harness.directory));
         }

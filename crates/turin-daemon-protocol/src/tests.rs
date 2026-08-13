@@ -40,6 +40,44 @@ fn request_envelope_round_trips_typed_shape() {
 }
 
 #[test]
+fn harness_source_candidate_and_save_requests_round_trip() {
+    let validate = RequestEnvelope::new(
+        Some("req_validate_source".to_string()),
+        DaemonRequest::HarnessSourceValidate(HarnessSourceValidateParams {
+            id: "operator".to_string(),
+            changes: vec![
+                HarnessSourceOverlay {
+                    path: "main.lua".to_string(),
+                    source: Some("use('libs/security')".to_string()),
+                },
+                HarnessSourceOverlay {
+                    path: "libs/security.lua".to_string(),
+                    source: Some("return {}".to_string()),
+                },
+            ],
+        }),
+    );
+    let value = serde_json::to_value(validate).expect("serialize source validation");
+    assert_eq!(value["op"], "harness.source.validate");
+    assert_eq!(value["params"]["changes"][1]["path"], "libs/security.lua");
+
+    let save = RequestEnvelope::new(
+        Some("req_save_source".to_string()),
+        DaemonRequest::HarnessSourceSave(HarnessSourceSaveParams {
+            id: "operator".to_string(),
+            changes: vec![HarnessSourceSaveChange {
+                path: "main.lua".to_string(),
+                source: Some("return {}".to_string()),
+                expected_hash: Some("abc123".to_string()),
+            }],
+        }),
+    );
+    let value = serde_json::to_value(save).expect("serialize source save");
+    assert_eq!(value["op"], "harness.source.save");
+    assert_eq!(value["params"]["changes"][0]["expected_hash"], "abc123");
+}
+
+#[test]
 fn session_get_accepts_full_and_windowed_request_shapes() {
     let full: RequestEnvelope = serde_json::from_value(json!({
         "op": "session.get",

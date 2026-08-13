@@ -191,6 +191,18 @@ impl ExecutionHost {
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
         runtime.validate(self.harness_init_context())
     }
+
+    pub(crate) fn validate_named_harness_sources(
+        &self,
+        harness_id: &str,
+        source_overlay: crate::harness::source::HarnessSourceOverlay,
+    ) -> Result<usize> {
+        let runtime = self
+            .harness_manager
+            .runtime_by_id(harness_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
+        runtime.validate_sources(self.harness_init_context(), source_overlay)
+    }
 }
 
 impl Kernel {

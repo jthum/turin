@@ -93,6 +93,7 @@ fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> Harnes
         active_modules: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         watch_roots: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         loading_phase: std::sync::Arc::new(std::sync::Mutex::new(true)),
+        source_overlay: None,
     }
 }
 
@@ -2859,6 +2860,13 @@ fn test_engine_use_activates_script_and_table_blocks() {
             "blocks/script_style#use1".to_string(),
             "blocks/table_style#use1".to_string(),
             "main".to_string()
+        ]
+    );
+    assert_eq!(
+        engine.explicit_watch_roots(),
+        vec![
+            dir.path().join("blocks/script_style.lua"),
+            dir.path().join("blocks/table_style.lua")
         ]
     );
 

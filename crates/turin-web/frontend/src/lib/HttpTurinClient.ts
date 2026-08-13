@@ -18,6 +18,12 @@ import type {
   HarnessIssue,
   HarnessRuntime,
   HarnessValidation,
+  HarnessSourceEntry,
+  HarnessSourceFile,
+  HarnessSourceOverlay,
+  HarnessSourceSaveChange,
+  HarnessSourceSaveResult,
+  HarnessSourceValidation,
   ScheduleCreateInput,
   ScheduleJob,
   ScheduleRun,
@@ -210,6 +216,39 @@ export class HttpTurinClient implements TurinClient {
       body: JSON.stringify({ id }),
     });
     return result.validation;
+  }
+
+  async harnessSources(id: string): Promise<HarnessSourceEntry[]> {
+    const params = new URLSearchParams({ id });
+    const result = await this.request<{ files: HarnessSourceEntry[] }>(
+      `/api/harnesses/sources?${params}`,
+    );
+    return result.files;
+  }
+
+  harnessSource(id: string, path: string): Promise<HarnessSourceFile> {
+    const params = new URLSearchParams({ id, path });
+    return this.request(`/api/harnesses/source?${params}`);
+  }
+
+  validateHarnessSources(
+    id: string,
+    changes: HarnessSourceOverlay[],
+  ): Promise<HarnessSourceValidation> {
+    return this.request("/api/harnesses/sources/validate", {
+      method: "POST",
+      body: JSON.stringify({ id, changes }),
+    });
+  }
+
+  saveHarnessSources(
+    id: string,
+    changes: HarnessSourceSaveChange[],
+  ): Promise<HarnessSourceSaveResult> {
+    return this.request("/api/harnesses/sources", {
+      method: "PUT",
+      body: JSON.stringify({ id, changes }),
+    });
   }
 
   reloadHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }> {

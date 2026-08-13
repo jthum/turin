@@ -21,6 +21,8 @@ This file is security-sensitive because it defines how harness code loads other 
   - File path safety and `fs.stat` session hash tracking.
 - `src/harness/engine.rs`
   - Module loading, loaded-module registry, load phase, and watch roots.
+- `src/harness/source.rs`
+  - In-memory source overlay used to validate a complete unsaved harness candidate.
 - `src/harness/stdlib/governance_support.rs`
   - Active subject and capability enforcement.
 - `src/tools.rs`
@@ -33,6 +35,7 @@ Imports:
 1. `import*` resolves or loads a module under the harness directory.
 2. The import policy checks governance mode, scoped/unscoped capability, requested root, and root attribution.
 3. Exported functions are wrapped so active module/root/capability context is restored around calls.
+4. Resolved module files become watch roots so nested imports hot-reload after direct or API-backed saves.
 
 Use blocks:
 
@@ -55,6 +58,8 @@ Filesystem globals:
 - `import_scoped` and `use_scoped` must reject requested roots that cannot be attributed to the module.
 - Delegated import capabilities cannot widen the parent delegation.
 - Imported function wrappers must restore previous module/root/capability context after the call.
+- Candidate validation must resolve top-level and imported modules through the same overlay before falling back to disk.
+- Imported and used module paths must participate in hot reload even when they are nested below the harness root.
 - Filesystem APIs must not bypass safe path resolution.
 - File-content helpers must enforce the max harness file size before reading contents into memory.
 

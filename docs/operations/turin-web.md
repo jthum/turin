@@ -59,6 +59,9 @@ Start with a small API that mirrors what the current clients already need.
 | `GET /api/harnesses` / `GET /api/harness` | Implemented. Loaded harness inventory, source map, bindings, UI declarations, and diagnostics. |
 | `POST /api/harnesses/create` | Implemented. Scaffolds and loads a managed shared harness. |
 | `POST /api/harnesses/validate` / `POST /api/harnesses/reload` | Implemented. Validates scripts and performs atomic runtime reload. |
+| `GET /api/harnesses/sources` / `GET /api/harnesses/source` | Implemented. Lists recursive Lua source metadata and reads one harness-root-relative source with its content hash. |
+| `POST /api/harnesses/sources/validate` | Implemented. Validates a complete unsaved candidate containing added, modified, and deleted source paths without changing disk or the active runtime. |
+| `PUT /api/harnesses/sources` | Implemented. Persists a hash-guarded source batch through the daemon; each replacement is file-atomic and activation remains watcher-driven. |
 | `DELETE /api/harnesses/delete` | Implemented. Guarded deletion for unbound shared harnesses. |
 | `GET /api/operations/schedules` | Implemented. Durable scheduled job inventory. |
 | `POST /api/operations/schedules` | Implemented. Creates prompt or action schedules. |
@@ -72,8 +75,28 @@ Start with a small API that mirrors what the current clients already need.
 | `GET /assets/app.css` | Implemented. First-party shell styling. |
 | `GET /assets/app.js` | Implemented. First-party shell behavior. |
 
-The current version proxies through `turin-control-client` rather than exposing
-new daemon operations.
+The current version proxies typed daemon operations through
+`turin-control-client` rather than implementing runtime or filesystem semantics
+inside the web process.
+
+Harness source paths are relative to the registered harness root, including
+nested paths such as `libs/security.lua`. Candidate validation accepts the
+complete dirty editor set:
+
+```json
+{
+  "id": "operator",
+  "changes": [
+    { "path": "main.lua", "source": "use('libs/security')" },
+    { "path": "libs/security.lua", "source": "return {}" }
+  ]
+}
+```
+
+`source: null` represents a candidate deletion. Saves use the same shape plus
+`expected_hash`: the hash returned by the read endpoint for an existing file,
+or `null` when creating a file that must still be absent. The daemon rejects
+the complete save before replacement when any expected hash is stale.
 
 ## Frontend Build
 
@@ -105,9 +128,11 @@ provides two runtime-wide operational surfaces.
 **Harness Studio** shows every loaded bootstrap, shared, and agent-local
 harness. It exposes bindings, watched roots, loaded scripts, semantic UI apps,
 runtime issues, validation, and atomic reload. It can scaffold shared harnesses
-and delete an unbound shared harness after confirmation. It deliberately does
-not provide arbitrary source-file editing: edits should continue through normal
-workspace tooling until Turin has a validated atomic edit contract.
+and delete an unbound shared harness after confirmation. The control and web
+layers now provide source inspection, complete dirty-buffer validation, and
+conflict-aware saves for a future editor surface. Files remain authoritative:
+the save API does not imply successful validation or activation, and direct
+workspace edits continue through the same watcher and atomic runtime reload.
 
 **Work Operations** joins three related views:
 

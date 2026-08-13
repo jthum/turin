@@ -3,6 +3,7 @@ pub mod dx;
 pub mod engine;
 pub mod globals;
 pub mod scheduler;
+pub(crate) mod source;
 pub mod stdlib;
 pub mod verdict;
 pub mod virtual_tools;

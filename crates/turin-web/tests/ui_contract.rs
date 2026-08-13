@@ -885,6 +885,98 @@ async fn assert_ui_contract_web(base_url: &str, client: &reqwest::Client) -> Res
         .await?;
     assert_eq!(created["harness"]["harness_id"], "studio-contract");
 
+    let sources: Value = client
+        .get(format!("{base_url}/api/harnesses/sources"))
+        .query(&[("id", "studio-contract")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(sources["files"][0]["path"], "main.lua");
+
+    let main_source: Value = client
+        .get(format!("{base_url}/api/harnesses/source"))
+        .query(&[("id", "studio-contract"), ("path", "main.lua")])
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        main_source["hash"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64)
+    );
+
+    let candidate: Value = client
+        .post(format!("{base_url}/api/harnesses/sources/validate"))
+        .json(&json!({
+            "id": "studio-contract",
+            "changes": [
+                { "path": "main.lua", "source": "use('libs/security')" },
+                { "path": "libs/security.lua", "source": "return { enabled = true }" }
+            ]
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(candidate["valid"], true);
+    assert_eq!(candidate["script_count"], 2);
+
+    let saved: Value = client
+        .put(format!("{base_url}/api/harnesses/sources"))
+        .json(&json!({
+            "id": "studio-contract",
+            "changes": [{
+                "path": "libs/security.lua",
+                "source": "return { enabled = true }",
+                "expected_hash": null
+            }]
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let saved_hash = saved["saved"][0]["hash"]
+        .as_str()
+        .context("saved source hash")?;
+    assert_eq!(saved["saved"][0]["path"], "libs/security.lua");
+
+    let conflict = client
+        .put(format!("{base_url}/api/harnesses/sources"))
+        .json(&json!({
+            "id": "studio-contract",
+            "changes": [{
+                "path": "libs/security.lua",
+                "source": "return { enabled = false }",
+                "expected_hash": null
+            }]
+        }))
+        .send()
+        .await?;
+    assert_eq!(conflict.status(), reqwest::StatusCode::CONFLICT);
+
+    let deleted_source: Value = client
+        .put(format!("{base_url}/api/harnesses/sources"))
+        .json(&json!({
+            "id": "studio-contract",
+            "changes": [{
+                "path": "libs/security.lua",
+                "source": null,
+                "expected_hash": saved_hash
+            }]
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(deleted_source["deleted"][0], "libs/security.lua");
+
     let deleted: Value = client
         .delete(format!("{base_url}/api/harnesses/delete"))
         .json(&json!({ "id": "studio-contract" }))

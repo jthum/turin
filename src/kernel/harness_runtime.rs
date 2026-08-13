@@ -11,6 +11,7 @@ use turin_daemon_protocol::UiIntentMessage;
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::scheduler::HarnessSchedulerAccess;
+use crate::harness::source::HarnessSourceOverlay;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
@@ -264,6 +265,15 @@ impl HarnessRuntime {
         Ok(instance.loaded_scripts().len())
     }
 
+    pub(crate) fn validate_sources(
+        &self,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: HarnessSourceOverlay,
+    ) -> Result<usize> {
+        let instance = self.build_instance_with_overlay(ctx, Some(Arc::new(source_overlay)))?;
+        Ok(instance.loaded_scripts().len())
+    }
+
     pub(crate) fn create_instance(
         &self,
         ctx: HarnessRuntimeInitContext,
@@ -271,7 +281,11 @@ impl HarnessRuntime {
         self.build_instance(ctx)
     }
 
-    fn build_app_data(&self, ctx: HarnessRuntimeInitContext) -> HarnessAppData {
+    fn build_app_data(
+        &self,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    ) -> HarnessAppData {
         HarnessAppData {
             fs_root: self.fs_root.clone(),
             workspace_root: self.workspace_root.clone(),
@@ -289,11 +303,20 @@ impl HarnessRuntime {
             active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
             watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
             loading_phase: Arc::new(std::sync::Mutex::new(true)),
+            source_overlay,
         }
     }
 
     fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessInstance> {
-        let mut engine = HarnessEngine::new(self.build_app_data(ctx))
+        self.build_instance_with_overlay(ctx, None)
+    }
+
+    fn build_instance_with_overlay(
+        &self,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    ) -> Result<HarnessInstance> {
+        let mut engine = HarnessEngine::new(self.build_app_data(ctx, source_overlay))
             .context("Failed to create harness engine")?;
         engine.load_dir(&self.directory).with_context(|| {
             format!(

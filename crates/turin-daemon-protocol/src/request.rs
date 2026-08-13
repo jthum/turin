@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BindHarnessParams, ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHeartbeatParams,
     ChannelRunnerHelloParams, CreateAgentParams, CreateChannelParams, EntityIdParams,
-    HarnessActionRunParams, LiveSessionTargetParams, MemoryListParams, NoParams, OpenSessionParams,
-    PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams,
-    ScheduleUpdateParams, SessionBranchCheckoutParams, SessionBranchCreateParams,
-    SessionBranchSiblingsParams, SessionGetParams, SessionIdParams, SessionListParams,
-    SessionSearchParams, SessionTitleParams, SidestepTaskParams, SubmitTaskParams, TaskIdParams,
-    UpdateAgentParams, UpdateChannelParams, WaitTaskParams, WorkItemTargetParams,
-    WorklistItemsParams, WorklistListParams, WorklistTargetParams,
+    HarnessActionRunParams, HarnessSourceGetParams, HarnessSourceSaveParams,
+    HarnessSourceValidateParams, LiveSessionTargetParams, MemoryListParams, NoParams,
+    OpenSessionParams, PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams,
+    ScheduleRunsParams, ScheduleUpdateParams, SessionBranchCheckoutParams,
+    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionGetParams, SessionIdParams,
+    SessionListParams, SessionSearchParams, SessionTitleParams, SidestepTaskParams,
+    SubmitTaskParams, TaskIdParams, UpdateAgentParams, UpdateChannelParams, WaitTaskParams,
+    WorkItemTargetParams, WorklistItemsParams, WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -133,6 +134,14 @@ pub enum DaemonRequest {
     HarnessReload(EntityIdParams),
     #[serde(rename = "harness.validate")]
     HarnessValidate(EntityIdParams),
+    #[serde(rename = "harness.source.list")]
+    HarnessSourceList(EntityIdParams),
+    #[serde(rename = "harness.source.get")]
+    HarnessSourceGet(HarnessSourceGetParams),
+    #[serde(rename = "harness.source.validate")]
+    HarnessSourceValidate(HarnessSourceValidateParams),
+    #[serde(rename = "harness.source.save")]
+    HarnessSourceSave(HarnessSourceSaveParams),
     #[serde(rename = "harness.action_run")]
     HarnessActionRun(HarnessActionRunParams),
     #[serde(rename = "harness.delete")]

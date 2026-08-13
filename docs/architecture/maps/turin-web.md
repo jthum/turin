@@ -136,10 +136,13 @@ session state, invent renderer-specific harness APIs, or bypass
 37. Harness Studio and Work Operations are deterministic lazy-loaded chunks.
     Rust embeds and serves those explicit chunk paths while ordinary assistant
     startup loads only the main browser bootstrap.
+38. Harness source APIs remain thin control-client adapters. They expose recursive Lua source inspection, whole-candidate validation, and hash-guarded batch saves without making `turin-web` a filesystem owner.
 
 ## Invariants
 
 - Runtime state remains in the daemon; web session state remains in the browser.
+- Dirty harness buffers remain browser state until an explicit save. Validation may include all dirty additions, replacements, and deletions without persisting any of them.
+- A source save response means the daemon persisted file changes. Runtime activation remains asynchronous watcher behavior and may retain the previous valid generation when the saved candidate is invalid.
 - Agent selectors must include every effective runtime status. They may join
   registry metadata by id, but must not treat registry peers as the full agent set.
 - Browser model controls submit configured inference-context ids, never raw

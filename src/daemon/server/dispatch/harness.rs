@@ -1,7 +1,10 @@
 use serde_json::json;
 
 use crate::daemon::protocol::ErrorCode;
-use crate::daemon::protocol::{EntityIdParams, HarnessActionRunParams, NoParams, ResponseEnvelope};
+use crate::daemon::protocol::{
+    EntityIdParams, HarnessActionRunParams, HarnessSourceGetParams, HarnessSourceSaveParams,
+    HarnessSourceValidateParams, NoParams, ResponseEnvelope,
+};
 
 use super::{
     DispatchContext, build_runtime_snapshot, emit_event, emit_registry_issue_events,
@@ -113,6 +116,67 @@ pub(super) async fn validate(
         Ok(result) => {
             emit_event(&ctx.event_tx, "harness.validated", result.clone());
             ResponseEnvelope::ok(id, result)
+        }
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn source_list(
+    id: Option<String>,
+    params: EntityIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.list_harness_sources(&params.id) {
+        Ok(result) => serialize_response(id, result, "harness source list"),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn source_get(
+    id: Option<String>,
+    params: HarnessSourceGetParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.get_harness_source(&params.id, &params.path) {
+        Ok(result) => serialize_response(id, result, "harness source"),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn source_validate(
+    id: Option<String>,
+    params: HarnessSourceValidateParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.validate_harness_sources(&params.id, params.changes) {
+        Ok(result) => serialize_response(id, result, "harness source validation"),
+        Err(err) => validation_error(id, err),
+    }
+}
+
+pub(super) async fn source_save(
+    id: Option<String>,
+    params: HarnessSourceSaveParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.save_harness_sources(&params.id, params.changes) {
+        Ok(result) => serialize_response_with_event(
+            id,
+            result,
+            "harness source save",
+            &ctx.event_tx,
+            "harness.source_saved",
+        ),
+        Err(err)
+            if err
+                .downcast_ref::<crate::daemon::state::HarnessSourceConflict>()
+                .is_some() =>
+        {
+            ResponseEnvelope::err(id, ErrorCode::Conflict, err.to_string(), None)
         }
         Err(err) => validation_error(id, err),
     }

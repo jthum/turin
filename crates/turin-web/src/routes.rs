@@ -20,10 +20,11 @@ use turin_control_client::{
     SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
-    DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, MemoryList,
-    MemoryListParams, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleJobRunList, SidestepContextTargetParams, SidestepModeParams, SubmitTaskParams,
-    WorkItemList, WorklistDetail, WorklistItemsParams, WorklistListParams,
+    DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult,
+    HarnessSourceSaveParams, HarnessSourceValidateParams, MemoryList, MemoryListParams,
+    RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail, ScheduleJobRunList,
+    SidestepContextTargetParams, SidestepModeParams, SubmitTaskParams, WorkItemList,
+    WorklistDetail, WorklistItemsParams, WorklistListParams,
 };
 use turin_ui_core::{
     DashboardSnapshot, DashboardState, UiAppRecord, UiListRequest, UiRegistry,
@@ -32,6 +33,7 @@ use turin_ui_core::{
 use url::form_urlencoded;
 
 const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
+const MAX_HARNESS_SOURCE_BODY_BYTES: usize = 32 * 1024 * 1024;
 const DEFAULT_MESSAGE_LIMIT: usize = 48;
 const MAX_MESSAGE_LIMIT: usize = 256;
 const DEFAULT_DATA_LIMIT: u32 = 100;
@@ -393,6 +395,12 @@ async fn route_request(
         (Method::GET, "/api/harness") => handle_harness(req, &state).await,
         (Method::POST, "/api/harnesses/create") => handle_harness_create(req, &state).await,
         (Method::POST, "/api/harnesses/validate") => handle_harness_validate(req, &state).await,
+        (Method::GET, "/api/harnesses/sources") => handle_harness_sources(req, &state).await,
+        (Method::GET, "/api/harnesses/source") => handle_harness_source(req, &state).await,
+        (Method::POST, "/api/harnesses/sources/validate") => {
+            handle_harness_sources_validate(req, &state).await
+        }
+        (Method::PUT, "/api/harnesses/sources") => handle_harness_sources_save(req, &state).await,
         (Method::POST, "/api/harnesses/reload") => handle_harness_reload(req, &state).await,
         (Method::DELETE, "/api/harnesses/delete") => handle_harness_delete(req, &state).await,
         (Method::GET, "/api/operations/schedules") => handle_schedules(&state).await,
@@ -588,6 +596,62 @@ async fn handle_harness_validate(
     ))
 }
 
+async fn handle_harness_sources(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let id = parse_entity_id_query(req.uri().query(), "harness")?;
+    let sources = state
+        .client
+        .list_harness_sources(id)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to list harness sources: {err}")))?;
+    Ok(json_response(StatusCode::OK, &sources))
+}
+
+async fn handle_harness_source(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let (id, path) = parse_harness_source_query(req.uri().query())?;
+    let source = state
+        .client
+        .get_harness_source(id, path)
+        .await
+        .map_err(|err| WebError::upstream(format!("Failed to read harness source: {err}")))?;
+    Ok(json_response(StatusCode::OK, &source))
+}
+
+async fn handle_harness_sources_validate(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: HarnessSourceValidateParams =
+        read_json_with_limit(req, MAX_HARNESS_SOURCE_BODY_BYTES).await?;
+    let id = validate_entity_id(&params.id, "harness")?;
+    let validation = state
+        .client
+        .validate_harness_sources(id, params.changes)
+        .await
+        .map_err(|err| WebError::upstream(format!("Harness source validation failed: {err}")))?;
+    Ok(json_response(StatusCode::OK, &validation))
+}
+
+async fn handle_harness_sources_save(
+    req: Request<Incoming>,
+    state: &WebState,
+) -> std::result::Result<Response<WebBody>, WebError> {
+    let params: HarnessSourceSaveParams =
+        read_json_with_limit(req, MAX_HARNESS_SOURCE_BODY_BYTES).await?;
+    let id = validate_entity_id(&params.id, "harness")?;
+    let saved = state
+        .client
+        .save_harness_sources(id, params.changes)
+        .await
+        .map_err(harness_source_save_error)?;
+    Ok(json_response(StatusCode::OK, &saved))
+}
+
 async fn handle_harness_reload(
     req: Request<Incoming>,
     state: &WebState,
@@ -636,6 +700,15 @@ fn validate_entity_id<'a>(id: &'a str, entity: &str) -> std::result::Result<&'a 
         ));
     }
     Ok(id)
+}
+
+fn harness_source_save_error(err: anyhow::Error) -> WebError {
+    let message = err.to_string();
+    if let Some(message) = message.strip_prefix("conflict: ") {
+        WebError::new(StatusCode::CONFLICT, "source_conflict", message)
+    } else {
+        WebError::upstream(format!("Failed to save harness sources: {message}"))
+    }
 }
 
 async fn handle_session_title(
@@ -1362,6 +1435,31 @@ fn parse_entity_id_query(
     Ok(validate_entity_id(&id, entity)?.to_string())
 }
 
+fn parse_harness_source_query(
+    query: Option<&str>,
+) -> std::result::Result<(String, String), WebError> {
+    let mut id = None;
+    let mut path = None;
+    for (key, value) in form_urlencoded::parse(query.unwrap_or_default().as_bytes()) {
+        match key.as_ref() {
+            "id" => id = Some(value.into_owned()),
+            "path" => path = Some(value.into_owned()),
+            other => {
+                return Err(WebError::bad_request(
+                    "invalid_query",
+                    format!("Unknown query parameter '{other}'"),
+                ));
+            }
+        }
+    }
+    let id =
+        id.ok_or_else(|| WebError::bad_request("missing_entity_id", "harness id is required"))?;
+    let path = path.filter(|path| !path.is_empty()).ok_or_else(|| {
+        WebError::bad_request("missing_source_path", "harness source path is required")
+    })?;
+    Ok((validate_entity_id(&id, "harness")?.to_string(), path))
+}
+
 fn parse_schedule_runs_query(query: Option<&str>) -> std::result::Result<(String, u32), WebError> {
     let mut id = None;
     let mut limit = 50;
@@ -1489,16 +1587,32 @@ async fn read_json<T: DeserializeOwned>(
     read_json_body(req.into_body()).await
 }
 
+async fn read_json_with_limit<T: DeserializeOwned>(
+    req: Request<Incoming>,
+    limit: usize,
+) -> std::result::Result<T, WebError> {
+    read_json_body_limited(req.into_body(), limit).await
+}
+
 async fn read_json_body<T, B>(body: B) -> std::result::Result<T, WebError>
 where
     T: DeserializeOwned,
     B: BodyExt,
     B::Error: Into<Box<dyn Error + Send + Sync>>,
 {
-    let body = Limited::new(body, MAX_JSON_BODY_BYTES)
+    read_json_body_limited(body, MAX_JSON_BODY_BYTES).await
+}
+
+async fn read_json_body_limited<T, B>(body: B, limit: usize) -> std::result::Result<T, WebError>
+where
+    T: DeserializeOwned,
+    B: BodyExt,
+    B::Error: Into<Box<dyn Error + Send + Sync>>,
+{
+    let body = Limited::new(body, limit)
         .collect()
         .await
-        .map_err(json_body_read_error)?
+        .map_err(|err| json_body_read_error(err, limit))?
         .to_bytes();
     serde_json::from_slice(&body).map_err(|err| {
         WebError::bad_request(
@@ -1508,11 +1622,11 @@ where
     })
 }
 
-fn json_body_read_error(err: Box<dyn Error + Send + Sync>) -> WebError {
+fn json_body_read_error(err: Box<dyn Error + Send + Sync>, limit: usize) -> WebError {
     if err.downcast_ref::<LengthLimitError>().is_some() {
         return WebError::bad_request(
             "request_body_too_large",
-            format!("JSON request body exceeds {} bytes", MAX_JSON_BODY_BYTES),
+            format!("JSON request body exceeds {} bytes", limit),
         );
     }
     WebError::bad_request(

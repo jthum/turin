@@ -17,6 +17,12 @@ import type {
   HarnessIssue,
   HarnessRuntime,
   HarnessValidation,
+  HarnessSourceEntry,
+  HarnessSourceFile,
+  HarnessSourceOverlay,
+  HarnessSourceSaveChange,
+  HarnessSourceSaveResult,
+  HarnessSourceValidation,
   ScheduleCreateInput,
   ScheduleJob,
   ScheduleRun,
@@ -77,6 +83,16 @@ export interface TurinClient {
   harness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
   createHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
   validateHarness(id: string): Promise<HarnessValidation>;
+  harnessSources(id: string): Promise<HarnessSourceEntry[]>;
+  harnessSource(id: string, path: string): Promise<HarnessSourceFile>;
+  validateHarnessSources(
+    id: string,
+    changes: HarnessSourceOverlay[],
+  ): Promise<HarnessSourceValidation>;
+  saveHarnessSources(
+    id: string,
+    changes: HarnessSourceSaveChange[],
+  ): Promise<HarnessSourceSaveResult>;
   reloadHarness(id: string): Promise<{ harness: HarnessDetail; issues: HarnessIssue[] }>;
   deleteHarness(id: string): Promise<void>;
   schedules(): Promise<ScheduleJob[]>;

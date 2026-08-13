@@ -1,5 +1,6 @@
 mod channel_validation;
 mod harness_actions;
+mod harness_sources;
 mod helpers;
 mod memories;
 mod registry_ops;
@@ -30,6 +31,7 @@ use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
 use crate::persistence::state::StateStore;
 
+pub(crate) use harness_sources::HarnessSourceConflict;
 pub(crate) use runtime_sessions::session_store_selector_from_filters;
 pub(crate) use scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,

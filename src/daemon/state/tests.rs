@@ -11,9 +11,9 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 use turin_daemon_protocol::{
-    ContextPersistenceParams, HarnessActionRunParams, PromoteTaskParams, ScheduleActionParams,
-    SessionSearchScope, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
-    StoreTargetParams,
+    ContextPersistenceParams, HarnessActionRunParams, HarnessSourceOverlay,
+    HarnessSourceSaveChange, PromoteTaskParams, ScheduleActionParams, SessionSearchScope,
+    SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, StoreTargetParams,
 };
 use turin_types::{TaskInputContent, ToolSelectionConfig, ToolsConfig};
 
@@ -3011,6 +3011,112 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
         .expect("shared harness still visible");
     assert!(still_loaded.loaded_scripts.iter().all(|s| s != "broken"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn harness_source_candidates_resolve_unsaved_nested_modules() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let validation = state.validate_harness_sources(
+        "default",
+        vec![
+            HarnessSourceOverlay {
+                path: "main.lua".to_string(),
+                source: Some("use('libs/security')".to_string()),
+            },
+            HarnessSourceOverlay {
+                path: "libs/security.lua".to_string(),
+                source: Some("return { policy = 'strict' }".to_string()),
+            },
+        ],
+    )?;
+
+    assert!(validation.valid);
+    assert_eq!(validation.script_count, 2);
+    assert!(
+        !temp
+            .path()
+            .join("default-harness/libs/security.lua")
+            .exists()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn harness_source_save_is_hash_guarded_and_supports_nested_paths() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+
+    let original = state.get_harness_source("default", "main.lua")?;
+    let saved = state.save_harness_sources(
+        "default",
+        vec![
+            HarnessSourceSaveChange {
+                path: "main.lua".to_string(),
+                source: Some("use('libs/security')\n".to_string()),
+                expected_hash: Some(original.hash.clone()),
+            },
+            HarnessSourceSaveChange {
+                path: "libs/security.lua".to_string(),
+                source: Some("return { policy = 'strict' }\n".to_string()),
+                expected_hash: None,
+            },
+        ],
+    )?;
+
+    assert_eq!(saved.saved.len(), 2);
+    let nested = state.get_harness_source("default", "libs/security.lua")?;
+    assert!(nested.source.contains("strict"));
+    assert!(
+        state
+            .list_harness_sources("default")?
+            .files
+            .iter()
+            .any(|file| file.path == "libs/security.lua")
+    );
+
+    let stale = state
+        .save_harness_sources(
+            "default",
+            vec![HarnessSourceSaveChange {
+                path: "main.lua".to_string(),
+                source: Some("-- stale overwrite\n".to_string()),
+                expected_hash: Some(original.hash),
+            }],
+        )
+        .expect_err("stale source hash must conflict");
+    assert!(stale.downcast_ref::<HarnessSourceConflict>().is_some());
+    assert!(
+        state
+            .get_harness_source("default", "main.lua")?
+            .source
+            .contains("libs/security")
+    );
+
+    let deleted = state.save_harness_sources(
+        "default",
+        vec![HarnessSourceSaveChange {
+            path: "libs/security.lua".to_string(),
+            source: None,
+            expected_hash: Some(nested.hash),
+        }],
+    )?;
+    assert_eq!(deleted.deleted, vec!["libs/security.lua"]);
+    assert!(
+        !temp
+            .path()
+            .join("default-harness/libs/security.lua")
+            .exists()
+    );
+    assert!(
+        state
+            .get_harness_source("default", "../escape.lua")
+            .is_err()
+    );
     Ok(())
 }
 

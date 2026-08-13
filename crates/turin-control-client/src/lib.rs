@@ -14,6 +14,10 @@ pub use client::{
 };
 pub use health::ControlHealth;
 pub use models::*;
+pub use turin_daemon_protocol::{
+    HarnessSourceEntry, HarnessSourceFile, HarnessSourceListResult, HarnessSourceOverlay,
+    HarnessSourceSaveChange, HarnessSourceSaveResult, HarnessSourceValidationResult,
+};
 
 #[cfg(test)]
 mod tests {

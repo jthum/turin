@@ -20,6 +20,8 @@ This subsystem should preserve three guarantees:
     resolution, and live branch target guards.
 - `src/daemon/state/harness_actions.rs`
   - Harness action runtime targeting, agent execution identity resolution, and action result collection.
+- `src/daemon/state/harness_sources.rs`
+  - Harness source listing/reading, candidate validation, safe relative-path resolution, hash-guarded batch saves, and file-atomic replacement.
 - `src/daemon/server/dispatch/task.rs`
   - Daemon task request handlers.
 - `src/daemon/server/dispatch/session.rs`
@@ -62,6 +64,14 @@ Harness action execution:
 2. An explicit `agent_id` supplies execution and governance identity after binding validation.
 3. Without an explicit agent, Turin uses the sole bound agent or the primary agent identity for an unbound shared harness.
 4. Harnesses bound to multiple agents require the caller to choose an agent.
+
+Harness source editing:
+
+1. Source paths are normalized relative to the registered harness root and limited to Lua files.
+2. Candidate validation layers every dirty source addition, replacement, or deletion over the current filesystem and builds the normal disposable harness VM.
+3. Imports and `use` blocks consult that same overlay, so unsaved nested modules validate coherently.
+4. Saving compares every current file hash before staging any replacement. New files require an absent expected hash; existing files require the hash returned by the read API.
+5. Each replacement is staged beside its target and renamed into place. Saving does not validate, reload, or make the daemon the source of truth; the normal filesystem watcher owns activation.
 
 Persisted session detail:
 
@@ -145,6 +155,10 @@ validates that the turn belongs to the resolved session.
 - Channel-bound session open/resume should reuse channel persistence and inference overrides.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.
 - Explicit harness action targets must run in the named harness runtime; agent identity must not silently redirect them to another harness.
+- Harness source paths must not be absolute, traverse above the harness root, escape through symlinks, or target non-Lua files.
+- Candidate validation is observational and must not mutate the active harness generation.
+- Source saves must reject stale expected hashes before replacing files. A successful save means persisted, not validated or activated.
+- Multi-file saves are conflict-checked as a batch, while replacement atomicity is per file; failed hot reload must leave the previous valid runtime active.
 - Unbound shared harness actions use the primary agent identity, while multi-agent harness actions remain explicit.
 - Branch activation/checkout must reject busy live sessions.
 - Branch activation/checkout must reject slot-agnostic requests when multiple runtime slots are attached.

@@ -24,7 +24,7 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `crates/turin-control-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
 - `crates/turin-control-client/src/harnesses.rs`
-  - Harness detail, UI intent, and action invocation convenience methods.
+  - Harness detail, UI intent, source inspection/candidate validation/hash-guarded saves, and action invocation convenience methods.
 - `crates/turin-control-client/src/worklists.rs`
   - Worklist and work-item convenience methods.
 - `crates/turin-control-client/src/memories.rs`
@@ -63,6 +63,7 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - Session messages retain that exact turn id so clients can associate branch
   provenance and contextual actions without loading the on-demand graph.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
+- Harness source editing must go through daemon protocol operations so local and remote clients share path, conflict, validation, and persistence semantics.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - `ControlHealth::agent_count` counts effective configured runtime agents, including
   the bootstrap agent; the filesystem registry alone is not a complete inventory.

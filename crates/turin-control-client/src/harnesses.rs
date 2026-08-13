@@ -1,7 +1,9 @@
 use anyhow::Result;
 use turin_daemon_protocol::{
-    DaemonRequest, EntityIdParams, HarnessActionRunParams, HarnessActionRunResult, NoParams,
-    UiIntentMessage,
+    DaemonRequest, EntityIdParams, HarnessActionRunParams, HarnessActionRunResult,
+    HarnessSourceFile, HarnessSourceGetParams, HarnessSourceListResult, HarnessSourceOverlay,
+    HarnessSourceSaveChange, HarnessSourceSaveParams, HarnessSourceSaveResult,
+    HarnessSourceValidateParams, HarnessSourceValidationResult, NoParams, UiIntentMessage,
 };
 
 use crate::client::ControlClient;
@@ -67,6 +69,64 @@ impl ControlClient {
             None,
             DaemonRequest::HarnessValidate(EntityIdParams {
                 id: harness_id.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn list_harness_sources(
+        &self,
+        harness_id: impl Into<String>,
+    ) -> Result<HarnessSourceListResult> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessSourceList(EntityIdParams {
+                id: harness_id.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_harness_source(
+        &self,
+        harness_id: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<HarnessSourceFile> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessSourceGet(HarnessSourceGetParams {
+                id: harness_id.into(),
+                path: path.into(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn validate_harness_sources(
+        &self,
+        harness_id: impl Into<String>,
+        changes: Vec<HarnessSourceOverlay>,
+    ) -> Result<HarnessSourceValidationResult> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessSourceValidate(HarnessSourceValidateParams {
+                id: harness_id.into(),
+                changes,
+            }),
+        )
+        .await
+    }
+
+    pub async fn save_harness_sources(
+        &self,
+        harness_id: impl Into<String>,
+        changes: Vec<HarnessSourceSaveChange>,
+    ) -> Result<HarnessSourceSaveResult> {
+        self.request_ok(
+            None,
+            DaemonRequest::HarnessSourceSave(HarnessSourceSaveParams {
+                id: harness_id.into(),
+                changes,
             }),
         )
         .await

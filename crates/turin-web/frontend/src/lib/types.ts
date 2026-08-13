@@ -59,6 +59,38 @@ export interface HarnessValidation {
   valid: boolean;
 }
 
+export interface HarnessSourceEntry {
+  path: string;
+  hash: string;
+  bytes: number;
+}
+
+export interface HarnessSourceFile extends HarnessSourceEntry {
+  source: string;
+}
+
+export interface HarnessSourceOverlay {
+  path: string;
+  source: string | null;
+}
+
+export interface HarnessSourceSaveChange extends HarnessSourceOverlay {
+  expected_hash: string | null;
+}
+
+export interface HarnessSourceValidation {
+  harness_id: string;
+  directory: string;
+  script_count: number;
+  valid: boolean;
+}
+
+export interface HarnessSourceSaveResult {
+  harness_id: string;
+  saved: HarnessSourceEntry[];
+  deleted: string[];
+}
+
 export interface ScheduleAction {
   name: string;
   params?: JsonValue;

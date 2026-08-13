@@ -26,6 +26,8 @@ use crate::persistence::manager::StoreSelector;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
+use crate::harness::source::HarnessSourceOverlay;
+
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 
 pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
@@ -113,6 +115,7 @@ pub struct HarnessAppData {
     pub active_modules: ActiveHarnessModuleList,
     pub watch_roots: ExplicitWatchRoots,
     pub loading_phase: HarnessLoadPhase,
+    pub(crate) source_overlay: Option<Arc<HarnessSourceOverlay>>,
 }
 
 pub(crate) fn block_on_current<F>(fut: F) -> F::Output
