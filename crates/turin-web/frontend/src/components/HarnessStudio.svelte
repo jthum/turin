@@ -13,6 +13,7 @@
   } from "../lib/types";
   import { humanize } from "../lib/format";
   import Icon from "./Icon.svelte";
+  import LuaCodeEditor from "./LuaCodeEditor.svelte";
 
   export let client: TurinClient;
   export let status: TurinStatus;
@@ -77,6 +78,8 @@
   let newFileOpen = false;
   let newHarnessId = "";
   let newSourcePath = "";
+  let editorLine = 1;
+  let editorColumn = 1;
 
   $: selectedType = harnessType(selectedId);
   $: managed = selectedType === "Shared";
@@ -237,21 +240,9 @@
     invalidateCandidate();
   }
 
-  function handleEditorKeydown(event: KeyboardEvent) {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      const target = event.currentTarget as HTMLTextAreaElement;
-      const start = target.selectionStart;
-      const end = target.selectionEnd;
-      updateSource(`${target.value.slice(0, start)}  ${target.value.slice(end)}`);
-      requestAnimationFrame(() => {
-        target.selectionStart = target.selectionEnd = start + 2;
-      });
-    }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      if (canSave) void saveCandidate();
-    }
+  function updateEditorCursor(line: number, column: number) {
+    editorLine = line;
+    editorColumn = column;
   }
 
   function validSourcePath(path: string): boolean {
@@ -539,8 +530,16 @@
                   {#if activeBuffer.deleted}
                     <div class="deleted-source"><span><Icon name="activity" size={17} /></span><strong>{activeBuffer.path} will be deleted</strong><p>Revert this file to keep it, or validate and save the candidate to remove it.</p><button class="secondary-button" onclick={revertSource}>Keep file</button></div>
                   {:else}
-                    <textarea aria-label={`Source for ${activeBuffer.path}`} value={activeBuffer.source} spellcheck="false" oninput={(event) => updateSource(event.currentTarget.value)} onkeydown={handleEditorKeydown}></textarea>
-                    <footer><span>Lua</span><span>{activeBuffer.source.split("\n").length} lines</span><span>{formatBytes(new TextEncoder().encode(activeBuffer.source).length)}</span><span class="editor-shortcut">Tab inserts two spaces · Ctrl/⌘ S saves a validated candidate</span></footer>
+                    {#key activeBuffer.path}
+                      <LuaCodeEditor
+                        value={activeBuffer.source}
+                        ariaLabel={`Source for ${activeBuffer.path}`}
+                        onChange={updateSource}
+                        onSave={() => { if (canSave) void saveCandidate(); }}
+                        onCursorChange={updateEditorCursor}
+                      />
+                    {/key}
+                    <footer><span>Lua</span><span>Ln {editorLine}, Col {editorColumn}</span><span>{activeBuffer.source.split("\n").length} lines</span><span>{formatBytes(new TextEncoder().encode(activeBuffer.source).length)}</span><span class="editor-shortcut">Ctrl/⌘ F searches · Tab indents · Ctrl/⌘ S saves a validated candidate</span></footer>
                   {/if}
                 {:else}
                   <div class="studio-empty tall"><span class="empty-mark"><Icon name="code" size={17} /></span><strong>Create the first module</strong><span>Every harness starts with a readable Lua file.</span><button class="secondary-button" onclick={() => newFileOpen = true}><Icon name="plus" size={14} />New file</button></div>

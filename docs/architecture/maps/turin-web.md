@@ -144,6 +144,10 @@ session state, invent renderer-specific harness APIs, or bypass
 40. Conversation deletion is an explicit destructive action backed by the typed
     daemon lifecycle operation. The browser confirms scope, refuses while the
     session remains live, and returns to a fresh draft after durable deletion.
+41. Harness Studio's source view uses a lazy CodeMirror 6 editor with Lua
+    highlighting, code navigation, search, bracket handling, and local undo
+    history. CodeMirror remains inside the optional Harness Studio chunk; the
+    browser source buffers and daemon validation/save contracts are unchanged.
 
 ## Invariants
 
@@ -263,6 +267,9 @@ session state, invent renderer-specific harness APIs, or bypass
 - Harness Studio must use daemon validation, reload, scaffold, and guarded
   deletion operations. It must not become an arbitrary filesystem editor or
   classify bootstrap/agent-local harnesses as managed shared harnesses.
+- Rich source editing remains a browser presentation concern. Editor document
+  changes must flow through the existing browser-local candidate buffers, and
+  editor undo/search state must not bypass candidate validation or guarded save.
 - Worklist inspection in Work Operations is observational. Generic browser
   mutations must not bypass harness actions, claims, dependency rules, or
   governance policy.
