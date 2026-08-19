@@ -84,6 +84,8 @@ Session targeting:
   sessions. A queued non-current session can be killed independently.
 - Recursive cancellation is explicit and cooperative. It targets materialized descendants
   plus queued child reservations; ordinary cancel and kill remain session-local.
+- Recursive cancellation uses a pending-work snapshot but tolerates work becoming terminal
+  during its sweep, so one completion race cannot prevent cancellation of later descendants.
 - Recursive force-kill is rejected because physical linked lanes may contain unrelated
   session families.
 - Timed-out `await_result` calls must put the receiver back so the result can still be awaited later.

@@ -304,9 +304,7 @@ impl AgentManager {
             .map(|(request_id, _)| request_id.clone())
             .collect::<Vec<_>>();
 
-        for request_id in &request_ids {
-            self.cancel_task(request_id).await?;
-        }
+        self.cancel_pending_requests(&request_ids).await?;
 
         let runtimes = self.runtimes.read().await;
         for (runtime_key, handle) in runtimes.iter() {
@@ -325,6 +323,25 @@ impl AgentManager {
         }
 
         Ok((parent.agent_id, session_id.to_string(), request_ids.len()))
+    }
+
+    pub(super) async fn cancel_pending_requests(&self, request_ids: &[String]) -> Result<()> {
+        for request_id in request_ids {
+            if let Err(error) = self.cancel_task(request_id).await {
+                // The cancellation sweep works from a snapshot. Completion may win the
+                // race after that snapshot; terminal or already-removed work is settled.
+                let is_settled = self.completed_result(request_id).await.is_some()
+                    || !self
+                        .pending_task_states
+                        .read()
+                        .await
+                        .contains_key(request_id);
+                if !is_settled {
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn logical_session_runtime_target(

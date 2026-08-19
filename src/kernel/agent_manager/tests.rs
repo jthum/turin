@@ -604,6 +604,54 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         .expect("cancelled task should be visible");
     assert_eq!(completed.status, Some(TaskTerminalStatus::Cancelled));
 
+    let later_request_id = "req_cancelled_after_settled".to_string();
+    let runtime_key = RuntimeSlotKey::default_for("default");
+    let handle = manager
+        .runtimes
+        .read()
+        .await
+        .get(&runtime_key)
+        .cloned()
+        .expect("test runtime");
+    manager.pending_task_states.write().await.insert(
+        later_request_id.clone(),
+        PendingTaskRecord {
+            runtime_key,
+            session_target: TaskSessionTarget::default(),
+            trace_id: "tr_cancelled_later".to_string(),
+            title: None,
+            prompt_preview: "cancel me too".to_string(),
+            state: PendingTaskState::Queued,
+            runtime_task_id: None,
+            execution: test_execution_snapshot(),
+        },
+    );
+    handle
+        .queue
+        .lock()
+        .expect("runtime queue mutex poisoned")
+        .push_back(PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("cancel me too"),
+            request_id: Some(later_request_id.clone()),
+            result_tx: None,
+            delegated_capabilities: None,
+            promotion_candidate: None,
+            linked_session: None,
+            session_target: TaskSessionTarget::default(),
+        });
+    handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
+
+    manager
+        .cancel_pending_requests(&[request_id, later_request_id.clone()])
+        .await?;
+    assert_eq!(
+        manager
+            .get_task(&later_request_id)
+            .await
+            .and_then(|task| task.status),
+        Some(TaskTerminalStatus::Cancelled)
+    );
+
     Ok(())
 }
 
