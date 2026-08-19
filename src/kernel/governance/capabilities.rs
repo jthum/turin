@@ -89,6 +89,26 @@ pub(crate) fn capability_allowed_by_bool_rules(
         .unwrap_or(false)
 }
 
+/// Compose two default-deny capability ceilings without widening either side.
+pub(crate) fn intersect_capability_bool_rules(
+    inherited: &BTreeMap<String, bool>,
+    requested: &BTreeMap<String, bool>,
+) -> BTreeMap<String, bool> {
+    inherited
+        .keys()
+        .chain(requested.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|rule| {
+            let probe = rule.strip_suffix(".*").unwrap_or(&rule);
+            let allowed = capability_allowed_by_bool_rules(inherited, probe)
+                && capability_allowed_by_bool_rules(requested, probe);
+            (rule, allowed)
+        })
+        .collect()
+}
+
 pub(super) fn capability_ceiling_denial_reason_json_map(
     caps: &HashMap<String, serde_json::Value>,
     capability: &str,
@@ -208,5 +228,31 @@ mod tests {
         assert_eq!(matched.rule.as_deref(), Some("runtime.db.*"));
         assert!(matched.via_wildcard);
         assert_eq!(matched.allowed, Some(true));
+    }
+
+    #[test]
+    fn delegated_rule_intersection_preserves_both_ceiling_shapes() {
+        let inherited = BTreeMap::from([
+            ("runtime.*".to_string(), true),
+            ("runtime.db.*".to_string(), false),
+        ]);
+        let requested = BTreeMap::from([
+            ("runtime.db.query".to_string(), true),
+            ("runtime.agent.*".to_string(), true),
+        ]);
+
+        let effective = intersect_capability_bool_rules(&inherited, &requested);
+        assert!(!capability_allowed_by_bool_rules(
+            &effective,
+            "runtime.db.query"
+        ));
+        assert!(capability_allowed_by_bool_rules(
+            &effective,
+            "runtime.agent.submit"
+        ));
+        assert!(!capability_allowed_by_bool_rules(
+            &effective,
+            "runtime.policy.set"
+        ));
     }
 }

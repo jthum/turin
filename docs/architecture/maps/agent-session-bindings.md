@@ -45,7 +45,8 @@ Peer-agent calls:
 
 1. Lua calls `agent.submit` or `agent.ask`.
 2. The binding checks submit/await capabilities and child-agent governance.
-3. Delegated capabilities are parsed and capped by active grants.
+3. Delegated capabilities are parsed, intersected with any inherited peer ceiling,
+   and capped by active grants.
 4. `AgentManager` owns peer submission and result waiting.
 
 Session branch helpers:
@@ -68,7 +69,8 @@ Session metadata helpers:
 - `agent.sidestep`, `agent.promote`, `agent.submit`, and `agent.ask` require submit-capable governance.
 - `agent.ask` also requires `runtime.agent.await`.
 - Child-agent access must pass `allowed_child_agents` checks before peer submission.
-- Delegated capabilities must be capped by active temporary grants.
+- Delegated capabilities must inherit active peer ceilings and be capped by active
+  temporary grants; nested delegation may narrow authority but never widen it.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.

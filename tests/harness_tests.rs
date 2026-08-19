@@ -1651,8 +1651,10 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
     let db_path = tmp.path().join("test_runtime_agent_peer_delegation.db");
     let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
     let worker_harness_dir = tmp.path().join("harnesses_worker");
+    let leaf_harness_dir = tmp.path().join("harnesses_leaf");
     std::fs::create_dir(&orchestrator_harness_dir)?;
     std::fs::create_dir(&worker_harness_dir)?;
+    std::fs::create_dir(&leaf_harness_dir)?;
 
     let orchestrator_harness = r#"
         function on_turn_prepare(ctx)
@@ -1664,7 +1666,10 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
 
             local task_id, se = runtime.agent.submit("worker", { prompt = "delegated worker run" }, {
                 capabilities = {
-                    ["runtime.db.query"] = true
+                    ["runtime.db.query"] = true,
+                    ["runtime.agent.submit"] = true,
+                    ["runtime.agent.await"] = true,
+                    ["runtime.agent.status"] = true
                 }
             })
             if task_id == nil then error("runtime.agent.submit failed: " .. tostring(se)) end
@@ -1704,10 +1709,31 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
                 error("worker denial should mention delegated capabilities")
             end
 
+            local leaf_id, leaf_err = runtime.agent.submit("leaf", { prompt = "nested delegation" })
+            if leaf_id == nil then error("nested submit failed: " .. tostring(leaf_err)) end
+            local leaf, await_err = runtime.agent.await(leaf_id, { timeout_ms = 5000 })
+            if leaf == nil then error("nested await failed: " .. tostring(await_err)) end
+            if leaf.status ~= "success" then error("nested delegated task should succeed") end
+
             return ALLOW
         end
     "#;
     std::fs::write(worker_harness_dir.join("worker.lua"), worker_harness)?;
+    std::fs::write(
+        leaf_harness_dir.join("leaf.lua"),
+        r#"
+            function on_turn_prepare(ctx)
+                local dec, err = runtime.governance.check("runtime.policy.set")
+                if dec == nil then error("leaf governance check failed: " .. tostring(err)) end
+                if dec.subject_agent_id ~= "leaf" then error("leaf subject mismatch") end
+                if dec.allowed then error("leaf widened its inherited capability ceiling") end
+                if dec.reason == nil or string.find(dec.reason, "delegated capabilities", 1, true) == nil then
+                    error("leaf denial should retain delegated capability provenance")
+                end
+                return ALLOW
+            end
+        "#,
+    )?;
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -1731,6 +1757,21 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
             system_prompt: "Worker".to_string(),
             thinking: None,
             harness: Some("worker".to_string()),
+            idle_timeout_seconds: None,
+            inference: Default::default(),
+            persistence: Default::default(),
+        },
+    );
+    agents.insert(
+        "leaf".to_string(),
+        AgentConfig {
+            tools: Default::default(),
+            id: "leaf".to_string(),
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Leaf".to_string(),
+            thinking: None,
+            harness: Some("leaf".to_string()),
             idle_timeout_seconds: None,
             inference: Default::default(),
             persistence: Default::default(),
@@ -1766,14 +1807,24 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
             fs_root: ".".to_string(),
             memory_limit_mb: 32,
         },
-        harnesses: std::collections::HashMap::from([(
-            "worker".to_string(),
-            HarnessConfig {
-                directory: worker_harness_dir.to_string_lossy().to_string(),
-                fs_root: ".".to_string(),
-                memory_limit_mb: 32,
-            },
-        )]),
+        harnesses: std::collections::HashMap::from([
+            (
+                "worker".to_string(),
+                HarnessConfig {
+                    directory: worker_harness_dir.to_string_lossy().to_string(),
+                    fs_root: ".".to_string(),
+                    memory_limit_mb: 32,
+                },
+            ),
+            (
+                "leaf".to_string(),
+                HarnessConfig {
+                    directory: leaf_harness_dir.to_string_lossy().to_string(),
+                    fs_root: ".".to_string(),
+                    memory_limit_mb: 32,
+                },
+            ),
+        ]),
         providers,
         embeddings: None,
         governance: turin::kernel::config::GovernanceConfig {

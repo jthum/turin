@@ -2,6 +2,7 @@ use crate::harness::globals::HarnessAppData;
 use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::governance::{
     CapabilityDecision, GovernanceSubject, capability_allowed_by_bool_rules,
+    intersect_capability_bool_rules,
 };
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 use crate::kernel::session_refs::format_session_reference;
@@ -99,10 +100,18 @@ pub(crate) fn parse_delegated_capabilities(
 
 pub(crate) fn apply_active_grant_ceiling_to_peer_delegation(
     app_data: &HarnessAppData,
-    delegated_capabilities: Option<BTreeMap<String, bool>>,
+    requested_capabilities: Option<BTreeMap<String, bool>>,
     caller_label: &str,
 ) -> LuaResult<Option<BTreeMap<String, bool>>> {
     let subject = current_subject(app_data);
+    let delegated_capabilities =
+        match (subject.import_capabilities.as_ref(), requested_capabilities) {
+            (Some(inherited), Some(requested)) => {
+                Some(intersect_capability_bool_rules(inherited, &requested))
+            }
+            (Some(inherited), None) => Some(inherited.clone()),
+            (None, requested) => requested,
+        };
     let Some(grant_id) = subject.grant_id.as_deref() else {
         return Ok(delegated_capabilities);
     };

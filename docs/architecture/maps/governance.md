@@ -56,6 +56,14 @@ Temporary grants:
 3. `with_grant` validates grant ancestry, subject access, expiry, and remaining uses.
 4. Revoked, expired, missing, or cyclic ancestor grants invalidate dependent grants.
 
+Nested peer delegation:
+
+1. The parent task's active delegated ceiling is inherited when it submits a child.
+2. Explicit child capabilities intersect with that inherited ceiling rather than
+   replacing it.
+3. Active grants further narrow the composed ceiling.
+4. The child agent's configured profile and maximum capabilities apply during checks.
+
 ## Invariants
 
 - Exact capability rules outrank wildcard rules.
@@ -67,6 +75,8 @@ Temporary grants:
 - Enforcement-disabled mode must still produce accurate observability decisions.
 - Temporary grants are bound to the issuing agent/session context when those fields are present.
 - Delegated grants cannot widen parent grant capabilities.
+- Nested peer delegation is monotonic: omitting or restating capabilities cannot
+  widen the active ceiling inherited from an ancestor task.
 
 ## Tests
 
