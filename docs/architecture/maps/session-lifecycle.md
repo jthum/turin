@@ -105,9 +105,11 @@ End session:
 Delete persisted session:
 
 1. Resolve the session reference and its state store.
-2. Refuse deletion while any runtime slot still has the session open.
-3. In one transaction, remove the turn graph, transcript, tools, events,
-   semantic graph, and session-scoped KV/memory before removing the session row.
+2. Resolve linked descendants and refuse deletion while any runtime slot has the
+   requested session or one of those descendants open.
+3. Delete descendants deepest-first, then remove the requested session. Each session
+   deletion transaction removes its turn graph, transcript, tools, events, semantic
+   graph, and session-scoped KV/memory before removing the session row.
 4. Leave unrelated worklists intact while clearing stale session claim references.
 
 ## Invariants

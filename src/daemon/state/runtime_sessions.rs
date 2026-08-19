@@ -61,6 +61,27 @@ impl DaemonState {
             .collect())
     }
 
+    pub async fn list_linked_sessions(
+        &self,
+        parent_session_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Option<Vec<SessionSummary>>> {
+        let Some((store_selector, store, parent)) =
+            self.resolve_persisted_session(parent_session_id).await?
+        else {
+            return Ok(None);
+        };
+        let rows = store
+            .list_linked_session_rows(parent.id, limit, offset)
+            .await?;
+        Ok(Some(
+            rows.iter()
+                .map(|row| session_summary_from_row_and_selector(row, &store_selector))
+                .collect(),
+        ))
+    }
+
     #[instrument(
         skip(self, query),
         fields(
@@ -473,16 +494,23 @@ impl DaemonState {
 
     pub async fn delete_session(&self, session_id: &str) -> Result<bool> {
         let (store_selector, public_id) = persisted_session_target(session_id)?;
-        let public_id_bytes = public_id.into_bytes().to_vec();
-        let live = self.live_session_snapshots(&public_id_bytes).await;
-        if !live.is_empty() {
+        let store = self.kernel.store_manager().open(&store_selector).await?;
+        let Some(session) = store.get_session_row_by_public_id(public_id).await? else {
+            return Ok(false);
+        };
+        let mut family = store.list_linked_session_descendants(session.id).await?;
+        family.push(session);
+        let mut live_runtime_count = 0;
+        for row in &family {
+            live_runtime_count += self.live_session_snapshots(&row.public_id).await.len();
+        }
+        if live_runtime_count > 0 {
             return Err(SessionDeleteBusy {
                 session_id: session_id.to_string(),
-                runtime_count: live.len(),
+                runtime_count: live_runtime_count,
             }
             .into());
         }
-        let store = self.kernel.store_manager().open(&store_selector).await?;
         let deleted = store.delete_session_by_public_id(public_id).await?;
         if deleted {
             info!(

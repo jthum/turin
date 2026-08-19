@@ -808,8 +808,9 @@ async fn test_update_session_title_preserves_other_metadata() {
 #[tokio::test]
 async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
     let store = StateStore::open_memory().await.unwrap();
+    let root_public_id = uuid::Uuid::now_v7();
     let root = store
-        .create_session(uuid::Uuid::now_v7(), "primary", None)
+        .create_session(root_public_id, "primary", None)
         .await
         .unwrap();
     let reviewer_public_id = uuid::Uuid::now_v7();
@@ -841,9 +842,10 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
     assert_eq!(found.thread_key.as_deref(), Some("architecture"));
     assert_eq!(found.visibility, "contextual");
 
+    let nested_public_id = uuid::Uuid::now_v7();
     let nested = store
         .create_linked_session(
-            uuid::Uuid::now_v7(),
+            nested_public_id,
             "researcher",
             None,
             &LinkedSessionCreate {
@@ -879,6 +881,32 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
         )
         .await;
     assert!(duplicate.is_err());
+
+    let descendants = store.list_linked_session_descendants(root).await.unwrap();
+    assert_eq!(
+        descendants.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![nested.id, reviewer]
+    );
+    assert!(
+        store
+            .delete_session_by_public_id(root_public_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .get_session_row_by_public_id(reviewer_public_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_session_row_by_public_id(nested_public_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

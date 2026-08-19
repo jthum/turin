@@ -50,6 +50,28 @@ impl ControlClient {
                     offset,
                     store: store.map(str::to_string),
                     path: path.map(str::to_string),
+                    parent_session_id: None,
+                }),
+            )
+            .await?;
+        Ok(response.sessions)
+    }
+
+    pub async fn list_linked_sessions(
+        &self,
+        parent_session_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSummary>> {
+        let response: SessionList = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionList(SessionListParams {
+                    limit,
+                    offset,
+                    store: None,
+                    path: None,
+                    parent_session_id: Some(parent_session_id.to_string()),
                 }),
             )
             .await?;

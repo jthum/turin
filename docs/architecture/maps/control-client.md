@@ -20,7 +20,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   - Schedule convenience methods.
 - `crates/turin-control-client/src/sessions.rs`
   - Live and persisted session convenience methods, on-demand turn topology,
-    exact-turn branch creation, branch listing, checkout, and durable deletion.
+    direct linked-session discovery, exact-turn branch creation, branch listing,
+    checkout, and durable deletion.
 - `crates/turin-control-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
 - `crates/turin-control-client/src/harnesses.rs`
@@ -64,6 +65,9 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   provenance and contextual actions without loading the on-demand graph.
 - Session deletion remains a daemon-owned operation. The client only sends the
   persisted session reference and preserves live-session rejection semantics.
+- Persisted session listing returns roots by default. `list_linked_sessions`
+  requests only direct children of an explicit parent; it must not turn the
+  control client into a generic session-relationship query layer.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
 - Harness source editing must go through daemon protocol operations so local and remote clients share path, conflict, validation, and persistence semantics.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.

@@ -495,6 +495,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                     offset: 0,
                     store: None,
                     path: None,
+                    parent_session_id: None,
                 },
             ))
             .await?,

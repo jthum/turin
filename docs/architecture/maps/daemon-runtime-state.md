@@ -105,6 +105,14 @@ Persisted session detail:
    projection to the ancestral path ending at that turn. This is a read-only
    projection and does not alter the persisted active branch head.
 
+Persisted session discovery:
+
+1. Ordinary `session.list` returns top-level sessions only.
+2. A `parent_session_id` request resolves that parent and returns its direct
+   linked children from the same store.
+3. Session summaries expose normalized linkage fields; relationship discovery
+   does not parse metadata or query the semantic graph overlay.
+
 Session graph:
 
 1. `session.graph_get` resolves the persisted session and store in the same way
@@ -129,12 +137,12 @@ validates that the turn belongs to the resolved session.
 
 Persisted session deletion:
 
-1. `runtime_sessions.rs` resolves the session reference and checks every live
-   runtime slot before opening the selected store.
-2. Any attached live slot rejects deletion with `resource_busy`; clients must
-   explicitly end that runtime first.
-3. Persistence removes the session-owned transcript, branches, events, tool
-   executions, semantic graph, and session-scoped data in one transaction.
+1. `runtime_sessions.rs` resolves the session reference and its linked descendants.
+2. Any live runtime attached to the requested session or a descendant rejects
+   deletion with `resource_busy`; clients must explicitly end those runtimes first.
+3. Persistence deletes descendants deepest-first, then removes each session's
+   transcript, branches, events, tool executions, semantic graph, and scoped data
+   in a per-session transaction.
 4. Work items survive deletion but any claim owned by the deleted session is
    released.
 
@@ -178,6 +186,8 @@ Persisted session deletion:
 - Exact-turn branch creation must validate session ownership and must not
   silently resolve the same numeric depth on the active path.
 - Session deletion must reject any attached live runtime, regardless of slot.
+- Root-session listing must not mix contextual or hidden child sessions into the
+  operator's conversation list.
 - Session deletion must be transactional and must not delete durable work
   items merely because the session claimed them.
 

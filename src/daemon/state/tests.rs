@@ -6,6 +6,7 @@ use super::*;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::schema::LinkedSessionCreate;
 use crate::persistence::state::SessionReadTarget;
 use serde_json::json;
 use tempfile::tempdir;
@@ -2299,6 +2300,47 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     assert!(!detail.events.is_empty());
     assert!(!detail.messages.is_empty());
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let store = state.kernel.store_manager().get_default().await?;
+    let root_public_id = uuid::Uuid::now_v7();
+    let root_id = store
+        .create_session(root_public_id, "default", None)
+        .await?;
+    store
+        .create_linked_session(
+            uuid::Uuid::now_v7(),
+            "reviewer",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: root_id,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "review".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await?;
+
+    let roots = state.list_sessions(10, 0, None).await?;
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].visibility, "top_level");
+
+    let children = state
+        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0)
+        .await?
+        .expect("root exists");
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].agent_id, "reviewer");
+    assert_eq!(children[0].parent_internal_id, Some(root_id));
+    assert_eq!(children[0].thread_key.as_deref(), Some("review"));
+    assert_eq!(children[0].visibility, "contextual");
     Ok(())
 }
 

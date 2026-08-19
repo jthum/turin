@@ -148,6 +148,50 @@ impl StateStore {
         Ok(sessions)
     }
 
+    /// Return descendants in deletion order (deepest children first).
+    pub async fn list_linked_session_descendants(
+        &self,
+        session_id: i64,
+    ) -> Result<Vec<SessionRow>> {
+        let Some(target) = self.get_session_row(session_id).await? else {
+            return Ok(Vec::new());
+        };
+        let root_session_id = target.root_session_id.unwrap_or(target.id);
+        let conn = self.connect().await?;
+        let sql = format!("{SESSION_SELECT} WHERE id = ?1 OR root_session_id = ?1 ORDER BY id ASC");
+        let mut rows = conn.query(&sql, [root_session_id]).await?;
+        let mut family = HashMap::new();
+        while let Some(row) = rows.next().await? {
+            let row = map_session_row(&row)?;
+            family.insert(row.id, row);
+        }
+
+        let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+        for row in family.values() {
+            if let Some(parent_id) = row.parent_session_id {
+                children.entry(parent_id).or_default().push(row.id);
+            }
+        }
+
+        let mut descendants = Vec::new();
+        let mut stack = vec![(session_id, false)];
+        while let Some((current_id, expanded)) = stack.pop() {
+            if expanded {
+                if current_id != session_id
+                    && let Some(row) = family.get(&current_id)
+                {
+                    descendants.push(row.clone());
+                }
+                continue;
+            }
+            stack.push((current_id, true));
+            if let Some(child_ids) = children.get(&current_id) {
+                stack.extend(child_ids.iter().map(|child_id| (*child_id, false)));
+            }
+        }
+        Ok(descendants)
+    }
+
     pub async fn get_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<Option<i64>> {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
@@ -249,6 +293,19 @@ WHERE public_id = ?2
     }
 
     pub async fn delete_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<bool> {
+        let Some(session) = self.get_session_row_by_public_id(public_id).await? else {
+            return Ok(false);
+        };
+        for descendant in self.list_linked_session_descendants(session.id).await? {
+            let descendant_public_id = uuid::Uuid::from_slice(&descendant.public_id)
+                .context("Linked session has an invalid public id")?;
+            self.delete_single_session_by_public_id(descendant_public_id)
+                .await?;
+        }
+        self.delete_single_session_by_public_id(public_id).await
+    }
+
+    async fn delete_single_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<bool> {
         let mut conn = self.connect().await?;
         let tx = conn
             .transaction()

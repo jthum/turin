@@ -18,6 +18,28 @@ pub(super) async fn list(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
+    if let Some(parent_session_id) = params.parent_session_id.as_deref() {
+        if params.store.is_some() || params.path.is_some() {
+            return validation_error(
+                id,
+                anyhow::anyhow!("'store' and 'path' cannot be combined with 'parent_session_id'"),
+            );
+        }
+        return match guard
+            .list_linked_sessions(parent_session_id, params.limit, params.offset)
+            .await
+        {
+            Ok(Some(sessions)) => {
+                ResponseEnvelope::ok(id, serde_json::json!({ "sessions": sessions }))
+            }
+            Ok(None) => not_found_error(
+                id,
+                ErrorCode::SessionNotFound,
+                format!("Session '{parent_session_id}' not found"),
+            ),
+            Err(err) => super::internal_error(id, err),
+        };
+    }
     let store_selector = match session_store_selector_from_filters(
         params.store.as_deref(),
         params.path.as_deref(),

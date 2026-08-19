@@ -167,6 +167,23 @@ fn session_delete_request_round_trips() {
 }
 
 #[test]
+fn session_list_can_target_direct_linked_children() {
+    let request = RequestEnvelope::new(
+        Some("req_linked_sessions".to_string()),
+        DaemonRequest::SessionList(SessionListParams {
+            limit: 20,
+            offset: 0,
+            store: None,
+            path: None,
+            parent_session_id: Some("019f-parent".to_string()),
+        }),
+    );
+    let value = serde_json::to_value(request).expect("serialize linked session list");
+    assert_eq!(value["op"], "session.list");
+    assert_eq!(value["params"]["parent_session_id"], "019f-parent");
+}
+
+#[test]
 fn memory_list_round_trips_filters_and_window() {
     let request = RequestEnvelope::new(
         Some("req_memory".to_string()),

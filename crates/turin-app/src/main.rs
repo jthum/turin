@@ -5309,6 +5309,12 @@ mod tests {
             session_id: live.session_id.clone(),
             agent_id: live.agent_id.clone(),
             metadata: Some(serde_json::json!({ "title": "Plan the migration" })),
+            parent_internal_id: None,
+            root_internal_id: None,
+            origin_turn_id: None,
+            relation_kind: None,
+            thread_key: None,
+            visibility: "top_level".to_string(),
             created_at: "2026-07-31T00:00:00Z".to_string(),
         };
 
@@ -5347,6 +5353,12 @@ mod tests {
                 session_id: session_id.to_string(),
                 agent_id: "default".to_string(),
                 metadata: None,
+                parent_internal_id: None,
+                root_internal_id: None,
+                origin_turn_id: None,
+                relation_kind: None,
+                thread_key: None,
+                visibility: "top_level".to_string(),
                 created_at: "2026-07-31T00:00:00Z".to_string(),
             })
             .collect::<Vec<_>>();
