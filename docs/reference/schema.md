@@ -201,6 +201,8 @@ Key fields:
 - `topic`
 - `source_agent_id`
 - `target_agent_id`
+- `source_session_id` (nullable canonical session reference)
+- `target_session_id` (nullable canonical session reference; indexed only when present)
 - `payload`
 - `attempt_count`
 - `last_attempted_at`

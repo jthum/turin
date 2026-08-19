@@ -29,7 +29,18 @@ struct LuaRuntimeSignalListOpts {
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
+    source_session: Option<String>,
+    #[serde(default)]
+    target_session: Option<String>,
+    #[serde(default)]
     limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LuaRuntimeSignalSendOpts {
+    target_agent: String,
+    #[serde(default)]
+    target_session: Option<String>,
 }
 
 pub fn register_runtime_signal_namespace(
@@ -62,6 +73,11 @@ pub fn register_runtime_signal_namespace(
                 };
 
                 let source_agent_id = current_agent_id(&app_data);
+                let source_session_id = app_data
+                    .execution_ctx
+                    .lock()
+                    .ok()
+                    .and_then(|context| context.session_id.clone());
 
                 let Some(runtime_scheduler) = app_data.scheduler.clone() else {
                     return Err(mlua::Error::runtime(
@@ -96,6 +112,8 @@ pub fn register_runtime_signal_namespace(
                                 topic: topic.clone(),
                                 source_agent_id: source_agent_id.clone(),
                                 target_agent_id: target_agent_id.clone(),
+                                source_session_id: source_session_id.clone(),
+                                target_session_id: None,
                                 payload: serde_json::to_string(&payload)
                                     .map_err(|e| e.to_string())?,
                             })
@@ -112,6 +130,97 @@ pub fn register_runtime_signal_namespace(
 
                 Ok(emitted_count)
             })?,
+        )?;
+    }
+
+    {
+        let app_data = app_data.clone();
+        signals_ns.set(
+            "send",
+            lua.create_function(
+                move |lua, (topic, payload, opts): (String, Option<Value>, Table)| {
+                    require_capability(&app_data, "runtime.agent.submit")
+                        .map_err(mlua::Error::runtime)?;
+                    let opts = parse_optional_lua_table::<LuaRuntimeSignalSendOpts>(
+                        lua,
+                        Some(&opts),
+                        "runtime.signals.send opts",
+                    )?;
+                    let target_agent = opts.target_agent.trim().to_string();
+                    if target_agent.is_empty() {
+                        return Err(mlua::Error::runtime(
+                            "runtime.signals.send target_agent must not be empty",
+                        ));
+                    }
+                    require_child_agent(&app_data, &target_agent).map_err(mlua::Error::runtime)?;
+
+                    let payload = match payload {
+                        None | Some(Value::Nil) => JsonValue::Object(JsonMap::new()),
+                        Some(value) => object_refs::encode_lua_payload(lua, value)?,
+                    };
+                    let source_agent = current_agent_id(&app_data);
+                    let source_session = app_data
+                        .execution_ctx
+                        .lock()
+                        .ok()
+                        .and_then(|context| context.session_id.clone());
+                    let requested_target_session = opts
+                        .target_session
+                        .map(|session| session.trim().to_string())
+                        .filter(|session| !session.is_empty());
+                    let Some(runtime_scheduler) = app_data.scheduler.clone() else {
+                        return Err(mlua::Error::runtime(
+                            "runtime.signals.send requires daemon runtime coordination",
+                        ));
+                    };
+                    let manager = app_data.agent_manager.clone();
+                    let emitted = bridge_async_display_err(async move {
+                        let target_session =
+                            if let Some(session_id) = requested_target_session.as_deref() {
+                                let (owner, canonical_session_id) = manager
+                                    .resolve_session_target(session_id)
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                                if owner != target_agent {
+                                    return Err(format!(
+                                        "Session '{}' belongs to agent '{}', not '{}'",
+                                        session_id, owner, target_agent
+                                    ));
+                                }
+                                Some(canonical_session_id)
+                            } else {
+                                None
+                            };
+                        runtime_scheduler
+                            .runtime_store()
+                            .insert_signal(SignalInsert {
+                                public_id: uuid::Uuid::now_v7().into_bytes().to_vec(),
+                                topic,
+                                source_agent_id: source_agent,
+                                target_agent_id: target_agent.clone(),
+                                source_session_id: source_session,
+                                target_session_id: target_session.clone(),
+                                payload: serde_json::to_string(&payload)
+                                    .map_err(|error| error.to_string())?,
+                            })
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        match target_session.as_deref() {
+                            Some(session_id) => manager
+                                .wake_session(session_id)
+                                .await
+                                .map_err(|error| error.to_string())?,
+                            None => manager
+                                .wake_agent(&target_agent)
+                                .await
+                                .map_err(|error| error.to_string())?,
+                        }
+                        Ok::<usize, String>(1)
+                    })
+                    .map_err(mlua::Error::runtime)?;
+                    Ok(emitted)
+                },
+            )?,
         )?;
     }
 
@@ -171,6 +280,8 @@ pub fn register_runtime_signal_namespace(
                             parsed.topic.as_deref(),
                             parsed.source_agent.as_deref(),
                             target_agent.as_deref(),
+                            parsed.source_session.as_deref(),
+                            parsed.target_session.as_deref(),
                             limit,
                         )
                         .await
@@ -213,6 +324,8 @@ pub(crate) fn dispatch_runtime_signal(lua: &Lua, signal: &SignalRow) -> Result<u
     )?;
     event_ctx.set("source_agent_id", signal.source_agent_id.clone())?;
     event_ctx.set("target_agent_id", signal.target_agent_id.clone())?;
+    event_ctx.set("source_session_id", signal.source_session_id.clone())?;
+    event_ctx.set("target_session_id", signal.target_session_id.clone())?;
     event_ctx.set("created_at", signal.created_at.clone())?;
 
     let event_payload = build_runtime_signal_event_payload(lua, signal)?;
@@ -308,6 +421,22 @@ fn build_runtime_signal_event_payload(lua: &Lua, signal: &SignalRow) -> Result<V
         JsonValue::String(signal.source_agent_id.clone()),
     );
     base.insert(
+        "source_session_id".to_string(),
+        signal
+            .source_session_id
+            .clone()
+            .map(JsonValue::String)
+            .unwrap_or(JsonValue::Null),
+    );
+    base.insert(
+        "target_session_id".to_string(),
+        signal
+            .target_session_id
+            .clone()
+            .map(JsonValue::String)
+            .unwrap_or(JsonValue::Null),
+    );
+    base.insert(
         "emitted_at".to_string(),
         JsonValue::String(signal.created_at.clone()),
     );
@@ -334,6 +463,22 @@ fn signal_row_to_json(signal: &SignalRow) -> JsonValue {
         (
             "target_agent_id".to_string(),
             JsonValue::String(signal.target_agent_id.clone()),
+        ),
+        (
+            "source_session_id".to_string(),
+            signal
+                .source_session_id
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+        ),
+        (
+            "target_session_id".to_string(),
+            signal
+                .target_session_id
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
         ),
         ("payload".to_string(), payload),
         (

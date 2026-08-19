@@ -59,6 +59,8 @@ Session targeting:
 3. Ambiguous slot-agnostic operations fail instead of guessing.
 4. Cancellation and kill also inspect pending logical targets, so queued linked
    sessions remain addressable before they become the lane's current session.
+5. Directed runtime signals resolve a canonical session reference, verify its owning
+   agent, and wake or resume that exact session before delivery.
 
 ## Invariants
 
@@ -85,6 +87,8 @@ Session targeting:
   It must not bypass agent/session inference overrides or harness turn policy.
 - Fair scheduling changes dequeue order only across logical sessions. Cancellation,
   pending-result ownership, and queue counters continue to operate on the same envelopes.
+- A session-addressed signal may only be consumed when the runtime's current canonical
+  session reference matches its target. Agent-addressed signals retain broadcast behavior.
 
 ## Common Changes
 

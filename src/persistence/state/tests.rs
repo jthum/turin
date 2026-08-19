@@ -30,6 +30,52 @@ async fn test_schema_initialization() {
 }
 
 #[tokio::test]
+async fn session_addressed_signals_are_visible_only_to_the_target_runtime() {
+    let store = StateStore::open_memory().await.unwrap();
+    for (topic, target_session_id) in [
+        ("broadcast", None),
+        ("session-a", Some("session-a".to_string())),
+        ("session-b", Some("session-b".to_string())),
+    ] {
+        store
+            .insert_signal(SignalInsert {
+                public_id: uuid::Uuid::now_v7().into_bytes().to_vec(),
+                topic: topic.to_string(),
+                source_agent_id: "sender".to_string(),
+                target_agent_id: "worker".to_string(),
+                source_session_id: Some("parent".to_string()),
+                target_session_id,
+                payload: "{}".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let default = store
+        .list_signals_for_agent("worker", None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        default
+            .iter()
+            .map(|row| row.topic.as_str())
+            .collect::<Vec<_>>(),
+        ["broadcast"]
+    );
+    let session_a = store
+        .list_signals_for_agent("worker", Some("session-a"), 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        session_a
+            .iter()
+            .map(|row| row.topic.as_str())
+            .collect::<Vec<_>>(),
+        ["broadcast", "session-a"]
+    );
+}
+
+#[tokio::test]
 async fn test_insert_and_get_events() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

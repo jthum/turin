@@ -598,7 +598,10 @@ impl PeerRuntime {
             return Ok(0);
         };
         let store = runtime_scheduler.runtime_store();
-        let signals = store.list_signals_for_agent(&self.agent_id, 64).await?;
+        let current_session_id = self.control.current_session_id();
+        let signals = store
+            .list_signals_for_agent(&self.agent_id, current_session_id.as_deref(), 64)
+            .await?;
         if signals.is_empty() {
             return Ok(0);
         }

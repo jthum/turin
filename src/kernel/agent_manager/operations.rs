@@ -10,7 +10,9 @@ use crate::kernel::session::{
     ExecutionContextTarget, ExecutionDurability, ExecutionStatusSnapshot, ExecutionVisibility,
     ExecutionWritePolicy,
 };
-use crate::kernel::session_refs::{parse_session_reference, session_references_match};
+use crate::kernel::session_refs::{
+    format_session_reference, parse_session_reference, session_references_match,
+};
 use crate::persistence::manager::StoreSelector;
 
 use super::{
@@ -86,6 +88,45 @@ impl AgentManager {
     pub async fn wake_agent(self: &Arc<Self>, agent_id: &str) -> Result<()> {
         let handle = self.ensure_runtime(agent_id).await?;
         handle.notify.notify_one();
+        Ok(())
+    }
+
+    pub async fn resolve_session_target(&self, session_id: &str) -> Result<(String, String)> {
+        let session_ref = parse_session_reference(session_id)?;
+        let selector = session_ref
+            .store_selector
+            .unwrap_or(self.config.persistence.top_level_state_selector()?);
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
+        let store = self.store_manager.open(&selector).await?;
+        let row = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        Ok((
+            row.agent_id,
+            format_session_reference(&session_ref.public_id, &selector),
+        ))
+    }
+
+    pub async fn wake_session(self: &Arc<Self>, session_id: &str) -> Result<()> {
+        let live = self.find_runtimes_by_session(session_id).await;
+        if !live.is_empty() {
+            for (_, handle) in live {
+                handle.notify.notify_one();
+            }
+            return Ok(());
+        }
+        let live = self
+            .resume_session(session_id, None, None, InferenceOverrideConfig::default())
+            .await?;
+        if let Some((_, handle)) = self
+            .find_runtimes_by_session(&live.session_id)
+            .await
+            .into_iter()
+            .find(|(key, _)| key.slot_id == live.slot_id)
+        {
+            handle.notify.notify_one();
+        }
         Ok(())
     }
 

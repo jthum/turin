@@ -1109,6 +1109,8 @@ async fn test_runtime_signals_list_and_subscribers_helpers() {
             topic: "code.ready".to_string(),
             source_agent_id: "publisher".to_string(),
             target_agent_id: "test-agent".to_string(),
+            source_session_id: None,
+            target_session_id: None,
             payload: serde_json::json!({ "branch": "feature-x" }).to_string(),
         })
         .await
@@ -1215,12 +1217,14 @@ async fn test_runtime_signals_support_terminal_wildcard_subscriptions() {
             topic: "deploy.complete".to_string(),
             source_agent_id: "publisher".to_string(),
             target_agent_id: "test-agent".to_string(),
+            source_session_id: None,
+            target_session_id: None,
             payload: serde_json::json!({ "env": "prod" }).to_string(),
         })
         .await
         .unwrap();
     let signals = runtime_store
-        .list_signals_for_agent("test-agent", 10)
+        .list_signals_for_agent("test-agent", None, 10)
         .await
         .unwrap();
     assert_eq!(signals.len(), 1);

@@ -5,7 +5,7 @@ use super::StateStore;
 use crate::persistence::schema::SignalRow;
 use crate::signal_topics::signal_topic_subscription_candidates;
 
-const SIGNAL_COLUMNS: &str = "id, public_id, topic, source_agent_id, target_agent_id, payload, attempt_count, last_attempted_at, last_error, created_at";
+const SIGNAL_COLUMNS: &str = "id, public_id, topic, source_agent_id, target_agent_id, source_session_id, target_session_id, payload, attempt_count, last_attempted_at, last_error, created_at";
 
 #[derive(Debug, Clone)]
 pub struct SignalInsert {
@@ -13,6 +13,8 @@ pub struct SignalInsert {
     pub topic: String,
     pub source_agent_id: String,
     pub target_agent_id: String,
+    pub source_session_id: Option<String>,
+    pub target_session_id: Option<String>,
     pub payload: String,
 }
 
@@ -73,12 +75,14 @@ impl StateStore {
     pub async fn insert_signal(&self, insert: SignalInsert) -> Result<()> {
         let conn = self.connect().await?;
         conn.execute(
-            "INSERT INTO signals (public_id, topic, source_agent_id, target_agent_id, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO signals (public_id, topic, source_agent_id, target_agent_id, source_session_id, target_session_id, payload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             (
                 insert.public_id,
                 insert.topic,
                 insert.source_agent_id,
                 insert.target_agent_id,
+                insert.source_session_id,
+                insert.target_session_id,
                 insert.payload,
             ),
         )
@@ -89,6 +93,7 @@ impl StateStore {
     pub async fn list_signals_for_agent(
         &self,
         agent_id: &str,
+        session_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SignalRow>> {
         let conn = self.connect().await?;
@@ -96,10 +101,13 @@ impl StateStore {
             "SELECT {SIGNAL_COLUMNS}
              FROM signals
              WHERE target_agent_id = ?1
+               AND (target_session_id IS NULL OR target_session_id = ?2)
              ORDER BY id ASC
-             LIMIT ?2"
+             LIMIT ?3"
         );
-        let mut rows = conn.query(&sql, (agent_id, limit as i64)).await?;
+        let mut rows = conn
+            .query(&sql, (agent_id, session_id, limit as i64))
+            .await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -114,6 +122,8 @@ impl StateStore {
         topic: Option<&str>,
         source_agent_id: Option<&str>,
         target_agent_id: Option<&str>,
+        source_session_id: Option<&str>,
+        target_session_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SignalRow>> {
         let conn = self.connect().await?;
@@ -126,6 +136,18 @@ impl StateStore {
             &mut params,
             "source_agent_id",
             source_agent_id,
+        );
+        push_signal_filter(
+            &mut clauses,
+            &mut params,
+            "source_session_id",
+            source_session_id,
+        );
+        push_signal_filter(
+            &mut clauses,
+            &mut params,
+            "target_session_id",
+            target_session_id,
         );
         push_signal_filter(
             &mut clauses,
@@ -203,10 +225,12 @@ fn map_signal_row(row: &turso::Row) -> Result<SignalRow> {
         topic: row.get(2)?,
         source_agent_id: row.get(3)?,
         target_agent_id: row.get(4)?,
-        payload: row.get(5)?,
-        attempt_count: row.get::<i64>(6)? as u64,
-        last_attempted_at: row.get(7)?,
-        last_error: row.get(8)?,
-        created_at: row.get(9)?,
+        source_session_id: row.get(5)?,
+        target_session_id: row.get(6)?,
+        payload: row.get(7)?,
+        attempt_count: row.get::<i64>(8)? as u64,
+        last_attempted_at: row.get(9)?,
+        last_error: row.get(10)?,
+        created_at: row.get(11)?,
     })
 }

@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 31;
+pub(crate) const SCHEMA_VERSION: u32 = 32;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -298,6 +298,8 @@ CREATE TABLE IF NOT EXISTS signals (
     topic             TEXT NOT NULL,
     source_agent_id   TEXT NOT NULL,
     target_agent_id   TEXT NOT NULL,
+    source_session_id TEXT,
+    target_session_id TEXT,
     payload           TEXT NOT NULL,
     attempt_count     INTEGER NOT NULL DEFAULT 0,
     last_attempted_at TEXT,
@@ -306,6 +308,8 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_target ON signals(target_agent_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_signals_target_session ON signals(target_session_id, id ASC)
+    WHERE target_session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_signals_topic ON signals(topic, id ASC);
 
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -525,6 +529,8 @@ pub struct SignalRow {
     pub topic: String,
     pub source_agent_id: String,
     pub target_agent_id: String,
+    pub source_session_id: Option<String>,
+    pub target_session_id: Option<String>,
     pub payload: String,
     pub attempt_count: u64,
     pub last_attempted_at: Option<String>,
