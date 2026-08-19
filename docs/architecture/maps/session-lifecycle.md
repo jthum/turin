@@ -18,6 +18,9 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
   - Execution-target materialization for branch-head, turn, selected-path, summary-source, and external-reference targets.
   - Persisted history reconstruction.
   - Session counter and context compaction checkpoint reconstruction from persisted events.
+- `src/kernel/session_lifecycle/persistence.rs`
+  - Session-row creation, initial branch cursor hydration, shared persistence-lock binding,
+    and ordered background event durability attachment.
 - `src/kernel/session_lifecycle/sidestep.rs`
   - Persisted sidestep target normalization.
   - Ephemeral sidestep snapshots.
@@ -222,9 +225,10 @@ git diff --check
 
 ## Current Shape
 
-The current pass keeps lifecycle orchestration in `session_lifecycle.rs` and extracts two private helper boundaries:
+The current shape keeps lifecycle orchestration in `session_lifecycle.rs` and extracts private helper boundaries:
 
 - `materialization.rs` owns persisted target materialization and rebuild logic.
+- `persistence.rs` owns persistence attachment and the background durability lane.
 - `sidestep.rs` owns persisted sidestep preparation and branch-source normalization.
 
 `session.rs` remains the public facade for session-domain types. Completed-task retention and queued-task construction live in child modules and are re-exported at the original `crate::kernel::session::*` paths.

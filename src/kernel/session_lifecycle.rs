@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 
 mod materialization;
+mod persistence;
 mod sidestep;
 
 use crate::kernel::config::ContextPersistenceConfig;
@@ -12,8 +12,7 @@ use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::{
-    ExecutionContextTarget, ExecutionWritePolicy, PersistedKernelRecord, SessionState,
-    SessionStatus,
+    ExecutionContextTarget, ExecutionWritePolicy, SessionState, SessionStatus,
 };
 use crate::kernel::session_lifecycle::materialization::{
     MaterializedExecutionTarget, TokenContextBounds, materialize_execution_target,
@@ -21,8 +20,7 @@ use crate::kernel::session_lifecycle::materialization::{
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::{
-    create_session_metadata, session_channel_id_from_metadata,
-    session_default_store_selector_from_metadata,
+    session_channel_id_from_metadata, session_default_store_selector_from_metadata,
 };
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
@@ -465,147 +463,6 @@ impl ExecutionHost {
         });
         self.refresh_session_from_persistence(session).await?;
         Ok(true)
-    }
-
-    async fn attach_session_persistence(
-        &self,
-        session: &mut SessionState,
-        create_row: bool,
-        link: Option<&LinkedSessionCreate>,
-    ) {
-        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            if create_row
-                && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
-            {
-                let metadata = create_session_metadata(
-                    session.default_store_selector.as_ref(),
-                    session.identity.channel_id(),
-                );
-                let created = match link {
-                    Some(link) => {
-                        store
-                            .create_linked_session(
-                                public_id,
-                                session.identity.agent_id(),
-                                metadata.as_deref(),
-                                link,
-                            )
-                            .await
-                    }
-                    None => {
-                        store
-                            .create_session(
-                                public_id,
-                                session.identity.agent_id(),
-                                metadata.as_deref(),
-                            )
-                            .await
-                    }
-                };
-                match created {
-                    Ok(id) => {
-                        session.internal_id = Some(id);
-                        match store.get_active_branch_head(id).await {
-                            Ok(Some(branch)) => {
-                                session.set_selected_branch_head_id(Some(branch.id));
-                                let branch_head_turn_id = branch.head_turn_id;
-                                let head_turn_index = match branch.head_turn_id {
-                                    Some(turn_id) => match store.get_turn_row(turn_id).await {
-                                        Ok(Some(turn)) => Some(turn.branch_depth),
-                                        Ok(None) => None,
-                                        Err(e) => {
-                                            warn!(
-                                                error = %e,
-                                                turn_id,
-                                                "Failed to load initial branch head turn depth"
-                                            );
-                                            None
-                                        }
-                                    },
-                                    None => None,
-                                };
-                                session.set_selected_branch_head_cursor(
-                                    branch_head_turn_id,
-                                    head_turn_index,
-                                );
-                            }
-                            Ok(None) => {
-                                warn!("Created session is missing an active branch head");
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "Failed to load initial branch head for session");
-                            }
-                        }
-                        if let Err(e) = self.bind_session_persistence_lock(session).await {
-                            warn!(error = %e, "Failed to bind shared persistence lock for session");
-                        }
-                    }
-                    Err(e) => warn!(error = %e, "Failed to create session row in DB"),
-                }
-            }
-
-            if create_row
-                && session.internal_id.is_none()
-                && let Err(e) = self.bind_session_persistence_lock(session).await
-            {
-                warn!(error = %e, "Failed to bind shared persistence lock for session");
-            }
-
-            if !create_row && let Err(e) = self.bind_session_persistence_lock(session).await {
-                warn!(error = %e, "Failed to bind shared persistence lock for resumed session");
-            }
-
-            let (durability_tx, mut durability_rx) =
-                tokio::sync::mpsc::unbounded_channel::<PersistedKernelRecord>();
-            session.durability_tx = Some(durability_tx);
-            let store_clone = store.clone();
-            let persistence_lock = Arc::clone(&session.persistence_lock);
-            let handle = tokio::spawn(async move {
-                let mut event_writer = None;
-                let mut pending_error = None;
-                while let Some(record) = durability_rx.recv().await {
-                    match record {
-                        PersistedKernelRecord::Event(record) => {
-                            let event = record.event;
-                            let event_type = event.event_type().to_string();
-                            let payload = serde_json::to_value(&event).unwrap_or_default();
-                            if let Some(iid) = record.internal_id {
-                                let _guard = persistence_lock.lock().await;
-                                if event_writer.is_none() {
-                                    match store_clone.event_writer().await {
-                                        Ok(writer) => event_writer = Some(writer),
-                                        Err(e) => {
-                                            warn!(error = %e, "Background persistence error");
-                                            pending_error.get_or_insert_with(|| e.to_string());
-                                            continue;
-                                        }
-                                    }
-                                }
-                                let writer = event_writer
-                                    .as_ref()
-                                    .expect("event writer initialized before insert");
-                                if let Err(e) = writer
-                                    .insert_event(iid, record.turn_target, &event_type, &payload)
-                                    .await
-                                {
-                                    warn!(error = %e, "Background persistence error");
-                                    pending_error.get_or_insert_with(|| e.to_string());
-                                    event_writer = None;
-                                }
-                            } else {
-                                warn!("Dropping event: no internal_id for session");
-                            }
-                        }
-                        PersistedKernelRecord::Barrier(tx) => {
-                            let _guard = persistence_lock.lock().await;
-                            let result = pending_error.take().map_or(Ok(()), Err);
-                            let _ = tx.send(result);
-                        }
-                    }
-                }
-            });
-            session.event_task = Some(Arc::new(AsyncMutex::new(Some(handle))));
-        }
     }
 
     pub(crate) fn resolve_agent_state_selector(&self, agent_id: &str) -> StoreSelector {
