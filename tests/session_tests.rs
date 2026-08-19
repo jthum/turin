@@ -1379,6 +1379,74 @@ async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_contex
 }
 
 #[tokio::test]
+async fn test_complete_current_resident_history_bypasses_context_rematerialization() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.agent.provider = "capture".to_string();
+    config.agent.model = "capture-model".to_string();
+    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
+    config.providers.insert(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "mock".to_string(),
+            base_url: None,
+            context_window_tokens: Some(32_768),
+            ..ProviderConfig::default()
+        },
+    );
+
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+
+    let seen_messages = Arc::new(Mutex::new(Vec::new()));
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureMessagesProvider {
+                seen_messages: Arc::clone(&seen_messages),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Persisted original".to_string()))
+        .await?;
+    let resident_text = session
+        .history
+        .iter_mut()
+        .flat_map(|message| message.content.iter_mut())
+        .find_map(|content| match content {
+            turin::inference::provider::InferenceContent::Text { text }
+                if text == "Persisted original" =>
+            {
+                Some(text)
+            }
+            _ => None,
+        })
+        .expect("expected persisted prompt in resident history");
+    *resident_text = "Resident fast-path marker".to_string();
+
+    kernel
+        .run(&mut session, Some("Next prompt".to_string()))
+        .await?;
+
+    let rendered_request = format!(
+        "{:?}",
+        seen_messages
+            .lock()
+            .expect("capture messages mutex poisoned")
+    );
+    assert!(rendered_request.contains("Resident fast-path marker"));
+    assert!(!rendered_request.contains("Persisted original"));
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = make_config(tmp.path());

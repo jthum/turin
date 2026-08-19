@@ -12,7 +12,7 @@ use crate::harness::context::{
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute};
-use crate::kernel::session::SessionState;
+use crate::kernel::session::{ExecutionContextTarget, ExecutionWritePolicy, SessionState};
 use crate::kernel::turn::context_window::{
     effective_input_budget_tokens, estimate_history_input_tokens, estimate_request_input_tokens,
     resolve_context_window_tokens,
@@ -105,7 +105,12 @@ impl ExecutionHost {
             req.thinking_budget,
             req.inference_context.as_deref(),
         );
-        let selected_history = if let Some(candidate) = initial_route.candidates.first()
+        let selected_history = if self
+            .resident_history_matches_persisted_head(session)
+            .await?
+        {
+            session.history.clone()
+        } else if let Some(candidate) = initial_route.candidates.first()
             && let Some(provider_config) = self.config.providers.get(&candidate.provider_name)
             && session.internal_id.is_some()
         {
@@ -163,6 +168,31 @@ impl ExecutionHost {
             .build_prepared_turn_stream(session, req, tool_definitions)
             .await?;
         Ok(TurnPreflight::Ready(prepared))
+    }
+
+    async fn resident_history_matches_persisted_head(
+        &self,
+        session: &SessionState,
+    ) -> Result<bool> {
+        if session.history.has_prior_history()
+            || session.effective_write_policy() != ExecutionWritePolicy::AdvanceBranchHead
+            || !matches!(
+                session.context_target(),
+                ExecutionContextTarget::BranchHead { .. }
+            )
+        {
+            return Ok(false);
+        }
+        let Some(session_id) = session.internal_id else {
+            return Ok(false);
+        };
+
+        let store = self.store_manager.open(&session.store_selector).await?;
+        let branch = match session.selected_branch_head_id() {
+            Some(branch_head_id) => store.get_branch_head(session_id, branch_head_id).await?,
+            None => store.get_active_branch_head(session_id).await?,
+        };
+        Ok(branch.and_then(|branch| branch.head_turn_id) == session.selected_branch_head_turn_id())
     }
 
     fn default_turn_request_state(

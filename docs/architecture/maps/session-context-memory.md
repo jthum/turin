@@ -56,16 +56,17 @@ Hot-history pruning:
 Turn preflight:
 
 1. Turin resolves the initial provider route and derives an input-token budget after reserving output/thinking capacity and tool/system overhead.
-2. Persistence pages backward from the selected branch/turn and builds a request-local context from complete turns until that budget is filled.
-3. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize an older complete-turn prefix.
-4. Checkpoints identify their durable boundary by source turn ID/index, not by a mutable message count.
-5. Harness `on_turn_prepare` receives the request-local token-bounded message projection and may rewrite that request without mutating resident history.
-6. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
-7. After a provider accepts the stream request, Turin persists one
+2. Complete resident history is reused only when its selected branch-head cursor still matches a lightweight durable head lookup.
+3. Otherwise, persistence pages backward from the selected branch/turn and builds a request-local context from complete turns until that budget is filled.
+4. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize an older complete-turn prefix.
+5. Checkpoints identify their durable boundary by source turn ID/index, not by a mutable message count.
+6. Harness `on_turn_prepare` receives the request-local token-bounded message projection and may rewrite that request without mutating resident history.
+7. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
+8. After a provider accepts the stream request, Turin persists one
    `inference_request` event with normalized token and payload estimates,
    context-budget provenance, compaction counts, and route identity.
-8. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
-9. A queued task may seed the requested inference context for all of its turns;
+9. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
+10. A queued task may seed the requested inference context for all of its turns;
    `on_turn_prepare` remains authoritative and may retain or replace it.
 
 Bounded persistence selection:
@@ -93,6 +94,7 @@ Bounded persistence selection:
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.
 - Context-window structural compaction is request-local; it should not mutate session history.
+- Resident-history reuse must validate both completeness and the durable branch-head identity; `has_prior_history` alone is insufficient.
 - `inference_request` telemetry must remain sparse. It records counts and route
   metadata, never another copy of prompts, messages, tool schemas, or checkpoint
   summaries.
