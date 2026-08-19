@@ -1301,16 +1301,19 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
 }
 
 #[tokio::test]
-async fn test_pruned_hot_history_is_used_without_plain_turn_rematerialization() -> Result<()> {
+async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_context() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = make_config(tmp.path());
     config.agent.provider = "capture".to_string();
     config.agent.model = "capture-model".to_string();
+    config.inference.hot_history.max_messages = Some(4);
+    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
     config.providers.insert(
         "capture".to_string(),
         ProviderConfig {
             kind: "mock".to_string(),
             base_url: None,
+            context_window_tokens: Some(32_768),
             ..ProviderConfig::default()
         },
     );
@@ -1331,36 +1334,47 @@ async fn test_pruned_hot_history_is_used_without_plain_turn_rematerialization() 
     );
 
     let mut session = kernel.create_session().await;
-    session.history_message_offset = 12;
-    session
-        .history
-        .push(turin::inference::provider::InferenceMessage {
-            role: turin::inference::provider::InferenceRole::User,
-            content: vec![turin::inference::provider::InferenceContent::Text {
-                text: "hot context should stay resident".to_string(),
-            }],
-            tool_call_id: None,
-        });
+    for i in 0..8 {
+        kernel
+            .run(&mut session, Some(format!("Persisted context {i}")))
+            .await?;
+    }
+    let session_id = session.identity.session_id().to_string();
+    kernel.end_session(&mut session).await?;
+
+    let mut resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    assert!(resumed.history.has_prior_history());
+    assert!(
+        resumed.history.len() <= 4,
+        "resume should materialize only the configured resident history window"
+    );
+    assert!(
+        !format!("{:?}", resumed.history.messages()).contains("Persisted context 0"),
+        "the oldest persisted turn should not remain resident"
+    );
 
     kernel
-        .run(&mut session, Some("current prompt".to_string()))
+        .run(
+            &mut resumed,
+            Some("Use the full token-bounded context".to_string()),
+        )
         .await?;
 
-    let seen = seen_messages
-        .lock()
-        .expect("capture messages mutex poisoned")
-        .clone();
-    let rendered = format!("{seen:?}");
-    assert!(
-        rendered.contains("hot context should stay resident"),
-        "plain preflight should not rematerialize and discard the hot history window"
+    let rendered_request = format!(
+        "{:?}",
+        seen_messages
+            .lock()
+            .expect("capture messages mutex poisoned")
     );
     assert!(
-        rendered.contains("current prompt"),
-        "expected latest prompt to remain in the inference request"
+        rendered_request.contains("Persisted context 0"),
+        "inference should retrieve older persisted turns beyond the resident window: {rendered_request}"
     );
+    assert!(rendered_request.contains("Use the full token-bounded context"));
 
-    kernel.end_session(&mut session).await?;
+    kernel.end_session(&mut resumed).await?;
     Ok(())
 }
 
@@ -1371,12 +1385,13 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
     config.agent.provider = "checkpoint".to_string();
     config.agent.model = "checkpoint-model".to_string();
     config.agent.system_prompt = "Auto-compact long histories".to_string();
+    config.inference.compaction.trigger_ratio = 0.1;
     config.providers.insert(
         "checkpoint".to_string(),
         ProviderConfig {
             kind: "mock".to_string(),
             base_url: None,
-            context_window_tokens: Some(512),
+            context_window_tokens: Some(8_192),
             ..ProviderConfig::default()
         },
     );
@@ -1402,15 +1417,12 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
 
     let mut session = kernel.create_session().await;
     for i in 0..12 {
-        session
-            .history
-            .push(turin::inference::provider::InferenceMessage {
-                role: turin::inference::provider::InferenceRole::User,
-                content: vec![turin::inference::provider::InferenceContent::Text {
-                    text: format!("Historic prompt {i}: {}", "x".repeat(240)),
-                }],
-                tool_call_id: None,
-            });
+        kernel
+            .run(
+                &mut session,
+                Some(format!("Historic prompt {i}: {}", "x".repeat(240))),
+            )
+            .await?;
     }
 
     kernel
@@ -1426,15 +1438,15 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         .expect("expected context checkpoint to be generated");
     assert_eq!(checkpoint.summary, "CHECKPOINT SUMMARY");
     assert!(
-        checkpoint.covered_message_count > 0,
+        checkpoint.covered_through_turn_id > 0,
         "expected checkpoint to cover earlier history"
     );
-    assert_eq!(
+    assert!(
         *complete_calls
             .lock()
-            .expect("context checkpoint complete mutex poisoned"),
-        1,
-        "expected exactly one semantic compaction completion call"
+            .expect("context checkpoint complete mutex poisoned")
+            >= 1,
+        "expected at least one semantic compaction completion call"
     );
 
     let stream_system = seen_stream_system
@@ -1957,6 +1969,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
     config.agent.model = "main-model".to_string();
     config.agent.system_prompt = "Dedicated compaction route".to_string();
     config.inference.compaction.inference = Some("summary".to_string());
+    config.inference.compaction.trigger_ratio = 0.2;
     config.inference.contexts.insert(
         "summary".to_string(),
         turin::kernel::config::InferenceContextConfig {
@@ -1973,7 +1986,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
         ProviderConfig {
             kind: "mock".to_string(),
             base_url: None,
-            context_window_tokens: Some(512),
+            context_window_tokens: Some(8_192),
             ..ProviderConfig::default()
         },
     );
@@ -1982,7 +1995,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
         ProviderConfig {
             kind: "mock".to_string(),
             base_url: None,
-            context_window_tokens: Some(512),
+            context_window_tokens: Some(8_192),
             ..ProviderConfig::default()
         },
     );
@@ -2023,23 +2036,16 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
 
     let mut session = kernel.create_session().await;
     for i in 0..12 {
-        session
-            .history
-            .push(turin::inference::provider::InferenceMessage {
-                role: turin::inference::provider::InferenceRole::User,
-                content: vec![turin::inference::provider::InferenceContent::Text {
-                    text: format!("Compaction-route history {i}: {}", "x".repeat(240)),
-                }],
-                tool_call_id: None,
-            });
+        kernel
+            .run(
+                &mut session,
+                Some(format!("Compaction-route history {i}: {}", "x".repeat(240))),
+            )
+            .await?;
+        if session.context_checkpoint.is_some() {
+            break;
+        }
     }
-
-    kernel
-        .run(
-            &mut session,
-            Some("Newest prompt with dedicated compaction route".to_string()),
-        )
-        .await?;
 
     let checkpoint = session
         .context_checkpoint

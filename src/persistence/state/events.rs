@@ -179,6 +179,17 @@ impl StateStore {
         }
     }
 
+    pub async fn get_session_events_by_types(
+        &self,
+        session_id: i64,
+        event_types: &[&str],
+    ) -> Result<Vec<EventRow>> {
+        if event_types.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.query_events_by_types(session_id, event_types).await
+    }
+
     pub async fn get_recent_events_by_types(
         &self,
         session_id: i64,

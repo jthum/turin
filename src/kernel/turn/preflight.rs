@@ -13,7 +13,10 @@ use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute};
 use crate::kernel::session::SessionState;
-use crate::kernel::turn::context_window::estimate_history_input_tokens;
+use crate::kernel::turn::context_window::{
+    effective_input_budget_tokens, estimate_history_input_tokens, estimate_request_input_tokens,
+    resolve_context_window_tokens,
+};
 
 use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
@@ -40,6 +43,7 @@ pub(super) struct TurnRequestState {
     model: String,
     provider_name: String,
     system_prompt: String,
+    messages: Vec<provider::InferenceMessage>,
     thinking_budget: u32,
     request_options_override: RequestOptionsOverride,
     tool_exposure: crate::harness::context::ToolExposure,
@@ -91,6 +95,63 @@ impl ExecutionHost {
 
         let tool_definitions = self.tool_definitions_for_session(session, turn_ctx)?;
 
+        let effective_inference = self.config.effective_inference_config_for_agent(
+            session.identity.agent_id(),
+            Some(&session.inference),
+        )?;
+        let initial_route = effective_inference.resolve_route(
+            &req.provider_name,
+            &req.model,
+            req.thinking_budget,
+            req.inference_context.as_deref(),
+        );
+        let selected_history = if let Some(candidate) = initial_route.candidates.first()
+            && let Some(provider_config) = self.config.providers.get(&candidate.provider_name)
+            && session.internal_id.is_some()
+        {
+            let input_budget = effective_input_budget_tokens(
+                resolve_context_window_tokens(Some(provider_config)),
+                candidate.max_tokens,
+                candidate.thinking_budget,
+            );
+            let support_tokens =
+                estimate_request_input_tokens(&req.system_prompt, &[], &tool_definitions);
+            let history_budget = input_budget.saturating_sub(support_tokens).max(1) as u64;
+            let max_turns = (history_budget as usize / 4)
+                .saturating_add(64)
+                .min(100_000);
+            let mut selected = self
+                .load_token_bounded_history(session, history_budget, 8, max_turns)
+                .await?;
+            for message in session.history.untracked_suffix() {
+                selected.push(message.clone());
+            }
+            selected
+        } else {
+            session.history.clone()
+        };
+        self.maybe_refresh_context_checkpoint(
+            session,
+            &selected_history,
+            &effective_inference,
+            &initial_route,
+            &req,
+            &tool_definitions,
+        )
+        .await?;
+        if effective_inference.compaction.mode.uses_summary() {
+            let effective =
+                crate::kernel::turn::context_window::effective_request_context_from_window(
+                    &req.system_prompt,
+                    &selected_history,
+                    session.context_checkpoint.as_ref(),
+                );
+            req.system_prompt = effective.system_prompt;
+            req.messages = effective.messages;
+        } else {
+            req.messages = selected_history.to_messages();
+        }
+
         if self
             .emit_turn_prepare_and_apply_hook(session, turn_ctx, &tool_definitions, &mut req)
             .await?
@@ -115,6 +176,7 @@ impl ExecutionHost {
             model: agent.model.clone(),
             provider_name: agent.provider.clone(),
             system_prompt: agent.system_prompt.clone(),
+            messages: session.history.to_messages(),
             thinking_budget: agent
                 .thinking
                 .as_ref()
@@ -242,17 +304,13 @@ impl ExecutionHost {
                 .expect("session harness mutex poisoned")
                 .has_hook("on_turn_prepare")
         });
-        if has_prepare_hook {
-            self.ensure_full_history_materialized(session).await?;
-        }
-
         if has_prepare_hook && let Some(harness) = self.session_harness_engine(session) {
             let available_tool_names = available_tools
                 .iter()
                 .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
                 .map(ToOwned::to_owned)
                 .collect();
-            let token_count = estimate_history_input_tokens(&req.system_prompt, &session.history);
+            let token_count = estimate_history_input_tokens(&req.system_prompt, &req.messages);
             let token_limit = self.estimate_turn_context_window_tokens(session, req)?;
             let session_id = self.session_reference(session);
             let session_title = self.session_title(session).await?;
@@ -262,7 +320,7 @@ impl ExecutionHost {
                 req.model.clone(),
                 req.provider_name.clone(),
                 req.system_prompt.clone(),
-                session.history.clone(),
+                req.messages.clone(),
                 session.turn_index,
                 turn_ctx.task_turn_index,
                 turn_ctx.task_turn_index == 0,
@@ -297,7 +355,7 @@ impl ExecutionHost {
             }
 
             let state = ctx.get_state();
-            session.replace_full_history(state.messages);
+            req.messages = state.messages;
             req.inference_context = state.inference;
             req.system_prompt = state.system_prompt;
             req.model = state.model;
@@ -344,9 +402,6 @@ impl ExecutionHost {
                 "Inference route warning"
             );
         }
-        self.maybe_refresh_context_checkpoint(session, &effective_inference, &route, &req, &tools)
-            .await?;
-
         let mut last_error: Option<anyhow::Error> = None;
         for candidate in route.candidates {
             if let Err(err) = self.ensure_turn_provider_client(&candidate.provider_name) {
@@ -412,7 +467,7 @@ impl ExecutionHost {
                 thinking_budget: candidate.thinking_budget,
             };
             let prepared_request = self.compact_messages_for_candidate(
-                session,
+                &req.messages,
                 &req.system_prompt,
                 &tools,
                 &candidate,
@@ -451,11 +506,11 @@ impl ExecutionHost {
                 thinking_budget_tokens: candidate.thinking_budget,
                 available_message_count: session.history.len(),
                 sent_message_count: effective_request.messages.len(),
-                history_message_offset: session.history_message_offset,
-                checkpoint_covered_message_count: session
+                has_prior_history: session.history.has_prior_history(),
+                checkpoint_covered_through_turn_id: session
                     .context_checkpoint
                     .as_ref()
-                    .map_or(0, |checkpoint| checkpoint.covered_message_count),
+                    .map(|checkpoint| checkpoint.covered_through_turn_id),
                 truncated_tool_results: prepared_request.report.truncated_tool_results,
                 dropped_messages: prepared_request.report.dropped_messages,
                 estimated_payload_bytes: token_estimate.estimated_payload_bytes,

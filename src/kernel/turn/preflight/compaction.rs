@@ -6,6 +6,7 @@ use crate::kernel::config::{
     InferenceCompactionMode, InferenceConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute,
 };
 use crate::kernel::event::AuditEvent;
+use crate::kernel::session::ResidentHistory;
 use crate::kernel::session::SessionState;
 use crate::kernel::turn::context_window::{
     CompactionReport, EffectiveRequestContext, build_checkpoint_summary_request,
@@ -50,12 +51,16 @@ impl ExecutionHost {
     pub(super) async fn maybe_refresh_context_checkpoint(
         &mut self,
         session: &mut SessionState,
+        context_history: &ResidentHistory,
         effective_inference: &InferenceConfig,
         route: &ResolvedInferenceRoute,
         req: &TurnRequestState,
         tools: &[serde_json::Value],
     ) -> Result<()> {
         if !effective_inference.compaction.mode.uses_summary() {
+            return Ok(());
+        }
+        if context_history.has_prior_history() && session.context_checkpoint.is_none() {
             return Ok(());
         }
 
@@ -95,8 +100,7 @@ impl ExecutionHost {
         );
         let effective = effective_request_context_from_window(
             &req.system_prompt,
-            &session.history,
-            session.history_message_offset,
+            context_history,
             session.context_checkpoint.as_ref(),
         );
         let effective_input_tokens =
@@ -108,8 +112,8 @@ impl ExecutionHost {
             return Ok(());
         }
 
-        let Some(target_covered_message_count) =
-            target_checkpoint_coverage(session.history.len(), session.context_checkpoint.as_ref())
+        let Some((summary_prefix_len, covered_origin)) =
+            target_checkpoint_coverage(context_history, session.context_checkpoint.as_ref())
         else {
             return Ok(());
         };
@@ -138,9 +142,9 @@ impl ExecutionHost {
 
         let (summary_system_prompt, summary_messages, summary_max_tokens) =
             build_checkpoint_summary_request(
-                &session.history,
+                context_history,
                 session.context_checkpoint.as_ref(),
-                target_covered_message_count,
+                summary_prefix_len,
                 context_window_tokens,
             );
         if summary_messages.is_empty() {
@@ -185,7 +189,8 @@ impl ExecutionHost {
 
         let checkpoint = crate::kernel::session::ContextCompactionCheckpoint {
             summary,
-            covered_message_count: target_covered_message_count,
+            covered_through_turn_id: covered_origin.turn_id,
+            covered_through_turn_index: covered_origin.turn_index,
             generated_at_turn_index: session.turn_index,
             provider_name: candidate.provider_name.clone(),
             model: candidate.model.clone(),
@@ -200,25 +205,16 @@ impl ExecutionHost {
 
     pub(super) fn compact_messages_for_candidate(
         &self,
-        session: &SessionState,
+        request_messages: &[provider::InferenceMessage],
         system_prompt: &str,
         tools: &[serde_json::Value],
         candidate: &ResolvedInferenceCandidate,
         provider_config: &crate::kernel::config::ProviderConfig,
         compaction_mode: &InferenceCompactionMode,
     ) -> PreparedRequestContext {
-        let effective = if compaction_mode.uses_summary() {
-            effective_request_context_from_window(
-                system_prompt,
-                &session.history,
-                session.history_message_offset,
-                session.context_checkpoint.as_ref(),
-            )
-        } else {
-            EffectiveRequestContext {
-                system_prompt: system_prompt.to_string(),
-                messages: session.history.clone(),
-            }
+        let effective = EffectiveRequestContext {
+            system_prompt: system_prompt.to_string(),
+            messages: request_messages.to_vec(),
         };
 
         let context_window_tokens = resolve_context_window_tokens(Some(provider_config));

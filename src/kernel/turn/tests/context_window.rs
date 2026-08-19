@@ -1,6 +1,6 @@
 use super::*;
 use crate::inference::provider::InferenceRole;
-use crate::kernel::session::ContextCompactionCheckpoint;
+use crate::kernel::session::{ContextCompactionCheckpoint, HistoryOrigin, ResidentHistory};
 
 fn text_message(role: InferenceRole, text: &str) -> InferenceMessage {
     InferenceMessage {
@@ -10,6 +10,25 @@ fn text_message(role: InferenceRole, text: &str) -> InferenceMessage {
         }],
         tool_call_id: None,
     }
+}
+
+fn resident_history(messages: Vec<InferenceMessage>, first_turn_id: i64) -> ResidentHistory {
+    let entries = messages
+        .into_iter()
+        .enumerate()
+        .map(|(index, message)| {
+            (
+                message,
+                Some(HistoryOrigin {
+                    turn_id: first_turn_id + index as i64,
+                    turn_index: index as u32,
+                }),
+            )
+        })
+        .collect();
+    let mut history = ResidentHistory::default();
+    history.replace(entries, first_turn_id > 1);
+    history
 }
 
 #[test]
@@ -102,21 +121,25 @@ fn compaction_slides_message_window_when_needed() {
 
 #[test]
 fn effective_request_context_injects_checkpoint_and_drops_covered_history() {
-    let messages = vec![
-        text_message(InferenceRole::User, "old 1"),
-        text_message(InferenceRole::Assistant, "old 2"),
-        text_message(InferenceRole::User, "recent"),
-    ];
+    let history = resident_history(
+        vec![
+            text_message(InferenceRole::User, "old 1"),
+            text_message(InferenceRole::Assistant, "old 2"),
+            text_message(InferenceRole::User, "recent"),
+        ],
+        1,
+    );
     let checkpoint = ContextCompactionCheckpoint {
         summary: "important durable context".to_string(),
-        covered_message_count: 2,
+        covered_through_turn_id: 2,
+        covered_through_turn_index: 1,
         generated_at_turn_index: 4,
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
 
     let effective =
-        effective_request_context_from_window("base system", &messages, 0, Some(&checkpoint));
+        effective_request_context_from_window("base system", &history, Some(&checkpoint));
 
     assert!(
         effective
@@ -131,22 +154,26 @@ fn effective_request_context_injects_checkpoint_and_drops_covered_history() {
 }
 
 #[test]
-fn effective_request_context_applies_checkpoint_to_hot_window_offset() {
-    let messages = vec![
-        text_message(InferenceRole::User, "covered hot message"),
-        text_message(InferenceRole::Assistant, "recent answer"),
-        text_message(InferenceRole::User, "current prompt"),
-    ];
+fn effective_request_context_applies_checkpoint_to_bounded_hot_window() {
+    let history = resident_history(
+        vec![
+            text_message(InferenceRole::User, "covered hot message"),
+            text_message(InferenceRole::Assistant, "recent answer"),
+            text_message(InferenceRole::User, "current prompt"),
+        ],
+        6,
+    );
     let checkpoint = ContextCompactionCheckpoint {
         summary: "durable context before the hot window".to_string(),
-        covered_message_count: 6,
+        covered_through_turn_id: 6,
+        covered_through_turn_index: 0,
         generated_at_turn_index: 4,
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
 
     let effective =
-        effective_request_context_from_window("base system", &messages, 5, Some(&checkpoint));
+        effective_request_context_from_window("base system", &history, Some(&checkpoint));
 
     assert!(
         effective

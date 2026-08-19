@@ -202,7 +202,8 @@ pub struct SessionRequestEfficiencyDetail {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionCompactionDetail {
-    pub covered_message_count: usize,
+    pub covered_through_turn_id: i64,
+    pub covered_through_turn_index: u32,
     pub generated_at_turn_index: u32,
     pub provider: String,
     pub model: String,

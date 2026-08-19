@@ -103,11 +103,15 @@ impl ExecutionHost {
                 input: tc.args.clone(),
             });
         }
-        session.history.push(InferenceMessage {
-            role: InferenceRole::Assistant,
-            content: assistant_content,
-            tool_call_id: None,
-        });
+        let origin = session.active_history_origin();
+        session.history.push_with_origin(
+            InferenceMessage {
+                role: InferenceRole::Assistant,
+                content: assistant_content,
+                tool_call_id: None,
+            },
+            origin,
+        );
 
         has_tool_calls
     }

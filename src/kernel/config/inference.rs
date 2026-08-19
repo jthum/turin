@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::ProvidersConfig;
 
 const DEFAULT_INFERENCE_CONTEXT_NAME: &str = "default";
-const DEFAULT_COMPACTION_TRIGGER_RATIO: f32 = 1.0;
+const DEFAULT_COMPACTION_TRIGGER_RATIO: f32 = 0.8;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct InferenceConfig {

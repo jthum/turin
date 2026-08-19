@@ -1116,10 +1116,14 @@ fn session_efficiency_from_events(
                     continue;
                 };
                 latest_compaction = Some(SessionCompactionDetail {
-                    covered_message_count: checkpoint
-                        .get("covered_message_count")
+                    covered_through_turn_id: checkpoint
+                        .get("covered_through_turn_id")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0),
+                    covered_through_turn_index: checkpoint
+                        .get("covered_through_turn_index")
                         .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0) as usize,
+                        .unwrap_or(0) as u32,
                     generated_at_turn_index: checkpoint
                         .get("generated_at_turn_index")
                         .and_then(serde_json::Value::as_u64)
@@ -1374,8 +1378,8 @@ mod tests {
             thinking_budget_tokens: None,
             available_message_count: 4,
             sent_message_count: 4,
-            history_message_offset: 0,
-            checkpoint_covered_message_count: 0,
+            has_prior_history: false,
+            checkpoint_covered_through_turn_id: None,
             truncated_tool_results: 0,
             dropped_messages: 0,
             estimated_payload_bytes: 400,

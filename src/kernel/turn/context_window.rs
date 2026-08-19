@@ -1,6 +1,6 @@
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::config::ProviderConfig;
-use crate::kernel::session::ContextCompactionCheckpoint;
+use crate::kernel::session::{ContextCompactionCheckpoint, HistoryOrigin, ResidentHistory};
 
 pub(crate) const DEFAULT_CONTEXT_WINDOW_TOKENS: u32 = 128_000;
 const DEFAULT_OUTPUT_RESERVE_TOKENS: u32 = 4_096;
@@ -149,21 +149,16 @@ pub(crate) fn estimate_persisted_message_input_tokens(
 
 pub(crate) fn effective_request_context_from_window(
     system_prompt: &str,
-    messages: &[InferenceMessage],
-    message_offset: usize,
+    history: &ResidentHistory,
     checkpoint: Option<&ContextCompactionCheckpoint>,
 ) -> EffectiveRequestContext {
     let Some(checkpoint) = checkpoint else {
         return EffectiveRequestContext {
             system_prompt: system_prompt.to_string(),
-            messages: messages.to_vec(),
+            messages: history.to_messages(),
         };
     };
 
-    let covered_message_count = checkpoint
-        .covered_message_count
-        .saturating_sub(message_offset)
-        .min(messages.len());
     let mut effective_system_prompt = String::with_capacity(
         system_prompt.len() + checkpoint.summary.len() + CONTEXT_SUMMARY_OPEN_TAG.len() + 64,
     );
@@ -179,37 +174,47 @@ pub(crate) fn effective_request_context_from_window(
 
     EffectiveRequestContext {
         system_prompt: effective_system_prompt,
-        messages: messages[covered_message_count..].to_vec(),
+        messages: history
+            .suffix_after_turn(
+                checkpoint.covered_through_turn_id,
+                checkpoint.covered_through_turn_index,
+            )
+            .to_vec(),
     }
 }
 
 pub(crate) fn target_checkpoint_coverage(
-    history_len: usize,
+    history: &ResidentHistory,
     checkpoint: Option<&ContextCompactionCheckpoint>,
-) -> Option<usize> {
-    let target_covered_message_count = history_len.saturating_sub(SUMMARY_RECENT_MESSAGES);
-    if target_covered_message_count == 0 {
+) -> Option<(usize, HistoryOrigin)> {
+    let mut summary_prefix_len = history.len().saturating_sub(SUMMARY_RECENT_MESSAGES);
+    if summary_prefix_len == 0 || summary_prefix_len >= history.len() {
         return None;
     }
 
+    let boundary_turn_id = history.origin(summary_prefix_len)?.turn_id;
+    while summary_prefix_len > 0
+        && history
+            .origin(summary_prefix_len - 1)
+            .is_some_and(|origin| origin.turn_id == boundary_turn_id)
+    {
+        summary_prefix_len -= 1;
+    }
+    let covered_origin = history.origin(summary_prefix_len.checked_sub(1)?)?;
+
     match checkpoint {
-        None => Some(target_covered_message_count),
-        Some(existing)
-            if target_covered_message_count
-                > existing
-                    .covered_message_count
-                    .saturating_add(SUMMARY_RECENT_MESSAGES) =>
-        {
-            Some(target_covered_message_count)
+        None => Some((summary_prefix_len, covered_origin)),
+        Some(existing) if covered_origin.turn_index > existing.covered_through_turn_index => {
+            Some((summary_prefix_len, covered_origin))
         }
         _ => None,
     }
 }
 
 pub(crate) fn build_checkpoint_summary_request(
-    history: &[InferenceMessage],
+    history: &ResidentHistory,
     checkpoint: Option<&ContextCompactionCheckpoint>,
-    target_covered_message_count: usize,
+    summary_prefix_len: usize,
     context_window_tokens: u32,
 ) -> (String, Vec<InferenceMessage>, u32) {
     let summary_system_prompt = [
@@ -226,9 +231,9 @@ pub(crate) fn build_checkpoint_summary_request(
     .join("\n");
 
     let start_index = checkpoint
-        .map(|checkpoint| checkpoint.covered_message_count.min(history.len()))
+        .and_then(|checkpoint| history.index_after_turn(checkpoint.covered_through_turn_id))
         .unwrap_or(0);
-    let end_index = target_covered_message_count.min(history.len());
+    let end_index = summary_prefix_len.min(history.len());
 
     let mut summary_messages = Vec::new();
     if let Some(checkpoint) = checkpoint {
@@ -244,7 +249,7 @@ pub(crate) fn build_checkpoint_summary_request(
         });
     }
     if start_index < end_index {
-        summary_messages.extend_from_slice(&history[start_index..end_index]);
+        summary_messages.extend_from_slice(&history.messages()[start_index..end_index]);
     }
 
     let summary_input_budget =

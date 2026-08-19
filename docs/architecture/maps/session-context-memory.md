@@ -13,7 +13,7 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/kernel/session.rs`
-  - `SessionState`, execution write policy, context targets, hot-history offset, and context checkpoint state.
+  - `SessionState`, turn-addressed resident history, execution write policy, context targets, and context checkpoint state.
 - `src/kernel/session_lifecycle.rs`
   - Session creation, restore/materialization, branch checkout, persisted history rebuild, and hot-history policy application.
 - `src/kernel/hot_history.rs`
@@ -40,10 +40,10 @@ This subsystem should preserve three guarantees:
 Session restore:
 
 1. `session_lifecycle.rs` loads the persisted session row.
-2. The active branch or selected context target is materialized from persistence.
-3. `rebuild_history` converts persisted messages into inference messages.
-4. `SessionState::replace_full_history` resets the hot-history offset.
-5. `prune_session_hot_history` applies the configured hot-history policy.
+2. The active branch or selected context target is materialized using the configured hot-history bound.
+3. `rebuild_history` converts persisted messages into inference messages and retains each message's source turn ID/index.
+4. `ResidentHistory` records whether older persisted ancestry exists without storing an exact message count.
+5. `prune_session_hot_history` applies payload trimming and enforces the same in-memory policy after subsequent turns.
 
 Hot-history pruning:
 
@@ -51,29 +51,22 @@ Hot-history pruning:
 2. `hot_history::apply` prunes old messages using `effective_max_messages`.
 3. The prune boundary expands backward when needed to keep assistant tool-use and tool-result adjacency.
 4. Older large successful tool results are replaced with an omission marker using `effective_max_tool_result_bytes`.
-5. `history_message_offset` records how many persisted messages precede the current hot window.
+5. `has_prior_history` records that persisted ancestry precedes the resident window; no full-path count is computed.
 
 Turn preflight:
 
-1. Harness `on_turn_prepare` requires full materialization because harness code can inspect or rewrite the full message list.
-2. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize older history.
-3. Provider request context is built from the hot window plus any checkpoint summary.
-4. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
-5. After a provider accepts the stream request, Turin persists one
+1. Turin resolves the initial provider route and derives an input-token budget after reserving output/thinking capacity and tool/system overhead.
+2. Persistence pages backward from the selected branch/turn and builds a request-local context from complete turns until that budget is filled.
+3. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize an older complete-turn prefix.
+4. Checkpoints identify their durable boundary by source turn ID/index, not by a mutable message count.
+5. Harness `on_turn_prepare` receives the request-local token-bounded message projection and may rewrite that request without mutating resident history.
+6. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
+7. After a provider accepts the stream request, Turin persists one
    `inference_request` event with normalized token and payload estimates,
    context-budget provenance, compaction counts, and route identity.
-6. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
-7. A queued task may seed the requested inference context for all of its turns;
+8. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
+9. A queued task may seed the requested inference context for all of its turns;
    `on_turn_prepare` remains authoritative and may retain or replace it.
-
-Full materialization:
-
-1. `ensure_full_history_materialized` reloads persisted messages when a full-history consumer needs them.
-2. The session hot window is replaced by the full active context.
-3. Later turn completion applies hot-history pruning again.
-4. A `perf-diagnostics` build scopes resume, refresh, and per-turn
-   rematerialization stages to the public session id and correlates them with
-   daemon-process memory while leaving the retrieval path unchanged.
 
 Bounded persistence selection:
 
@@ -89,8 +82,8 @@ Bounded persistence selection:
 ## Invariants
 
 - Hot-history pruning must not run for ephemeral or non-branch-advancing execution contexts.
-- `history_message_offset` must increase when hot messages are dropped and reset when full history is materialized.
-- Live session snapshots expose hot-history length and offset for diagnostics; these values are observational and must not drive runtime pruning decisions.
+- Resident message origins must remain aligned with their messages through append, replacement, and prefix pruning.
+- Live session snapshots expose hot-history length and whether prior history exists; these values are observational and must not drive runtime pruning decisions.
 - Client transcript windows are independent read projections over durable
   history. They must not be confused with, or used to configure, the runtime
   hot-history window.
@@ -109,7 +102,9 @@ Bounded persistence selection:
 - Reusable-prefix tokens describe a stable-prefix opportunity. They must not be
   presented as cache hits until the inference boundary exposes provider cache
   read/write counters.
-- Harness `on_turn_prepare` may see full history and may replace it, so pruning happens after turn execution, not before the hook.
+- Harness `on_turn_prepare` sees the provider-budgeted request projection and may replace it; its changes must remain request-local.
+- A checkpoint boundary must resolve to a complete persisted turn. It must never depend on the current resident-window length.
+- When no checkpoint exists, Turin must not summarize a bounded window that omits older ancestry as though it covered that ancestry.
 - Debug hot-history profile can opt out of bounds; default profile should remain memory-safe.
 - Feature-gated live diagnostics must not change materialization semantics or
   introduce prompt/history copies. Normal builds must compile the hooks away.
@@ -142,7 +137,7 @@ Change provider request compaction:
 Change session materialization:
 
 1. Update `src/kernel/session_lifecycle.rs`.
-2. Verify branch/selected-path behavior and hot-window offset behavior together.
+2. Verify branch/selected-path behavior, resident origins, and prior-history metadata together.
 3. Run `cargo test -p turin session --lib`.
 
 ## Tests

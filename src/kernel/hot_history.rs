@@ -9,7 +9,7 @@ const TRUNCATED_TOOL_RESULT_MARKER: &str = "[older tool result omitted from hot 
 pub(crate) struct PruneReport {
     pub dropped_messages: usize,
     pub retained_messages: usize,
-    pub retained_offset: usize,
+    pub has_prior_history: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,13 +60,11 @@ pub(crate) fn prune(
         return None;
     }
 
-    session.history.drain(0..retain_from);
-    session.history.shrink_to_fit();
-    session.history_message_offset = session.history_message_offset.saturating_add(retain_from);
+    session.history.drain_prefix(retain_from);
     Some(PruneReport {
         dropped_messages: retain_from,
         retained_messages: session.history.len(),
-        retained_offset: session.history_message_offset,
+        has_prior_history: true,
     })
 }
 
@@ -139,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn prunes_old_messages_and_tracks_offset() {
+    fn prunes_old_messages_and_tracks_prior_history() {
         let mut session = SessionState::new();
         for idx in 0..6 {
             session.history.push(text_message(format!("message {idx}")));
@@ -149,8 +147,8 @@ mod tests {
 
         assert_eq!(report.dropped_messages, 3);
         assert_eq!(report.retained_messages, 3);
-        assert_eq!(report.retained_offset, 3);
-        assert_eq!(session.history_message_offset, 3);
+        assert!(report.has_prior_history);
+        assert!(session.history.has_prior_history());
         assert_eq!(session.history.len(), 3);
         assert_eq!(session.history[0].role, InferenceRole::User);
     }
@@ -181,7 +179,7 @@ mod tests {
         let report = prune(&mut session, Some(1)).expect("history should be pruned");
 
         assert_eq!(report.dropped_messages, 1);
-        assert_eq!(session.history_message_offset, 1);
+        assert!(session.history.has_prior_history());
         assert_eq!(session.history.len(), 2);
         assert_eq!(session.history[0].role, InferenceRole::Assistant);
         assert_eq!(session.history[1].role, InferenceRole::Tool);
@@ -253,6 +251,6 @@ mod tests {
                 .trimmed_tool_results,
             1
         );
-        assert_eq!(session.history_message_offset, 1);
+        assert!(session.history.has_prior_history());
     }
 }

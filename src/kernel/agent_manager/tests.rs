@@ -179,7 +179,7 @@ fn runtime_control_publishes_coherent_snapshots() {
         ExecutionConflictPolicy::Detached,
         Some(LiveSessionHistorySnapshot {
             len: 7,
-            message_offset: 3,
+            has_prior_history: true,
         }),
     );
     control.activate_task(
@@ -844,7 +844,7 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     control.set_current_execution_conflict_policy(ExecutionConflictPolicy::Detached);
     control.set_current_history_snapshot(LiveSessionHistorySnapshot {
         len: 64,
-        message_offset: 1936,
+        has_prior_history: true,
     });
 
     manager.runtimes.write().await.insert(
@@ -866,7 +866,7 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     assert_eq!(live[0].conflict_policy, ExecutionConflictPolicy::Detached);
     let history = live[0].history.as_ref().expect("history snapshot");
     assert_eq!(history.len, 64);
-    assert_eq!(history.message_offset, 1936);
+    assert!(history.has_prior_history);
 
     Ok(())
 }

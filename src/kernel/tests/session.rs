@@ -205,7 +205,7 @@ fn replacing_full_history_resets_hot_window_offset() {
         tool_call_id: None,
     }]);
 
-    assert_eq!(session.history_message_offset, 0);
+    assert!(!session.history.has_prior_history());
     assert!(!session.history_is_pruned());
     assert_eq!(session.history.len(), 1);
 }

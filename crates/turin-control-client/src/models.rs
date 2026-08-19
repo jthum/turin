@@ -297,7 +297,7 @@ pub struct LiveSession {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveSessionHistory {
     pub len: usize,
-    pub message_offset: usize,
+    pub has_prior_history: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,8 +539,8 @@ pub struct InferenceRequestMetrics {
     pub thinking_budget_tokens: Option<u32>,
     pub available_message_count: usize,
     pub sent_message_count: usize,
-    pub history_message_offset: usize,
-    pub checkpoint_covered_message_count: usize,
+    pub has_prior_history: bool,
+    pub checkpoint_covered_through_turn_id: Option<i64>,
     pub truncated_tool_results: usize,
     pub dropped_messages: usize,
     pub estimated_payload_bytes: usize,
@@ -548,7 +548,8 @@ pub struct InferenceRequestMetrics {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCompactionDetail {
-    pub covered_message_count: usize,
+    pub covered_through_turn_id: i64,
+    pub covered_through_turn_index: u32,
     pub generated_at_turn_index: u32,
     pub provider: String,
     pub model: String,

@@ -106,11 +106,15 @@ impl ExecutionHost {
     }
 
     fn append_task_user_message(&self, session: &mut SessionState, content: &[InferenceContent]) {
-        session.history.push(InferenceMessage {
-            role: InferenceRole::User,
-            content: content.to_vec(),
-            tool_call_id: None,
-        });
+        let origin = session.active_history_origin();
+        session.history.push_with_origin(
+            InferenceMessage {
+                role: InferenceRole::User,
+                content: content.to_vec(),
+                tool_call_id: None,
+            },
+            origin,
+        );
     }
 
     async fn persist_task_user_message(

@@ -163,14 +163,14 @@ pub struct LiveSessionSnapshot {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LiveSessionHistorySnapshot {
     pub len: usize,
-    pub message_offset: usize,
+    pub has_prior_history: bool,
 }
 
 impl LiveSessionHistorySnapshot {
     fn from_session(session: &SessionState) -> Self {
         Self {
             len: session.history.len(),
-            message_offset: session.history_message_offset,
+            has_prior_history: session.history.has_prior_history(),
         }
     }
 }

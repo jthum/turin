@@ -16,8 +16,9 @@ use crate::kernel::session::{
     SessionStatus,
 };
 use crate::kernel::session_lifecycle::materialization::{
-    MaterializedExecutionTarget, materialize_execution_target, rebuild_context_checkpoint,
-    rebuild_history, rebuild_session_counters,
+    MaterializedExecutionTarget, TokenContextBounds, materialize_execution_target,
+    materialize_token_bounded_messages, rebuild_context_checkpoint, rebuild_history,
+    rebuild_session_counters,
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::{
@@ -76,6 +77,39 @@ async fn materialize_session_target(
 }
 
 impl ExecutionHost {
+    pub(crate) async fn load_token_bounded_history(
+        &self,
+        session: &SessionState,
+        token_budget: u64,
+        minimum_messages: usize,
+        max_turns: usize,
+    ) -> Result<crate::kernel::session::ResidentHistory> {
+        let (store, row) = self
+            .load_current_session_row(
+                session,
+                "Token-bounded context retrieval requires a configured persistent state store",
+            )
+            .await?;
+        let context_target = resolved_execution_context_target(session.context_target(), &row);
+        let selected = materialize_token_bounded_messages(
+            self,
+            &store,
+            &session.store_selector,
+            &row,
+            &context_target,
+            TokenContextBounds {
+                token_budget,
+                minimum_messages,
+                max_turns,
+            },
+        )
+        .await?;
+        let (history, _) = rebuild_history(&selected.messages)?;
+        let mut resident = crate::kernel::session::ResidentHistory::default();
+        resident.replace(history, selected.has_prior_history);
+        Ok(resident)
+    }
+
     /// Create a new session.
     pub async fn create_session(&self) -> SessionState {
         self.create_session_for_agent(&self.config.agent.id).await
@@ -186,7 +220,18 @@ impl ExecutionHost {
             "session.resume.materialize",
         )
         .await?;
-        let events = store.get_all_events(row.id).await?;
+        let events = store
+            .get_session_events_by_types(
+                row.id,
+                &[
+                    "task_start",
+                    "task_complete",
+                    "plan_complete",
+                    "message_end",
+                    "session_end",
+                ],
+            )
+            .await?;
         let (history, turn_index) = rebuild_history(&materialized.messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -202,7 +247,9 @@ impl ExecutionHost {
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.inference = inference;
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
-        session.replace_full_history(history);
+        session
+            .history
+            .replace(history, materialized.has_prior_history);
         session.replace_context_target_preserving_policy(context_target);
         session.set_selected_branch_head_cursor(
             materialized.branch_head_turn_id,
@@ -239,7 +286,18 @@ impl ExecutionHost {
             "session.refresh.materialize",
         )
         .await?;
-        let events = store.get_all_events(row.id).await?;
+        let events = store
+            .get_session_events_by_types(
+                row.id,
+                &[
+                    "task_start",
+                    "task_complete",
+                    "plan_complete",
+                    "message_end",
+                    "session_end",
+                ],
+            )
+            .await?;
         let (history, turn_index) = rebuild_history(&materialized.messages)?;
         let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
             rebuild_session_counters(&events);
@@ -250,7 +308,9 @@ impl ExecutionHost {
             .identity
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
-        session.replace_full_history(history);
+        session
+            .history
+            .replace(history, materialized.has_prior_history);
         session.set_context_target(context_target);
         session.set_selected_branch_head_cursor(
             materialized.branch_head_turn_id,
@@ -263,36 +323,6 @@ impl ExecutionHost {
         session.next_plan_id = next_plan_id;
         session.restored_from_persistence = true;
         self.prune_session_hot_history(session);
-        Ok(())
-    }
-
-    pub(crate) async fn ensure_full_history_materialized(
-        &self,
-        session: &mut SessionState,
-    ) -> Result<()> {
-        if !session.history_is_pruned() {
-            return Ok(());
-        }
-        let (store, row) = self
-            .load_current_session_row(
-                session,
-                "Session history materialization requires a configured persistent state store",
-            )
-            .await?;
-        let context_target = resolved_execution_context_target(session.context_target(), &row);
-        let session_reference = self.session_reference(session);
-        let materialized = materialize_session_target(
-            self,
-            &store,
-            &session.store_selector,
-            &row,
-            &context_target,
-            &session_reference,
-            "session.history.materialize",
-        )
-        .await?;
-        let (history, _) = rebuild_history(&materialized.messages)?;
-        session.replace_full_history(history);
         Ok(())
     }
 
@@ -313,10 +343,10 @@ impl ExecutionHost {
                 .prune
                 .map(|report| report.retained_messages)
                 .unwrap_or(session.history.len());
-            let retained_offset = report
+            let has_prior_history = report
                 .prune
-                .map(|report| report.retained_offset)
-                .unwrap_or(session.history_message_offset);
+                .map(|report| report.has_prior_history)
+                .unwrap_or_else(|| session.history.has_prior_history());
             let trimmed_tool_results = report
                 .payload_trim
                 .map(|report| report.trimmed_tool_results)
@@ -328,7 +358,7 @@ impl ExecutionHost {
             debug!(
                 dropped_messages,
                 retained_messages,
-                retained_offset,
+                has_prior_history,
                 trimmed_tool_results,
                 dropped_payload_bytes,
                 "Applied hot-history memory policy"

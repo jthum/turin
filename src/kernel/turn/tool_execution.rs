@@ -596,11 +596,15 @@ impl ExecutionHost {
         }
 
         if publish_to_history && !tool_results.is_empty() {
-            session.history.push(InferenceMessage {
-                role: InferenceRole::Tool,
-                content: tool_results.clone(),
-                tool_call_id: None,
-            });
+            let origin = session.active_history_origin();
+            session.history.push_with_origin(
+                InferenceMessage {
+                    role: InferenceRole::Tool,
+                    content: tool_results.clone(),
+                    tool_call_id: None,
+                },
+                origin,
+            );
 
             if let Ok(store) = self.store_manager.open(&session.store_selector).await
                 && let (Some(iid), Some(target)) =
