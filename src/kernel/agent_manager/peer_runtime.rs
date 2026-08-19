@@ -249,8 +249,7 @@ impl PeerRuntime {
             return self.restore_session(&session_id, target.context).await;
         }
 
-        self.host.end_session(&mut self.session).await?;
-        let mut session = self
+        let session = self
             .host
             .create_linked_session_for_agent_with_context(
                 &self.agent_id,
@@ -261,18 +260,7 @@ impl PeerRuntime {
                 target.link,
             )
             .await?;
-        session.runtime_slot_id = Some(self.slot_id.clone());
-        self.host.start_session(&mut session).await?;
-        self.control.set_current_session(
-            Some(self.host.session_reference(&session)),
-            Some(session.event_tx.clone()),
-            session_context_from_session(&session),
-            Some(ExecutionStatusSnapshot::from_session(&session)),
-            session.execution.conflict_policy,
-            Some(LiveSessionHistorySnapshot::from_session(&session)),
-        );
-        self.session = session;
-        Ok(())
+        self.replace_session(session).await
     }
 
     pub(super) async fn shutdown(mut self) {
@@ -630,9 +618,8 @@ impl PeerRuntime {
     }
 
     async fn reset_session(&mut self, context: SessionContextOverrides) -> Result<()> {
-        self.host.end_session(&mut self.session).await?;
         let context = effective_session_context(&self.session, context);
-        let mut session = self
+        let session = self
             .host
             .create_session_for_agent_with_context(
                 &self.agent_id,
@@ -642,18 +629,7 @@ impl PeerRuntime {
                 context.inference.clone(),
             )
             .await;
-        session.runtime_slot_id = Some(self.slot_id.clone());
-        self.host.start_session(&mut session).await?;
-        self.control.set_current_session(
-            Some(self.host.session_reference(&session)),
-            Some(session.event_tx.clone()),
-            session_context_from_session(&session),
-            Some(ExecutionStatusSnapshot::from_session(&session)),
-            session.execution.conflict_policy,
-            Some(LiveSessionHistorySnapshot::from_session(&session)),
-        );
-        self.session = session;
-        Ok(())
+        self.replace_session(session).await
     }
 
     async fn restore_session(
@@ -661,9 +637,8 @@ impl PeerRuntime {
         session_id: &str,
         context: SessionContextOverrides,
     ) -> Result<()> {
-        self.host.end_session(&mut self.session).await?;
         let context = effective_session_context(&self.session, context);
-        let mut session = self
+        let session = self
             .host
             .resume_session_for_agent_with_context(
                 &self.agent_id,
@@ -672,8 +647,16 @@ impl PeerRuntime {
                 context.inference.clone(),
             )
             .await?;
+        self.replace_session(session).await
+    }
+
+    async fn replace_session(
+        &mut self,
+        mut session: crate::kernel::session::SessionState,
+    ) -> Result<()> {
         session.runtime_slot_id = Some(self.slot_id.clone());
         self.host.start_session(&mut session).await?;
+        let previous_end = self.host.end_session(&mut self.session).await;
         self.control.set_current_session(
             Some(self.host.session_reference(&session)),
             Some(session.event_tx.clone()),
@@ -683,7 +666,7 @@ impl PeerRuntime {
             Some(LiveSessionHistorySnapshot::from_session(&session)),
         );
         self.session = session;
-        Ok(())
+        previous_end
     }
 
     fn sync_control_execution_state(&self) {

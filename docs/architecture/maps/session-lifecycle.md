@@ -140,6 +140,8 @@ Delete persisted session:
   fails submission explicitly instead of queueing a child behind an ancestor awaiting it.
 - A linked session that is already resident retains its physical lane so concurrent
   submissions cannot run one durable transcript through two Lua runtimes.
+- Runtime session switches prepare and start the replacement before ending and publishing
+  over the current session. A failed preparation must leave the current lane coherent.
 - Runtime task ids must be allocated after a linked lane activates its target session so
   task counters advance in the session that actually executes the work.
 - Successful linked-task results are promotable from their recorded origin into a new
