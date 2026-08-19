@@ -30,18 +30,26 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
 fn linked_submission_scope(
     app_data: &HarnessAppData,
     opts: Option<&Table>,
-) -> std::result::Result<(String, String), String> {
-    let origin_session_id = app_data
-        .execution_ctx
-        .lock()
-        .map_err(|_| "execution context mutex poisoned".to_string())?
-        .session_id
-        .clone()
-        .ok_or_else(|| "No active session context".to_string())?;
+) -> std::result::Result<(String, Option<i64>, String), String> {
+    let (origin_session_id, origin_turn_id) = {
+        let execution = app_data
+            .execution_ctx
+            .lock()
+            .map_err(|_| "execution context mutex poisoned".to_string())?;
+        let session_id = execution
+            .session_id
+            .clone()
+            .ok_or_else(|| "No active session context".to_string())?;
+        let turn_id = execution
+            .event_context
+            .as_ref()
+            .and_then(|context| context.turn_id);
+        (session_id, turn_id)
+    };
     let thread_key = opts
         .and_then(|table| table.get::<String>("thread").ok())
         .unwrap_or_else(|| "default".to_string());
-    Ok((origin_session_id, thread_key))
+    Ok((origin_session_id, origin_turn_id, thread_key))
 }
 
 fn parse_submit_task(
@@ -318,7 +326,7 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.submit",
                     )?;
-                    let (origin_session_id, thread_key) =
+                    let (origin_session_id, origin_turn_id, thread_key) =
                         match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
                             Ok(scope) => scope,
                             Err(err) => return nil_err(lua, &err),
@@ -329,6 +337,7 @@ pub fn register_runtime_agent_namespace(
                         manager
                             .submit_linked(
                                 &origin_session_id,
+                                origin_turn_id,
                                 &agent_id,
                                 &thread_key,
                                 task,
@@ -490,7 +499,7 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.ask",
                     )?;
-                    let (origin_session_id, thread_key) =
+                    let (origin_session_id, origin_turn_id, thread_key) =
                         match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
                             Ok(scope) => scope,
                             Err(err) => return nil_err(lua, &err),
@@ -501,6 +510,7 @@ pub fn register_runtime_agent_namespace(
                         let request_id = manager
                             .submit_linked(
                                 &origin_session_id,
+                                origin_turn_id,
                                 &agent_id,
                                 &thread_key,
                                 task,

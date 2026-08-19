@@ -246,6 +246,7 @@ impl AgentManager {
     pub async fn submit_linked(
         self: &Arc<Self>,
         origin_session_id: &str,
+        origin_turn_id: Option<i64>,
         agent_id: &str,
         thread_key: &str,
         task: QueuedTask,
@@ -295,7 +296,7 @@ impl AgentManager {
                 SessionContextOverrides::default(),
                 LinkedSessionCreate {
                     parent_session_id: parent.id,
-                    origin_turn_id: None,
+                    origin_turn_id,
                     relation_kind: "delegated".to_string(),
                     thread_key: thread_key.to_string(),
                     visibility: "contextual".to_string(),

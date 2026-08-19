@@ -43,6 +43,7 @@ use sidestep_graph::{attach_sidestep_graph_relation, opt_sidestep_graph_relation
 struct PreparedPeerSubmission {
     target_agent: String,
     origin_session_id: String,
+    origin_turn_id: Option<i64>,
     thread_key: String,
     task: QueuedTask,
     delegated_capabilities: Option<BTreeMap<String, bool>>,
@@ -81,13 +82,21 @@ fn prepare_peer_submission(
         Ok(task) => task,
         Err(err) => return Ok(Err(err)),
     };
-    let origin_session_id = app_data
-        .execution_ctx
-        .lock()
-        .map_err(|_| mlua::Error::runtime("execution context mutex poisoned"))?
-        .session_id
-        .clone()
-        .ok_or_else(|| mlua::Error::runtime("No active session context"))?;
+    let (origin_session_id, origin_turn_id) = {
+        let execution = app_data
+            .execution_ctx
+            .lock()
+            .map_err(|_| mlua::Error::runtime("execution context mutex poisoned"))?;
+        let session_id = execution
+            .session_id
+            .clone()
+            .ok_or_else(|| mlua::Error::runtime("No active session context"))?;
+        let turn_id = execution
+            .event_context
+            .as_ref()
+            .and_then(|context| context.turn_id);
+        (session_id, turn_id)
+    };
     let thread_key = opts
         .and_then(|table| table.get::<String>("thread").ok())
         .unwrap_or_else(|| "default".to_string());
@@ -95,6 +104,7 @@ fn prepare_peer_submission(
     Ok(Ok(PreparedPeerSubmission {
         target_agent,
         origin_session_id,
+        origin_turn_id,
         thread_key,
         task,
         delegated_capabilities,
@@ -386,6 +396,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     manager
                         .submit_linked(
                             &prepared.origin_session_id,
+                            prepared.origin_turn_id,
                             &prepared.target_agent,
                             &prepared.thread_key,
                             prepared.task,
@@ -429,6 +440,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     manager_submit
                         .submit_linked(
                             &prepared.origin_session_id,
+                            prepared.origin_turn_id,
                             &prepared.target_agent,
                             &prepared.thread_key,
                             prepared.task,

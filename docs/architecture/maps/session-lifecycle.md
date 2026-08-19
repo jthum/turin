@@ -49,7 +49,7 @@ Create linked peer session:
 1. Resolve the originating session and its state store.
 2. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
 3. Otherwise create an agent-owned child session with explicit parent, root, relation,
-   thread, and visibility columns.
+   thread, visibility, and originating-turn columns.
 4. Start or resume a deterministic peer runtime slot for that child and execute tasks
    against the child's independent turn tree.
 
@@ -117,6 +117,8 @@ Delete persisted session:
 - A resumed session must belong to the requested agent.
 - A linked session has one direct parent, one stable root session, and an independent
   agent-owned transcript; linkage never changes turn ancestry or inference lookup.
+- Harness delegation records the active durable turn as the child's origin when one
+  exists. Reusing that child preserves its first origin rather than moving the thread.
 - Repeated peer calls without an explicit `thread` reuse the `default` child thread.
   A named `thread` creates or reuses a separate child context under the same parent.
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are

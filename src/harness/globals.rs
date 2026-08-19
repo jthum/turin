@@ -39,6 +39,7 @@ pub type HarnessLoadPhase = Arc<std::sync::Mutex<bool>>;
 pub struct HarnessEventContext {
     pub json: bool,
     pub internal_id: Option<i64>,
+    pub turn_id: Option<i64>,
     pub branch_head_id: Option<i64>,
     pub execution_id: String,
     pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,

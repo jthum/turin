@@ -6525,6 +6525,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             .iter()
             .all(|row| row.relation_kind.as_deref() == Some("delegated"))
     );
+    assert!(linked.iter().all(|row| row.origin_turn_id.is_some()));
     assert!(linked.iter().all(|row| row.visibility == "contextual"));
     let thread_keys = linked
         .iter()
