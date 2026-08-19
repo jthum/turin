@@ -17,7 +17,9 @@ This subsystem should preserve three guarantees:
 - `src/kernel/agent_manager/operations.rs`
   - Live session operation surface: open/resume/reload sessions, list statuses/live sessions, session event subscription, and runtime lookup helpers.
 - `src/kernel/agent_manager/tasks.rs`
-  - Peer task operation surface: submit/await tasks, task status snapshots, completed-result cache updates, promotion, pending-result bookkeeping, and runtime queue enqueueing.
+  - Peer task operation surface: submit/await tasks, completed-result cache updates, promotion, pending-result bookkeeping, and runtime queue enqueueing.
+- `src/kernel/agent_manager/task_status.rs`
+  - Pending/completed task snapshot construction and payload-sparse change fingerprints.
 - `src/kernel/agent_manager/cancellation.rs`
   - Runtime, session, and task cancellation/kill behavior.
 - `src/kernel/agent_manager/runtime_registry.rs`
