@@ -49,6 +49,8 @@ Task submission:
 8. Every pending envelope records its logical session target independently of
    its physical runtime slot. Linked lanes may therefore queue work for several
    sessions without making lifecycle operations lane-wide.
+9. A linked lane dequeues round-robin across logical session targets while preserving
+   FIFO order within each target. One noisy thread cannot monopolize a shared lane.
 
 Session targeting:
 
@@ -81,6 +83,8 @@ Session targeting:
   pending or completed task state.
 - A task inference context is a configured route name, not a raw model endpoint.
   It must not bypass agent/session inference overrides or harness turn policy.
+- Fair scheduling changes dequeue order only across logical sessions. Cancellation,
+  pending-result ownership, and queue counters continue to operate on the same envelopes.
 
 ## Common Changes
 

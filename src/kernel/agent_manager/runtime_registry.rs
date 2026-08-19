@@ -18,6 +18,74 @@ use crate::kernel::session_refs::{parse_session_reference, session_references_ma
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::LinkedSessionCreate;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TaskSchedulingKey {
+    Session(String),
+    PendingLinked {
+        store: Option<StoreSelector>,
+        parent_session_id: i64,
+        thread_key: String,
+    },
+    Runtime,
+}
+
+impl TaskSchedulingKey {
+    fn from_envelope(envelope: &PeerAgentTaskEnvelope) -> Self {
+        if let Some(session_id) = envelope.session_target.session_id.as_ref() {
+            return Self::Session(session_id.clone());
+        }
+        match (
+            envelope.session_target.linked_parent_session_id,
+            envelope.session_target.thread_key.as_ref(),
+        ) {
+            (Some(parent_session_id), Some(thread_key)) => Self::PendingLinked {
+                store: envelope.session_target.store_selector.clone(),
+                parent_session_id,
+                thread_key: thread_key.clone(),
+            },
+            _ => Self::Runtime,
+        }
+    }
+
+    fn matches(&self, envelope: &PeerAgentTaskEnvelope) -> bool {
+        match self {
+            Self::Session(session_id) => {
+                envelope.session_target.session_id.as_ref() == Some(session_id)
+            }
+            Self::PendingLinked {
+                store,
+                parent_session_id,
+                thread_key,
+            } => {
+                envelope.session_target.session_id.is_none()
+                    && envelope.session_target.store_selector.as_ref() == store.as_ref()
+                    && envelope.session_target.linked_parent_session_id == Some(*parent_session_id)
+                    && envelope.session_target.thread_key.as_ref() == Some(thread_key)
+            }
+            Self::Runtime => {
+                envelope.session_target.session_id.is_none()
+                    && (envelope.session_target.linked_parent_session_id.is_none()
+                        || envelope.session_target.thread_key.is_none())
+            }
+        }
+    }
+}
+
+fn pop_fair_task(
+    queue: &mut VecDeque<PeerAgentTaskEnvelope>,
+    last_scheduled: &mut Option<TaskSchedulingKey>,
+) -> Option<PeerAgentTaskEnvelope> {
+    let index = last_scheduled
+        .as_ref()
+        .and_then(|last| queue.iter().position(|envelope| !last.matches(envelope)));
+    let envelope = match index {
+        Some(index) => queue.remove(index),
+        None => queue.pop_front(),
+    }?;
+    *last_scheduled = Some(TaskSchedulingKey::from_envelope(&envelope));
+    Some(envelope)
+}
+
 impl AgentManager {
     pub(super) async fn ensure_runtime(
         self: &Arc<Self>,
@@ -214,13 +282,14 @@ impl AgentManager {
             info!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop ready for tasks");
 
             let mut processed_task = false;
+            let mut last_scheduled = None;
             loop {
                 if shutdown_bg.is_cancelled() {
                     break;
                 }
                 let envelope = {
                     let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
-                    queue.pop_front()
+                    pop_fair_task(&mut queue, &mut last_scheduled)
                 };
                 let Some(envelope) = envelope else {
                     match runtime.reset_session_if_requested().await {
@@ -420,5 +489,43 @@ impl AgentManager {
         );
         runtimes.insert(runtime_key, Arc::clone(&handle));
         Ok(handle)
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::*;
+    use crate::kernel::session::QueuedTask;
+
+    fn envelope(request_id: &str, session_id: &str) -> PeerAgentTaskEnvelope {
+        PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc(request_id),
+            request_id: Some(request_id.to_string()),
+            result_tx: None,
+            delegated_capabilities: None,
+            promotion_candidate: None,
+            linked_session: None,
+            session_target: super::super::TaskSessionTarget {
+                session_id: Some(session_id.to_string()),
+                ..super::super::TaskSessionTarget::default()
+            },
+        }
+    }
+
+    #[test]
+    fn lane_scheduler_rotates_sessions_and_preserves_per_session_fifo() {
+        let mut queue = VecDeque::from([
+            envelope("a1", "session-a"),
+            envelope("a2", "session-a"),
+            envelope("b1", "session-b"),
+            envelope("b2", "session-b"),
+            envelope("a3", "session-a"),
+        ]);
+        let mut last = None;
+        let mut order = Vec::new();
+        while let Some(envelope) = pop_fair_task(&mut queue, &mut last) {
+            order.push(envelope.request_id.expect("request id"));
+        }
+        assert_eq!(order, ["a1", "b1", "a2", "b2", "a3"]);
     }
 }

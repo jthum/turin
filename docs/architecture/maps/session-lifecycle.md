@@ -129,7 +129,8 @@ Delete persisted session:
   context. It remains promotable and inspectable but is never selected by a later default call.
 - Linked-session durability is independent of runtime residency. Any number of logical
   children may exist, but each agent owns at most its configured number of hot linked Lua
-  runtimes; colliding threads execute serially and switch session context at envelope boundaries.
+  runtimes; colliding threads execute serially, rotate fairly across logical sessions, and
+  switch session context at envelope boundaries.
 - Same-agent nested delegation excludes linked lanes occupied by busy ancestor sessions
   and probes the remaining lanes deterministically. Exhausting all configured ancestor lanes
   fails submission explicitly instead of queueing a child behind an ancestor awaiting it.
