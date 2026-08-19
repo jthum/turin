@@ -15,8 +15,10 @@ This subsystem should preserve three guarantees:
 - `src/daemon/state/runtime_tasks.rs`
   - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, channel persistence/inference lookup, and live-session filtering.
 - `src/daemon/state/runtime_sessions.rs`
-  - Persisted session list/search/detail/title, on-demand turn-topology projection,
-    durable deletion, persisted-session target resolution, and live mutation guards.
+  - Persisted session detail/title, durable deletion, persisted-session target
+    resolution, and live mutation guards.
+- `src/daemon/state/runtime_sessions/discovery.rs`
+  - Root/linked session listing, ranked history search, and bounded search excerpts.
 - `src/daemon/state/runtime_sessions/branches.rs`
   - Branch listing, sibling lookup, creation, checkout, and turn-graph projection.
 - `src/daemon/state/runtime_sessions/family.rs`
