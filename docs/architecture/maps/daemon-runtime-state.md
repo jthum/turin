@@ -18,6 +18,8 @@ This subsystem should preserve three guarantees:
   - Persisted session list/search/detail/title, on-demand turn-topology projection,
     branch listing/sibling lookup/create/checkout, durable deletion,
     persisted-session target resolution, and live mutation guards.
+- `src/daemon/state/runtime_sessions/family.rs`
+  - Linked-family topology/runtime projection and idle subtree archival.
 - `src/daemon/state/harness_actions.rs`
   - Harness action runtime targeting, agent execution identity resolution, and action result collection.
 - `src/daemon/state/harness_sources.rs`
