@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::config::ProviderConfig;
 use crate::kernel::session::{ContextCompactionCheckpoint, HistoryOrigin, ResidentHistory};
@@ -13,9 +15,14 @@ const CONTEXT_SUMMARY_OPEN_TAG: &str = "<turin_context_summary>";
 const CONTEXT_SUMMARY_CLOSE_TAG: &str = "</turin_context_summary>";
 
 #[derive(Debug, Clone)]
-pub(crate) struct EffectiveRequestContext {
-    pub system_prompt: String,
-    pub messages: Vec<InferenceMessage>,
+pub(crate) struct EffectiveRequestContext<'a> {
+    pub system_prompt: Cow<'a, str>,
+    pub messages: Cow<'a, [InferenceMessage]>,
+}
+
+pub(crate) struct EffectiveRequestContextView<'a> {
+    pub system_prompt: Cow<'a, str>,
+    pub messages: &'a [InferenceMessage],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,15 +154,15 @@ pub(crate) fn estimate_persisted_message_input_tokens(
     }))
 }
 
-pub(crate) fn effective_request_context_from_window(
-    system_prompt: &str,
-    history: &ResidentHistory,
+pub(crate) fn effective_request_context_from_window<'a>(
+    system_prompt: &'a str,
+    history: &'a ResidentHistory,
     checkpoint: Option<&ContextCompactionCheckpoint>,
-) -> EffectiveRequestContext {
+) -> EffectiveRequestContextView<'a> {
     let Some(checkpoint) = checkpoint else {
-        return EffectiveRequestContext {
-            system_prompt: system_prompt.to_string(),
-            messages: history.to_messages(),
+        return EffectiveRequestContextView {
+            system_prompt: Cow::Borrowed(system_prompt),
+            messages: history.messages(),
         };
     };
 
@@ -172,15 +179,30 @@ pub(crate) fn effective_request_context_from_window(
     effective_system_prompt.push('\n');
     effective_system_prompt.push_str(CONTEXT_SUMMARY_CLOSE_TAG);
 
-    EffectiveRequestContext {
-        system_prompt: effective_system_prompt,
-        messages: history
-            .suffix_after_turn(
-                checkpoint.covered_through_turn_id,
-                checkpoint.covered_through_turn_index,
-            )
-            .to_vec(),
+    EffectiveRequestContextView {
+        system_prompt: Cow::Owned(effective_system_prompt),
+        messages: history.suffix_after_turn(
+            checkpoint.covered_through_turn_id,
+            checkpoint.covered_through_turn_index,
+        ),
     }
+}
+
+pub(crate) fn materialize_effective_request_context(
+    system_prompt: &mut String,
+    history: ResidentHistory,
+    checkpoint: Option<&ContextCompactionCheckpoint>,
+) -> Vec<InferenceMessage> {
+    let Some(checkpoint) = checkpoint else {
+        return history.into_messages();
+    };
+    let effective =
+        effective_request_context_from_window(system_prompt, &history, Some(checkpoint));
+    *system_prompt = effective.system_prompt.into_owned();
+    history.into_suffix_after_turn(
+        checkpoint.covered_through_turn_id,
+        checkpoint.covered_through_turn_index,
+    )
 }
 
 pub(crate) fn target_checkpoint_coverage(

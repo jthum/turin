@@ -201,6 +201,13 @@ impl ContextWrapper {
     pub fn get_state(&self) -> ContextState {
         self.lock_state().clone()
     }
+
+    pub fn into_state(self) -> ContextState {
+        match Arc::try_unwrap(self.state) {
+            Ok(state) => state.into_inner().expect("context state mutex poisoned"),
+            Err(state) => state.lock().expect("context state mutex poisoned").clone(),
+        }
+    }
 }
 
 fn tool_names_from_value(value: Value) -> mlua::Result<BTreeSet<String>> {

@@ -43,7 +43,9 @@ Session restore:
 2. The active branch or selected context target is materialized using the configured hot-history bound.
 3. `rebuild_history` converts persisted messages into inference messages and retains each message's source turn ID/index.
 4. `ResidentHistory` records whether older persisted ancestry exists without storing an exact message count.
-5. `prune_session_hot_history` applies payload trimming and enforces the same in-memory policy after subsequent turns.
+5. Resume counters are reconstructed by one persistence aggregate; lifecycle event rows are not materialized in Rust.
+6. Only the newest persisted context-compaction checkpoint is loaded for resume.
+7. `prune_session_hot_history` applies payload trimming and enforces the same in-memory policy after subsequent turns.
 
 Hot-history pruning:
 
@@ -60,13 +62,14 @@ Turn preflight:
 3. Otherwise, persistence pages backward from the selected branch/turn and builds a request-local context from complete turns until that budget is filled.
 4. Context checkpoint refresh estimates the effective request size and may ask a compaction provider to summarize an older complete-turn prefix.
 5. Checkpoints identify their durable boundary by source turn ID/index, not by a mutable message count.
-6. Harness `on_turn_prepare` receives the request-local token-bounded message projection and may rewrite that request without mutating resident history.
-7. Structural request compaction can still truncate old tool results and slide the request window to fit provider limits.
-8. After a provider accepts the stream request, Turin persists one
+6. The selected request history is moved into request state rather than cloned from resident history.
+7. Harness `on_turn_prepare` receives ownership of the request-local projection and may rewrite it without mutating resident history. Turin moves it back when the hook releases its context userdata, with a safe clone fallback only when Lua retains another reference.
+8. Structural request compaction borrows the prepared request when it already fits and allocates a replacement message vector only when trimming is required.
+9. After a provider accepts the stream request, Turin persists one
    `inference_request` event with normalized token and payload estimates,
    context-budget provenance, compaction counts, and route identity.
-9. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
-10. A queued task may seed the requested inference context for all of its turns;
+10. Inference route candidate fallback keeps a common log shape for requested context, resolved context, provider, model, and error.
+11. A queued task may seed the requested inference context for all of its turns;
    `on_turn_prepare` remains authoritative and may retain or replace it.
 
 Bounded persistence selection:
@@ -94,6 +97,8 @@ Bounded persistence selection:
 - Hot-history payload trimming should affect only older successful tool results, not recent payloads or error payloads.
 - Durable persistence must keep the full message content even when hot memory uses an omission marker.
 - Context-window structural compaction is request-local; it should not mutate session history.
+- The ordinary preflight path should move or borrow its request projection; it must not clone the full message vector merely to cross an internal boundary.
+- A harness that retains turn-context userdata may force the explicit safe clone fallback, but ordinary synchronous hooks should recover the owned state.
 - Resident-history reuse must validate both completeness and the durable branch-head identity; `has_prior_history` alone is insufficient.
 - `inference_request` telemetry must remain sparse. It records counts and route
   metadata, never another copy of prompts, messages, tool schemas, or checkpoint
@@ -115,6 +120,7 @@ Bounded persistence selection:
   report that older history exists.
 - Full and bounded ancestry reads must share parent-chain validation and
   chronological ordering.
+- Session resume must not materialize lifecycle event history to recover scalar counters or the newest context checkpoint.
 
 ## Common Changes
 
@@ -181,10 +187,4 @@ The current module split is deliberate:
 Likely future cleanup areas:
 
 - add a long-session fake-inference benchmark that checks RSS and hot-window size together
-- replace message-count compaction coordinates with durable turn-addressed
-  checkpoint boundaries
-- resume directly into a bounded persistence suffix instead of rebuilding full
-  history before pruning
-- extend provider context from the token-budgeted persistence selector before
-  invoking bounded turn-preparation hooks
 - tune default profile values after measurement, not by guesswork

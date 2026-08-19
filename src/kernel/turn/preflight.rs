@@ -15,7 +15,7 @@ use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, Resolved
 use crate::kernel::session::{ExecutionContextTarget, ExecutionWritePolicy, SessionState};
 use crate::kernel::turn::context_window::{
     effective_input_budget_tokens, estimate_history_input_tokens, estimate_request_input_tokens,
-    resolve_context_window_tokens,
+    materialize_effective_request_context, resolve_context_window_tokens,
 };
 
 use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
@@ -145,16 +145,13 @@ impl ExecutionHost {
         )
         .await?;
         if effective_inference.compaction.mode.uses_summary() {
-            let effective =
-                crate::kernel::turn::context_window::effective_request_context_from_window(
-                    &req.system_prompt,
-                    &selected_history,
-                    session.context_checkpoint.as_ref(),
-                );
-            req.system_prompt = effective.system_prompt;
-            req.messages = effective.messages;
+            req.messages = materialize_effective_request_context(
+                &mut req.system_prompt,
+                selected_history,
+                session.context_checkpoint.as_ref(),
+            );
         } else {
-            req.messages = selected_history.to_messages();
+            req.messages = selected_history.into_messages();
         }
 
         if self
@@ -206,7 +203,7 @@ impl ExecutionHost {
             model: agent.model.clone(),
             provider_name: agent.provider.clone(),
             system_prompt: agent.system_prompt.clone(),
-            messages: session.history.to_messages(),
+            messages: Vec::new(),
             thinking_budget: agent
                 .thinking
                 .as_ref()
@@ -346,11 +343,11 @@ impl ExecutionHost {
             let session_title = self.session_title(session).await?;
             let engine = harness.lock().expect("session harness mutex poisoned");
             let ctx = ContextWrapper::new(
-                req.inference_context.clone(),
-                req.model.clone(),
-                req.provider_name.clone(),
-                req.system_prompt.clone(),
-                req.messages.clone(),
+                req.inference_context.take(),
+                std::mem::take(&mut req.model),
+                std::mem::take(&mut req.provider_name),
+                std::mem::take(&mut req.system_prompt),
+                std::mem::take(&mut req.messages),
                 session.turn_index,
                 turn_ctx.task_turn_index,
                 turn_ctx.task_turn_index == 0,
@@ -359,7 +356,7 @@ impl ExecutionHost {
                 token_count,
                 token_limit,
                 req.thinking_budget,
-                req.request_options_override.clone(),
+                std::mem::take(&mut req.request_options_override),
                 self.clients.clone(),
                 self.config.clone(),
                 session.identity.agent_id().to_string(),
@@ -384,7 +381,7 @@ impl ExecutionHost {
                 }
             }
 
-            let state = ctx.get_state();
+            let state = ctx.into_state();
             req.messages = state.messages;
             req.inference_context = state.inference;
             req.system_prompt = state.system_prompt;

@@ -19,8 +19,8 @@ use super::super::super::event::KernelEvent;
 use super::super::super::execution_host::ExecutionHost;
 use super::TurnRequestState;
 
-pub(super) struct PreparedRequestContext {
-    pub context: EffectiveRequestContext,
+pub(super) struct PreparedRequestContext<'a> {
+    pub context: EffectiveRequestContext<'a>,
     pub report: CompactionReport,
 }
 
@@ -104,7 +104,7 @@ impl ExecutionHost {
             session.context_checkpoint.as_ref(),
         );
         let effective_input_tokens =
-            estimate_request_input_tokens(&effective.system_prompt, &effective.messages, tools);
+            estimate_request_input_tokens(&effective.system_prompt, effective.messages, tools);
         let compaction_trigger_threshold = ((input_budget_tokens as f32)
             * effective_inference.compaction.trigger_ratio)
             .floor() as u32;
@@ -203,29 +203,23 @@ impl ExecutionHost {
         Ok(())
     }
 
-    pub(super) fn compact_messages_for_candidate(
+    pub(super) fn compact_messages_for_candidate<'a>(
         &self,
-        request_messages: &[provider::InferenceMessage],
-        system_prompt: &str,
+        request_messages: &'a [provider::InferenceMessage],
+        system_prompt: &'a str,
         tools: &[serde_json::Value],
         candidate: &ResolvedInferenceCandidate,
         provider_config: &crate::kernel::config::ProviderConfig,
         compaction_mode: &InferenceCompactionMode,
-    ) -> PreparedRequestContext {
-        let effective = EffectiveRequestContext {
-            system_prompt: system_prompt.to_string(),
-            messages: request_messages.to_vec(),
-        };
-
+    ) -> PreparedRequestContext<'a> {
         let context_window_tokens = resolve_context_window_tokens(Some(provider_config));
         let input_budget_tokens = effective_input_budget_tokens(
             context_window_tokens,
             candidate.max_tokens,
             candidate.thinking_budget,
         );
-        if !compaction_mode.uses_structural_trim() {
-            let used_tokens =
-                estimate_request_input_tokens(&effective.system_prompt, &effective.messages, tools);
+        let used_tokens = estimate_request_input_tokens(system_prompt, request_messages, tools);
+        if !compaction_mode.uses_structural_trim() || used_tokens <= input_budget_tokens {
             if used_tokens > input_budget_tokens {
                 warn!(
                     used_tokens,
@@ -235,7 +229,10 @@ impl ExecutionHost {
                 );
             }
             return PreparedRequestContext {
-                context: effective,
+                context: EffectiveRequestContext {
+                    system_prompt: std::borrow::Cow::Borrowed(system_prompt),
+                    messages: std::borrow::Cow::Borrowed(request_messages),
+                },
                 report: CompactionReport {
                     used_tokens_before: used_tokens,
                     used_tokens_after: used_tokens,
@@ -248,8 +245,8 @@ impl ExecutionHost {
         }
 
         let (messages, report) = compact_messages_for_input_budget(
-            &effective.system_prompt,
-            &effective.messages,
+            system_prompt,
+            request_messages,
             tools,
             context_window_tokens,
             input_budget_tokens,
@@ -277,8 +274,8 @@ impl ExecutionHost {
 
         PreparedRequestContext {
             context: EffectiveRequestContext {
-                system_prompt: effective.system_prompt,
-                messages,
+                system_prompt: std::borrow::Cow::Borrowed(system_prompt),
+                messages: std::borrow::Cow::Owned(messages),
             },
             report,
         }

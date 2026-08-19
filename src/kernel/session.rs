@@ -406,6 +406,10 @@ impl ResidentHistory {
         self.messages.clone()
     }
 
+    pub fn into_messages(self) -> Vec<InferenceMessage> {
+        self.messages
+    }
+
     pub fn push(&mut self, message: InferenceMessage) {
         self.push_with_origin(message, None);
     }
@@ -476,6 +480,27 @@ impl ResidentHistory {
             &self.messages
         } else {
             &[]
+        }
+    }
+
+    pub fn into_suffix_after_turn(
+        mut self,
+        turn_id: i64,
+        turn_index: u32,
+    ) -> Vec<InferenceMessage> {
+        if let Some(index) = self.index_after_turn(turn_id) {
+            self.messages.drain(..index);
+            return self.messages;
+        }
+        if self
+            .origins
+            .iter()
+            .flatten()
+            .all(|origin| origin.turn_index > turn_index)
+        {
+            self.messages
+        } else {
+            Vec::new()
         }
     }
 
