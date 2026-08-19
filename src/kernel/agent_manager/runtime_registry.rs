@@ -370,6 +370,19 @@ impl AgentManager {
                 active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
             }
 
+            // Close task admission before the final drain. A submitter that retained this
+            // handle either enqueues before cancellation and is drained below, or observes
+            // cancellation while holding the queue lock and fails submission.
+            shutdown_bg.cancel();
+            manager
+                .cancel_queued_requests_for_runtime(
+                    &RuntimeSlotKey {
+                        agent_id: agent_id_clone.clone(),
+                        slot_id: slot_id_clone.clone(),
+                    },
+                    "Runtime stopped before task execution",
+                )
+                .await;
             info!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop terminating runtime");
 
             runtime.shutdown().await;

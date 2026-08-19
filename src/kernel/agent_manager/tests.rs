@@ -1260,6 +1260,54 @@ async fn linked_submission_admission_bounds_outstanding_children_and_fan_out() -
 }
 
 #[tokio::test]
+async fn stopped_runtime_rejects_submission_without_pending_state() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let shutdown_token = CancellationToken::new();
+    shutdown_token.cancel();
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(VecDeque::new())),
+        notify: Arc::new(Notify::new()),
+        control: Arc::new(RuntimeControl::default()),
+        shutdown_token,
+        task: None,
+        queued_tasks: Arc::new(AtomicUsize::new(0)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let error = manager
+        .submit_to_handle(
+            RuntimeSlotKey::default_for("default"),
+            Arc::clone(&handle),
+            QueuedTask::ad_hoc("must not be stranded"),
+            PeerTaskSubmission {
+                delegated_capabilities: None,
+                promotion_candidate: None,
+                linked_session: None,
+                session_target: TaskSessionTarget::default(),
+                delegation_admission: None,
+            },
+        )
+        .await
+        .expect_err("stopped runtime should reject submission");
+
+    assert!(error.to_string().contains("stopped before task submission"));
+    assert!(
+        handle
+            .queue
+            .lock()
+            .expect("runtime queue mutex poisoned")
+            .is_empty()
+    );
+    assert!(manager.pending_task_states.read().await.is_empty());
+    assert!(manager.pending_results.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn linked_submission_depth_uses_persisted_session_ancestry() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");

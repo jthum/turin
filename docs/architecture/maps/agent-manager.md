@@ -73,6 +73,8 @@ Session targeting:
 - `LiveSessionSnapshot` fields should be derived consistently from the runtime key, handle, and effective session id.
 - Pending task records should be removed when a result is recorded or a submission fails.
 - A runtime handle must not enter the registry until its initial provider, harness, and session bootstrap succeeds.
+- Runtime shutdown must close queue admission before its final drain. A submitter
+  holding an old handle must fail instead of leaving work on a stopped runtime.
 - Unexpected result-channel closure must terminally record the task as an error rather than leave pending state behind.
 - Pending and completed task status must retain the logical session id; a linked
   lane id identifies capacity, not task ownership.

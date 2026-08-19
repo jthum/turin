@@ -561,6 +561,9 @@ impl AgentManager {
                 .queue
                 .lock()
                 .expect("agent runtime queue mutex poisoned");
+            if handle.shutdown_token.is_cancelled() {
+                anyhow::bail!("Agent runtime stopped before task submission");
+            }
             queue.push_back(envelope);
         }
         handle.queued_tasks.fetch_add(1, Ordering::Relaxed);

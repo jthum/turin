@@ -465,7 +465,11 @@ impl AgentManager {
         })
     }
 
-    async fn cancel_queued_requests_for_runtime(&self, runtime_key: &RuntimeSlotKey, reason: &str) {
+    pub(super) async fn cancel_queued_requests_for_runtime(
+        &self,
+        runtime_key: &RuntimeSlotKey,
+        reason: &str,
+    ) {
         let Some(handle) = self.runtimes.read().await.get(runtime_key).cloned() else {
             return;
         };
