@@ -608,6 +608,71 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
 }
 
 #[tokio::test]
+async fn closed_result_channel_terminally_fails_pending_task() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let request_id = "req_lost_result".to_string();
+    let (tx_result, rx_result) = oneshot::channel::<PeerAgentTaskResult>();
+    drop(tx_result);
+
+    manager
+        .pending_results
+        .write()
+        .await
+        .insert(request_id.clone(), rx_result);
+    manager.pending_task_states.write().await.insert(
+        request_id.clone(),
+        PendingTaskRecord {
+            runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget {
+                session_id: Some("lost-session".to_string()),
+                ..TaskSessionTarget::default()
+            },
+            trace_id: "tr_lost_result".to_string(),
+            title: Some("Lost result".to_string()),
+            prompt_preview: "lost result".to_string(),
+            state: PendingTaskState::Running,
+            runtime_task_id: Some("task_lost_result".to_string()),
+            execution: test_execution_snapshot(),
+        },
+    );
+
+    let error = manager
+        .await_result(&request_id, None)
+        .await
+        .expect_err("closed result sender should fail awaiting caller");
+    assert!(error.to_string().contains("result channel closed"));
+    assert!(
+        !manager
+            .pending_task_states
+            .read()
+            .await
+            .contains_key(&request_id)
+    );
+    assert!(
+        !manager
+            .pending_results
+            .read()
+            .await
+            .contains_key(&request_id)
+    );
+    let completed = manager
+        .get_task(&request_id)
+        .await
+        .expect("lost result should remain observable as terminal work");
+    assert_eq!(completed.status, Some(TaskTerminalStatus::Error));
+    assert_eq!(
+        completed.error.as_deref(),
+        Some("Peer task result channel closed")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
@@ -1431,6 +1496,39 @@ async fn resume_session_restarts_dead_requested_slot() -> anyhow::Result<()> {
     assert_eq!(resumed.session_id, session_id);
     assert_eq!(resumed.agent_id, "default");
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_runtime_bootstrap_is_not_published() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let mut kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    kernel.init_state().await?;
+    let manager = Arc::clone(kernel.agent_manager());
+    let runtime_key = RuntimeSlotKey {
+        agent_id: "default".to_string(),
+        slot_id: "failed-bootstrap".to_string(),
+    };
+    let missing_session = format!("{}@state", uuid::Uuid::now_v7().simple());
+
+    let result = manager
+        .ensure_runtime_slot_resumed(
+            runtime_key.clone(),
+            missing_session,
+            SessionContextOverrides::default(),
+        )
+        .await;
+
+    let error = match result {
+        Ok(_) => anyhow::bail!("missing session unexpectedly started a runtime"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("failed to start"));
+    assert!(!manager.runtimes.read().await.contains_key(&runtime_key));
+    assert!(manager.pending_task_states.read().await.is_empty());
     Ok(())
 }
 

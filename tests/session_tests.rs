@@ -20,7 +20,8 @@ use turin::kernel::config::{
 };
 use turin::kernel::policy::PolicyScope;
 use turin::kernel::session::{
-    ExecutionContextTarget, ExecutionWritePolicy, QueuedTask, SessionStatus, TaskExecutionOverrides,
+    ExecutionContextTarget, ExecutionVisibility, ExecutionWritePolicy, QueuedTask, SessionStatus,
+    TaskExecutionOverrides,
 };
 use turin::kernel::session_refs::parse_session_reference;
 use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
@@ -746,14 +747,21 @@ async fn test_run_reports_background_event_persistence_failure() -> Result<()> {
     )
     .await?;
 
+    let original_execution = session.execution.clone();
+    let mut task = QueuedTask::ad_hoc("Persist transcript and events");
+    task.task_id = "t_durability_failure".to_string();
+    task.execution = Some(TaskExecutionOverrides {
+        visibility: Some(ExecutionVisibility::Hidden),
+        ..TaskExecutionOverrides::default()
+    });
+    session.queue.lock().await.push_back(task);
+
     let error = kernel
-        .run(
-            &mut session,
-            Some("Persist transcript and events".to_string()),
-        )
+        .run(&mut session, None)
         .await
         .expect_err("task barrier should report background event write failure");
     assert!(error.to_string().contains("Event durability write failed"));
+    assert_eq!(session.execution, original_execution);
 
     let messages = store
         .get_messages(

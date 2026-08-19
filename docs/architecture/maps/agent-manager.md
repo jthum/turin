@@ -38,20 +38,21 @@ Session open/resume/reload:
 
 Task submission:
 
-1. `tasks.rs` resolves the target runtime slot through direct agent id or session target.
-2. It creates a request id and pending result receiver.
-3. The task is enqueued into the runtime handle queue.
-4. `peer_runtime.rs` executes the task and reports a `PeerAgentTaskResult`.
-5. `tasks.rs` removes pending state and moves completed results into the bounded completed-result cache.
-6. Pending and completed status retain an optional title plus a normalized,
+1. `runtime_registry.rs` completes provider/session/harness bootstrap before publishing a new runtime handle.
+2. `tasks.rs` resolves the target runtime slot through direct agent id or session target.
+3. It creates a request id and pending result receiver.
+4. The task is enqueued into the runtime handle queue.
+5. `peer_runtime.rs` executes the task and reports a `PeerAgentTaskResult`.
+6. `tasks.rs` removes pending state and moves completed results into the bounded completed-result cache.
+7. Pending and completed status retain an optional title plus a normalized,
    240-character prompt preview so operator surfaces can identify work without
    duplicating full prompts in the runtime task ledger.
-7. An optional task inference context seeds each turn's requested route. The
+8. An optional task inference context seeds each turn's requested route. The
    harness may still replace that context during `on_turn_prepare`.
-8. Every pending envelope records its logical session target independently of
+9. Every pending envelope records its logical session target independently of
    its physical runtime slot. Linked lanes may therefore queue work for several
    sessions without making lifecycle operations lane-wide.
-9. A linked lane dequeues round-robin across logical session targets while preserving
+10. A linked lane dequeues round-robin across logical session targets while preserving
    FIFO order within each target. One noisy thread cannot monopolize a shared lane.
 
 Session targeting:
@@ -71,6 +72,8 @@ Session targeting:
 - Busy runtime slots must not be reused for session resume or reload.
 - `LiveSessionSnapshot` fields should be derived consistently from the runtime key, handle, and effective session id.
 - Pending task records should be removed when a result is recorded or a submission fails.
+- A runtime handle must not enter the registry until its initial provider, harness, and session bootstrap succeeds.
+- Unexpected result-channel closure must terminally record the task as an error rather than leave pending state behind.
 - Pending and completed task status must retain the logical session id; a linked
   lane id identifies capacity, not task ownership.
 - Session cancellation may remove only work belonging to the requested logical

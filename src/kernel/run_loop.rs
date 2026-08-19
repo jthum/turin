@@ -31,34 +31,42 @@ impl ExecutionHost {
             session.begin_active_task_budget();
             if let Err(error) = self.begin_task_execution_scope(session, &task).await {
                 let error_message = error.to_string();
-                self.complete_task(
-                    session,
-                    &task,
-                    TaskTerminalStatus::Error,
-                    0,
-                    None,
-                    Some(error_message),
-                )
-                .await?;
-                self.finish_task_execution_scope(session).await?;
+                let completion = self
+                    .complete_task(
+                        session,
+                        &task,
+                        TaskTerminalStatus::Error,
+                        0,
+                        None,
+                        Some(error_message),
+                    )
+                    .await;
+                self.finish_task_scope_after(session, completion).await?;
                 if session.stop_requested {
                     break;
                 }
                 continue;
             }
             if session.cancel_token.is_cancelled() {
-                self.complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None, None)
-                    .await?;
-                self.finish_task_execution_scope(session).await?;
+                let completion = self
+                    .complete_task(session, &task, TaskTerminalStatus::Cancelled, 0, None, None)
+                    .await;
+                self.finish_task_scope_after(session, completion).await?;
                 if session.stop_requested {
                     break;
                 }
                 continue;
             }
-            if !self
+            let should_start = self
                 .prepare_task_start(session, &mut task, queue_depth_after_pop)
-                .await?
-            {
+                .await;
+            let should_start = match should_start {
+                Ok(should_start) => should_start,
+                Err(error) => {
+                    return self.finish_task_scope_after(session, Err(error)).await;
+                }
+            };
+            if !should_start {
                 self.finish_task_execution_scope(session).await?;
                 continue;
             }
@@ -71,18 +79,26 @@ impl ExecutionHost {
                 "Running task"
             );
 
-            let task_result = match self.run_task_with_conflict_handling(session, &task).await? {
+            let task_attempt = self.run_task_with_conflict_handling(session, &task).await;
+            let task_attempt = match task_attempt {
+                Ok(task_attempt) => task_attempt,
+                Err(error) => {
+                    return self.finish_task_scope_after(session, Err(error)).await;
+                }
+            };
+            let task_result = match task_attempt {
                 TaskRunAttempt::Completed(result) => result,
                 TaskRunAttempt::Terminal {
                     status,
                     error_message,
                 } => {
-                    self.complete_task(session, &task, status, 0, None, Some(error_message))
-                        .await?;
-                    let apply_result = self.apply_pending_branch_checkout(session).await;
-                    let finish_result = self.finish_task_execution_scope(session).await;
-                    apply_result?;
-                    finish_result?;
+                    let finalization = async {
+                        self.complete_task(session, &task, status, 0, None, Some(error_message))
+                            .await?;
+                        self.apply_pending_branch_checkout(session).await
+                    }
+                    .await;
+                    self.finish_task_scope_after(session, finalization).await?;
                     if session.stop_requested {
                         break;
                     }
@@ -93,19 +109,20 @@ impl ExecutionHost {
                     error_message,
                     recovered,
                 } => {
-                    self.complete_task(
-                        session,
-                        &task,
-                        TaskTerminalStatus::Error,
-                        0,
-                        None,
-                        Some(error_message),
-                    )
-                    .await?;
-                    let apply_result = self.apply_pending_branch_checkout(session).await;
-                    let finish_result = self.finish_task_execution_scope(session).await;
-                    apply_result?;
-                    finish_result?;
+                    let finalization = async {
+                        self.complete_task(
+                            session,
+                            &task,
+                            TaskTerminalStatus::Error,
+                            0,
+                            None,
+                            Some(error_message),
+                        )
+                        .await?;
+                        self.apply_pending_branch_checkout(session).await
+                    }
+                    .await;
+                    self.finish_task_scope_after(session, finalization).await?;
                     if recovered {
                         continue;
                     }
@@ -113,20 +130,20 @@ impl ExecutionHost {
                 }
             };
 
-            self.complete_task(
-                session,
-                &task,
-                task_result.status,
-                task_result.task_turn_count,
-                task_result.branch_outcome,
-                None,
-            )
-            .await?;
-
-            let apply_result = self.apply_pending_branch_checkout(session).await;
-            let finish_result = self.finish_task_execution_scope(session).await;
-            apply_result?;
-            finish_result?;
+            let finalization = async {
+                self.complete_task(
+                    session,
+                    &task,
+                    task_result.status,
+                    task_result.task_turn_count,
+                    task_result.branch_outcome,
+                    None,
+                )
+                .await?;
+                self.apply_pending_branch_checkout(session).await
+            }
+            .await;
+            self.finish_task_scope_after(session, finalization).await?;
 
             if session.stop_requested || task_result.status == TaskTerminalStatus::Cancelled {
                 info!(
@@ -138,6 +155,22 @@ impl ExecutionHost {
         }
 
         Ok(())
+    }
+
+    async fn finish_task_scope_after<T>(
+        &mut self,
+        session: &mut SessionState,
+        result: Result<T>,
+    ) -> Result<T> {
+        let cleanup = self.finish_task_execution_scope(session).await;
+        match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(cleanup_error)) => Err(cleanup_error),
+            (Err(error), Err(cleanup_error)) => Err(error.context(format!(
+                "Task execution scope cleanup also failed: {cleanup_error}"
+            ))),
+        }
     }
 
     pub(crate) async fn apply_pending_branch_checkout(

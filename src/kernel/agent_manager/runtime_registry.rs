@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 use serde_json::Value;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
@@ -254,6 +254,7 @@ impl AgentManager {
         let control_bg = Arc::clone(&control);
         let idle_control = Arc::clone(&control);
         let shutdown_bg = shutdown_token.clone();
+        let (startup_tx, startup_rx) = oneshot::channel::<std::result::Result<(), String>>();
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop initializing");
 
@@ -272,8 +273,13 @@ impl AgentManager {
             )
             .await
             {
-                Ok(runtime) => runtime,
+                Ok(runtime) => {
+                    let _ = startup_tx.send(Ok(()));
+                    runtime
+                }
                 Err(e) => {
+                    let message = e.to_string();
+                    let _ = startup_tx.send(Err(message));
                     error!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, error = %e, "Peer agent failed to start session");
                     return;
                 }
@@ -368,6 +374,30 @@ impl AgentManager {
 
             runtime.shutdown().await;
         });
+
+        match startup_rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(message)) => {
+                let _ = join_handle.await;
+                anyhow::bail!(
+                    "Peer agent '{}' [{}] failed to start: {}",
+                    agent_id,
+                    runtime_key.slot_id,
+                    message
+                );
+            }
+            Err(_) => {
+                let join_error = join_handle.await.err();
+                anyhow::bail!(
+                    "Peer agent '{}' [{}] exited before reporting startup{}",
+                    agent_id,
+                    runtime_key.slot_id,
+                    join_error
+                        .map(|error| format!(": {error}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
 
         Ok(AgentRuntimeHandle {
             queue,

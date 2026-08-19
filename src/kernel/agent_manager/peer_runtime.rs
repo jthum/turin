@@ -321,7 +321,8 @@ impl PeerRuntime {
             .await
         {
             let error_message = error.to_string();
-            self.host
+            let completion = self
+                .host
                 .complete_task(
                     &mut self.session,
                     &task,
@@ -330,12 +331,15 @@ impl PeerRuntime {
                     None,
                     Some(error_message),
                 )
-                .await?;
-            self.host
+                .await;
+            let cleanup = self
+                .host
                 .finish_task_execution_scope(&mut self.session)
-                .await?;
+                .await;
             self.sync_control_execution_state();
             self.clear_capability_ceiling();
+            completion?;
+            cleanup?;
             return Ok(self.empty_outcome(task.task_id, TaskTerminalStatus::Error));
         }
         self.sync_control_execution_state();

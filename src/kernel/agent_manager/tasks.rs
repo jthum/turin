@@ -429,10 +429,14 @@ impl AgentManager {
         let result = if let Some(ms) = timeout_ms {
             match tokio::time::timeout(std::time::Duration::from_millis(ms), &mut rx).await {
                 Ok(Ok(res)) => Ok(res),
-                Ok(Err(_)) => Err(anyhow::anyhow!(
-                    "Peer task '{}' result channel closed",
-                    request_id
-                )),
+                Ok(Err(_)) => {
+                    self.record_lost_task_result(request_id, "Peer task result channel closed")
+                        .await;
+                    Err(anyhow::anyhow!(
+                        "Peer task '{}' result channel closed",
+                        request_id
+                    ))
+                }
                 Err(_) => {
                     self.pending_results
                         .write()
@@ -447,10 +451,14 @@ impl AgentManager {
         } else {
             match rx.await {
                 Ok(res) => Ok(res),
-                Err(_) => Err(anyhow::anyhow!(
-                    "Peer task '{}' result channel closed",
-                    request_id
-                )),
+                Err(_) => {
+                    self.record_lost_task_result(request_id, "Peer task result channel closed")
+                        .await;
+                    Err(anyhow::anyhow!(
+                        "Peer task '{}' result channel closed",
+                        request_id
+                    ))
+                }
             }
         };
 
@@ -563,6 +571,39 @@ impl AgentManager {
     async fn remove_pending_request(&self, request_id: &str) {
         self.pending_results.write().await.remove(request_id);
         self.pending_task_states.write().await.remove(request_id);
+    }
+
+    async fn record_lost_task_result(&self, request_id: &str, reason: &str) {
+        let Some(pending) = self
+            .pending_task_states
+            .read()
+            .await
+            .get(request_id)
+            .cloned()
+        else {
+            return;
+        };
+        self.record_completed_result(PeerAgentTaskResult {
+            request_id: request_id.to_string(),
+            agent_id: pending.runtime_key.agent_id,
+            slot_id: pending.runtime_key.slot_id,
+            session_id: pending.session_target.session_id,
+            trace_id: pending.trace_id,
+            title: pending.title,
+            prompt_preview: pending.prompt_preview,
+            runtime_task_id: pending.runtime_task_id.unwrap_or_default(),
+            execution: pending.execution,
+            status: crate::kernel::event::TaskTerminalStatus::Error,
+            task_turn_count: 0,
+            branch_outcome: None,
+            promotion_candidate: None,
+            promoted_branch: None,
+            output: None,
+            assistant_content: None,
+            promotion_input_content: None,
+            error: Some(reason.to_string()),
+        })
+        .await;
     }
 
     pub(crate) async fn record_completed_result(&self, result: PeerAgentTaskResult) {

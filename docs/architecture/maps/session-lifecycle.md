@@ -173,6 +173,7 @@ Delete persisted session:
 - Ending a session must drain the durability lane before marking the session inactive.
 - Turn insertion and branch-head advancement must commit or roll back together.
 - Durable transcript and tool-record write failures must stop the active task; they must not be reduced to warnings.
+- Task execution overrides, delegation budgets, and active-task state must be restored even when task hooks, execution, checkout, or durability finalization fails.
 - A durability barrier must report event-writer failures that occurred before it, then allow a recreated writer to serve later tasks.
 - Resident history must not advance past a transcript write that failed.
 - Resume must advance beyond the durable branch-head depth even when its newest turn has no messages.
