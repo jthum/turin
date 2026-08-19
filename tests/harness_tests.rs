@@ -6457,6 +6457,30 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             if isolated == nil then error("named thread await failed: " .. tostring(isolated_await_err)) end
             if isolated.status ~= "success" then error("named peer thread should succeed") end
 
+            -- Five logical threads force at least one collision across four physical lanes.
+            -- Each must still activate and preserve its own durable linked session.
+            for index = 1, 5 do
+                local thread = "pool-" .. tostring(index)
+                local pooled_id, pooled_err = runtime.agent.submit(
+                    "worker",
+                    { prompt = "pooled " .. tostring(index), title = thread },
+                    { thread = thread }
+                )
+                if pooled_id == nil then error("pooled submit failed: " .. tostring(pooled_err)) end
+                local pooled, pooled_await_err = runtime.agent.await(pooled_id, { timeout_ms = 5000 })
+                if pooled == nil then error("pooled await failed: " .. tostring(pooled_await_err)) end
+                if pooled.status ~= "success" then error("pooled peer task should succeed") end
+            end
+            local reused_id, reused_err = runtime.agent.submit(
+                "worker",
+                { prompt = "reuse pooled one", title = "reuse pooled one" },
+                { thread = "pool-1" }
+            )
+            if reused_id == nil then error("pooled reuse submit failed: " .. tostring(reused_err)) end
+            local reused, reused_await_err = runtime.agent.await(reused_id, { timeout_ms = 5000 })
+            if reused == nil then error("pooled reuse await failed: " .. tostring(reused_await_err)) end
+            if reused.status ~= "success" then error("reused pooled task should succeed") end
+
             return ALLOW
         end
     "#;
@@ -6564,8 +6588,8 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         .await?;
     assert_eq!(
         linked.len(),
-        2,
-        "default peer calls should reuse one thread and a named thread should stay isolated"
+        7,
+        "logical peer threads should remain isolated while sharing bounded runtime lanes"
     );
     assert!(linked.iter().all(|row| row.agent_id == "worker"));
     assert!(
@@ -6591,7 +6615,15 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(
         thread_keys,
-        std::collections::HashSet::from(["default", "independent-review"])
+        std::collections::HashSet::from([
+            "default",
+            "independent-review",
+            "pool-1",
+            "pool-2",
+            "pool-3",
+            "pool-4",
+            "pool-5",
+        ])
     );
     assert_eq!(store.list_session_rows(10, 0).await?.len(), 1);
     let promoted = store

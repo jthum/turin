@@ -24,6 +24,18 @@ fn task_status_prompt_preview_is_normalized_and_bounded() {
     assert!(preview.ends_with("..."));
 }
 
+#[test]
+fn linked_runtime_keys_are_bounded_to_physical_lanes() {
+    let keys = (0..100)
+        .map(|index| {
+            RuntimeSlotKey::linked_for("worker", "parent@state", &format!("thread-{index}")).slot_id
+        })
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(keys.len(), RuntimeSlotKey::LINKED_RUNTIME_LANES as usize);
+    assert!(keys.iter().all(|slot_id| slot_id.starts_with("linked_")));
+}
+
 struct TestTool;
 
 #[async_trait]
@@ -404,6 +416,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         result_tx: Some(tx_result),
         delegated_capabilities: None,
         promotion_candidate: None,
+        linked_session: None,
     });
 
     manager.runtimes.write().await.insert(
@@ -542,6 +555,7 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         result_tx: Some(tx_result),
         delegated_capabilities: None,
         promotion_candidate: None,
+        linked_session: None,
     });
 
     manager.runtimes.write().await.insert(
@@ -637,6 +651,7 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         result_tx: Some(tx_result),
         delegated_capabilities: None,
         promotion_candidate: None,
+        linked_session: None,
     });
 
     manager.runtimes.write().await.insert(

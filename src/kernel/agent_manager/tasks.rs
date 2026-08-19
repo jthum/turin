@@ -11,10 +11,10 @@ use crate::kernel::task_promotion::{TaskPromotionCandidate, promote_task_result}
 use crate::persistence::schema::LinkedSessionCreate;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, PeerAgentTaskResult,
-    PendingTaskRecord, PendingTaskState, PromotedTaskBranch, PromotedTaskBranchFingerprint,
-    RuntimeSlotKey, SessionContextOverrides, TaskBranchOutcomeFingerprint, TaskStatusFingerprint,
-    TaskStatusSnapshot, task_prompt_preview,
+    AgentManager, AgentRuntimeHandle, LinkedSessionTarget, PeerAgentTaskEnvelope,
+    PeerAgentTaskResult, PendingTaskRecord, PendingTaskState, PromotedTaskBranch,
+    PromotedTaskBranchFingerprint, RuntimeSlotKey, SessionContextOverrides,
+    TaskBranchOutcomeFingerprint, TaskStatusFingerprint, TaskStatusSnapshot, task_prompt_preview,
 };
 
 fn intended_task_execution_snapshot(
@@ -281,39 +281,39 @@ impl AgentManager {
             .as_ref()
             .and_then(|session| session.origin_turn_id)
             .or(origin_turn_id);
-        let handle = if let Some(linked) = linked {
+        let linked_session_id = if let Some(linked) = linked.as_ref() {
             let public_id = uuid::Uuid::from_slice(&linked.public_id)
                 .context("Linked session has an invalid public id")?
                 .simple()
                 .to_string();
-            self.ensure_runtime_slot_resumed(
-                runtime_key.clone(),
-                format_session_reference(&public_id, &state_selector),
-                SessionContextOverrides::default(),
-            )
-            .await?
+            Some(format_session_reference(&public_id, &state_selector))
         } else {
-            self.ensure_runtime_slot_linked(
+            None
+        };
+        let link = LinkedSessionCreate {
+            parent_session_id: parent.id,
+            origin_turn_id,
+            relation_kind: "delegated".to_string(),
+            thread_key: thread_key.to_string(),
+            visibility: "contextual".to_string(),
+        };
+        let session_context = SessionContextOverrides::default();
+        let handle = self
+            .ensure_runtime_slot_for_linked(
                 runtime_key.clone(),
+                linked_session_id.as_deref(),
                 state_selector.clone(),
                 None,
-                SessionContextOverrides::default(),
-                LinkedSessionCreate {
-                    parent_session_id: parent.id,
-                    origin_turn_id,
-                    relation_kind: "delegated".to_string(),
-                    thread_key: thread_key.to_string(),
-                    visibility: "contextual".to_string(),
-                },
+                session_context.clone(),
+                link.clone(),
             )
-            .await?
-        };
+            .await?;
 
         let promotion_candidate =
             promotion_origin_turn_id.map(|source_turn_id| TaskPromotionCandidate {
                 session_id: parent_session_reference,
                 source_turn_id,
-                source_session_id: handle.control.current_session_id(),
+                source_session_id: linked_session_id,
             });
 
         self.submit_to_handle(
@@ -322,6 +322,12 @@ impl AgentManager {
             task,
             delegated_capabilities,
             promotion_candidate,
+            Some(LinkedSessionTarget {
+                state_selector,
+                default_store_selector: None,
+                context: session_context,
+                link,
+            }),
         )
         .await
     }
@@ -345,8 +351,15 @@ impl AgentManager {
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
         let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
-        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities, None)
-            .await
+        self.submit_to_handle(
+            runtime_key,
+            handle,
+            task,
+            delegated_capabilities,
+            None,
+            None,
+        )
+        .await
     }
 
     async fn submit_to_handle(
@@ -356,6 +369,7 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
         promotion_candidate: Option<TaskPromotionCandidate>,
+        linked_session: Option<LinkedSessionTarget>,
     ) -> Result<String> {
         let trace_id = task.trace_id.clone();
         let title = task.title.clone();
@@ -391,6 +405,7 @@ impl AgentManager {
                     result_tx: Some(tx_result),
                     delegated_capabilities,
                     promotion_candidate,
+                    linked_session,
                 },
             )
             .await

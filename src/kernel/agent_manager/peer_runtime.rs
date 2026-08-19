@@ -14,9 +14,9 @@ use crate::persistence::schema::{LinkedSessionCreate, SignalRow};
 use turin_types::TaskInputContent;
 
 use super::{
-    AgentManager, ExecutionStatusSnapshot, LiveSessionHistorySnapshot, PeerAgentTaskEnvelope,
-    PeerAgentTaskResult, RuntimeControl, SessionContextOverrides, TaskPromotionCandidate,
-    task_prompt_preview,
+    AgentManager, ExecutionStatusSnapshot, LinkedSessionTarget, LiveSessionHistorySnapshot,
+    PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl, SessionContextOverrides,
+    TaskPromotionCandidate, task_prompt_preview,
 };
 
 pub(super) struct PeerRuntime {
@@ -115,19 +115,38 @@ impl PeerRuntime {
     }
 
     pub(super) async fn handle_envelope(&mut self, mut envelope: PeerAgentTaskEnvelope) {
-        let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
         let request_id = envelope.request_id.clone();
         let trace_id = envelope.task.trace_id.clone();
         let title = envelope.task.title.clone();
         let prompt_preview = task_prompt_preview(&envelope.task.prompt);
-        self.prepare_task_execution(request_id.clone(), runtime_task_id);
-        let result = self
-            .run_queued_task(
-                envelope.task,
-                envelope.delegated_capabilities,
-                envelope.promotion_candidate,
-            )
-            .await;
+        let activation = if let Some(target) = envelope.linked_session.take() {
+            self.activate_linked_session(target).await
+        } else {
+            Ok(())
+        };
+        let result = match activation {
+            Ok(()) => {
+                if let Some(candidate) = envelope.promotion_candidate.as_mut()
+                    && candidate.source_session_id.is_none()
+                {
+                    candidate.source_session_id = self.control.current_session_id();
+                }
+                let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
+                if let Some(request_id) = request_id.as_deref() {
+                    self.manager
+                        .mark_task_running(request_id, runtime_task_id.clone())
+                        .await;
+                }
+                self.prepare_task_execution(request_id.clone(), runtime_task_id);
+                self.run_queued_task(
+                    envelope.task,
+                    envelope.delegated_capabilities,
+                    envelope.promotion_candidate,
+                )
+                .await
+            }
+            Err(err) => Err(err),
+        };
 
         if let Some(tx_result) = envelope.result_tx {
             let request_id = envelope
@@ -183,6 +202,66 @@ impl PeerRuntime {
         if let Err(err) = self.reset_session_if_requested().await {
             error!(agent_id = %self.agent_id, error = %err, "Peer runtime failed to reset session");
         }
+    }
+
+    async fn activate_linked_session(&mut self, target: LinkedSessionTarget) -> Result<()> {
+        let store = self
+            .manager
+            .store_manager
+            .open(&target.state_selector)
+            .await?;
+        if let Some(linked) = store
+            .find_linked_session(
+                target.link.parent_session_id,
+                &self.agent_id,
+                &target.link.thread_key,
+            )
+            .await?
+        {
+            let public_id = uuid::Uuid::from_slice(&linked.public_id)?
+                .simple()
+                .to_string();
+            let session_id = crate::kernel::session_refs::format_session_reference(
+                &public_id,
+                &target.state_selector,
+            );
+            if self
+                .control
+                .current_session_id()
+                .as_deref()
+                .is_some_and(|current| {
+                    crate::kernel::session_refs::session_references_match(current, &session_id)
+                })
+            {
+                return Ok(());
+            }
+            return self.restore_session(&session_id, target.context).await;
+        }
+
+        self.host.end_session(&mut self.session).await?;
+        let mut session = self
+            .host
+            .create_linked_session_for_agent_with_context(
+                &self.agent_id,
+                target.state_selector,
+                target.default_store_selector,
+                target.context.channel_id,
+                target.context.inference,
+                target.link,
+            )
+            .await?;
+        session.runtime_slot_id = Some(self.slot_id.clone());
+        self.host.start_session(&mut session).await?;
+        self.control.set_current_session(
+            Some(self.host.session_reference(&session)),
+            Some(session.event_tx.clone()),
+            session_context_from_session(&session),
+            Some(ExecutionStatusSnapshot::from_session(&session)),
+            session.execution.conflict_policy,
+            Some(LiveSessionHistorySnapshot::from_session(&session)),
+        );
+        self.session = session;
+        Ok(())
     }
 
     pub(super) async fn shutdown(mut self) {

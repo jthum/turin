@@ -184,6 +184,7 @@ struct RuntimeSlotKey {
 
 impl RuntimeSlotKey {
     const DEFAULT_SLOT_ID: &str = "default";
+    const LINKED_RUNTIME_LANES: u64 = 4;
 
     fn default_for(agent_id: &str) -> Self {
         Self {
@@ -196,9 +197,10 @@ impl RuntimeSlotKey {
         let mut hasher = DefaultHasher::new();
         parent_session_reference.hash(&mut hasher);
         thread_key.hash(&mut hasher);
+        let lane = hasher.finish() % Self::LINKED_RUNTIME_LANES;
         Self {
             agent_id: agent_id.to_string(),
-            slot_id: format!("linked_{:016x}", hasher.finish()),
+            slot_id: format!("linked_{lane}"),
         }
     }
 }
@@ -483,6 +485,15 @@ struct PeerAgentTaskEnvelope {
     result_tx: Option<oneshot::Sender<PeerAgentTaskResult>>,
     delegated_capabilities: Option<BTreeMap<String, bool>>,
     promotion_candidate: Option<TaskPromotionCandidate>,
+    linked_session: Option<LinkedSessionTarget>,
+}
+
+#[derive(Debug, Clone)]
+struct LinkedSessionTarget {
+    state_selector: crate::persistence::manager::StoreSelector,
+    default_store_selector: Option<crate::persistence::manager::StoreSelector>,
+    context: SessionContextOverrides,
+    link: crate::persistence::schema::LinkedSessionCreate,
 }
 
 /// A handle to a running peer agent.

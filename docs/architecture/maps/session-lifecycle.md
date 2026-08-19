@@ -50,8 +50,9 @@ Create linked peer session:
 2. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
 3. Otherwise create an agent-owned child session with explicit parent, root, relation,
    thread, visibility, and originating-turn columns.
-4. Start or resume a deterministic peer runtime slot for that child and execute tasks
-   against the child's independent turn tree.
+4. Route the child onto one of four deterministic linked-runtime lanes for its agent.
+5. The lane creates or resumes the envelope's logical child session immediately before
+   execution, then runs against that child's independent turn tree.
 
 Resume or refresh:
 
@@ -121,6 +122,11 @@ Delete persisted session:
   exists. Reusing that child preserves its first origin rather than moving the thread.
 - Repeated peer calls without an explicit `thread` reuse the `default` child thread.
   A named `thread` creates or reuses a separate child context under the same parent.
+- Linked-session durability is independent of runtime residency. Any number of logical
+  children may exist, but each agent owns at most four hot linked Lua runtimes; colliding
+  threads execute serially and switch session context at envelope boundaries.
+- Runtime task ids must be allocated after a linked lane activates its target session so
+  task counters advance in the session that actually executes the work.
 - Successful linked-task results are promotable from their recorded origin into a new
   parent branch; promotion copies the task/result boundary, not the child's internal
   transcript or tool lifecycle.

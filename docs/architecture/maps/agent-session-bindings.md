@@ -72,6 +72,15 @@ Peer result promotion:
 3. Branch provenance retains the linked source session. Internal child tool/event
    history remains in the child session and is not merged into the parent transcript.
 
+Linked runtime residency:
+
+1. The parent session and thread key identify a durable logical child session.
+2. Their stable hash selects one of four physical runtime lanes for the target agent.
+3. Each task envelope carries its linked-session target; the lane creates or resumes
+   that target before allocating the runtime task id and running inference.
+4. Threads sharing a lane queue serially, bounding resident Lua VMs without combining
+   their transcripts, harness state, or promotion provenance.
+
 ## Invariants
 
 - `agent.spawn` requires `runtime.agent.spawn`.
@@ -80,6 +89,8 @@ Peer result promotion:
 - Child-agent access must pass `allowed_child_agents` checks before peer submission.
 - Delegated capabilities must inherit active peer ceilings and be capped by active
   temporary grants; nested delegation may narrow authority but never widen it.
+- Linked runtime lane reuse must switch sessions only between envelopes. It must never
+  reset a lane globally while another logical session has queued work.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.

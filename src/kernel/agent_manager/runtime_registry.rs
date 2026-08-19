@@ -106,9 +106,10 @@ impl AgentManager {
         .await
     }
 
-    pub(super) async fn ensure_runtime_slot_linked(
+    pub(super) async fn ensure_runtime_slot_for_linked(
         self: &Arc<Self>,
         runtime_key: RuntimeSlotKey,
+        initial_session_id: Option<&str>,
         state_selector: StoreSelector,
         default_store_selector: Option<StoreSelector>,
         session_context: SessionContextOverrides,
@@ -124,14 +125,19 @@ impl AgentManager {
             return Ok(Arc::clone(handle));
         }
 
+        let (initial_state_selector, initial_link) = if initial_session_id.is_some() {
+            (None, None)
+        } else {
+            (Some(state_selector), Some(link))
+        };
         let handle = Arc::new(
             self.start_agent(
                 &runtime_key,
-                None,
-                Some(state_selector),
+                initial_session_id,
+                initial_state_selector,
                 default_store_selector,
                 session_context,
-                Some(link),
+                initial_link,
             )
             .await?,
         );
@@ -216,7 +222,7 @@ impl AgentManager {
                     let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
                     queue.pop_front()
                 };
-                let Some(mut envelope) = envelope else {
+                let Some(envelope) = envelope else {
                     match runtime.reset_session_if_requested().await {
                         Ok(true) => continue,
                         Ok(false) => {}
@@ -284,10 +290,6 @@ impl AgentManager {
                 };
                 queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
                 active_tasks_bg.fetch_add(1, Ordering::Relaxed);
-                if let Some(request_id) = envelope.request_id.as_deref() {
-                    let runtime_task_id = runtime.allocate_runtime_task_id(&mut envelope.task);
-                    manager.mark_task_running(request_id, runtime_task_id).await;
-                }
                 runtime.handle_envelope(envelope).await;
                 processed_task = true;
                 active_tasks_bg.fetch_sub(1, Ordering::Relaxed);
