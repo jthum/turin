@@ -22,6 +22,113 @@ LEFT JOIN turns t ON t.id = bh.head_turn_id
 "#;
 
 impl StateStore {
+    pub(crate) async fn create_promoted_branch_from_turn(
+        &self,
+        session_id: i64,
+        name: &str,
+        source_turn_id: i64,
+        provenance: BranchProvenance,
+        user_content: &serde_json::Value,
+        assistant_content: &serde_json::Value,
+    ) -> Result<BranchHeadRow> {
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start branch promotion transaction")?;
+        let mut source_rows = tx
+            .query(
+                "SELECT session_id, branch_depth FROM turns WHERE id = ?1",
+                [source_turn_id],
+            )
+            .await?;
+        let source = source_rows
+            .next()
+            .await?
+            .ok_or_else(|| anyhow!("Source turn '{}' not found", source_turn_id))?;
+        let source_session_id = source.get::<i64>(0)?;
+        let source_depth = source.get::<i64>(1)?;
+        drop(source_rows);
+        if source_session_id != session_id {
+            anyhow::bail!(
+                "Source turn '{}' does not belong to session '{}'",
+                source_turn_id,
+                session_id
+            );
+        }
+
+        let branch_public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
+        let BranchProvenance {
+            origin_kind,
+            origin_task_id,
+            origin_execution_id,
+            origin_metadata,
+        } = provenance;
+        tx.execute(
+            r#"
+            INSERT INTO branch_heads (
+                public_id,
+                session_id,
+                name,
+                head_turn_id,
+                created_from_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            turso::params![
+                branch_public_id,
+                session_id,
+                name,
+                source_turn_id,
+                source_turn_id,
+                origin_kind,
+                origin_task_id,
+                origin_execution_id,
+                origin_metadata
+            ],
+        )
+        .await
+        .with_context(|| format!("Failed to create promoted branch head '{}'", name))?;
+        let branch_id = tx.last_insert_rowid();
+
+        let turn_public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
+        tx.execute(
+            r#"
+            INSERT INTO turns (public_id, session_id, parent_turn_id, branch_depth)
+            VALUES (?1, ?2, ?3, ?4)
+            "#,
+            turso::params![turn_public_id, session_id, source_turn_id, source_depth + 1],
+        )
+        .await
+        .context("Failed to create promoted turn")?;
+        let turn_id = tx.last_insert_rowid();
+        tx.execute(
+            "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2",
+            turso::params![turn_id, branch_id],
+        )
+        .await
+        .context("Failed to advance promoted branch head")?;
+
+        for (role, content) in [("user", user_content), ("assistant", assistant_content)] {
+            tx.execute(
+                "INSERT INTO messages (turn_id, role, content) VALUES (?1, ?2, ?3)",
+                turso::params![turn_id, role, serde_json::to_string(content)?],
+            )
+            .await
+            .with_context(|| format!("Failed to insert promoted {role} message"))?;
+        }
+
+        tx.commit()
+            .await
+            .context("Failed to commit branch promotion transaction")?;
+        self.get_branch_head(session_id, branch_id)
+            .await?
+            .ok_or_else(|| anyhow!("Promoted branch '{}' was not readable", name))
+    }
+
     pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
         let conn = self.connect().await?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();

@@ -637,6 +637,7 @@ impl AgentManager {
         branch_name: Option<&str>,
         source_turn_id: Option<i64>,
     ) -> Result<PromotedTaskBranch> {
+        let _promotion_guard = self.task_promotion.lock().await;
         let result = self
             .completed_result(request_id)
             .await

@@ -9,7 +9,7 @@ use crate::inference::content::{
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::BranchProvenance;
-use crate::persistence::state::{SessionReadTarget, TurnWriteTarget};
+use crate::persistence::state::SessionReadTarget;
 use turin_types::TaskInputContent;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -82,70 +82,24 @@ pub(crate) async fn promote_task_result(
         .get_session_row_by_public_id(public_id)
         .await?
         .ok_or_else(|| anyhow!("Session '{}' not found", promotion.session_id))?;
-    let source_turn = store
-        .get_turn_row(promotion.source_turn_id)
-        .await?
-        .ok_or_else(|| anyhow!("Source turn '{}' not found", promotion.source_turn_id))?;
-    if source_turn.session_id != row.id {
-        anyhow::bail!(
-            "Source turn '{}' does not belong to promoted session '{}'",
-            promotion.source_turn_id,
-            promotion.session_id
-        );
-    }
-
     let branch_name = branch_name
         .filter(|name| !name.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("promoted-{}", uuid::Uuid::now_v7().simple()));
     let branch = store
-        .create_branch_head_from_turn_id_with_provenance(
+        .create_promoted_branch_from_turn(
             row.id,
             &branch_name,
             promotion.source_turn_id,
-            false,
             BranchProvenance::promotion(
                 origin_task_id.map(str::to_string),
                 promotion.source_session_id.clone(),
                 selected_source_turn_id,
             ),
-        )
-        .await?;
-    let turn_target = store
-        .prepare_turn_write_target(
-            row.id,
-            TurnWriteTarget::branch_head_with_expectation(
-                Some(branch.id),
-                Some(promotion.source_turn_id),
-                source_turn.branch_depth + 1,
-            ),
-        )
-        .await?
-        .ok_or_else(|| anyhow!("Failed to allocate promoted turn target"))?;
-
-    store
-        .insert_message(
-            row.id,
-            turn_target,
-            "user",
             &encode_content_json(&task_content_from_parts(input_content)),
-            None,
-        )
-        .await?;
-    store
-        .insert_message(
-            row.id,
-            turn_target,
-            "assistant",
             &encode_content_json(&task_content_from_parts(assistant_content)),
-            None,
         )
         .await?;
-
-    let branch = store
-        .get_branch_head(row.id, branch.id)
-        .await?
-        .ok_or_else(|| anyhow!("Promoted branch '{}' was not readable", branch_name))?;
 
     Ok(PromotedTaskBranch {
         session_id: promotion.session_id.clone(),
@@ -219,6 +173,7 @@ async fn load_linked_turn_content(
 mod tests {
     use super::*;
     use crate::kernel::session_refs::format_session_reference;
+    use crate::persistence::state::TurnWriteTarget;
     use serde_json::json;
 
     #[tokio::test]

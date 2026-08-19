@@ -145,6 +145,8 @@ Delete persisted session:
 - Successful linked-task results are promotable from their recorded origin into a new
   parent branch; promotion copies the task/result boundary or one selected completed child
   turn, not the child's internal transcript or tool lifecycle.
+- A promoted branch, its promoted turn, and the user/assistant message boundary commit as
+  one transaction. Repeating promotion for one completed task returns its recorded branch.
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are
   discovered through their indexed parent relationship rather than mixed into the
   conversation list.

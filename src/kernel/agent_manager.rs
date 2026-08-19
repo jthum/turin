@@ -29,7 +29,7 @@ use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
 pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
-use tokio::sync::{Notify, RwLock, oneshot};
+use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use turin_types::TaskInputContent;
@@ -716,6 +716,8 @@ pub struct AgentManager {
     pending_task_states: RwLock<HashMap<String, PendingTaskRecord>>,
     /// Bounded cache of completed task results for daemon/control-plane inspection.
     completed_results: RwLock<CompletedTaskCache>,
+    /// Serializes the rare completed-task promotion path so one task cannot fork twice.
+    task_promotion: AsyncMutex<()>,
     delegation_budgets: Mutex<DelegationBudgetCache>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
@@ -737,6 +739,7 @@ impl AgentManager {
             pending_results: RwLock::new(HashMap::new()),
             pending_task_states: RwLock::new(HashMap::new()),
             completed_results: RwLock::new(CompletedTaskCache::default()),
+            task_promotion: AsyncMutex::new(()),
             delegation_budgets: Mutex::new(DelegationBudgetCache::default()),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),

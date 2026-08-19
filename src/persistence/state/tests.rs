@@ -2122,6 +2122,80 @@ async fn test_turn_allocation_rolls_back_when_branch_advance_fails() {
 }
 
 #[tokio::test]
+async fn promoted_branch_rolls_back_as_one_unit_when_message_insert_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "origin"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let source_turn_id = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .and_then(|branch| branch.head_turn_id)
+        .expect("source turn");
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_promoted_assistant
+        BEFORE INSERT ON messages
+        WHEN NEW.role = 'assistant'
+        BEGIN
+            SELECT RAISE(FAIL, 'injected promoted message failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .create_promoted_branch_from_turn(
+            session,
+            "must-roll-back",
+            source_turn_id,
+            BranchProvenance::promotion(Some("request-1".to_string()), None, None),
+            &json!([{"type": "text", "text": "input"}]),
+            &json!([{"type": "text", "text": "result"}]),
+        )
+        .await
+        .expect_err("injected assistant failure should roll back promotion");
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to insert promoted assistant message")
+    );
+
+    assert!(
+        store
+            .get_branch_head_by_name(session, "must-roll-back")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM turns WHERE session_id = ?1",
+            [session],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
     let store = StateStore::open_memory()
         .await
