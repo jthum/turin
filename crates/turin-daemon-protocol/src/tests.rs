@@ -266,6 +266,7 @@ fn promote_task_request_round_trips_typed_shape() {
         DaemonRequest::TaskPromote(PromoteTaskParams {
             request_id: "req_task".to_string(),
             branch_name: Some("kept-idea".to_string()),
+            source_turn_id: Some(42),
         }),
     );
 
@@ -273,12 +274,14 @@ fn promote_task_request_round_trips_typed_shape() {
     assert_eq!(value["op"], "task.promote");
     assert_eq!(value["params"]["request_id"], "req_task");
     assert_eq!(value["params"]["branch_name"], "kept-idea");
+    assert_eq!(value["params"]["source_turn_id"], 42);
 
     let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
     match decoded.request {
         DaemonRequest::TaskPromote(params) => {
             assert_eq!(params.request_id, "req_task");
             assert_eq!(params.branch_name.as_deref(), Some("kept-idea"));
+            assert_eq!(params.source_turn_id, Some(42));
         }
         other => panic!("unexpected request variant: {other:?}"),
     }

@@ -467,6 +467,9 @@ pub fn register_runtime_agent_namespace(
                 let branch_name = opts
                     .as_ref()
                     .and_then(|t| t.get::<String>("branch_name").ok());
+                let source_turn_id = opts
+                    .as_ref()
+                    .and_then(|t| t.get::<i64>("source_turn_id").ok());
                 let manager = manager.clone();
                 let app_data_snapshot = app_data_snapshot.clone();
                 let result = bridge_async_display_err(async move {
@@ -477,7 +480,7 @@ pub fn register_runtime_agent_namespace(
                     require_child_agent_governance(&app_data_snapshot, &snapshot.agent_id)
                         .map_err(anyhow::Error::msg)?;
                     manager
-                        .promote_completed_task(&task_id, branch_name.as_deref())
+                        .promote_completed_task(&task_id, branch_name.as_deref(), source_turn_id)
                         .await
                 });
                 lua_json_result(lua, result)

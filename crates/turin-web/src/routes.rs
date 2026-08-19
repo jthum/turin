@@ -233,6 +233,8 @@ struct WebPromoteRequest {
     request_id: String,
     #[serde(default)]
     branch_name: Option<String>,
+    #[serde(default)]
+    source_turn_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -993,7 +995,7 @@ async fn handle_task_promote(
         .filter(|name| !name.is_empty());
     let branch = state
         .client
-        .promote_task(params.request_id.trim(), branch_name)
+        .promote_task(params.request_id.trim(), branch_name, params.source_turn_id)
         .await
         .map_err(|err| WebError::upstream(format!("Failed to promote sidestep: {err}")))?;
     Ok(json_response(

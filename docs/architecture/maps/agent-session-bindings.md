@@ -72,8 +72,9 @@ Peer result promotion:
 1. A linked peer task completed from a durable parent turn carries that parent/origin
    as its promotion target.
 2. `agent.promote` or `runtime.agent.promote` creates a sibling branch from the
-   origin turn and writes the delegated input plus selected assistant result.
-3. Branch provenance retains the linked source session. Internal child tool/event
+   origin turn and writes either the delegated request/result boundary or one explicitly
+   selected completed child turn.
+3. Branch provenance retains the linked source session and selected source turn. Internal child tool/event
    history remains in the child session and is not merged into the parent transcript.
 
 Linked runtime residency:

@@ -2047,6 +2047,7 @@ async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()
         .promote_task_params(PromoteTaskParams {
             request_id: sidestep.request_id.clone(),
             branch_name: Some("kept-side-question".to_string()),
+            source_turn_id: None,
         })
         .await?;
     assert_eq!(promoted.name, "kept-side-question");
@@ -2061,6 +2062,7 @@ async fn detached_sidestep_task_can_be_promoted_to_sibling_branch() -> Result<()
         .promote_task_params(PromoteTaskParams {
             request_id: sidestep.request_id.clone(),
             branch_name: Some("should-not-create-new-branch".to_string()),
+            source_turn_id: None,
         })
         .await?;
     assert_eq!(promoted_again.branch_id, promoted.branch_id);

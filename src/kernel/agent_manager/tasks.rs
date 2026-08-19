@@ -9,7 +9,9 @@ use crate::kernel::delegation_budget::DelegationBudgetLimits;
 use crate::kernel::policy::{PolicyScope, RuntimePolicy};
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTask};
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
-use crate::kernel::task_promotion::{TaskPromotionCandidate, promote_task_result};
+use crate::kernel::task_promotion::{
+    TaskPromotionCandidate, TaskPromotionSelection, promote_task_result,
+};
 use crate::persistence::schema::LinkedSessionCreate;
 use crate::persistence::schema::SessionRow;
 use crate::persistence::state::StateStore;
@@ -794,6 +796,7 @@ impl AgentManager {
         &self,
         request_id: &str,
         branch_name: Option<&str>,
+        source_turn_id: Option<i64>,
     ) -> Result<PromotedTaskBranch> {
         let result = self
             .completed_result(request_id)
@@ -806,16 +809,11 @@ impl AgentManager {
             .promotion_candidate
             .clone()
             .ok_or_else(|| anyhow!("Task '{}' is not promotable", request_id))?;
-        let assistant_content = result
-            .assistant_content
-            .as_ref()
-            .filter(|content| !content.is_empty())
-            .ok_or_else(|| anyhow!("Task '{}' has no promotable assistant output", request_id))?;
+        let assistant_content = result.assistant_content.as_deref().unwrap_or_default();
         let input_content = result
             .promotion_input_content
-            .as_ref()
-            .filter(|content| !content.is_empty())
-            .ok_or_else(|| anyhow!("Task '{}' is missing promotable task input", request_id))?;
+            .as_deref()
+            .unwrap_or_default();
         let branch = promote_task_result(
             &self.store_manager,
             &promotion,
@@ -823,6 +821,9 @@ impl AgentManager {
             assistant_content,
             Some(request_id),
             branch_name,
+            source_turn_id
+                .map(TaskPromotionSelection::LinkedTurn)
+                .unwrap_or(TaskPromotionSelection::Result),
         )
         .await?;
         self.completed_results

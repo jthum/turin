@@ -563,14 +563,26 @@ impl BranchProvenance {
         }
     }
 
-    pub fn promotion(task_id: Option<String>, source_session_id: Option<String>) -> Self {
+    pub fn promotion(
+        task_id: Option<String>,
+        source_session_id: Option<String>,
+        source_turn_id: Option<i64>,
+    ) -> Self {
+        let origin_metadata = match (source_session_id, source_turn_id) {
+            (None, None) => None,
+            (source_session_id, source_turn_id) => Some(
+                serde_json::json!({
+                    "source_session_id": source_session_id,
+                    "source_turn_id": source_turn_id,
+                })
+                .to_string(),
+            ),
+        };
         Self {
             origin_kind: "promotion".to_string(),
             origin_task_id: task_id,
             origin_execution_id: None,
-            origin_metadata: source_session_id.map(|session_id| {
-                serde_json::json!({ "source_session_id": session_id }).to_string()
-            }),
+            origin_metadata,
         }
     }
 }

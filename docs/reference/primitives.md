@@ -1262,6 +1262,7 @@ Peer-agent orchestration API.
 - `runtime.agent.get_status(agent_id) -> status|nil`
 - `runtime.agent.submit(agent_id, task, opts?) -> task_id`
 - `runtime.agent.await(task_id, opts?) -> result`
+- `runtime.agent.promote(task_id, opts?) -> branch`
 - `runtime.agent.ask(agent_id, prompt, opts?) -> output`
 
 `task` can be:
@@ -1291,6 +1292,20 @@ contexts are both linked sessions with independent turn trees.
 ```lua
 { timeout_ms = 30000 }
 ```
+
+`promote` creates a sibling branch at the recorded parent origin. By default it copies the
+delegated request/result boundary. Set `source_turn_id` to copy one completed turn from the
+linked child instead:
+
+```lua
+runtime.agent.promote(task_id, {
+  branch_name = "adopt-review",
+  source_turn_id = child_turn_id,
+})
+```
+
+Promotion never merges child tool history or unrelated transcript turns. A task has one
+idempotent promotion result.
 
 `opts` for `ask`:
 
@@ -1808,6 +1823,9 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
   - `opts.capabilities` (delegated ceiling)
   - `opts.execution`
   - `opts.mode = "thread"|"fresh"` and optional reusable `opts.thread`
+- `agent.promote(task_id, opts?) -> branch`
+  - `opts.branch_name` names the new parent branch
+  - `opts.source_turn_id` optionally selects one linked-child turn instead of the final task result
 
 ### Runtime retention
 

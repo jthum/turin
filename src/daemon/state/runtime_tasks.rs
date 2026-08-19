@@ -225,7 +225,11 @@ impl DaemonState {
     ) -> Result<PromotedTaskBranch> {
         self.kernel
             .agent_manager()
-            .promote_completed_task(&params.request_id, params.branch_name.as_deref())
+            .promote_completed_task(
+                &params.request_id,
+                params.branch_name.as_deref(),
+                params.source_turn_id,
+            )
             .await
     }
 

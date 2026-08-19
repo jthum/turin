@@ -76,4 +76,6 @@ pub struct PromoteTaskParams {
     pub request_id: String,
     #[serde(default)]
     pub branch_name: Option<String>,
+    #[serde(default)]
+    pub source_turn_id: Option<i64>,
 }

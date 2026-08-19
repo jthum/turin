@@ -25,7 +25,7 @@ use crate::harness::stdlib::policy_support::{policy_bool, policy_u64, runtime_po
 use crate::kernel::prepare_persisted_session_sidestep;
 use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::format_session_reference;
-use crate::kernel::task_promotion::promote_task_result;
+use crate::kernel::task_promotion::{TaskPromotionSelection, promote_task_result};
 use branch_lua::{branch_row_to_lua_table, branch_rows_to_lua_table};
 use options::{
     opt_activate, opt_conflict_policy, opt_execution_overrides, opt_from_turn_index,
@@ -293,6 +293,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
             let branch_name = opts
                 .as_ref()
                 .and_then(|table| table.get::<String>("branch_name").ok());
+            let source_turn_id = opts
+                .as_ref()
+                .and_then(|table| table.get::<i64>("source_turn_id").ok());
             let completed_task_results =
                 match current_completed_task_results(&promote_execution_ctx) {
                     Ok(results) => results,
@@ -312,20 +315,11 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     .promotion_candidate
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("Task '{}' is not promotable", task_id))?;
-                let assistant_content = completed
-                    .assistant_content
-                    .as_ref()
-                    .filter(|content| !content.is_empty())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Task '{}' has no promotable assistant output", task_id)
-                    })?;
+                let assistant_content = completed.assistant_content.as_deref().unwrap_or_default();
                 let input_content = completed
                     .promotion_input_content
-                    .as_ref()
-                    .filter(|content| !content.is_empty())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Task '{}' is missing promotable task input", task_id)
-                    })?;
+                    .as_deref()
+                    .unwrap_or_default();
                 let branch = promote_task_result(
                     &store_manager,
                     &promotion,
@@ -333,6 +327,9 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                     assistant_content,
                     Some(&task_id),
                     branch_name.as_deref(),
+                    source_turn_id
+                        .map(TaskPromotionSelection::LinkedTurn)
+                        .unwrap_or(TaskPromotionSelection::Result),
                 )
                 .await?;
                 completed_task_results

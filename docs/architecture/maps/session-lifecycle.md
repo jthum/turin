@@ -138,8 +138,8 @@ Delete persisted session:
 - Runtime task ids must be allocated after a linked lane activates its target session so
   task counters advance in the session that actually executes the work.
 - Successful linked-task results are promotable from their recorded origin into a new
-  parent branch; promotion copies the task/result boundary, not the child's internal
-  transcript or tool lifecycle.
+  parent branch; promotion copies the task/result boundary or one selected completed child
+  turn, not the child's internal transcript or tool lifecycle.
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are
   discovered through their indexed parent relationship rather than mixed into the
   conversation list.

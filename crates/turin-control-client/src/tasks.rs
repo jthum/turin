@@ -110,12 +110,14 @@ impl ControlClient {
         &self,
         request_id: &str,
         branch_name: Option<String>,
+        source_turn_id: Option<i64>,
     ) -> Result<SessionBranchDetail> {
         self.request_ok(
             None,
             DaemonRequest::TaskPromote(PromoteTaskParams {
                 request_id: request_id.to_string(),
                 branch_name,
+                source_turn_id,
             }),
         )
         .await

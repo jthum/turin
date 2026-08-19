@@ -855,6 +855,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
                 turin::daemon::protocol::PromoteTaskParams {
                     request_id: sidestep_request_id.clone(),
                     branch_name: Some("kept-side-question".to_string()),
+                    source_turn_id: None,
                 },
             ))
             .await?,
@@ -867,6 +868,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
                 turin::daemon::protocol::PromoteTaskParams {
                     request_id: sidestep_request_id.clone(),
                     branch_name: Some("should-not-create-new-branch".to_string()),
+                    source_turn_id: None,
                 },
             ))
             .await?,
