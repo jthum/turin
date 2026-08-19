@@ -27,9 +27,11 @@ This subsystem should preserve three guarantees:
 - `src/kernel/config/inference.rs`
   - `inference.hot_history` and inference compaction configuration.
 - `src/persistence/state/messages.rs`
-  - Durable turn-scoped message loading.
+  - Full message reads, bounded ancestry suffix reads, and token-budgeted
+    context selection over complete turn groups.
 - `src/persistence/state/turns.rs`
-  - Turn allocation, active branch path, selected turn path, and turn-row resolution.
+  - Turn allocation, depth-chunked ancestry resolution, active branch path,
+    selected turn path, and turn-row resolution.
 - `src/persistence/state/turns/branch_heads.rs`
   - Main branch initialization, branch-head lookup/listing, branch creation, checkout, and branch source resolution.
 
@@ -73,6 +75,17 @@ Full materialization:
    rematerialization stages to the public session id and correlates them with
    daemon-process memory while leaving the retrieval path unchanged.
 
+Bounded persistence selection:
+
+1. Ancestry is read backward in bounded depth chunks over one connection rather
+   than opening a connection for every parent turn.
+2. Structural bounded reads stop after the requested turn and message limits
+   and report whether older ancestry exists without calculating an exact total.
+3. Token-budgeted reads page backward, retain complete turn groups, and stop
+   once the caller's token budget and minimum-message policy are satisfied.
+4. Persistence supplies the mechanism and does not choose the provider or
+   harness context budget.
+
 ## Invariants
 
 - Hot-history pruning must not run for ephemeral or non-branch-advancing execution contexts.
@@ -100,6 +113,11 @@ Full materialization:
 - Debug hot-history profile can opt out of bounds; default profile should remain memory-safe.
 - Feature-gated live diagnostics must not change materialization semantics or
   introduce prompt/history copies. Normal builds must compile the hooks away.
+- Bounded context reads must never split the messages belonging to one turn.
+- Ordinary bounded reads must not calculate full-path message totals merely to
+  report that older history exists.
+- Full and bounded ancestry reads must share parent-chain validation and
+  chronological ordering.
 
 ## Common Changes
 
@@ -166,5 +184,10 @@ The current module split is deliberate:
 Likely future cleanup areas:
 
 - add a long-session fake-inference benchmark that checks RSS and hot-window size together
-- consider a persistence query that materializes only the needed recent branch suffix instead of always rebuilding full history before pruning
+- replace message-count compaction coordinates with durable turn-addressed
+  checkpoint boundaries
+- resume directly into a bounded persistence suffix instead of rebuilding full
+  history before pruning
+- extend provider context from the token-budgeted persistence selector before
+  invoking bounded turn-preparation hooks
 - tune default profile values after measurement, not by guesswork
