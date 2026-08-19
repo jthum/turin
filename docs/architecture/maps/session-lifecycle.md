@@ -32,6 +32,10 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
   - Host construction, persistence locks, run-loop entry points, and task execution coordination.
 - `src/persistence/state/*`
   - Session rows, messages, events, branches, atomic turn allocation, and worklist persistence.
+- `src/persistence/state/sessions.rs`
+  - Session creation, normalized linkage, family lifecycle, title updates, and transactional deletion.
+- `src/persistence/state/sessions/search.rs`
+  - Ranked session, active-path message, tool-execution, and event search read model.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 
