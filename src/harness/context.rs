@@ -1,18 +1,15 @@
 use mlua::{Lua, LuaSerdeExt, MetaMethod, Table, UserData, UserDataMethods, Value};
-use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::harness::globals::block_on_current;
 use crate::inference::content::{infer_prompt_from_messages, replace_user_text_content};
 use crate::inference::provider::{InferenceMessage, ProviderClient};
-use crate::inference::structured::{
-    fallback_system_prompt, parse_and_validate_json_response, response_format_for_schema,
-};
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
 
 mod request_options;
+mod structured_call;
 
 pub use request_options::RequestOptionsOverride;
 pub(crate) use request_options::build_merged_request_options;
@@ -100,33 +97,6 @@ pub struct ContextWrapper {
 struct ToolExposureProxy {
     state: Arc<Mutex<ContextState>>,
     available_tools: Arc<BTreeSet<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct StructuredCallArgs {
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    messages: Option<Vec<InferenceMessage>>,
-    #[serde(default)]
-    system: Option<String>,
-    schema: serde_json::Value,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    strict: Option<bool>,
-    #[serde(default)]
-    inference: Option<String>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    thinking_budget: Option<u32>,
-    #[serde(default)]
-    request_options: Option<RequestOptionsOverride>,
 }
 
 impl ContextWrapper {
@@ -689,152 +659,8 @@ impl UserData for ContextWrapper {
         });
 
         methods.add_method("structured", |lua, this: &ContextWrapper, args: Value| {
-            let parsed: StructuredCallArgs = lua.from_value(args).map_err(mlua::Error::external)?;
-            let clients = this.clients.clone();
-            let config = Arc::clone(&this.config);
-            let agent_id = this.agent_id.clone();
-            let session_inference = this.session_inference.clone();
-            let state_arc = Arc::clone(&this.state);
-
-            let structured = block_on_current(async move {
-                let (
-                    current_inference,
-                    current_provider,
-                    current_model,
-                    current_system_prompt,
-                    current_messages,
-                    current_thinking_budget,
-                    current_request_options,
-                ) = {
-                    let state = state_arc.lock().expect("context state mutex poisoned");
-                    (
-                        state.inference.clone(),
-                        state.provider.clone(),
-                        state.model.clone(),
-                        state.system_prompt.clone(),
-                        state.messages.clone(),
-                        state.thinking_budget,
-                        state.request_options.clone(),
-                    )
-                };
-
-                let requested_inference =
-                    normalize_inference_context_name(parsed.inference.or(current_inference));
-                let message_set = structured_messages(
-                    parsed.prompt.clone(),
-                    parsed.messages.clone(),
-                    current_messages,
-                )?;
-                let system_prompt = parsed.system.unwrap_or(current_system_prompt);
-                let strict = parsed.strict.unwrap_or(true);
-
-                let route = config
-                    .resolve_inference_route(
-                        &agent_id,
-                        &current_provider,
-                        &current_model,
-                        current_thinking_budget,
-                        requested_inference.as_deref(),
-                        Some(&session_inference),
-                    )
-                    .map_err(|err| err.to_string())?;
-
-                let response_format = response_format_for_schema(
-                    parsed.name.as_deref(),
-                    parsed.description.as_deref(),
-                    &parsed.schema,
-                    strict,
-                );
-
-                let fallback_system_prompt = fallback_system_prompt(
-                    &system_prompt,
-                    parsed.name.as_deref(),
-                    parsed.description.as_deref(),
-                    &parsed.schema,
-                );
-
-                let mut last_error = None::<String>;
-                for candidate in &route.candidates {
-                    let client = match clients.get(&candidate.provider_name).cloned() {
-                        Some(client) => client,
-                        None => {
-                            last_error = Some(format!(
-                                "Provider '{}' not initialized",
-                                candidate.provider_name
-                            ));
-                            continue;
-                        }
-                    };
-
-                    let provider_config = match config.providers.get(&candidate.provider_name) {
-                        Some(provider) => provider,
-                        None => {
-                            last_error = Some(format!(
-                                "Provider '{}' not found in config",
-                                candidate.provider_name
-                            ));
-                            continue;
-                        }
-                    };
-
-                    let request_options = build_merged_request_options(
-                        provider_config,
-                        &current_request_options,
-                        parsed.request_options.as_ref(),
-                    )
-                    .map_err(|err| err.to_string())?;
-
-                    let options = crate::inference::provider::InferenceOptions {
-                        temperature: parsed.temperature.or(candidate.temperature),
-                        max_tokens: parsed.max_tokens.or(candidate.max_tokens),
-                        thinking_budget: Some(
-                            parsed
-                                .thinking_budget
-                                .or(candidate.thinking_budget)
-                                .unwrap_or(current_thinking_budget),
-                        ),
-                    };
-
-                    let raw = if client.supports_response_format(&response_format) {
-                        client
-                            .completion_with_response_format(
-                                &candidate.model,
-                                &system_prompt,
-                                &message_set,
-                                &[],
-                                &options,
-                                response_format.clone(),
-                                Some(request_options.clone()),
-                            )
-                            .await
-                            .map_err(|err| err.to_string())
-                    } else {
-                        client
-                            .completion_with_options(
-                                &candidate.model,
-                                &fallback_system_prompt,
-                                &message_set,
-                                &[],
-                                &options,
-                                Some(request_options.clone()),
-                            )
-                            .await
-                            .map_err(|err| err.to_string())
-                    };
-
-                    match raw.and_then(|text| {
-                        parse_and_validate_json_response(&text, &parsed.schema)
-                            .map_err(|err| err.to_string())
-                    }) {
-                        Ok(json) => return Ok(json),
-                        Err(err) => last_error = Some(err),
-                    }
-                }
-
-                Err(last_error.unwrap_or_else(|| {
-                    "No inference route available for structured output".to_string()
-                }))
-            });
+            let parsed = structured_call::parse(lua, args)?;
+            let structured = block_on_current(structured_call::run(this, parsed));
 
             match structured {
                 Ok(value) => lua.to_value(&value).map_err(mlua::Error::external),

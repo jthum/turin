@@ -12,6 +12,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - `ContextWrapper`, `ContextState`, Lua property accessors, message mutation helpers, summarization, and `ctx:structured`.
 - `src/harness/context/request_options.rs`
   - `RequestOptionsOverride` and shared provider request-option layering.
+- `src/harness/context/structured_call.rs`
+  - `ctx:structured` argument parsing, route resolution, provider fallback,
+    request construction, and response validation.
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/inference/structured.rs`
@@ -88,4 +91,7 @@ git diff --check
 
 ## Current Shape
 
-The current pass extracted request-option layering from `context.rs` and removed the duplicate implementation from turn execution. This is a logic-quality win more than a pure structural split: normal inference and structured harness inference now use the same header/retry/timeout override policy.
+The current shape keeps Lua property and message mutation in `context.rs`, request-option
+layering in `request_options.rs`, and the structured inference operation in
+`structured_call.rs`. Normal inference and structured harness inference use the same
+header/retry/timeout override policy.
