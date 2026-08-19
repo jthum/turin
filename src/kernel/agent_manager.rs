@@ -17,6 +17,7 @@ use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::config::TurinConfig;
+use crate::kernel::delegation_budget::{DelegationBudget, DelegationBudgetLimits};
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
@@ -249,6 +250,8 @@ struct TaskSessionTarget {
     session_id: Option<String>,
     store_selector: Option<crate::persistence::manager::StoreSelector>,
     linked_parent_session_id: Option<i64>,
+    thread_key: Option<String>,
+    reserves_new_child: bool,
 }
 
 impl TaskSessionTarget {
@@ -549,6 +552,15 @@ struct PeerTaskSubmission {
     promotion_candidate: Option<TaskPromotionCandidate>,
     linked_session: Option<LinkedSessionTarget>,
     session_target: TaskSessionTarget,
+    delegation_admission: Option<DelegationAdmission>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DelegationAdmission {
+    parent_session_id: i64,
+    persisted_direct_children: usize,
+    max_fan_out: usize,
+    max_concurrent_children: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -608,6 +620,48 @@ struct CompletedTaskCache {
     results: HashMap<String, PeerAgentTaskResult>,
 }
 
+#[derive(Default)]
+struct DelegationBudgetCache {
+    order: VecDeque<String>,
+    budgets: HashMap<String, Arc<DelegationBudget>>,
+}
+
+impl DelegationBudgetCache {
+    const MAX_ENTRIES: usize = 1024;
+
+    fn get_or_create(
+        &mut self,
+        trace_id: &str,
+        limits: DelegationBudgetLimits,
+    ) -> Arc<DelegationBudget> {
+        if let Some(budget) = self.budgets.get(trace_id) {
+            budget.tighten(limits);
+            return Arc::clone(budget);
+        }
+        let budget = DelegationBudget::new(limits);
+        self.order.push_back(trace_id.to_string());
+        self.budgets
+            .insert(trace_id.to_string(), Arc::clone(&budget));
+        let mut eviction_attempts = self.order.len();
+        while self.budgets.len() > Self::MAX_ENTRIES && eviction_attempts > 0 {
+            eviction_attempts -= 1;
+            let Some(candidate) = self.order.pop_front() else {
+                break;
+            };
+            let can_evict = self
+                .budgets
+                .get(&candidate)
+                .is_some_and(|budget| Arc::strong_count(budget) == 1);
+            if can_evict {
+                self.budgets.remove(&candidate);
+            } else {
+                self.order.push_back(candidate);
+            }
+        }
+        budget
+    }
+}
+
 impl CompletedTaskCache {
     const MAX_ENTRIES: usize = 1024;
 
@@ -645,6 +699,7 @@ pub struct AgentManager {
     pending_task_states: RwLock<HashMap<String, PendingTaskRecord>>,
     /// Bounded cache of completed task results for daemon/control-plane inspection.
     completed_results: RwLock<CompletedTaskCache>,
+    delegation_budgets: Mutex<DelegationBudgetCache>,
     /// Shared runtime pieces used to fork peer kernels without cloning the whole kernel topology.
     shared_runtime: OnceLock<SharedPeerRuntimeContext>,
     /// Live inference state copied from the root kernel after provider initialization.
@@ -665,6 +720,7 @@ impl AgentManager {
             pending_results: RwLock::new(HashMap::new()),
             pending_task_states: RwLock::new(HashMap::new()),
             completed_results: RwLock::new(CompletedTaskCache::default()),
+            delegation_budgets: Mutex::new(DelegationBudgetCache::default()),
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
             shared_scheduler: Mutex::new(None),

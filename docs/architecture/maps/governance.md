@@ -66,6 +66,14 @@ Nested peer delegation:
 
 ## Invariants
 
+- Delegation resource policy is independently configurable: depth and direct fan-out
+  bound durable topology, concurrent-child limits bound outstanding work, and nullable
+  root token/time/tool budgets bound one transitive task family.
+- Root delegation budgets are lazy and trace-scoped. They do not allocate state when
+  disabled; when enabled, token and tool usage update shared atomic counters and duration
+  uses one cancellation timer for the task family.
+- Nested policy can tighten an existing root budget but cannot widen it.
+
 - Exact capability rules outrank wildcard rules.
 - The longest matching wildcard wins.
 - `governance.unmatched_capability` decides the baseline result when no explicit capability rule matches.

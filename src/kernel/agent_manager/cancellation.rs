@@ -7,6 +7,7 @@ use tracing::warn;
 
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, ExecutionWritePolicy};
+use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskResult, PendingTaskRecord, PendingTaskState,
@@ -264,6 +265,66 @@ impl AgentManager {
             runtime_key.slot_id,
             session_id.to_string(),
         ))
+    }
+
+    pub async fn cancel_session_family(&self, session_id: &str) -> Result<(String, String, usize)> {
+        let session_ref = parse_session_reference(session_id)?;
+        let store_selector = session_ref
+            .store_selector
+            .unwrap_or(self.config.persistence.top_level_state_selector()?);
+        let store = self.store_manager.open(&store_selector).await?;
+        let public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
+        let parent = store
+            .get_session_row_by_public_id(public_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        let mut family = store.list_linked_session_descendants(parent.id).await?;
+        family.push(parent.clone());
+        let family_session_ids = family
+            .iter()
+            .map(|row| {
+                let public_id = uuid::Uuid::from_slice(&row.public_id)?.simple().to_string();
+                Ok(format_session_reference(&public_id, &store_selector))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let family_persisted_ids = family
+            .iter()
+            .map(|row| (store_selector.clone(), row.id))
+            .collect::<std::collections::HashSet<_>>();
+        let request_ids = self
+            .pending_task_states
+            .read()
+            .await
+            .iter()
+            .filter(|(_, pending)| {
+                pending
+                    .session_target
+                    .belongs_to_family(&family_session_ids, &family_persisted_ids)
+            })
+            .map(|(request_id, _)| request_id.clone())
+            .collect::<Vec<_>>();
+
+        for request_id in &request_ids {
+            self.cancel_task(request_id).await?;
+        }
+
+        let runtimes = self.runtimes.read().await;
+        for (runtime_key, handle) in runtimes.iter() {
+            let current_is_family = handle.control.current_session_id().is_some_and(|current| {
+                family_session_ids.iter().any(|family_session_id| {
+                    crate::kernel::session_refs::session_references_match(
+                        &current,
+                        family_session_id,
+                    )
+                })
+            });
+            if current_is_family && !runtime_key.is_linked() {
+                handle.control.request_session_cancel();
+                handle.notify.notify_one();
+            }
+        }
+
+        Ok((parent.agent_id, session_id.to_string(), request_ids.len()))
     }
 
     async fn logical_session_runtime_target(

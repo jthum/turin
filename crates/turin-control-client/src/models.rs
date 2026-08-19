@@ -580,6 +580,10 @@ pub struct SessionActionResult {
     pub slot_id: Option<String>,
     pub session_id: String,
     pub action: String,
+    #[serde(default)]
+    pub recursive: bool,
+    #[serde(default)]
+    pub affected_tasks: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

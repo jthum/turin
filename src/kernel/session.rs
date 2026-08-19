@@ -34,6 +34,7 @@ pub struct ActiveTaskState {
     pub turn_target: Option<TurnWriteTarget>,
     budget: Option<ActiveTaskBudget>,
     execution_restore: Option<TaskExecutionRestoreState>,
+    delegation_budget: Option<Arc<crate::kernel::delegation_budget::DelegationBudget>>,
 }
 
 #[derive(Debug, Clone)]
@@ -695,6 +696,26 @@ impl SessionState {
         window: Duration,
     ) -> usize {
         self.tool_rate_limit.reserve(requested, max_calls, window)
+    }
+
+    pub(crate) fn record_delegation_tokens(&self, tokens: u64) {
+        if let Some(budget) = self.active_task.delegation_budget.as_ref() {
+            budget.record_tokens(tokens);
+        }
+    }
+
+    pub(crate) fn reserve_delegation_tool_calls(&self, requested: usize) -> usize {
+        self.active_task
+            .delegation_budget
+            .as_ref()
+            .map_or(requested, |budget| budget.reserve_tool_calls(requested))
+    }
+
+    pub(crate) fn set_active_delegation_budget(
+        &mut self,
+        budget: Option<Arc<crate::kernel::delegation_budget::DelegationBudget>>,
+    ) {
+        self.active_task.delegation_budget = budget;
     }
 
     pub fn begin_active_task_budget(&mut self) {

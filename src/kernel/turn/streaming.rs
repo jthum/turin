@@ -103,6 +103,8 @@ impl ExecutionHost {
                         }
                         session.total_input_tokens += *input_tokens;
                         session.total_output_tokens += *output_tokens;
+                        session
+                            .record_delegation_tokens(input_tokens.saturating_add(*output_tokens));
                         self.persist_event(session, &event);
                     }
                     StreamEvent::ToolCall { id, name, args } => {

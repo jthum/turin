@@ -356,6 +356,7 @@ pub struct LinkedSessionCreate {
 /// Compact relationship statistics for one session inside its rooted family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkedSessionFamilyStats {
+    pub depth: usize,
     pub direct_child_count: usize,
     pub descendant_count: usize,
     pub root_family_size: usize,

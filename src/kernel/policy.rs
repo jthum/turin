@@ -17,6 +17,11 @@ pub struct PolicyScope {
 pub struct RuntimePolicy {
     pub spawn_enabled: bool,
     pub spawn_max_depth: u32,
+    pub spawn_max_fan_out: usize,
+    pub spawn_max_concurrent_children: usize,
+    pub spawn_root_max_total_tokens: Option<u64>,
+    pub spawn_root_max_duration_ms: Option<u64>,
+    pub spawn_root_max_tool_calls: Option<u64>,
     pub db_allow_dynamic_open: bool,
     pub db_path_scope: String,
     pub db_max_open_handles: usize,
@@ -31,6 +36,11 @@ impl Default for RuntimePolicy {
         Self {
             spawn_enabled: true,
             spawn_max_depth: 3,
+            spawn_max_fan_out: 64,
+            spawn_max_concurrent_children: 16,
+            spawn_root_max_total_tokens: None,
+            spawn_root_max_duration_ms: None,
+            spawn_root_max_tool_calls: None,
             db_allow_dynamic_open: true,
             db_path_scope: "workspace_only".to_string(),
             db_max_open_handles: 128,
@@ -49,6 +59,29 @@ impl RuntimePolicy {
         map.insert(
             "spawn.max_depth".to_string(),
             Value::from(self.spawn_max_depth as u64),
+        );
+        map.insert(
+            "spawn.max_fan_out".to_string(),
+            Value::from(self.spawn_max_fan_out as u64),
+        );
+        map.insert(
+            "spawn.max_concurrent_children".to_string(),
+            Value::from(self.spawn_max_concurrent_children as u64),
+        );
+        map.insert(
+            "spawn.root_max_total_tokens".to_string(),
+            self.spawn_root_max_total_tokens
+                .map_or(Value::Null, Value::from),
+        );
+        map.insert(
+            "spawn.root_max_duration_ms".to_string(),
+            self.spawn_root_max_duration_ms
+                .map_or(Value::Null, Value::from),
+        );
+        map.insert(
+            "spawn.root_max_tool_calls".to_string(),
+            self.spawn_root_max_tool_calls
+                .map_or(Value::Null, Value::from),
         );
         map.insert(
             "db.allow_dynamic_open".to_string(),
@@ -199,6 +232,11 @@ fn validate_key(key: &str) -> Result<()> {
     match key {
         "spawn.enabled"
         | "spawn.max_depth"
+        | "spawn.max_fan_out"
+        | "spawn.max_concurrent_children"
+        | "spawn.root_max_total_tokens"
+        | "spawn.root_max_duration_ms"
+        | "spawn.root_max_tool_calls"
         | "runtime.idle_timeout_seconds"
         | "db.allow_dynamic_open"
         | "db.path_scope"
@@ -220,11 +258,28 @@ fn validate_value(key: &str, value: &Value) -> Result<()> {
                 Err(anyhow!("Policy '{}' expects boolean", key))
             }
         }
-        "spawn.max_depth" | "db.max_open_handles" | "db.idle_close_seconds" | "queue.max_depth" => {
+        "spawn.max_depth"
+        | "spawn.max_fan_out"
+        | "spawn.max_concurrent_children"
+        | "db.max_open_handles"
+        | "db.idle_close_seconds"
+        | "queue.max_depth" => {
             if value.as_u64().is_some() {
                 Ok(())
             } else {
                 Err(anyhow!("Policy '{}' expects non-negative integer", key))
+            }
+        }
+        "spawn.root_max_total_tokens"
+        | "spawn.root_max_duration_ms"
+        | "spawn.root_max_tool_calls" => {
+            if value.is_null() || value.as_u64().is_some() {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "Policy '{}' expects null or non-negative integer",
+                    key
+                ))
             }
         }
         "runtime.idle_timeout_seconds" => {
@@ -265,6 +320,22 @@ mod tests {
         let base_scope = PolicyScope::default();
         let default = mgr.get("spawn.enabled", &base_scope).await.unwrap();
         assert_eq!(default, Some(Value::Bool(true)));
+        assert_eq!(
+            mgr.get("spawn.max_fan_out", &base_scope).await.unwrap(),
+            Some(Value::from(64u64))
+        );
+        assert_eq!(
+            mgr.get("spawn.max_concurrent_children", &base_scope)
+                .await
+                .unwrap(),
+            Some(Value::from(16u64))
+        );
+        assert_eq!(
+            mgr.get("spawn.root_max_total_tokens", &base_scope)
+                .await
+                .unwrap(),
+            Some(Value::Null)
+        );
 
         mgr.set(
             "spawn.enabled",
@@ -314,6 +385,21 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Unknown policy key"));
+
+        mgr.set(
+            "spawn.root_max_tool_calls",
+            Value::from(100u64),
+            &PolicyScope::default(),
+        )
+        .await
+        .unwrap();
+        mgr.set(
+            "spawn.root_max_tool_calls",
+            Value::Null,
+            &PolicyScope::default(),
+        )
+        .await
+        .unwrap();
 
         let err = mgr
             .set(

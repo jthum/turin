@@ -1,5 +1,8 @@
 use turin_types::{TaskInputContent, ToolsConfig};
 
+use std::sync::Arc;
+
+use crate::kernel::delegation_budget::DelegationBudget;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session::{ExecutionConflictPolicy, TaskExecutionOverrides};
 
@@ -24,6 +27,8 @@ pub struct QueuedTask {
     pub branch_outcome: Option<TaskBranchOutcome>,
     #[serde(default = "new_trace_id")]
     pub trace_id: String,
+    #[serde(skip)]
+    pub(crate) delegation_budget: Option<Arc<DelegationBudget>>,
 }
 
 impl QueuedTask {
@@ -40,6 +45,7 @@ impl QueuedTask {
             execution: None,
             branch_outcome: None,
             trace_id: new_trace_id(),
+            delegation_budget: None,
         }
     }
 
@@ -60,6 +66,7 @@ impl QueuedTask {
             execution: None,
             branch_outcome: None,
             trace_id: new_trace_id(),
+            delegation_budget: None,
         }
     }
 

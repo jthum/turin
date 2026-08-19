@@ -173,6 +173,7 @@ impl ChannelRunner {
                                 turin_daemon_protocol::LiveSessionTargetParams {
                                     session_id: binding.session_id.clone(),
                                     slot_id: Some(binding.slot_id.clone()),
+                                    recursive: false,
                                 },
                             ),
                         )

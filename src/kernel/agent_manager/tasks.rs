@@ -5,6 +5,8 @@ use std::sync::atomic::Ordering;
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::oneshot;
 
+use crate::kernel::delegation_budget::DelegationBudgetLimits;
+use crate::kernel::policy::{PolicyScope, RuntimePolicy};
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTask};
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::kernel::task_promotion::{TaskPromotionCandidate, promote_task_result};
@@ -13,11 +15,11 @@ use crate::persistence::schema::SessionRow;
 use crate::persistence::state::StateStore;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, LinkedSessionTarget, PeerAgentTaskEnvelope,
-    PeerAgentTaskResult, PeerTaskSubmission, PendingTaskRecord, PendingTaskState,
-    PromotedTaskBranch, PromotedTaskBranchFingerprint, RuntimeSlotKey, SessionContextOverrides,
-    TaskBranchOutcomeFingerprint, TaskSessionTarget, TaskStatusFingerprint, TaskStatusSnapshot,
-    task_prompt_preview,
+    AgentManager, AgentRuntimeHandle, DelegationAdmission, LinkedSessionTarget,
+    PeerAgentTaskEnvelope, PeerAgentTaskResult, PeerTaskSubmission, PendingTaskRecord,
+    PendingTaskState, PromotedTaskBranch, PromotedTaskBranchFingerprint, RuntimeSlotKey,
+    SessionContextOverrides, TaskBranchOutcomeFingerprint, TaskSessionTarget,
+    TaskStatusFingerprint, TaskStatusSnapshot, task_prompt_preview,
 };
 
 fn intended_task_execution_snapshot(
@@ -256,7 +258,7 @@ impl AgentManager {
         origin_turn_id: Option<i64>,
         agent_id: &str,
         thread_key: &str,
-        task: QueuedTask,
+        mut task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
         let thread_key = thread_key.trim();
@@ -278,6 +280,37 @@ impl AgentManager {
             .ok_or_else(|| anyhow!("Origin session '{}' not found", origin_session_id))?;
         let parent_session_reference =
             format_session_reference(&session_ref.public_id, &state_selector);
+        let policy = match self.shared_runtime() {
+            Some(shared) => {
+                shared
+                    .policy_manager
+                    .snapshot(&PolicyScope {
+                        agent_id: Some(parent.agent_id.clone()),
+                        session_id: Some(parent_session_reference.clone()),
+                        ..PolicyScope::default()
+                    })
+                    .await
+            }
+            None => RuntimePolicy::default().to_map(),
+        };
+        let max_depth = policy_usize(&policy, "spawn.max_depth", 3);
+        let max_fan_out = policy_usize(&policy, "spawn.max_fan_out", 64);
+        let max_concurrent_children = policy_usize(&policy, "spawn.max_concurrent_children", 16);
+        let budget_limits = DelegationBudgetLimits {
+            max_total_tokens: policy_optional_u64(&policy, "spawn.root_max_total_tokens"),
+            max_duration_ms: policy_optional_u64(&policy, "spawn.root_max_duration_ms"),
+            max_tool_calls: policy_optional_u64(&policy, "spawn.root_max_tool_calls"),
+        };
+        let family_stats = store
+            .linked_session_family_stats(parent.id)
+            .await?
+            .ok_or_else(|| anyhow!("Origin session '{}' disappeared", origin_session_id))?;
+        anyhow::ensure!(
+            family_stats.depth < max_depth,
+            "Policy denial: spawn.max_depth={} reached at session depth {}",
+            max_depth,
+            family_stats.depth
+        );
         let lane_capacity = self.config.linked_runtime_lanes_for_agent(agent_id)?;
         let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
@@ -295,6 +328,15 @@ impl AgentManager {
         } else {
             None
         };
+        if !budget_limits.is_unbounded() {
+            let budget = self
+                .delegation_budgets
+                .lock()
+                .expect("delegation budget mutex poisoned")
+                .get_or_create(&task.trace_id, budget_limits);
+            budget.check_admission()?;
+            task.delegation_budget = Some(budget);
+        }
         let runtime_key = if let Some(linked_session_id) = linked_session_id.as_deref() {
             self.find_runtimes_by_session(linked_session_id)
                 .await
@@ -356,6 +398,8 @@ impl AgentManager {
             session_id: linked_session_id.clone(),
             store_selector: Some(state_selector.clone()),
             linked_parent_session_id: Some(parent.id),
+            thread_key: Some(thread_key.to_string()),
+            reserves_new_child: linked_session_id.is_none(),
         };
 
         self.submit_to_handle(
@@ -372,6 +416,12 @@ impl AgentManager {
                     link,
                 }),
                 session_target,
+                delegation_admission: Some(DelegationAdmission {
+                    parent_session_id: parent.id,
+                    persisted_direct_children: family_stats.direct_child_count,
+                    max_fan_out,
+                    max_concurrent_children,
+                }),
             },
         )
         .await
@@ -464,12 +514,13 @@ impl AgentManager {
                     session_id,
                     ..TaskSessionTarget::default()
                 },
+                delegation_admission: None,
             },
         )
         .await
     }
 
-    async fn submit_to_handle(
+    pub(super) async fn submit_to_handle(
         &self,
         runtime_key: RuntimeSlotKey,
         handle: Arc<AgentRuntimeHandle>,
@@ -482,11 +533,43 @@ impl AgentManager {
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
         {
-            let mut pending = self.pending_results.write().await;
-            pending.insert(request_id.clone(), rx_result);
-        }
-        {
             let mut pending = self.pending_task_states.write().await;
+            if let Some(admission) = submission.delegation_admission {
+                let same_parent = |record: &&PendingTaskRecord| {
+                    record.session_target.linked_parent_session_id
+                        == Some(admission.parent_session_id)
+                        && record.session_target.store_selector
+                            == submission.session_target.store_selector
+                };
+                let outstanding_children = pending.values().filter(same_parent).count();
+                anyhow::ensure!(
+                    outstanding_children < admission.max_concurrent_children,
+                    "Policy denial: spawn.max_concurrent_children={} reached",
+                    admission.max_concurrent_children
+                );
+                if submission.session_target.reserves_new_child {
+                    let reserved_threads = pending
+                        .values()
+                        .filter(same_parent)
+                        .filter(|record| record.session_target.reserves_new_child)
+                        .filter_map(|record| record.session_target.thread_key.as_deref())
+                        .collect::<HashSet<_>>();
+                    let reserves_distinct_child = submission
+                        .session_target
+                        .thread_key
+                        .as_deref()
+                        .is_some_and(|thread| !reserved_threads.contains(thread));
+                    let projected_children = admission
+                        .persisted_direct_children
+                        .saturating_add(reserved_threads.len())
+                        .saturating_add(usize::from(reserves_distinct_child));
+                    anyhow::ensure!(
+                        projected_children <= admission.max_fan_out,
+                        "Policy denial: spawn.max_fan_out={} reached",
+                        admission.max_fan_out
+                    );
+                }
+            }
             pending.insert(
                 request_id.clone(),
                 PendingTaskRecord {
@@ -501,6 +584,10 @@ impl AgentManager {
                 },
             );
         }
+        self.pending_results
+            .write()
+            .await
+            .insert(request_id.clone(), rx_result);
 
         if let Err(e) = self
             .enqueue_runtime_task(
@@ -756,4 +843,23 @@ impl AgentManager {
             pending.session_target.session_id = session_id;
         }
     }
+}
+
+fn policy_usize(
+    policy: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+    default: usize,
+) -> usize {
+    policy
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(default)
+}
+
+fn policy_optional_u64(
+    policy: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<u64> {
+    policy.get(key).and_then(serde_json::Value::as_u64)
 }

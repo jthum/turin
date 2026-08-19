@@ -142,7 +142,11 @@ impl PeerRuntime {
                         )
                         .await;
                 }
-                self.prepare_task_execution(request_id.clone(), runtime_task_id);
+                self.prepare_task_execution(
+                    request_id.clone(),
+                    runtime_task_id,
+                    envelope.task.delegation_budget.as_deref(),
+                );
                 self.run_queued_task(
                     envelope.task,
                     envelope.delegated_capabilities,
@@ -557,8 +561,16 @@ impl PeerRuntime {
         }
     }
 
-    fn prepare_task_execution(&mut self, request_id: Option<String>, runtime_task_id: String) {
-        self.session.cancel_token = CancellationToken::new();
+    fn prepare_task_execution(
+        &mut self,
+        request_id: Option<String>,
+        runtime_task_id: String,
+        delegation_budget: Option<&crate::kernel::delegation_budget::DelegationBudget>,
+    ) {
+        self.session.cancel_token = delegation_budget.map_or_else(
+            CancellationToken::new,
+            crate::kernel::delegation_budget::DelegationBudget::child_cancellation_token,
+        );
         self.control.activate_task(
             request_id,
             runtime_task_id,

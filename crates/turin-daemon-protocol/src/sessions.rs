@@ -44,6 +44,8 @@ pub struct LiveSessionTargetParams {
     pub session_id: String,
     #[serde(default)]
     pub slot_id: Option<String>,
+    #[serde(default)]
+    pub recursive: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

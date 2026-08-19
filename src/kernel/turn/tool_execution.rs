@@ -222,6 +222,7 @@ impl ExecutionHost {
             MAX_TOOL_CALLS_PER_WINDOW,
             TOOL_CALL_WINDOW,
         );
+        let allowed = allowed.min(session.reserve_delegation_tool_calls(allowed));
         if allowed >= validated_calls.len() {
             return (immediate_records, validated_calls);
         }

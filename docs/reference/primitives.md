@@ -1664,6 +1664,11 @@ Common runtime policy keys (current):
 
 - `spawn.enabled`
 - `spawn.max_depth`
+- `spawn.max_fan_out`
+- `spawn.max_concurrent_children`
+- `spawn.root_max_total_tokens`
+- `spawn.root_max_duration_ms`
+- `spawn.root_max_tool_calls`
 - `runtime.idle_timeout_seconds`
 - `db.allow_dynamic_open`
 - `db.path_scope`
@@ -1672,6 +1677,11 @@ Common runtime policy keys (current):
 - `queue.max_depth`
 - `tool.exec_enabled`
 - `hook.token_usage.reject_mode` (`informational` | `enforce_task` | `enforce_session`)
+
+Delegation defaults are `max_depth = 3`, `max_fan_out = 64`, and
+`max_concurrent_children = 16`. Root token, duration, and tool-call budgets default
+to `null` (disabled). When enabled, they apply to linked descendants sharing the
+root task's inherited trace and may only be narrowed by nested policy.
 
 ## `runtime.governance`
 

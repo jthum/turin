@@ -1,6 +1,7 @@
 pub mod agent_manager;
 pub mod builder;
 pub mod config;
+mod delegation_budget;
 pub mod event;
 mod event_persistence;
 mod execution_host;

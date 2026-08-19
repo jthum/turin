@@ -351,10 +351,14 @@ pub(super) async fn cancel(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
-    match guard
-        .cancel_session(&params.session_id, params.slot_id.as_deref())
-        .await
-    {
+    let result = if params.recursive {
+        guard.cancel_session_family(&params.session_id).await
+    } else {
+        guard
+            .cancel_session(&params.session_id, params.slot_id.as_deref())
+            .await
+    };
+    match result {
         Ok(result) => {
             emit_event(&ctx.event_tx, "session.cancel_requested", result.clone());
             ResponseEnvelope::ok(id, result)
@@ -369,6 +373,14 @@ pub(super) async fn kill(
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
+    if params.recursive {
+        return validation_error(
+            id,
+            anyhow::anyhow!(
+                "Recursive force-kill is unsafe for pooled runtime lanes; use recursive cancellation"
+            ),
+        );
+    }
     match guard
         .kill_session(&params.session_id, params.slot_id.as_deref())
         .await

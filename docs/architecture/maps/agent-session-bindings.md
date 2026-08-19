@@ -48,6 +48,8 @@ Peer-agent calls:
 3. Delegated capabilities are parsed, intersected with any inherited peer ceiling,
    and capped by active grants.
 4. `AgentManager` owns peer submission and result waiting.
+5. Linked-session admission checks persisted ancestry, direct fan-out, outstanding
+   children, and any trace-scoped root delegation budget before queueing work.
 
 Session branch helpers:
 
@@ -92,6 +94,12 @@ Linked runtime residency:
 - Child-agent access must pass `allowed_child_agents` checks before peer submission.
 - Delegated capabilities must inherit active peer ceilings and be capped by active
   temporary grants; nested delegation may narrow authority but never widen it.
+- Linked delegation depth is derived from persisted parent relationships rather than
+  caller-supplied counters. Direct fan-out includes durable children plus child creation
+  already reserved by queued work.
+- Cooperative family cancellation reaches materialized and not-yet-materialized linked
+  descendants. Force-killing a family is rejected because physical lanes may contain
+  unrelated logical sessions.
 - Linked runtime lane reuse must switch sessions only between envelopes. It must never
   reset a lane globally while another logical session has queued work.
 - Force-killing the active session in a shared linked lane must reject the operation

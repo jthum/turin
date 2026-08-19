@@ -175,12 +175,27 @@ impl StateStore {
             .await?;
         let mut family_size = 0usize;
         let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+        let mut parents = HashMap::new();
         while let Some(row) = rows.next().await? {
             family_size += 1;
             let id = row.get::<i64>(0)?;
             if let Some(parent_id) = row.get::<Option<i64>>(1)? {
                 children.entry(parent_id).or_default().push(id);
+                parents.insert(id, parent_id);
             }
+        }
+
+        let mut depth = 0usize;
+        let mut ancestor_id = session_id;
+        let mut ancestors = HashSet::from([session_id]);
+        while let Some(parent_id) = parents.get(&ancestor_id).copied() {
+            anyhow::ensure!(
+                ancestors.insert(parent_id),
+                "Linked session ancestry contains a cycle at session '{}'",
+                parent_id
+            );
+            depth += 1;
+            ancestor_id = parent_id;
         }
 
         let direct_child_count = children.get(&session_id).map_or(0, Vec::len);
@@ -200,6 +215,7 @@ impl StateStore {
         }
 
         Ok(Some(LinkedSessionFamilyStats {
+            depth,
             direct_child_count,
             descendant_count,
             root_family_size: family_size,

@@ -287,6 +287,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         task: &QueuedTask,
     ) -> anyhow::Result<()> {
+        session.set_active_delegation_budget(task.delegation_budget.clone());
         let needs_refresh = session
             .begin_task_execution_override(task.execution.as_ref())
             .map_err(anyhow::Error::msg)?;

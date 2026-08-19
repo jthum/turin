@@ -894,6 +894,7 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
             .unwrap()
             .unwrap(),
         LinkedSessionFamilyStats {
+            depth: 0,
             direct_child_count: 1,
             descendant_count: 2,
             root_family_size: 3,
@@ -906,6 +907,7 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
             .unwrap()
             .unwrap(),
         LinkedSessionFamilyStats {
+            depth: 1,
             direct_child_count: 1,
             descendant_count: 1,
             root_family_size: 3,
@@ -918,6 +920,7 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
             .unwrap()
             .unwrap(),
         LinkedSessionFamilyStats {
+            depth: 2,
             direct_child_count: 0,
             descendant_count: 0,
             root_family_size: 3,

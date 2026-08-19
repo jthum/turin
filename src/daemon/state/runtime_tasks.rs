@@ -358,6 +358,22 @@ impl DaemonState {
         }))
     }
 
+    pub async fn cancel_session_family(&self, session_id: &str) -> Result<serde_json::Value> {
+        let (agent_id, session_id, affected_tasks) = self
+            .kernel
+            .agent_manager()
+            .cancel_session_family(session_id)
+            .await?;
+        Ok(serde_json::json!({
+            "agent_id": agent_id,
+            "slot_id": null,
+            "session_id": session_id,
+            "action": "family_cancel_requested",
+            "recursive": true,
+            "affected_tasks": affected_tasks,
+        }))
+    }
+
     pub(super) fn ensure_enabled_agent(&self, agent_id: &str) -> Result<()> {
         if agent_id == self.bootstrap_config.agent.id {
             return Ok(());

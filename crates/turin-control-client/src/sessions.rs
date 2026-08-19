@@ -363,6 +363,7 @@ impl ControlClient {
             DaemonRequest::SessionCancel(LiveSessionTargetParams {
                 session_id: session_id.to_string(),
                 slot_id,
+                recursive: false,
             }),
         )
         .await
@@ -370,6 +371,18 @@ impl ControlClient {
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<SessionActionResult> {
         self.cancel_live_session(session_id, None).await
+    }
+
+    pub async fn cancel_session_family(&self, session_id: &str) -> Result<SessionActionResult> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionCancel(LiveSessionTargetParams {
+                session_id: session_id.to_string(),
+                slot_id: None,
+                recursive: true,
+            }),
+        )
+        .await
     }
 
     pub async fn kill_live_session(
@@ -382,6 +395,7 @@ impl ControlClient {
             DaemonRequest::SessionKill(LiveSessionTargetParams {
                 session_id: session_id.to_string(),
                 slot_id,
+                recursive: false,
             }),
         )
         .await

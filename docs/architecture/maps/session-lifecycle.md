@@ -47,11 +47,13 @@ Create session:
 Create linked peer session:
 
 1. Resolve the originating session and its state store.
-2. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
-3. Otherwise create an agent-owned child session with explicit parent, root, relation,
+2. Enforce persisted family depth, direct fan-out, outstanding-child limits, and any
+   trace-scoped root delegation budget.
+3. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
+4. Otherwise create an agent-owned child session with explicit parent, root, relation,
    thread, visibility, and originating-turn columns.
-4. Route the child onto one of the configured deterministic linked-runtime lanes for its agent.
-5. The lane creates or resumes the envelope's logical child session immediately before
+5. Route the child onto one of the configured deterministic linked-runtime lanes for its agent.
+6. The lane creates or resumes the envelope's logical child session immediately before
    execution, then runs against that child's independent turn tree.
 
 Resume or refresh:
@@ -146,6 +148,10 @@ Delete persisted session:
 - Relationship and visibility values remain validated text deliberately: they are sparse,
   operator-readable metadata, and compact numeric codes would add migration and DX cost
   without reducing the dominant transcript storage.
+- Family depth and size queries traverse relationship-only rows in memory. They never load
+  transcript content and remain independent of the number or size of turns in each session.
+- Recursive cooperative cancellation covers the requested session and every linked
+  descendant, including pending child reservations that have not created a session row.
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.

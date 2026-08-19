@@ -1063,7 +1063,7 @@ async fn session_family_work_count_includes_an_unmaterialized_linked_task() -> a
     std::fs::create_dir_all(&harness_dir)?;
     let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
     let manager = kernel.agent_manager();
-    let store_selector = crate::persistence::manager::StoreSelector::Alias("state".to_string());
+    let store_selector = kernel.config().persistence.top_level_state_selector()?;
     manager.pending_task_states.write().await.insert(
         "req-unmaterialized-child".to_string(),
         PendingTaskRecord {
@@ -1075,6 +1075,8 @@ async fn session_family_work_count_includes_an_unmaterialized_linked_task() -> a
                 session_id: None,
                 store_selector: Some(store_selector.clone()),
                 linked_parent_session_id: Some(42),
+                thread_key: Some("child".to_string()),
+                reserves_new_child: true,
             },
             trace_id: "trace-unmaterialized-child".to_string(),
             title: None,
@@ -1093,6 +1095,284 @@ async fn session_family_work_count_includes_an_unmaterialized_linked_task() -> a
         .await;
 
     assert_eq!(count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn linked_submission_admission_bounds_outstanding_children_and_fan_out() -> anyhow::Result<()>
+{
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let runtime_key = RuntimeSlotKey {
+        agent_id: "worker".to_string(),
+        slot_id: "linked_0".to_string(),
+    };
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(VecDeque::new())),
+        notify: Arc::new(Notify::new()),
+        control: Arc::new(RuntimeControl::default()),
+        shutdown_token: CancellationToken::new(),
+        task: None,
+        queued_tasks: Arc::new(AtomicUsize::new(0)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(runtime_key.clone(), Arc::clone(&handle));
+    let store_selector = crate::persistence::manager::StoreSelector::Alias("state".to_string());
+    let target = |thread: &str| TaskSessionTarget {
+        session_id: None,
+        store_selector: Some(store_selector.clone()),
+        linked_parent_session_id: Some(42),
+        thread_key: Some(thread.to_string()),
+        reserves_new_child: true,
+    };
+    let admission = DelegationAdmission {
+        parent_session_id: 42,
+        persisted_direct_children: 0,
+        max_fan_out: 2,
+        max_concurrent_children: 1,
+    };
+    let first = manager
+        .submit_to_handle(
+            runtime_key.clone(),
+            Arc::clone(&handle),
+            QueuedTask::ad_hoc("first"),
+            PeerTaskSubmission {
+                delegated_capabilities: None,
+                promotion_candidate: None,
+                linked_session: None,
+                session_target: target("first"),
+                delegation_admission: Some(admission),
+            },
+        )
+        .await?;
+    let error = manager
+        .submit_to_handle(
+            runtime_key.clone(),
+            Arc::clone(&handle),
+            QueuedTask::ad_hoc("second"),
+            PeerTaskSubmission {
+                delegated_capabilities: None,
+                promotion_candidate: None,
+                linked_session: None,
+                session_target: target("second"),
+                delegation_admission: Some(admission),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("max_concurrent_children"));
+    manager.cancel_task(&first).await?;
+
+    let error = manager
+        .submit_to_handle(
+            runtime_key,
+            handle,
+            QueuedTask::ad_hoc("fan-out"),
+            PeerTaskSubmission {
+                delegated_capabilities: None,
+                promotion_candidate: None,
+                linked_session: None,
+                session_target: target("third"),
+                delegation_admission: Some(DelegationAdmission {
+                    persisted_direct_children: 2,
+                    max_concurrent_children: 4,
+                    ..admission
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("max_fan_out"));
+    assert!(manager.pending_results.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn linked_submission_depth_uses_persisted_session_ancestry() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let mut config = test_config(tmp.path(), &harness_dir);
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().to_string(),
+    );
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    let store = kernel.store_manager().get_default().await?;
+    let root = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await?;
+    let child_public_id = uuid::Uuid::now_v7();
+    store
+        .create_linked_session(
+            child_public_id,
+            "reviewer",
+            None,
+            &crate::persistence::schema::LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "review".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await?;
+    kernel
+        .policy_manager()
+        .set(
+            "spawn.max_depth",
+            serde_json::Value::from(1u64),
+            &crate::kernel::policy::PolicyScope::default(),
+        )
+        .await?;
+
+    let error = kernel
+        .agent_manager()
+        .submit_linked(
+            &child_public_id.simple().to_string(),
+            None,
+            "worker",
+            "too-deep",
+            QueuedTask::ad_hoc("reject"),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("spawn.max_depth=1"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn recursive_cancellation_includes_materialized_and_queued_descendants() -> anyhow::Result<()>
+{
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let mut config = test_config(tmp.path(), &harness_dir);
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().to_string(),
+    );
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    let manager = kernel.agent_manager();
+    let store = kernel.store_manager().get_default().await?;
+    let root_public_id = uuid::Uuid::now_v7();
+    let root = store
+        .create_session(root_public_id, "default", None)
+        .await?;
+    let child_public_id = uuid::Uuid::now_v7();
+    let child = store
+        .create_linked_session(
+            child_public_id,
+            "worker",
+            None,
+            &crate::persistence::schema::LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "child".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await?;
+    let runtime_key = RuntimeSlotKey {
+        agent_id: "worker".to_string(),
+        slot_id: "linked_0".to_string(),
+    };
+    let store_selector = kernel.config().persistence.top_level_state_selector()?;
+    let child_session_id = child_public_id.simple().to_string();
+    let materialized_request = "req-materialized-child".to_string();
+    let queued_request = "req-queued-grandchild".to_string();
+    let targets = [
+        (
+            materialized_request.clone(),
+            TaskSessionTarget {
+                session_id: Some(child_session_id.clone()),
+                store_selector: Some(store_selector.clone()),
+                linked_parent_session_id: Some(root),
+                thread_key: Some("child".to_string()),
+                reserves_new_child: false,
+            },
+        ),
+        (
+            queued_request.clone(),
+            TaskSessionTarget {
+                session_id: None,
+                store_selector: Some(store_selector),
+                linked_parent_session_id: Some(child),
+                thread_key: Some("grandchild".to_string()),
+                reserves_new_child: true,
+            },
+        ),
+    ];
+    let mut queue = VecDeque::new();
+    for (request_id, target) in targets {
+        manager.pending_task_states.write().await.insert(
+            request_id.clone(),
+            PendingTaskRecord {
+                runtime_key: runtime_key.clone(),
+                session_target: target.clone(),
+                trace_id: format!("trace-{request_id}"),
+                title: None,
+                prompt_preview: request_id.clone(),
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+                execution: test_execution_snapshot(),
+            },
+        );
+        queue.push_back(PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc(request_id.clone()),
+            request_id: Some(request_id),
+            result_tx: None,
+            delegated_capabilities: None,
+            promotion_candidate: None,
+            linked_session: None,
+            session_target: target,
+        });
+    }
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(queue)),
+        notify: Arc::new(Notify::new()),
+        control: Arc::new(RuntimeControl::default()),
+        shutdown_token: CancellationToken::new(),
+        task: None,
+        queued_tasks: Arc::new(AtomicUsize::new(2)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(runtime_key, Arc::clone(&handle));
+
+    let (_, returned_session_id, affected_tasks) = manager
+        .cancel_session_family(&root_public_id.simple().to_string())
+        .await?;
+
+    assert_eq!(returned_session_id, root_public_id.simple().to_string());
+    assert_eq!(affected_tasks, 2);
+    assert_eq!(handle.queued_tasks.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        manager
+            .get_task(&materialized_request)
+            .await
+            .and_then(|task| task.status),
+        Some(TaskTerminalStatus::Cancelled)
+    );
+    assert_eq!(
+        manager
+            .get_task(&queued_request)
+            .await
+            .and_then(|task| task.status),
+        Some(TaskTerminalStatus::Cancelled)
+    );
     Ok(())
 }
 

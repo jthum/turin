@@ -71,6 +71,10 @@ Session targeting:
   session. Runtime-wide queue drains are reserved for whole-runtime shutdown.
 - Force-killing a linked lane must fail rather than destroy unrelated queued
   sessions. A queued non-current session can be killed independently.
+- Recursive cancellation is explicit and cooperative. It targets materialized descendants
+  plus queued child reservations; ordinary cancel and kill remain session-local.
+- Recursive force-kill is rejected because physical linked lanes may contain unrelated
+  session families.
 - Timed-out `await_result` calls must put the receiver back so the result can still be awaited later.
 - Task title and prompt preview must survive queued, running, terminal,
   cancellation, and kill snapshots. The preview stays bounded before entering
