@@ -115,6 +115,95 @@ async fn test_get_recent_events_by_types_is_bounded_and_chronological() {
 }
 
 #[tokio::test]
+async fn test_session_counters_are_aggregated_without_materializing_events() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for (event_type, payload) in [
+        ("task_start", json!({"task_id": "t_2", "plan_id": "p_4"})),
+        ("task_complete", json!({"task_id": "t_7", "plan_id": "p_4"})),
+        ("plan_complete", json!({"plan_id": "p_6"})),
+        (
+            "message_end",
+            json!({"input_tokens": 11, "output_tokens": 5}),
+        ),
+        (
+            "message_end",
+            json!({"input_tokens": 17, "output_tokens": 8}),
+        ),
+    ] {
+        store
+            .insert_event(session, None, event_type, &payload)
+            .await
+            .unwrap();
+    }
+    store
+        .insert_event(
+            session,
+            None,
+            "session_end",
+            &json!({"total_input_tokens": 28, "total_output_tokens": 13}),
+        )
+        .await
+        .unwrap();
+
+    let counters = store.get_session_counters(session).await.unwrap();
+    assert_eq!(counters.next_task_id, 8);
+    assert_eq!(counters.next_plan_id, 7);
+    assert_eq!(counters.total_input_tokens, 28);
+    assert_eq!(counters.total_output_tokens, 13);
+}
+
+#[tokio::test]
+async fn test_empty_session_counters_start_at_initial_values() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    let counters = store.get_session_counters(session).await.unwrap();
+    assert_eq!(counters.next_task_id, 1);
+    assert_eq!(counters.next_plan_id, 1);
+    assert_eq!(counters.total_input_tokens, 0);
+    assert_eq!(counters.total_output_tokens, 0);
+}
+
+#[tokio::test]
+async fn test_latest_session_event_returns_only_the_newest_match() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for turn_index in 0..3 {
+        store
+            .insert_event(
+                session,
+                None,
+                "context_compaction",
+                &json!({"turn_index": turn_index}),
+            )
+            .await
+            .unwrap();
+    }
+
+    let latest = store
+        .get_latest_session_event_by_type(session, "context_compaction")
+        .await
+        .unwrap()
+        .expect("expected latest active-path checkpoint");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&latest.payload).unwrap()["turn_index"],
+        2
+    );
+}
+
+#[tokio::test]
 async fn test_events_isolated_by_session() {
     let store = StateStore::open_memory().await.unwrap();
     let session_a = store

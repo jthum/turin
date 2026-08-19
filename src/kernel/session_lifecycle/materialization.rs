@@ -7,14 +7,14 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{ContextCompactionCheckpoint, ExecutionContextTarget, HistoryOrigin};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{EventRow, MessageRow, SessionRow};
+use crate::persistence::schema::{MessageRow, SessionRow};
 use crate::persistence::state::TokenBoundedMessages;
 use crate::persistence::state::{SessionReadTarget, StateStore};
 
 pub(super) struct MaterializedExecutionTarget {
     pub(super) messages: Vec<MessageRow>,
     pub(super) has_prior_history: bool,
-    pub(super) active_events: Vec<EventRow>,
+    pub(super) context_checkpoint: Option<ContextCompactionCheckpoint>,
     pub(super) branch_head_turn_id: Option<i64>,
     pub(super) branch_head_turn_index: Option<u32>,
 }
@@ -62,9 +62,7 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                active_events: store
-                    .get_events_by_types(row.id, &target, &["context_compaction"])
-                    .await?,
+                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
                 branch_head_turn_id,
                 branch_head_turn_index: match branch_head_turn_id {
                     Some(turn_id) => store
@@ -83,9 +81,7 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                active_events: store
-                    .get_events_by_types(row.id, &target, &["context_compaction"])
-                    .await?,
+                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -98,9 +94,7 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                active_events: store
-                    .get_events_by_types(row.id, &target, &["context_compaction"])
-                    .await?,
+                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -113,9 +107,7 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                active_events: store
-                    .get_events_by_types(row.id, &target, &["context_compaction"])
-                    .await?,
+                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -145,14 +137,31 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                active_events: target_store
-                    .get_events_by_types(referenced_row.id, &target, &["context_compaction"])
+                context_checkpoint: latest_context_checkpoint(&target_store, referenced_row.id)
                     .await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
         }
     }
+}
+
+async fn latest_context_checkpoint(
+    store: &StateStore,
+    session_id: i64,
+) -> Result<Option<ContextCompactionCheckpoint>> {
+    let Some(event) = store
+        .get_latest_session_event_by_type(session_id, "context_compaction")
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Ok(KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint })) =
+        serde_json::from_str::<KernelEvent>(&event.payload)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(checkpoint))
 }
 
 pub(super) async fn materialize_token_bounded_messages(
@@ -273,78 +282,6 @@ pub(super) fn rebuild_history(messages: &[MessageRow]) -> Result<(MaterializedHi
     Ok((history, max_turn_index.map_or(0, |idx| idx + 1)))
 }
 
-pub(super) fn rebuild_session_counters(events: &[EventRow]) -> (u32, u32, u64, u64) {
-    let mut next_task_id = 1;
-    let mut next_plan_id = 1;
-    let mut total_input_tokens = 0;
-    let mut total_output_tokens = 0;
-
-    for event in events {
-        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload) else {
-            continue;
-        };
-        if let Some(task_id) = payload.get("task_id").and_then(|value| value.as_str()) {
-            next_task_id = next_task_id.max(next_numeric_suffix(task_id, "t_"));
-        }
-        if let Some(plan_id) = payload.get("plan_id").and_then(|value| value.as_str()) {
-            next_plan_id = next_plan_id.max(next_numeric_suffix(plan_id, "p_"));
-        }
-        match event.event_type.as_str() {
-            "message_end" => {
-                total_input_tokens += payload
-                    .get("input_tokens")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(0);
-                total_output_tokens += payload
-                    .get("output_tokens")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(0);
-            }
-            "session_end" => {
-                total_input_tokens = payload
-                    .get("total_input_tokens")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(total_input_tokens);
-                total_output_tokens = payload
-                    .get("total_output_tokens")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(total_output_tokens);
-            }
-            _ => {}
-        }
-    }
-
-    (
-        next_task_id,
-        next_plan_id,
-        total_input_tokens,
-        total_output_tokens,
-    )
-}
-
-pub(super) fn rebuild_context_checkpoint(
-    events: &[EventRow],
-) -> Option<ContextCompactionCheckpoint> {
-    let mut checkpoint = None;
-
-    for event in events {
-        if event.event_type != "context_compaction" {
-            continue;
-        }
-
-        let Ok(KernelEvent::Audit(AuditEvent::ContextCompaction {
-            checkpoint: persisted,
-        })) = serde_json::from_str::<KernelEvent>(&event.payload)
-        else {
-            continue;
-        };
-
-        checkpoint = Some(persisted);
-    }
-
-    checkpoint
-}
-
 fn decode_role(role: &str) -> Result<InferenceRole> {
     match role {
         "user" => Ok(InferenceRole::User),
@@ -352,12 +289,4 @@ fn decode_role(role: &str) -> Result<InferenceRole> {
         "tool_result" => Ok(InferenceRole::Tool),
         other => anyhow::bail!("Unsupported persisted role '{}'", other),
     }
-}
-
-fn next_numeric_suffix(value: &str, prefix: &str) -> u32 {
-    value
-        .strip_prefix(prefix)
-        .and_then(|suffix| suffix.parse::<u32>().ok())
-        .map(|value| value + 1)
-        .unwrap_or(1)
 }

@@ -29,6 +29,7 @@ mod tools;
 mod turns;
 mod worklists;
 
+pub use events::SessionCounters;
 pub use messages::TokenBoundedMessages;
 pub use scheduler::{ScheduledJobInsert, ScheduledJobUpdate};
 pub use signals::SignalInsert;

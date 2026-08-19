@@ -17,8 +17,7 @@ use crate::kernel::session::{
 };
 use crate::kernel::session_lifecycle::materialization::{
     MaterializedExecutionTarget, TokenContextBounds, materialize_execution_target,
-    materialize_token_bounded_messages, rebuild_context_checkpoint, rebuild_history,
-    rebuild_session_counters,
+    materialize_token_bounded_messages, rebuild_history,
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::{
@@ -62,7 +61,7 @@ async fn materialize_session_target(
                     "ok",
                     serde_json::json!({
                         "message_rows": materialized.messages.len(),
-                        "active_event_rows": materialized.active_events.len(),
+                        "has_context_checkpoint": materialized.context_checkpoint.is_some(),
                     })
                 );
                 Ok(materialized)
@@ -220,21 +219,8 @@ impl ExecutionHost {
             "session.resume.materialize",
         )
         .await?;
-        let events = store
-            .get_session_events_by_types(
-                row.id,
-                &[
-                    "task_start",
-                    "task_complete",
-                    "plan_complete",
-                    "message_end",
-                    "session_end",
-                ],
-            )
-            .await?;
         let (history, turn_index) = rebuild_history(&materialized.messages)?;
-        let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
-            rebuild_session_counters(&events);
+        let counters = store.get_session_counters(row.id).await?;
 
         let mut session = SessionState::new();
         session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
@@ -246,7 +232,7 @@ impl ExecutionHost {
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session.inference = inference;
-        session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
+        session.context_checkpoint = materialized.context_checkpoint;
         session
             .history
             .replace(history, materialized.has_prior_history);
@@ -256,10 +242,10 @@ impl ExecutionHost {
             materialized.branch_head_turn_index,
         );
         session.turn_index = turn_index;
-        session.total_input_tokens = total_input_tokens;
-        session.total_output_tokens = total_output_tokens;
-        session.next_task_id = next_task_id;
-        session.next_plan_id = next_plan_id;
+        session.total_input_tokens = counters.total_input_tokens;
+        session.total_output_tokens = counters.total_output_tokens;
+        session.next_task_id = counters.next_task_id;
+        session.next_plan_id = counters.next_plan_id;
         session.restored_from_persistence = true;
         self.prune_session_hot_history(&mut session);
         self.attach_session_persistence(&mut session, false).await;
@@ -286,28 +272,15 @@ impl ExecutionHost {
             "session.refresh.materialize",
         )
         .await?;
-        let events = store
-            .get_session_events_by_types(
-                row.id,
-                &[
-                    "task_start",
-                    "task_complete",
-                    "plan_complete",
-                    "message_end",
-                    "session_end",
-                ],
-            )
-            .await?;
         let (history, turn_index) = rebuild_history(&materialized.messages)?;
-        let (next_task_id, next_plan_id, total_input_tokens, total_output_tokens) =
-            rebuild_session_counters(&events);
+        let counters = store.get_session_counters(row.id).await?;
 
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session
             .identity
             .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
-        session.context_checkpoint = rebuild_context_checkpoint(&materialized.active_events);
+        session.context_checkpoint = materialized.context_checkpoint;
         session
             .history
             .replace(history, materialized.has_prior_history);
@@ -317,10 +290,10 @@ impl ExecutionHost {
             materialized.branch_head_turn_index,
         );
         session.turn_index = turn_index;
-        session.total_input_tokens = total_input_tokens;
-        session.total_output_tokens = total_output_tokens;
-        session.next_task_id = next_task_id;
-        session.next_plan_id = next_plan_id;
+        session.total_input_tokens = counters.total_input_tokens;
+        session.total_output_tokens = counters.total_output_tokens;
+        session.next_task_id = counters.next_task_id;
+        session.next_plan_id = counters.next_plan_id;
         session.restored_from_persistence = true;
         self.prune_session_hot_history(session);
         Ok(())

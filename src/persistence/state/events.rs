@@ -8,6 +8,14 @@ use super::{EventRow, SessionReadTarget, StateStore, TurnRow, TurnWriteTarget};
 const INSERT_EVENT_SQL: &str =
     "INSERT INTO events (session_id, turn_id, event_type, payload) VALUES (?1, ?2, ?3, ?4)";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCounters {
+    pub next_task_id: u32,
+    pub next_plan_id: u32,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+}
+
 pub(crate) struct EventWriter {
     store: StateStore,
     conn: turso::Connection,
@@ -179,15 +187,63 @@ impl StateStore {
         }
     }
 
-    pub async fn get_session_events_by_types(
+    pub async fn get_latest_session_event_by_type(
         &self,
         session_id: i64,
-        event_types: &[&str],
-    ) -> Result<Vec<EventRow>> {
-        if event_types.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.query_events_by_types(session_id, event_types).await
+        event_type: &str,
+    ) -> Result<Option<EventRow>> {
+        Ok(self
+            .query_recent_events_by_types(session_id, &[event_type], 1)
+            .await?
+            .pop())
+    }
+
+    pub async fn get_session_counters(&self, session_id: i64) -> Result<SessionCounters> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT COALESCE(MAX(
+                           CASE
+                               WHEN json_extract(payload, '$.task_id') GLOB 't_[0-9]*'
+                               THEN CAST(substr(json_extract(payload, '$.task_id'), 3) AS INTEGER)
+                           END
+                       ), 0) + 1,
+                       COALESCE(MAX(
+                           CASE
+                               WHEN json_extract(payload, '$.plan_id') GLOB 'p_[0-9]*'
+                               THEN CAST(substr(json_extract(payload, '$.plan_id'), 3) AS INTEGER)
+                           END
+                       ), 0) + 1,
+                       COALESCE(SUM(
+                           CASE WHEN event_type = 'message_end'
+                               THEN CAST(COALESCE(json_extract(payload, '$.input_tokens'), 0) AS INTEGER)
+                               ELSE 0
+                           END
+                       ), 0),
+                       COALESCE(SUM(
+                           CASE WHEN event_type = 'message_end'
+                               THEN CAST(COALESCE(json_extract(payload, '$.output_tokens'), 0) AS INTEGER)
+                               ELSE 0
+                           END
+                       ), 0)
+                FROM events
+                WHERE session_id = ?1
+                  AND event_type IN ('task_start', 'task_complete', 'plan_complete', 'message_end')
+                "#,
+                [session_id],
+            )
+            .await?;
+        let row = rows
+            .next()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session counter aggregate returned no row"))?;
+        Ok(SessionCounters {
+            next_task_id: row.get::<i64>(0)? as u32,
+            next_plan_id: row.get::<i64>(1)? as u32,
+            total_input_tokens: row.get::<i64>(2)? as u64,
+            total_output_tokens: row.get::<i64>(3)? as u64,
+        })
     }
 
     pub async fn get_recent_events_by_types(
