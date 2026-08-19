@@ -96,6 +96,16 @@ impl Kernel {
         RuntimeBuilder::new(config)
     }
 
+    /// Cooperatively stop peer runtimes and release external runtime resources.
+    pub async fn shutdown(&mut self) {
+        *self
+            .check_watcher
+            .lock()
+            .expect("kernel watcher mutex poisoned during shutdown") = None;
+        self.host.agent_manager.shutdown().await;
+        self.host.shutdown_mcp_clients().await;
+    }
+
     /// Access the store manager.
     pub fn store_manager(&self) -> &Arc<StoreManager> {
         &self.store_manager

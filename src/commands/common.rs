@@ -92,7 +92,7 @@ pub(crate) async fn run_prompt_once(
     kernel.start_session(&mut session).await?;
     kernel.run(&mut session, Some(prompt)).await?;
     kernel.end_session(&mut session).await?;
-    kernel.shutdown_mcp_clients().await;
+    kernel.shutdown().await;
     if !json {
         print_session_summary(&session);
     }

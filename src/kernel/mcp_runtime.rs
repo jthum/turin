@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use mcp_sdk::client::McpClient;
@@ -88,15 +89,23 @@ impl ExecutionHost {
         }
 
         let entries = std::mem::take(&mut self.mcp_clients);
-        for entry in entries {
-            if let Err(err) = entry.client.shutdown().await {
-                warn!(
-                    command = %entry.command,
-                    args = ?entry.args,
-                    error = %err,
-                    "Failed to shutdown MCP client cleanly"
-                );
+        let shutdown = async move {
+            for entry in entries {
+                if let Err(err) = entry.client.shutdown().await {
+                    warn!(
+                        command = %entry.command,
+                        args = ?entry.args,
+                        error = %err,
+                        "Failed to shutdown MCP client cleanly"
+                    );
+                }
             }
+        };
+        if tokio::time::timeout(Duration::from_secs(2), shutdown)
+            .await
+            .is_err()
+        {
+            warn!("MCP client shutdown exceeded the grace period");
         }
     }
 }

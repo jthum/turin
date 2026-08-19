@@ -70,6 +70,15 @@ Cancellation and timeout outcomes:
 4. Provider request and total-budget timeout errors become `timed_out`, distinct from cooperative `cancelled`, forceful `killed`, and generic `error`.
 5. Individual tool timeouts remain tool errors that the agent or harness may recover from; they do not automatically terminate the whole task.
 
+Kernel shutdown:
+
+1. Stop accepting new peer runtimes and queued work.
+2. Complete queued requests as `cancelled`, request cancellation for active work, and signal every peer event loop to stop.
+3. Give peer runtimes a bounded grace period to end their sessions, flush durability, and close their MCP clients.
+4. Record work still active after the grace period as `killed` and abort the stalled runtime task.
+5. Stop the kernel watcher and close root MCP clients within their own bounded grace period.
+6. Daemon shutdown first stops channels and broadcasts shutdown to background services, then drains the kernel before removing its endpoint.
+
 Local context selection:
 
 1. Validate the branch, turn, or external session reference.
@@ -111,6 +120,8 @@ Delete persisted session:
 - Cancellation must not append assistant output or tool results that did not complete before cancellation won.
 - Runtime error classification must prefer cancellation over a concurrent provider failure.
 - Provider timeout failures must remain distinguishable from cancellation and generic runtime errors.
+- Kernel shutdown must reject new runtime creation and cannot wait indefinitely for stalled peer work or MCP clients.
+- Cooperative shutdown records queued work as `cancelled`; only work that exceeds the grace period is `killed`.
 - Deleting a session must never race an open runtime or leave a partial graph.
 - Session deletion owns session-scoped KV and memory, including namespaced scope
   keys, but must not delete agent/user/global memory or worklist records.
@@ -128,6 +139,7 @@ cargo test -p turin --test session_tests test_local_external_reference_selection
 cargo test -p turin --test session_tests test_tool_transcript_restores_and_continues_after_cold_resume
 cargo test -p turin --test session_tests test_run_stops_when_user_message_persistence_fails
 cargo test -p turin --test session_tests test_run_stops_when_assistant_message_persistence_fails
+cargo test -p turin kernel::agent_manager::tests::manager_shutdown --lib
 cargo test -p turin --test session_tests test_run_reports_background_event_persistence_failure
 cargo test -p turin --test session_tests test_resume_advances_past_allocated_turn_without_messages
 cargo test -p turin --test session_tests test_cancelling_stalled_inference_does_not_append_assistant_output

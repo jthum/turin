@@ -126,6 +126,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         }
     }
 
+    let _ = shutdown_tx.send(true);
     {
         let mut slot = watcher_slot
             .lock()
@@ -134,6 +135,7 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     }
     channel_runtimes.shutdown().await;
     channel_supervisor.abort();
+    state.write().await.shutdown().await;
     remove_endpoint(&endpoint).await.ok();
     Ok(())
 }

@@ -8,7 +8,7 @@ mod tasks;
 mod tests;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
 use crate::harness::scheduler::HarnessSchedulerAccess;
@@ -481,6 +481,8 @@ pub struct AgentRuntimeHandle {
     notify: Arc<Notify>,
     /// Shared execution/session control state for the runtime.
     control: Arc<RuntimeControl>,
+    /// Cooperative stop signal for the runtime event loop.
+    shutdown_token: CancellationToken,
     /// The background task running the agent's event loop.
     task: Option<JoinHandle<()>>,
     /// Approximate number of tasks currently queued in the runtime channel.
@@ -563,6 +565,8 @@ pub struct AgentManager {
     shared_inference: Mutex<SharedInferenceState>,
     /// Optional daemon-owned scheduler access propagated to peer runtimes.
     shared_scheduler: Mutex<Option<Arc<HarnessSchedulerAccess>>>,
+    /// Prevents new runtimes from being created after shutdown begins.
+    shutting_down: AtomicBool,
 }
 
 impl AgentManager {
@@ -578,6 +582,7 @@ impl AgentManager {
             shared_runtime: OnceLock::new(),
             shared_inference: Mutex::new(SharedInferenceState::default()),
             shared_scheduler: Mutex::new(None),
+            shutting_down: AtomicBool::new(false),
         }
     }
 

@@ -154,6 +154,102 @@ async fn abort_all_runtime_slots(manager: &Arc<AgentManager>) {
     tokio::task::yield_now().await;
 }
 
+#[tokio::test]
+async fn manager_shutdown_stops_cooperative_runtime() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = Arc::clone(kernel.agent_manager());
+    let shutdown_token = CancellationToken::new();
+    let shutdown_bg = shutdown_token.clone();
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(VecDeque::new())),
+        notify: Arc::new(Notify::new()),
+        control: Arc::new(RuntimeControl::default()),
+        shutdown_token,
+        task: Some(tokio::spawn(async move {
+            shutdown_bg.cancelled().await;
+        })),
+        queued_tasks: Arc::new(AtomicUsize::new(0)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(RuntimeSlotKey::default_for("default"), Arc::clone(&handle));
+
+    manager
+        .shutdown_with_grace(std::time::Duration::from_millis(100))
+        .await;
+
+    assert!(!handle.is_running());
+    assert!(manager.runtimes.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn manager_shutdown_aborts_stalled_runtime_after_grace() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = Arc::clone(kernel.agent_manager());
+    let runtime_key = RuntimeSlotKey::default_for("default");
+    let request_id = "req_stalled_shutdown".to_string();
+    let control = Arc::new(RuntimeControl::default());
+    control.activate_task(
+        Some(request_id.clone()),
+        "t_shutdown".to_string(),
+        CancellationToken::new(),
+    );
+    manager.pending_task_states.write().await.insert(
+        request_id.clone(),
+        PendingTaskRecord {
+            runtime_key: runtime_key.clone(),
+            trace_id: "tr_shutdown".to_string(),
+            title: None,
+            prompt_preview: "stalled shutdown".to_string(),
+            state: PendingTaskState::Running,
+            runtime_task_id: Some("t_shutdown".to_string()),
+            execution: test_execution_snapshot(),
+        },
+    );
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(VecDeque::new())),
+        notify: Arc::new(Notify::new()),
+        control,
+        shutdown_token: CancellationToken::new(),
+        task: Some(tokio::spawn(std::future::pending())),
+        queued_tasks: Arc::new(AtomicUsize::new(0)),
+        active_tasks: Arc::new(AtomicUsize::new(1)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(runtime_key, Arc::clone(&handle));
+
+    manager
+        .shutdown_with_grace(std::time::Duration::from_millis(20))
+        .await;
+
+    assert!(!handle.is_running());
+    let completed = manager
+        .completed_result(&request_id)
+        .await
+        .expect("stalled request should become terminal");
+    assert_eq!(completed.status, TaskTerminalStatus::Killed);
+    assert_eq!(
+        completed.error.as_deref(),
+        Some("Runtime killed after shutdown grace period")
+    );
+    Ok(())
+}
+
 fn test_execution_snapshot() -> ExecutionStatusSnapshot {
     ExecutionStatusSnapshot::from_execution(
         &crate::kernel::session::ExecutionContext::new(),
@@ -315,6 +411,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
             queue: Arc::new(Mutex::new(queue)),
             notify: Arc::new(Notify::new()),
             control: Arc::new(RuntimeControl::default()),
+            shutdown_token: CancellationToken::new(),
             task: None,
             queued_tasks: Arc::new(AtomicUsize::new(1)),
             active_tasks: Arc::new(AtomicUsize::new(0)),
@@ -390,6 +487,7 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
             control,
+            shutdown_token: CancellationToken::new(),
             task: None,
             queued_tasks: Arc::new(AtomicUsize::new(0)),
             active_tasks: Arc::new(AtomicUsize::new(1)),
@@ -450,6 +548,7 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
             queue: Arc::new(Mutex::new(queue)),
             notify: Arc::new(Notify::new()),
             control: Arc::clone(&control),
+            shutdown_token: CancellationToken::new(),
             task: None,
             queued_tasks: Arc::new(AtomicUsize::new(1)),
             active_tasks: Arc::new(AtomicUsize::new(0)),
@@ -543,6 +642,7 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
             queue: Arc::new(Mutex::new(queue)),
             notify: Arc::new(Notify::new()),
             control,
+            shutdown_token: CancellationToken::new(),
             task: Some(tokio::spawn(async {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             })),
@@ -616,6 +716,7 @@ async fn resume_session_restarts_dead_requested_slot() -> anyhow::Result<()> {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
             control,
+            shutdown_token: CancellationToken::new(),
             task: None,
             queued_tasks: Arc::new(AtomicUsize::new(0)),
             active_tasks: Arc::new(AtomicUsize::new(0)),
@@ -853,6 +954,7 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
             control,
+            shutdown_token: CancellationToken::new(),
             task: None,
             queued_tasks: Arc::new(AtomicUsize::new(0)),
             active_tasks: Arc::new(AtomicUsize::new(1)),

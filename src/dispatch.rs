@@ -67,7 +67,7 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
                 .with_context(|| format!("Failed to read script: {}", path.display()))?;
 
             kernel.run_script(&script_content)?;
-            kernel.shutdown_mcp_clients().await;
+            kernel.shutdown().await;
 
             Ok(())
         }

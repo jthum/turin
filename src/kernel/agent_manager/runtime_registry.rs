@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use serde_json::Value;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use super::peer_runtime::{PeerRuntime, SessionBootstrap};
@@ -45,6 +46,9 @@ impl AgentManager {
         initial_default_store_selector: Option<StoreSelector>,
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            anyhow::bail!("Agent manager is shutting down");
+        }
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(&runtime_key)
@@ -69,6 +73,9 @@ impl AgentManager {
         session_id: String,
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            anyhow::bail!("Agent manager is shutting down");
+        }
         {
             let runtimes = self.runtimes.read().await;
             if let Some(handle) = runtimes.get(&runtime_key)
@@ -115,6 +122,7 @@ impl AgentManager {
         ));
         let notify = Arc::new(Notify::new());
         let control = Arc::new(RuntimeControl::default());
+        let shutdown_token = CancellationToken::new();
         let queued_tasks = Arc::new(AtomicUsize::new(0));
         let active_tasks = Arc::new(AtomicUsize::new(0));
         let agent_id_clone = agent_id.to_string();
@@ -128,6 +136,7 @@ impl AgentManager {
         let active_tasks_bg = active_tasks.clone();
         let control_bg = Arc::clone(&control);
         let idle_control = Arc::clone(&control);
+        let shutdown_bg = shutdown_token.clone();
         let join_handle = tokio::spawn(async move {
             debug!(agent_id = %agent_id_clone, slot_id = %slot_id_clone, "Peer agent loop initializing");
 
@@ -156,6 +165,9 @@ impl AgentManager {
 
             let mut processed_task = false;
             loop {
+                if shutdown_bg.is_cancelled() {
+                    break;
+                }
                 let envelope = {
                     let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
                     queue.pop_front()
@@ -187,7 +199,10 @@ impl AgentManager {
                         }
                     }
                     if !processed_task {
-                        notify_bg.notified().await;
+                        tokio::select! {
+                            _ = shutdown_bg.cancelled() => break,
+                            _ = notify_bg.notified() => {}
+                        }
                         continue;
                     }
                     let idle_timeout_seconds = manager
@@ -202,19 +217,24 @@ impl AgentManager {
                         } else {
                             std::time::Duration::from_secs(idle_timeout_seconds)
                         };
-                        let notified =
-                            tokio::time::timeout(idle_timeout, notify_bg.notified()).await;
-                        if notified.is_err() {
-                            info!(
-                                agent_id = %agent_id_clone,
-                                slot_id = %slot_id_clone,
-                                idle_timeout_seconds,
-                                "Peer agent idle timeout reached; shutting down runtime"
-                            );
-                            break;
+                        tokio::select! {
+                            _ = shutdown_bg.cancelled() => break,
+                            _ = notify_bg.notified() => {}
+                            _ = tokio::time::sleep(idle_timeout) => {
+                                info!(
+                                    agent_id = %agent_id_clone,
+                                    slot_id = %slot_id_clone,
+                                    idle_timeout_seconds,
+                                    "Peer agent idle timeout reached; shutting down runtime"
+                                );
+                                break;
+                            }
                         }
                     } else {
-                        notify_bg.notified().await;
+                        tokio::select! {
+                            _ = shutdown_bg.cancelled() => break,
+                            _ = notify_bg.notified() => {}
+                        }
                     }
                     continue;
                 };
@@ -238,6 +258,7 @@ impl AgentManager {
             queue,
             notify,
             control,
+            shutdown_token,
             task: Some(join_handle),
             queued_tasks,
             active_tasks,
@@ -294,6 +315,9 @@ impl AgentManager {
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
+        if self.shutting_down.load(Ordering::Acquire) {
+            anyhow::bail!("Agent manager is shutting down");
+        }
         if let Some(handle) = runtimes.get(&runtime_key)
             && handle.is_running()
         {
@@ -321,6 +345,9 @@ impl AgentManager {
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
         let mut runtimes = self.runtimes.write().await;
+        if self.shutting_down.load(Ordering::Acquire) {
+            anyhow::bail!("Agent manager is shutting down");
+        }
         if let Some(handle) = runtimes.get(&runtime_key)
             && handle.is_running()
         {

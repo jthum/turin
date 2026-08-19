@@ -243,7 +243,7 @@ impl DaemonState {
 
         tokio::spawn(async move {
             let mut kernel = old_kernel;
-            kernel.shutdown_mcp_clients().await;
+            kernel.shutdown().await;
         });
 
         Ok(self.status().await)
@@ -251,6 +251,11 @@ impl DaemonState {
 
     pub async fn reload_runtime(&mut self) -> Result<DaemonStatus> {
         self.rescan().await
+    }
+
+    pub async fn shutdown(&mut self) {
+        self.scheduler_wake = None;
+        self.kernel.shutdown().await;
     }
 
     pub fn registry_snapshot(&self) -> RegistrySnapshot {

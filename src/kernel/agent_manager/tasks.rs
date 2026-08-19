@@ -401,6 +401,9 @@ impl AgentManager {
         handle: &Arc<AgentRuntimeHandle>,
         envelope: PeerAgentTaskEnvelope,
     ) -> Result<()> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            anyhow::bail!("Agent manager is shutting down");
+        }
         {
             let mut queue = handle
                 .queue

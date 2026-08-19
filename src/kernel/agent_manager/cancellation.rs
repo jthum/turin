@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::Result;
+use tracing::warn;
 
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, ExecutionWritePolicy};
@@ -19,6 +21,85 @@ fn default_execution_snapshot() -> ExecutionStatusSnapshot {
 }
 
 impl AgentManager {
+    const SHUTDOWN_GRACE: Duration = Duration::from_secs(6);
+
+    /// Stop accepting work, cancel queued and active tasks, and bound runtime cleanup.
+    pub(crate) async fn shutdown(&self) {
+        self.shutdown_with_grace(Self::SHUTDOWN_GRACE).await;
+    }
+
+    pub(super) async fn shutdown_with_grace(&self, grace: Duration) {
+        self.shutting_down.store(true, Ordering::Release);
+
+        let runtimes: Vec<_> = self
+            .runtimes
+            .read()
+            .await
+            .iter()
+            .map(|(key, handle)| (key.clone(), Arc::clone(handle)))
+            .collect();
+
+        for (runtime_key, handle) in &runtimes {
+            self.cancel_queued_requests_for_runtime(
+                runtime_key,
+                "Runtime shutting down before execution",
+            )
+            .await;
+            handle.control.request_task_cancel();
+            handle.shutdown_token.cancel();
+            handle.notify.notify_one();
+        }
+
+        let deadline = tokio::time::Instant::now() + grace;
+        while runtimes.iter().any(|(_, handle)| handle.is_running()) {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            tokio::time::sleep((deadline - now).min(Duration::from_millis(10))).await;
+        }
+
+        // Close the narrow race where a submission passed its shutdown check just
+        // before the manager gate closed but reached the queue after the first drain.
+        for (runtime_key, _) in &runtimes {
+            self.cancel_queued_requests_for_runtime(
+                runtime_key,
+                "Runtime shutting down before execution",
+            )
+            .await;
+        }
+
+        let stalled: Vec<_> = runtimes
+            .iter()
+            .filter(|(_, handle)| handle.is_running())
+            .collect();
+        for (runtime_key, handle) in &stalled {
+            warn!(
+                agent_id = %runtime_key.agent_id,
+                slot_id = %runtime_key.slot_id,
+                "Peer runtime exceeded shutdown grace period; aborting"
+            );
+            if let Some(task) = &handle.task {
+                task.abort();
+            }
+        }
+        tokio::task::yield_now().await;
+
+        for (runtime_key, handle) in stalled {
+            if handle.control.current_request_id().is_some() {
+                self.kill_runtime_requests(
+                    runtime_key,
+                    handle,
+                    "Runtime killed after shutdown grace period",
+                )
+                .await;
+            }
+        }
+
+        self.runtimes.write().await.clear();
+        tokio::task::yield_now().await;
+    }
+
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
         if let Some(result) = self.completed_result(request_id).await {
             anyhow::bail!(
