@@ -910,6 +910,34 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
 }
 
 #[tokio::test]
+async fn linked_session_indexes_exclude_top_level_sessions() {
+    let store = StateStore::open_memory().await.unwrap();
+    let conn = store.connect().await.unwrap();
+    for index_name in [
+        "idx_sessions_parent_created",
+        "idx_sessions_root_created",
+        "idx_sessions_linked_thread",
+    ] {
+        let mut rows = conn
+            .query(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                [index_name],
+            )
+            .await
+            .unwrap();
+        let sql = rows
+            .next()
+            .await
+            .unwrap()
+            .expect("linked-session index should exist")
+            .get::<String>(0)
+            .unwrap();
+        assert!(sql.contains("WHERE"), "{index_name} should be partial");
+        assert!(sql.contains("IS NOT NULL"));
+    }
+}
+
+#[tokio::test]
 async fn test_update_session_title_if_empty_preserves_existing_title() {
     let store = StateStore::open_memory().await.unwrap();
     let public_id = uuid::Uuid::now_v7();

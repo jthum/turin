@@ -124,6 +124,8 @@ Delete persisted session:
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are
   discovered through their indexed parent relationship rather than mixed into the
   conversation list.
+- Relationship indexes are partial and contain linked rows only; top-level sessions do
+  not pay index-entry storage for nullable parent/root/thread relationships.
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.
