@@ -114,6 +114,7 @@ trigger_ratio = 0.85  # trigger semantic compaction before the window is fully e
 
 `trigger_ratio`:
 
+- defaults to `0.8`, leaving headroom for checkpoint generation before structural trimming is required
 - `1.0` means wait until the request budget is fully hit before semantic compaction
 - lower values trigger checkpoint generation earlier
 
@@ -127,6 +128,9 @@ Turin then:
 - preserves newer raw messages directly
 
 Checkpoints are persisted and restored on session resume.
+Their coverage boundary is a durable turn ID/index chosen from a token-budgeted
+request window, so pruning or reloading the resident message window cannot shift
+what a checkpoint covers.
 
 They do not rewrite the underlying transcript history.
 
