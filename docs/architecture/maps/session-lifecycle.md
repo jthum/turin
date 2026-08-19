@@ -50,7 +50,7 @@ Create linked peer session:
 2. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
 3. Otherwise create an agent-owned child session with explicit parent, root, relation,
    thread, visibility, and originating-turn columns.
-4. Route the child onto one of four deterministic linked-runtime lanes for its agent.
+4. Route the child onto one of the configured deterministic linked-runtime lanes for its agent.
 5. The lane creates or resumes the envelope's logical child session immediately before
    execution, then runs against that child's independent turn tree.
 
@@ -106,8 +106,9 @@ End session:
 Delete persisted session:
 
 1. Resolve the session reference and its state store.
-2. Resolve linked descendants and refuse deletion while any runtime slot has the
-   requested session or one of those descendants open.
+2. Resolve linked descendants and refuse deletion while any runtime slot or pending
+   task targets the requested session family. This includes queued child creation
+   before the child session row has been materialized.
 3. Delete descendants deepest-first, then remove the requested session. Each session
    deletion transaction removes its turn graph, transcript, tools, events, semantic
    graph, and session-scoped KV/memory before removing the session row.

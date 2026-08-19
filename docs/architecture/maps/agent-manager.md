@@ -46,12 +46,17 @@ Task submission:
    duplicating full prompts in the runtime task ledger.
 7. An optional task inference context seeds each turn's requested route. The
    harness may still replace that context during `on_turn_prepare`.
+8. Every pending envelope records its logical session target independently of
+   its physical runtime slot. Linked lanes may therefore queue work for several
+   sessions without making lifecycle operations lane-wide.
 
 Session targeting:
 
 1. `find_runtimes_by_session` compares direct session ids and parsed public ids.
 2. `runtime_by_session_target` applies optional slot filtering.
 3. Ambiguous slot-agnostic operations fail instead of guessing.
+4. Cancellation and kill also inspect pending logical targets, so queued linked
+   sessions remain addressable before they become the lane's current session.
 
 ## Invariants
 
@@ -60,6 +65,12 @@ Session targeting:
 - Busy runtime slots must not be reused for session resume or reload.
 - `LiveSessionSnapshot` fields should be derived consistently from the runtime key, handle, and effective session id.
 - Pending task records should be removed when a result is recorded or a submission fails.
+- Pending and completed task status must retain the logical session id; a linked
+  lane id identifies capacity, not task ownership.
+- Session cancellation may remove only work belonging to the requested logical
+  session. Runtime-wide queue drains are reserved for whole-runtime shutdown.
+- Force-killing a linked lane must fail rather than destroy unrelated queued
+  sessions. A queued non-current session can be killed independently.
 - Timed-out `await_result` calls must put the receiver back so the result can still be awaited later.
 - Task title and prompt preview must survive queued, running, terminal,
   cancellation, and kill snapshots. The preview stays bounded before entering

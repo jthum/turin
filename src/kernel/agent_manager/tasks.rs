@@ -14,9 +14,10 @@ use crate::persistence::state::StateStore;
 
 use super::{
     AgentManager, AgentRuntimeHandle, LinkedSessionTarget, PeerAgentTaskEnvelope,
-    PeerAgentTaskResult, PendingTaskRecord, PendingTaskState, PromotedTaskBranch,
-    PromotedTaskBranchFingerprint, RuntimeSlotKey, SessionContextOverrides,
-    TaskBranchOutcomeFingerprint, TaskStatusFingerprint, TaskStatusSnapshot, task_prompt_preview,
+    PeerAgentTaskResult, PeerTaskSubmission, PendingTaskRecord, PendingTaskState,
+    PromotedTaskBranch, PromotedTaskBranchFingerprint, RuntimeSlotKey, SessionContextOverrides,
+    TaskBranchOutcomeFingerprint, TaskSessionTarget, TaskStatusFingerprint, TaskStatusSnapshot,
+    task_prompt_preview,
 };
 
 fn intended_task_execution_snapshot(
@@ -56,6 +57,7 @@ fn pending_task_snapshot(request_id: &str, pending: &PendingTaskRecord) -> TaskS
         request_id: request_id.to_string(),
         agent_id: pending.runtime_key.agent_id.clone(),
         slot_id: pending.runtime_key.slot_id.clone(),
+        session_id: pending.session_target.session_id.clone(),
         trace_id: pending.trace_id.clone(),
         title: pending.title.clone(),
         prompt_preview: pending.prompt_preview.clone(),
@@ -82,6 +84,7 @@ fn completed_task_snapshot(result: &PeerAgentTaskResult) -> TaskStatusSnapshot {
         request_id: result.request_id.clone(),
         agent_id: result.agent_id.clone(),
         slot_id: result.slot_id.clone(),
+        session_id: result.session_id.clone(),
         trace_id: result.trace_id.clone(),
         title: result.title.clone(),
         prompt_preview: result.prompt_preview.clone(),
@@ -111,6 +114,7 @@ fn pending_task_fingerprint(
             PendingTaskState::Cancelling => "cancelling",
         },
         runtime_task_id: pending.runtime_task_id.clone(),
+        session_id: pending.session_target.session_id.clone(),
         status: None,
         task_turn_count: None,
         branch_outcome: None,
@@ -129,6 +133,7 @@ fn completed_task_fingerprint(result: &PeerAgentTaskResult) -> TaskStatusFingerp
         request_id: result.request_id.clone(),
         state: "completed",
         runtime_task_id: Some(result.runtime_task_id.clone()),
+        session_id: result.session_id.clone(),
         status: Some(result.status),
         task_turn_count: Some(result.task_turn_count),
         branch_outcome: result
@@ -345,21 +350,29 @@ impl AgentManager {
             promotion_origin_turn_id.map(|source_turn_id| TaskPromotionCandidate {
                 session_id: parent_session_reference,
                 source_turn_id,
-                source_session_id: linked_session_id,
+                source_session_id: linked_session_id.clone(),
             });
+        let session_target = TaskSessionTarget {
+            session_id: linked_session_id.clone(),
+            store_selector: Some(state_selector.clone()),
+            linked_parent_session_id: Some(parent.id),
+        };
 
         self.submit_to_handle(
             runtime_key,
             handle,
             task,
-            delegated_capabilities,
-            promotion_candidate,
-            Some(LinkedSessionTarget {
-                state_selector,
-                default_store_selector: None,
-                context: session_context,
-                link,
-            }),
+            PeerTaskSubmission {
+                delegated_capabilities,
+                promotion_candidate,
+                linked_session: Some(LinkedSessionTarget {
+                    state_selector,
+                    default_store_selector: None,
+                    context: session_context,
+                    link,
+                }),
+                session_target,
+            },
         )
         .await
     }
@@ -438,13 +451,20 @@ impl AgentManager {
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
         let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
+        let session_id = handle.control.current_session_id();
         self.submit_to_handle(
             runtime_key,
             handle,
             task,
-            delegated_capabilities,
-            None,
-            None,
+            PeerTaskSubmission {
+                delegated_capabilities,
+                promotion_candidate: None,
+                linked_session: None,
+                session_target: TaskSessionTarget {
+                    session_id,
+                    ..TaskSessionTarget::default()
+                },
+            },
         )
         .await
     }
@@ -454,9 +474,7 @@ impl AgentManager {
         runtime_key: RuntimeSlotKey,
         handle: Arc<AgentRuntimeHandle>,
         task: QueuedTask,
-        delegated_capabilities: Option<BTreeMap<String, bool>>,
-        promotion_candidate: Option<TaskPromotionCandidate>,
-        linked_session: Option<LinkedSessionTarget>,
+        submission: PeerTaskSubmission,
     ) -> Result<String> {
         let trace_id = task.trace_id.clone();
         let title = task.title.clone();
@@ -473,6 +491,7 @@ impl AgentManager {
                 request_id.clone(),
                 PendingTaskRecord {
                     runtime_key: runtime_key.clone(),
+                    session_target: submission.session_target.clone(),
                     trace_id,
                     title,
                     prompt_preview,
@@ -490,9 +509,10 @@ impl AgentManager {
                     task,
                     request_id: Some(request_id.clone()),
                     result_tx: Some(tx_result),
-                    delegated_capabilities,
-                    promotion_candidate,
-                    linked_session,
+                    delegated_capabilities: submission.delegated_capabilities,
+                    promotion_candidate: submission.promotion_candidate,
+                    linked_session: submission.linked_session,
+                    session_target: submission.session_target,
                 },
             )
             .await
@@ -597,6 +617,44 @@ impl AgentManager {
             .map(completed_task_snapshot)
     }
 
+    pub(crate) async fn session_family_work_count(
+        &self,
+        session_ids: &[String],
+        persisted_ids: &HashSet<(crate::persistence::manager::StoreSelector, i64)>,
+    ) -> usize {
+        let matching_tasks: Vec<_> = self
+            .pending_task_states
+            .read()
+            .await
+            .values()
+            .filter(|pending| {
+                pending
+                    .session_target
+                    .belongs_to_family(session_ids, persisted_ids)
+            })
+            .map(|pending| (pending.runtime_key.clone(), pending.session_target.clone()))
+            .collect();
+        let live_without_task = self
+            .runtimes
+            .read()
+            .await
+            .iter()
+            .filter(|(runtime_key, handle)| {
+                let Some(current) = handle.control.current_session_id() else {
+                    return false;
+                };
+                let current_is_family = session_ids.iter().any(|session_id| {
+                    crate::kernel::session_refs::session_references_match(&current, session_id)
+                });
+                current_is_family
+                    && !matching_tasks.iter().any(|(pending_key, target)| {
+                        pending_key == *runtime_key && target.matches_session(&current)
+                    })
+            })
+            .count();
+        matching_tasks.len() + live_without_task
+    }
+
     async fn enqueue_runtime_task(
         &self,
         handle: &Arc<AgentRuntimeHandle>,
@@ -686,10 +744,16 @@ impl AgentManager {
         Ok(branch)
     }
 
-    pub(crate) async fn mark_task_running(&self, request_id: &str, runtime_task_id: String) {
+    pub(crate) async fn mark_task_running(
+        &self,
+        request_id: &str,
+        runtime_task_id: String,
+        session_id: Option<String>,
+    ) {
         if let Some(pending) = self.pending_task_states.write().await.get_mut(request_id) {
             pending.state = PendingTaskState::Running;
             pending.runtime_task_id = Some(runtime_task_id);
+            pending.session_target.session_id = session_id;
         }
     }
 }

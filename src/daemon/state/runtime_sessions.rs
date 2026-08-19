@@ -30,10 +30,10 @@ use crate::persistence::state::{SessionReadTarget, StateStore};
 const SESSION_EXECUTION_EVENT_LIMIT: usize = 400;
 
 #[derive(Debug, thiserror::Error)]
-#[error("Session '{session_id}' is still open in {runtime_count} runtime slot(s)")]
+#[error("Session '{session_id}' still has {work_count} active or queued runtime target(s)")]
 pub(crate) struct SessionDeleteBusy {
     session_id: String,
-    runtime_count: usize,
+    work_count: usize,
 }
 
 impl DaemonState {
@@ -500,14 +500,26 @@ impl DaemonState {
         };
         let mut family = store.list_linked_session_descendants(session.id).await?;
         family.push(session);
-        let mut live_runtime_count = 0;
-        for row in &family {
-            live_runtime_count += self.live_session_snapshots(&row.public_id).await.len();
-        }
-        if live_runtime_count > 0 {
+        let family_session_ids = family
+            .iter()
+            .map(|row| {
+                let public_id = uuid::Uuid::from_slice(&row.public_id)?.simple().to_string();
+                Ok(format_session_reference(&public_id, &store_selector))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let family_persisted_ids = family
+            .iter()
+            .map(|row| (store_selector.clone(), row.id))
+            .collect::<HashSet<_>>();
+        let work_count = self
+            .kernel
+            .agent_manager()
+            .session_family_work_count(&family_session_ids, &family_persisted_ids)
+            .await;
+        if work_count > 0 {
             return Err(SessionDeleteBusy {
                 session_id: session_id.to_string(),
-                runtime_count: live_runtime_count,
+                work_count,
             }
             .into());
         }

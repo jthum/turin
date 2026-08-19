@@ -116,6 +116,7 @@ impl PeerRuntime {
 
     pub(super) async fn handle_envelope(&mut self, mut envelope: PeerAgentTaskEnvelope) {
         let request_id = envelope.request_id.clone();
+        let intended_session_id = envelope.session_target.session_id.clone();
         let trace_id = envelope.task.trace_id.clone();
         let title = envelope.task.title.clone();
         let prompt_preview = task_prompt_preview(&envelope.task.prompt);
@@ -134,7 +135,11 @@ impl PeerRuntime {
                 let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
                 if let Some(request_id) = request_id.as_deref() {
                     self.manager
-                        .mark_task_running(request_id, runtime_task_id.clone())
+                        .mark_task_running(
+                            request_id,
+                            runtime_task_id.clone(),
+                            self.control.current_session_id(),
+                        )
                         .await;
                 }
                 self.prepare_task_execution(request_id.clone(), runtime_task_id);
@@ -157,6 +162,7 @@ impl PeerRuntime {
                     request_id,
                     agent_id: self.agent_id.clone(),
                     slot_id: self.slot_id.clone(),
+                    session_id: self.control.current_session_id(),
                     trace_id,
                     title,
                     prompt_preview,
@@ -176,6 +182,7 @@ impl PeerRuntime {
                     request_id,
                     agent_id: self.agent_id.clone(),
                     slot_id: self.slot_id.clone(),
+                    session_id: intended_session_id,
                     trace_id,
                     title,
                     prompt_preview,

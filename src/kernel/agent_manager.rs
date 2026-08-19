@@ -41,6 +41,7 @@ pub struct PeerAgentTaskResult {
     pub request_id: String,
     pub agent_id: String,
     pub slot_id: String,
+    pub session_id: Option<String>,
     pub trace_id: String,
     pub title: Option<String>,
     pub prompt_preview: String,
@@ -86,6 +87,7 @@ pub struct TaskStatusSnapshot {
     pub request_id: String,
     pub agent_id: String,
     pub slot_id: String,
+    pub session_id: Option<String>,
     pub trace_id: String,
     pub title: Option<String>,
     pub prompt_preview: String,
@@ -107,6 +109,7 @@ pub(crate) struct TaskStatusFingerprint {
     pub(crate) request_id: String,
     state: &'static str,
     runtime_task_id: Option<String>,
+    session_id: Option<String>,
     status: Option<TaskTerminalStatus>,
     task_turn_count: Option<u32>,
     branch_outcome: Option<TaskBranchOutcomeFingerprint>,
@@ -232,12 +235,47 @@ enum PendingTaskState {
 #[derive(Debug, Clone)]
 struct PendingTaskRecord {
     runtime_key: RuntimeSlotKey,
+    session_target: TaskSessionTarget,
     trace_id: String,
     title: Option<String>,
     prompt_preview: String,
     state: PendingTaskState,
     runtime_task_id: Option<String>,
     execution: ExecutionStatusSnapshot,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TaskSessionTarget {
+    session_id: Option<String>,
+    store_selector: Option<crate::persistence::manager::StoreSelector>,
+    linked_parent_session_id: Option<i64>,
+}
+
+impl TaskSessionTarget {
+    fn matches_session(&self, session_id: &str) -> bool {
+        self.session_id.as_deref().is_some_and(|target| {
+            crate::kernel::session_refs::session_references_match(target, session_id)
+        })
+    }
+
+    fn belongs_to_family(
+        &self,
+        session_ids: &[String],
+        persisted_ids: &std::collections::HashSet<(
+            crate::persistence::manager::StoreSelector,
+            i64,
+        )>,
+    ) -> bool {
+        self.session_id.as_deref().is_some_and(|target| {
+            session_ids.iter().any(|session_id| {
+                crate::kernel::session_refs::session_references_match(target, session_id)
+            })
+        }) || self
+            .store_selector
+            .as_ref()
+            .zip(self.linked_parent_session_id)
+            .is_some_and(|(store, parent_id)| persisted_ids.contains(&(store.clone(), parent_id)))
+    }
 }
 
 fn task_prompt_preview(prompt: &str) -> String {
@@ -503,6 +541,14 @@ struct PeerAgentTaskEnvelope {
     delegated_capabilities: Option<BTreeMap<String, bool>>,
     promotion_candidate: Option<TaskPromotionCandidate>,
     linked_session: Option<LinkedSessionTarget>,
+    session_target: TaskSessionTarget,
+}
+
+struct PeerTaskSubmission {
+    delegated_capabilities: Option<BTreeMap<String, bool>>,
+    promotion_candidate: Option<TaskPromotionCandidate>,
+    linked_session: Option<LinkedSessionTarget>,
+    session_target: TaskSessionTarget,
 }
 
 #[derive(Debug, Clone)]

@@ -81,6 +81,8 @@ Linked runtime residency:
    that target before allocating the runtime task id and running inference.
 4. Threads sharing a lane queue serially, bounding resident Lua VMs without combining
    their transcripts, harness state, or promotion provenance.
+5. Pending and terminal task records retain the logical child session id. Session
+   cancellation and queued-session kill target that id rather than draining the lane.
 
 ## Invariants
 
@@ -92,6 +94,8 @@ Linked runtime residency:
   temporary grants; nested delegation may narrow authority but never widen it.
 - Linked runtime lane reuse must switch sessions only between envelopes. It must never
   reset a lane globally while another logical session has queued work.
+- Force-killing the active session in a shared linked lane must reject the operation
+  while unrelated work is queued; cooperative cancellation remains session-selective.
 - Resolve live linked-session affinity before hashing or probing a new lane.
 - Same-agent delegation must never queue onto a busy ancestor's lane. If every linked
   lane is occupied by an awaiting ancestor, fail with bounded-capacity feedback.

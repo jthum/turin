@@ -11,6 +11,7 @@ use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use tempfile::tempdir;
 
 #[test]
@@ -360,6 +361,7 @@ async fn manager_shutdown_aborts_stalled_runtime_after_grace() -> anyhow::Result
         request_id.clone(),
         PendingTaskRecord {
             runtime_key: runtime_key.clone(),
+            session_target: TaskSessionTarget::default(),
             trace_id: "tr_shutdown".to_string(),
             title: None,
             prompt_preview: "stalled shutdown".to_string(),
@@ -538,6 +540,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         request_id.clone(),
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget::default(),
             trace_id: "tr_cancelled".to_string(),
             title: None,
             prompt_preview: "cancel me".to_string(),
@@ -555,6 +558,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         delegated_capabilities: None,
         promotion_candidate: None,
         linked_session: None,
+        session_target: TaskSessionTarget::default(),
     });
 
     manager.runtimes.write().await.insert(
@@ -624,6 +628,7 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
         request_id.clone(),
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget::default(),
             trace_id: "tr_running".to_string(),
             title: None,
             prompt_preview: "running".to_string(),
@@ -677,6 +682,10 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         request_id.clone(),
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget {
+                session_id: Some(session_id.to_string()),
+                ..TaskSessionTarget::default()
+            },
             trace_id: "tr_session_cancel".to_string(),
             title: None,
             prompt_preview: "queued".to_string(),
@@ -694,6 +703,10 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         delegated_capabilities: None,
         promotion_candidate: None,
         linked_session: None,
+        session_target: TaskSessionTarget {
+            session_id: Some(session_id.to_string()),
+            ..TaskSessionTarget::default()
+        },
     });
 
     manager.runtimes.write().await.insert(
@@ -761,6 +774,10 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         running_request_id.clone(),
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget {
+                session_id: Some(session_id.to_string()),
+                ..TaskSessionTarget::default()
+            },
             trace_id: "tr_running_kill".to_string(),
             title: None,
             prompt_preview: "running".to_string(),
@@ -773,6 +790,10 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         queued_request_id.clone(),
         PendingTaskRecord {
             runtime_key: RuntimeSlotKey::default_for("default"),
+            session_target: TaskSessionTarget {
+                session_id: Some(session_id.to_string()),
+                ..TaskSessionTarget::default()
+            },
             trace_id: "tr_queued_kill".to_string(),
             title: None,
             prompt_preview: "queued".to_string(),
@@ -790,6 +811,10 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         delegated_capabilities: None,
         promotion_candidate: None,
         linked_session: None,
+        session_target: TaskSessionTarget {
+            session_id: Some(session_id.to_string()),
+            ..TaskSessionTarget::default()
+        },
     });
 
     manager.runtimes.write().await.insert(
@@ -834,6 +859,240 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
     assert_eq!(queued.status, Some(TaskTerminalStatus::Killed));
     assert_eq!(queued.error.as_deref(), Some("Session killed"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn pooled_linked_lane_cancels_only_the_target_session() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let runtime_key = RuntimeSlotKey {
+        agent_id: "worker".to_string(),
+        slot_id: "linked_0".to_string(),
+    };
+    let active_session = "active-linked-session";
+    let cancelled_session = "cancelled-linked-session";
+    let preserved_session = "preserved-linked-session";
+    let cancelled_request = "req_cancel_linked".to_string();
+    let preserved_request = "req_preserve_linked".to_string();
+    let control = Arc::new(RuntimeControl::default());
+    control.set_current_session_id(Some(active_session.to_string()));
+
+    for (request_id, session_id) in [
+        (&cancelled_request, cancelled_session),
+        (&preserved_request, preserved_session),
+    ] {
+        manager.pending_task_states.write().await.insert(
+            request_id.clone(),
+            PendingTaskRecord {
+                runtime_key: runtime_key.clone(),
+                session_target: TaskSessionTarget {
+                    session_id: Some(session_id.to_string()),
+                    ..TaskSessionTarget::default()
+                },
+                trace_id: format!("trace-{request_id}"),
+                title: None,
+                prompt_preview: session_id.to_string(),
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+                execution: test_execution_snapshot(),
+            },
+        );
+    }
+    let queue = VecDeque::from([
+        PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("cancel".to_string()),
+            request_id: Some(cancelled_request.clone()),
+            result_tx: None,
+            delegated_capabilities: None,
+            promotion_candidate: None,
+            linked_session: None,
+            session_target: TaskSessionTarget {
+                session_id: Some(cancelled_session.to_string()),
+                ..TaskSessionTarget::default()
+            },
+        },
+        PeerAgentTaskEnvelope {
+            task: QueuedTask::ad_hoc("preserve".to_string()),
+            request_id: Some(preserved_request.clone()),
+            result_tx: None,
+            delegated_capabilities: None,
+            promotion_candidate: None,
+            linked_session: None,
+            session_target: TaskSessionTarget {
+                session_id: Some(preserved_session.to_string()),
+                ..TaskSessionTarget::default()
+            },
+        },
+    ]);
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(queue)),
+        notify: Arc::new(Notify::new()),
+        control,
+        shutdown_token: CancellationToken::new(),
+        task: None,
+        queued_tasks: Arc::new(AtomicUsize::new(2)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(runtime_key.clone(), Arc::clone(&handle));
+
+    manager.cancel_session(cancelled_session, None).await?;
+
+    {
+        let queue = handle
+            .queue
+            .lock()
+            .expect("agent runtime queue mutex poisoned");
+        assert_eq!(queue.len(), 1);
+        assert_eq!(
+            queue.front().and_then(|task| task.request_id.as_deref()),
+            Some(preserved_request.as_str())
+        );
+    }
+    assert_eq!(handle.queued_tasks.load(Ordering::Relaxed), 1);
+    assert!(manager.runtimes.read().await.contains_key(&runtime_key));
+    assert_eq!(
+        manager
+            .get_task(&cancelled_request)
+            .await
+            .and_then(|task| task.status),
+        Some(TaskTerminalStatus::Cancelled)
+    );
+    assert!(manager.get_task(&preserved_request).await.is_some());
+
+    let error = manager
+        .kill_session(active_session, None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unrelated queued work"));
+    assert!(manager.runtimes.read().await.contains_key(&runtime_key));
+    assert_eq!(handle.queued_tasks.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn pooled_linked_lane_kills_a_queued_session_without_stopping_the_lane() -> anyhow::Result<()>
+{
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let runtime_key = RuntimeSlotKey {
+        agent_id: "worker".to_string(),
+        slot_id: "linked_0".to_string(),
+    };
+    let queued_session = "queued-linked-session";
+    let request_id = "req_kill_queued_linked".to_string();
+    let control = Arc::new(RuntimeControl::default());
+    control.set_current_session_id(Some("active-linked-session".to_string()));
+    manager.pending_task_states.write().await.insert(
+        request_id.clone(),
+        PendingTaskRecord {
+            runtime_key: runtime_key.clone(),
+            session_target: TaskSessionTarget {
+                session_id: Some(queued_session.to_string()),
+                ..TaskSessionTarget::default()
+            },
+            trace_id: "trace-kill-queued".to_string(),
+            title: None,
+            prompt_preview: "kill queued".to_string(),
+            state: PendingTaskState::Queued,
+            runtime_task_id: None,
+            execution: test_execution_snapshot(),
+        },
+    );
+    let queue = VecDeque::from([PeerAgentTaskEnvelope {
+        task: QueuedTask::ad_hoc("kill queued".to_string()),
+        request_id: Some(request_id.clone()),
+        result_tx: None,
+        delegated_capabilities: None,
+        promotion_candidate: None,
+        linked_session: None,
+        session_target: TaskSessionTarget {
+            session_id: Some(queued_session.to_string()),
+            ..TaskSessionTarget::default()
+        },
+    }]);
+    let handle = Arc::new(AgentRuntimeHandle {
+        queue: Arc::new(Mutex::new(queue)),
+        notify: Arc::new(Notify::new()),
+        control,
+        shutdown_token: CancellationToken::new(),
+        task: None,
+        queued_tasks: Arc::new(AtomicUsize::new(1)),
+        active_tasks: Arc::new(AtomicUsize::new(0)),
+    });
+    manager
+        .runtimes
+        .write()
+        .await
+        .insert(runtime_key.clone(), Arc::clone(&handle));
+
+    manager.kill_session(queued_session, None).await?;
+
+    assert!(manager.runtimes.read().await.contains_key(&runtime_key));
+    assert!(
+        handle
+            .queue
+            .lock()
+            .expect("agent runtime queue mutex poisoned")
+            .is_empty()
+    );
+    assert_eq!(handle.queued_tasks.load(Ordering::Relaxed), 0);
+    let completed = manager
+        .get_task(&request_id)
+        .await
+        .expect("killed queued task should be visible");
+    assert_eq!(completed.session_id.as_deref(), Some(queued_session));
+    assert_eq!(completed.status, Some(TaskTerminalStatus::Killed));
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_family_work_count_includes_an_unmaterialized_linked_task() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let store_selector = crate::persistence::manager::StoreSelector::Alias("state".to_string());
+    manager.pending_task_states.write().await.insert(
+        "req-unmaterialized-child".to_string(),
+        PendingTaskRecord {
+            runtime_key: RuntimeSlotKey {
+                agent_id: "worker".to_string(),
+                slot_id: "linked_0".to_string(),
+            },
+            session_target: TaskSessionTarget {
+                session_id: None,
+                store_selector: Some(store_selector.clone()),
+                linked_parent_session_id: Some(42),
+            },
+            trace_id: "trace-unmaterialized-child".to_string(),
+            title: None,
+            prompt_preview: "queued child".to_string(),
+            state: PendingTaskState::Queued,
+            runtime_task_id: None,
+            execution: test_execution_snapshot(),
+        },
+    );
+
+    let count = manager
+        .session_family_work_count(
+            &["parent-session".to_string()],
+            &std::collections::HashSet::from([(store_selector, 42)]),
+        )
+        .await;
+
+    assert_eq!(count, 1);
     Ok(())
 }
 
