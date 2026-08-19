@@ -8,8 +8,16 @@ use crate::persistence::state::sessions::map_session_row;
 
 const MESSAGE_TURN_QUERY_CHUNK: usize = 500;
 const MESSAGE_WINDOW_TURN_QUERY_CHUNK: usize = 32;
+const CONTEXT_ANCESTRY_PAGE_TURNS: usize = 64;
 
 type OrderedMessageRow = (usize, i64, MessageRow);
+
+#[derive(Debug)]
+pub struct TokenBoundedMessages {
+    pub messages: Vec<MessageRow>,
+    pub estimated_tokens: u64,
+    pub has_older: bool,
+}
 
 impl StateStore {
     pub async fn list_session_rows(&self, limit: usize, offset: usize) -> Result<Vec<SessionRow>> {
@@ -170,6 +178,100 @@ impl StateStore {
             }
         }
         Ok((messages, has_older))
+    }
+
+    pub async fn get_token_bounded_context_messages(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+        token_budget: u64,
+        minimum_messages: usize,
+        max_turns: usize,
+    ) -> Result<TokenBoundedMessages> {
+        let max_turns = max_turns.max(1);
+        let mut remaining_selected_path = match target {
+            SessionReadTarget::SelectedPath(turn_ids) => Some(turn_ids.as_slice()),
+            _ => None,
+        };
+        let mut next_turn_id = match target {
+            SessionReadTarget::ActiveBranch => self
+                .get_active_branch_head(session_id)
+                .await?
+                .and_then(|branch| branch.head_turn_id),
+            SessionReadTarget::BranchHead(branch_head_id) => self
+                .get_branch_head(session_id, *branch_head_id)
+                .await?
+                .and_then(|branch| branch.head_turn_id),
+            SessionReadTarget::TurnId(turn_id) => Some(*turn_id),
+            SessionReadTarget::SelectedPath(_) => None,
+        };
+        let mut selected_turn_groups = Vec::<Vec<MessageRow>>::new();
+        let mut selected_message_count = 0usize;
+        let mut visited_turns = 0usize;
+        let mut estimated_tokens = 0u64;
+        let mut has_older = false;
+
+        while visited_turns < max_turns {
+            let page_limit = CONTEXT_ANCESTRY_PAGE_TURNS.min(max_turns - visited_turns);
+            let (turns, page_has_older) = if let Some(selected_path) = remaining_selected_path {
+                if selected_path.is_empty() {
+                    break;
+                }
+                let page_start = selected_path.len().saturating_sub(page_limit);
+                let turns = self
+                    .turn_rows_for_selected_path(session_id, &selected_path[page_start..])
+                    .await?;
+                remaining_selected_path = Some(&selected_path[..page_start]);
+                (turns, page_start > 0)
+            } else {
+                let Some(page_head_id) = next_turn_id else {
+                    break;
+                };
+                let (turns, has_older) = self
+                    .recent_turn_path_to_turn_id(session_id, page_head_id, page_limit)
+                    .await?;
+                next_turn_id = turns.first().and_then(|turn| turn.parent_turn_id);
+                (turns, has_older)
+            };
+            visited_turns = visited_turns.saturating_add(turns.len());
+            let rows = self.messages_for_turns(session_id, &turns).await?;
+            let mut page_groups = group_messages_by_turn(rows);
+
+            while let Some(group) = page_groups.pop() {
+                let group_tokens = group.iter().map(estimated_message_tokens).sum::<u64>();
+                let exceeds_budget = estimated_tokens.saturating_add(group_tokens) > token_budget;
+                if exceeds_budget && selected_message_count >= minimum_messages.max(1) {
+                    has_older = true;
+                    break;
+                }
+                estimated_tokens = estimated_tokens.saturating_add(group_tokens);
+                selected_message_count = selected_message_count.saturating_add(group.len());
+                selected_turn_groups.push(group);
+            }
+
+            if has_older {
+                break;
+            }
+            if !page_groups.is_empty() {
+                has_older = true;
+                break;
+            }
+            has_older = page_has_older;
+            if !page_has_older {
+                break;
+            }
+            if visited_turns >= max_turns {
+                break;
+            }
+            has_older = false;
+        }
+
+        selected_turn_groups.reverse();
+        Ok(TokenBoundedMessages {
+            messages: selected_turn_groups.into_iter().flatten().collect(),
+            estimated_tokens,
+            has_older,
+        })
     }
 
     pub async fn get_message_window(
@@ -394,4 +496,25 @@ fn order_messages(mut messages: Vec<OrderedMessageRow>) -> Vec<MessageRow> {
         .into_iter()
         .map(|(_, _, message)| message)
         .collect()
+}
+
+fn group_messages_by_turn(messages: Vec<MessageRow>) -> Vec<Vec<MessageRow>> {
+    let mut groups = Vec::<Vec<MessageRow>>::new();
+    for message in messages {
+        if groups
+            .last()
+            .and_then(|group| group.first())
+            .is_none_or(|first| first.turn_id != message.turn_id)
+        {
+            groups.push(Vec::new());
+        }
+        groups.last_mut().expect("message group").push(message);
+    }
+    groups
+}
+
+fn estimated_message_tokens(message: &MessageRow) -> u64 {
+    message
+        .token_count
+        .unwrap_or_else(|| (message.content.len() as u64).div_ceil(4).saturating_add(4))
 }

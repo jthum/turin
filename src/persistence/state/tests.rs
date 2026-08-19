@@ -1323,6 +1323,15 @@ async fn bounded_context_reads_only_the_recent_ancestry_suffix() {
     assert_eq!(bounded.len(), 3);
     assert!(bounded[0].content.contains("message 267"));
     assert!(bounded[2].content.contains("message 269"));
+
+    let token_bounded = store
+        .get_token_bounded_context_messages(session, &active_branch(), 1, 1, 270)
+        .await
+        .unwrap();
+    assert!(token_bounded.has_older);
+    assert_eq!(token_bounded.messages.len(), 1);
+    assert!(token_bounded.messages[0].content.contains("message 269"));
+    assert!(token_bounded.estimated_tokens > 1);
 }
 
 #[tokio::test]
