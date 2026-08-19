@@ -93,6 +93,30 @@ pub struct ContextWrapper {
     available_tools: Arc<BTreeSet<String>>,
 }
 
+pub struct ContextInit {
+    pub inference: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub system_prompt: String,
+    pub messages: Vec<InferenceMessage>,
+    pub turn_index: u32,
+    pub task_turn_index: u32,
+    pub is_first_turn_in_task: bool,
+    pub task_id: String,
+    pub plan_id: Option<String>,
+    pub token_count: u32,
+    pub token_limit: u32,
+    pub thinking_budget: u32,
+    pub request_options: RequestOptionsOverride,
+    pub clients: HashMap<String, ProviderClient>,
+    pub config: Arc<TurinConfig>,
+    pub agent_id: String,
+    pub session_inference: InferenceOverrideConfig,
+    pub session_id: String,
+    pub session_title: Option<String>,
+    pub available_tools: BTreeSet<String>,
+}
+
 #[derive(Clone)]
 struct ToolExposureProxy {
     state: Arc<Mutex<ContextState>>,
@@ -100,30 +124,30 @@ struct ToolExposureProxy {
 }
 
 impl ContextWrapper {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        inference: Option<String>,
-        model: String,
-        provider: String,
-        system_prompt: String,
-        messages: Vec<InferenceMessage>,
-        turn_index: u32,
-        task_turn_index: u32,
-        is_first_turn_in_task: bool,
-        task_id: String,
-        plan_id: Option<String>,
-        token_count: u32,
-        token_limit: u32,
-        thinking_budget: u32,
-        request_options: RequestOptionsOverride,
-        clients: HashMap<String, ProviderClient>,
-        config: Arc<TurinConfig>,
-        agent_id: String,
-        session_inference: InferenceOverrideConfig,
-        session_id: String,
-        session_title: Option<String>,
-        available_tools: BTreeSet<String>,
-    ) -> Self {
+    pub fn new(init: ContextInit) -> Self {
+        let ContextInit {
+            inference,
+            model,
+            provider,
+            system_prompt,
+            messages,
+            turn_index,
+            task_turn_index,
+            is_first_turn_in_task,
+            task_id,
+            plan_id,
+            token_count,
+            token_limit,
+            thinking_budget,
+            request_options,
+            clients,
+            config,
+            agent_id,
+            session_inference,
+            session_id,
+            session_title,
+            available_tools,
+        } = init;
         let prompt = infer_prompt_from_messages(&messages);
         let user_message_count = messages
             .iter()

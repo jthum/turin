@@ -1,5 +1,5 @@
 use super::*;
-use crate::harness::context::{ContextWrapper, RequestOptionsOverride};
+use crate::harness::context::{ContextInit, ContextWrapper, RequestOptionsOverride};
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient, SdkError,
@@ -172,29 +172,32 @@ fn test_turn_context_selects_exposed_tools() {
 
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(dir.path()).unwrap();
-    let ctx = ContextWrapper::new(
-        None,
-        "mock-model".to_string(),
-        "mock".to_string(),
-        "System".to_string(),
-        Vec::new(),
-        0,
-        0,
-        true,
-        "task-1".to_string(),
-        None,
-        0,
-        100_000,
-        0,
-        RequestOptionsOverride::default(),
-        std::collections::HashMap::new(),
-        Arc::new(crate::kernel::config::TurinConfig::default()),
-        "default".to_string(),
-        InferenceOverrideConfig::default(),
-        "session-1".to_string(),
-        None,
-        std::collections::BTreeSet::from(["alpha".to_string(), "beta".to_string()]),
-    );
+    let ctx = ContextWrapper::new(ContextInit {
+        inference: None,
+        model: "mock-model".to_string(),
+        provider: "mock".to_string(),
+        system_prompt: "System".to_string(),
+        messages: Vec::new(),
+        turn_index: 0,
+        task_turn_index: 0,
+        is_first_turn_in_task: true,
+        task_id: "task-1".to_string(),
+        plan_id: None,
+        token_count: 0,
+        token_limit: 100_000,
+        thinking_budget: 0,
+        request_options: RequestOptionsOverride::default(),
+        clients: std::collections::HashMap::new(),
+        config: Arc::new(crate::kernel::config::TurinConfig::default()),
+        agent_id: "default".to_string(),
+        session_inference: InferenceOverrideConfig::default(),
+        session_id: "session-1".to_string(),
+        session_title: None,
+        available_tools: std::collections::BTreeSet::from([
+            "alpha".to_string(),
+            "beta".to_string(),
+        ]),
+    });
 
     let verdict = engine
         .evaluate_userdata("on_turn_prepare", ctx.clone())
@@ -3658,29 +3661,29 @@ async fn test_fs_summary_reuses_cached_summary_until_file_changes() {
     clients.insert("mock".to_string(), ProviderClient::new("mock", provider));
 
     let make_ctx = || {
-        ContextWrapper::new(
-            None,
-            "mock-model".to_string(),
-            "mock".to_string(),
-            "Summarize files.".to_string(),
-            Vec::new(),
-            1,
-            1,
-            true,
-            "task-1".to_string(),
-            None,
-            0,
-            100000,
-            0,
-            RequestOptionsOverride::default(),
-            clients.clone(),
-            Arc::new(crate::kernel::config::TurinConfig::default()),
-            "default".to_string(),
-            InferenceOverrideConfig::default(),
-            "test-session".to_string(),
-            None,
-            std::collections::BTreeSet::new(),
-        )
+        ContextWrapper::new(ContextInit {
+            inference: None,
+            model: "mock-model".to_string(),
+            provider: "mock".to_string(),
+            system_prompt: "Summarize files.".to_string(),
+            messages: Vec::new(),
+            turn_index: 1,
+            task_turn_index: 1,
+            is_first_turn_in_task: true,
+            task_id: "task-1".to_string(),
+            plan_id: None,
+            token_count: 0,
+            token_limit: 100000,
+            thinking_budget: 0,
+            request_options: RequestOptionsOverride::default(),
+            clients: clients.clone(),
+            config: Arc::new(crate::kernel::config::TurinConfig::default()),
+            agent_id: "default".to_string(),
+            session_inference: InferenceOverrideConfig::default(),
+            session_id: "test-session".to_string(),
+            session_title: None,
+            available_tools: std::collections::BTreeSet::new(),
+        })
     };
 
     let verdict = engine

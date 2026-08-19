@@ -9,7 +9,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 ## Files
 
 - `src/harness/context.rs`
-  - `ContextWrapper`, `ContextState`, Lua property accessors, message mutation helpers, summarization, and `ctx:structured`.
+  - `ContextWrapper`, named `ContextInit`, `ContextState`, Lua property accessors,
+    message mutation helpers, and summarization.
 - `src/harness/context/request_options.rs`
   - `RequestOptionsOverride` and shared provider request-option layering.
 - `src/harness/context/structured_call.rs`
@@ -44,6 +45,8 @@ Structured inference:
 - Provider defaults, context overrides, and call-local overrides must layer in that order.
 - Normal turn preflight and `ctx:structured` must share the same request-option merge semantics.
 - `ctx.prompt` and `ctx.messages` must remain synchronized when either is replaced.
+- Rust call sites must initialize `ContextWrapper` through named `ContextInit` fields;
+  positional construction is too error-prone for the request/runtime handoff.
 - Structured calls may define `prompt` or `messages`, not both.
 - Context token counts must be recomputed after message or system prompt mutation.
 - Tool declarations remain load-time; `ctx.tools` only filters definitions for the current provider inference.

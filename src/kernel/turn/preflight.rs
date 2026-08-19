@@ -7,7 +7,7 @@ use tracing::{debug, error, warn};
 
 use crate::display;
 use crate::harness::context::{
-    ContextWrapper, RequestOptionsOverride, build_merged_request_options,
+    ContextInit, ContextWrapper, RequestOptionsOverride, build_merged_request_options,
 };
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
@@ -342,29 +342,29 @@ impl ExecutionHost {
             let session_id = self.session_reference(session);
             let session_title = self.session_title(session).await?;
             let engine = harness.lock().expect("session harness mutex poisoned");
-            let ctx = ContextWrapper::new(
-                req.inference_context.take(),
-                std::mem::take(&mut req.model),
-                std::mem::take(&mut req.provider_name),
-                std::mem::take(&mut req.system_prompt),
-                std::mem::take(&mut req.messages),
-                session.turn_index,
-                turn_ctx.task_turn_index,
-                turn_ctx.task_turn_index == 0,
-                turn_ctx.task_id.clone(),
-                turn_ctx.plan_id.clone(),
+            let ctx = ContextWrapper::new(ContextInit {
+                inference: req.inference_context.take(),
+                model: std::mem::take(&mut req.model),
+                provider: std::mem::take(&mut req.provider_name),
+                system_prompt: std::mem::take(&mut req.system_prompt),
+                messages: std::mem::take(&mut req.messages),
+                turn_index: session.turn_index,
+                task_turn_index: turn_ctx.task_turn_index,
+                is_first_turn_in_task: turn_ctx.task_turn_index == 0,
+                task_id: turn_ctx.task_id.clone(),
+                plan_id: turn_ctx.plan_id.clone(),
                 token_count,
                 token_limit,
-                req.thinking_budget,
-                std::mem::take(&mut req.request_options_override),
-                self.clients.clone(),
-                self.config.clone(),
-                session.identity.agent_id().to_string(),
-                session.inference.clone(),
+                thinking_budget: req.thinking_budget,
+                request_options: std::mem::take(&mut req.request_options_override),
+                clients: self.clients.clone(),
+                config: self.config.clone(),
+                agent_id: session.identity.agent_id().to_string(),
+                session_inference: session.inference.clone(),
                 session_id,
                 session_title,
-                available_tool_names,
-            );
+                available_tools: available_tool_names,
+            });
 
             match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
                 Ok(Verdict::Reject(reason)) => {
