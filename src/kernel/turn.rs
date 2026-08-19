@@ -75,7 +75,7 @@ impl ExecutionHost {
                 &response_text,
                 &pending_tool_calls,
             )
-            .await;
+            .await?;
 
         if !has_tool_calls {
             return Ok(TurnOutcome::Complete);

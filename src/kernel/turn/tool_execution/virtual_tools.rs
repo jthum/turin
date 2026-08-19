@@ -186,14 +186,23 @@ impl ExecutionHost {
         result_handler_key: Option<String>,
     ) -> Pin<Box<dyn Future<Output = (String, bool)> + Send + 'a>> {
         Box::pin(async move {
-            let nested_records = self
+            let nested_records = match self
                 .execute_tool_calls_hidden(
                     session,
                     tool_ctx,
                     pending_virtual_calls,
                     current_virtual_stack.clone(),
                 )
-                .await;
+                .await
+            {
+                Ok(records) => records,
+                Err(error) => {
+                    if let Some(ref key) = result_handler_key {
+                        self.discard_virtual_result_handler(session, key);
+                    }
+                    return (format!("Virtual tool persistence failed: {error}"), true);
+                }
+            };
             if session.cancel_token.is_cancelled() {
                 if let Some(ref key) = result_handler_key {
                     self.discard_virtual_result_handler(session, key);

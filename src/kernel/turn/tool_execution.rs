@@ -2,7 +2,7 @@ mod plan_submission;
 mod result_hooks;
 mod virtual_tools;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -82,7 +82,7 @@ impl ExecutionHost {
         }
 
         self.finalize_tool_records(session, &pending_tool_calls, final_by_id, true)
-            .await;
+            .await?;
         Ok(TurnOutcome::Continue)
     }
 
@@ -92,10 +92,10 @@ impl ExecutionHost {
         tool_ctx: &'a ToolContext,
         pending_tool_calls: Vec<PendingToolCall>,
         virtual_stack: Vec<String>,
-    ) -> Pin<Box<dyn Future<Output = Vec<FinalToolRecord>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<FinalToolRecord>>> + Send + 'a>> {
         Box::pin(async move {
             if session.cancel_token.is_cancelled() {
-                return Vec::new();
+                return Ok(Vec::new());
             }
 
             let (immediate_records, validated_calls) =
@@ -112,7 +112,7 @@ impl ExecutionHost {
                 )
                 .await;
             if session.cancel_token.is_cancelled() {
-                return Vec::new();
+                return Ok(Vec::new());
             }
 
             self.finalize_tool_records(session, &pending_tool_calls, final_by_id, false)
@@ -503,7 +503,7 @@ impl ExecutionHost {
         pending_tool_calls: &[PendingToolCall],
         mut final_by_id: HashMap<String, FinalToolRecord>,
         publish_to_history: bool,
-    ) -> Vec<FinalToolRecord> {
+    ) -> Result<Vec<FinalToolRecord>> {
         let mut tool_results: Vec<InferenceContent> = Vec::new();
         let mut finalized_records = Vec::new();
         let ansi_stdout = display::stdout_ansi();
@@ -541,6 +541,33 @@ impl ExecutionHost {
             record.content = content;
             record.is_error = is_error;
 
+            if let (Some(iid), Some(target)) =
+                (session.internal_id, session.active_turn_write_target())
+            {
+                let store = self
+                    .store_manager
+                    .open(&session.store_selector)
+                    .await
+                    .context("Failed to open state store for tool execution persistence")?;
+                let _guard = session.persistence_lock.lock().await;
+                store
+                    .insert_tool_execution(
+                        iid,
+                        target,
+                        &record.id,
+                        &record.name,
+                        &record.args,
+                        Some(&record.content),
+                        record.is_error,
+                        Some(record.duration_ms),
+                        &record.verdict,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Failed to persist tool execution '{}'", record.name)
+                    })?;
+            }
+
             self.persist_event(
                 session,
                 &KernelEvent::Audit(AuditEvent::ToolResult {
@@ -556,26 +583,6 @@ impl ExecutionHost {
                     success: !record.is_error,
                 }),
             );
-
-            if let Ok(store) = self.store_manager.open(&session.store_selector).await
-                && let (Some(iid), Some(target)) =
-                    (session.internal_id, session.active_turn_write_target())
-            {
-                let _guard = session.persistence_lock.lock().await;
-                let _ = store
-                    .insert_tool_execution(
-                        iid,
-                        target,
-                        &record.id,
-                        &record.name,
-                        &record.args,
-                        Some(&record.content),
-                        record.is_error,
-                        Some(record.duration_ms),
-                        &record.verdict,
-                    )
-                    .await;
-            }
 
             if !self.json {
                 println!(
@@ -596,6 +603,8 @@ impl ExecutionHost {
         }
 
         if publish_to_history && !tool_results.is_empty() {
+            self.persist_turn_message(session, "tool_result", &encode_content_json(&tool_results))
+                .await?;
             let origin = session.active_history_origin();
             session.history.push_with_origin(
                 InferenceMessage {
@@ -605,24 +614,8 @@ impl ExecutionHost {
                 },
                 origin,
             );
-
-            if let Ok(store) = self.store_manager.open(&session.store_selector).await
-                && let (Some(iid), Some(target)) =
-                    (session.internal_id, session.active_turn_write_target())
-            {
-                let _guard = session.persistence_lock.lock().await;
-                let _ = store
-                    .insert_message(
-                        iid,
-                        target,
-                        "tool_result",
-                        &encode_content_json(&tool_results),
-                        None,
-                    )
-                    .await;
-            }
         }
 
-        finalized_records
+        Ok(finalized_records)
     }
 }

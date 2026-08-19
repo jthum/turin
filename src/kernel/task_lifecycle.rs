@@ -148,27 +148,27 @@ impl ExecutionHost {
         )
         .await;
 
-        self.wait_for_session_durability(session).await;
+        self.wait_for_session_durability(session).await?;
         Ok(())
     }
 
-    async fn wait_for_session_durability(&self, session: &SessionState) {
+    pub(super) async fn wait_for_session_durability(&self, session: &SessionState) -> Result<()> {
         let Some(durability_tx) = &session.durability_tx else {
-            return;
+            return Ok(());
         };
         let (tx, rx) = oneshot::channel();
-        if durability_tx
+        durability_tx
             .send(PersistedKernelRecord::Barrier(tx))
-            .is_err()
-        {
-            warn!("Event durability barrier send failed — persistence task unavailable");
-            return;
-        }
-        if tokio::time::timeout(std::time::Duration::from_secs(5), rx)
-            .await
-            .is_err()
-        {
-            warn!("Timed out waiting for event durability barrier");
+            .map_err(|_| anyhow::anyhow!("Event durability lane is unavailable"))?;
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(error))) => Err(anyhow::anyhow!("Event durability write failed: {error}")),
+            Ok(Err(_)) => Err(anyhow::anyhow!(
+                "Event durability lane closed before acknowledging the barrier"
+            )),
+            Err(_) => Err(anyhow::anyhow!(
+                "Timed out waiting for event durability barrier"
+            )),
         }
     }
 

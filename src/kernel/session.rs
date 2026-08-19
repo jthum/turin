@@ -548,7 +548,7 @@ impl<'a> IntoIterator for &'a mut ResidentHistory {
 
 pub enum PersistedKernelRecord {
     Event(Box<PersistedKernelEvent>),
-    Barrier(tokio::sync::oneshot::Sender<()>),
+    Barrier(tokio::sync::oneshot::Sender<Result<(), String>>),
 }
 
 /// Lightweight in-memory progress tracker for a plan.

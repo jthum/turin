@@ -1,3 +1,4 @@
+use anyhow::Result;
 use tracing::warn;
 
 use crate::inference::content::encode_content_json;
@@ -18,8 +19,28 @@ impl ExecutionHost {
         response_thinking_signature: Option<&str>,
         response_text: &str,
         pending_tool_calls: &[PendingToolCall],
-    ) -> bool {
+    ) -> Result<bool> {
         let has_tool_calls = !pending_tool_calls.is_empty();
+
+        let mut persisted_content: Vec<InferenceContent> = Vec::new();
+        if !response_text.is_empty() {
+            persisted_content.push(InferenceContent::Text {
+                text: response_text.to_string(),
+            });
+        }
+        for tc in pending_tool_calls {
+            persisted_content.push(InferenceContent::ToolUse {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                input: tc.args.clone(),
+            });
+        }
+        self.persist_turn_message(
+            session,
+            "assistant",
+            &encode_content_json(&persisted_content),
+        )
+        .await?;
 
         self.persist_event(
             session,
@@ -50,36 +71,6 @@ impl ExecutionHost {
             )
         {
             warn!(error = %e, "Harness on_turn_end error");
-        }
-
-        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            let mut persisted_content: Vec<InferenceContent> = Vec::new();
-            if !response_text.is_empty() {
-                persisted_content.push(InferenceContent::Text {
-                    text: response_text.to_string(),
-                });
-            }
-            for tc in pending_tool_calls {
-                persisted_content.push(InferenceContent::ToolUse {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    input: tc.args.clone(),
-                });
-            }
-            if let (Some(iid), Some(target)) =
-                (session.internal_id, session.active_turn_write_target())
-            {
-                let _guard = session.persistence_lock.lock().await;
-                let _ = store
-                    .insert_message(
-                        iid,
-                        target,
-                        "assistant",
-                        &encode_content_json(&persisted_content),
-                        None,
-                    )
-                    .await;
-            }
         }
 
         let mut assistant_content: Vec<InferenceContent> = Vec::new();
@@ -113,6 +104,6 @@ impl ExecutionHost {
             origin,
         );
 
-        has_tool_calls
+        Ok(has_tool_calls)
     }
 }

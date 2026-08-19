@@ -525,6 +525,131 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_run_stops_when_user_message_persistence_fails() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let mut session = kernel.create_session().await;
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let conn = store.get_connection().await?;
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_message_insert
+        BEFORE INSERT ON messages
+        BEGIN
+            SELECT RAISE(FAIL, 'injected message persistence failure');
+        END;
+        "#,
+    )
+    .await?;
+
+    let error = kernel
+        .run(&mut session, Some("Do not lose this message".to_string()))
+        .await
+        .expect_err("durable task should stop when its user message cannot be stored");
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to persist user turn message")
+    );
+    assert!(session.history.is_empty());
+
+    let messages = store
+        .get_messages(
+            session.internal_id.expect("persisted session"),
+            &SessionReadTarget::ActiveBranch,
+        )
+        .await?;
+    assert!(messages.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_run_stops_when_assistant_message_persistence_fails() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let mut session = kernel.create_session().await;
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let conn = store.get_connection().await?;
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_assistant_message_insert
+        BEFORE INSERT ON messages
+        WHEN NEW.role = 'assistant'
+        BEGIN
+            SELECT RAISE(FAIL, 'injected assistant persistence failure');
+        END;
+        "#,
+    )
+    .await?;
+
+    let error = kernel
+        .run(&mut session, Some("Persist my response".to_string()))
+        .await
+        .expect_err("durable task should stop when its assistant message cannot be stored");
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to persist assistant turn message")
+    );
+    assert_eq!(session.history.len(), 1);
+
+    let messages = store
+        .get_messages(
+            session.internal_id.expect("persisted session"),
+            &SessionReadTarget::ActiveBranch,
+        )
+        .await?;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, "user");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_run_reports_background_event_persistence_failure() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let mut session = kernel.create_session().await;
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let conn = store.get_connection().await?;
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_event_insert
+        BEFORE INSERT ON events
+        BEGIN
+            SELECT RAISE(FAIL, 'injected event persistence failure');
+        END;
+        "#,
+    )
+    .await?;
+
+    let error = kernel
+        .run(
+            &mut session,
+            Some("Persist transcript and events".to_string()),
+        )
+        .await
+        .expect_err("task barrier should report background event write failure");
+    assert!(error.to_string().contains("Event durability write failed"));
+
+    let messages = store
+        .get_messages(
+            session.internal_id.expect("persisted session"),
+            &SessionReadTarget::ActiveBranch,
+        )
+        .await?;
+    assert_eq!(messages.len(), 2);
+
+    conn.execute("DROP TRIGGER fail_event_insert", ()).await?;
+    kernel
+        .run(
+            &mut session,
+            Some("The durability lane should recover".to_string()),
+        )
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_run_populates_token_counts() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
@@ -1001,6 +1126,29 @@ async fn test_resumed_live_session_gets_distinct_execution_id() -> Result<()> {
     assert_eq!(session.identity.session_id(), resumed.identity.session_id());
     assert_ne!(session.execution_id(), resumed.execution_id());
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_resume_advances_past_allocated_turn_without_messages() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+    let session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    store
+        .prepare_turn_write_target(
+            session.internal_id.expect("persisted session"),
+            TurnWriteTarget::active_branch(0),
+        )
+        .await?
+        .expect("allocated turn");
+
+    let resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    assert!(resumed.history.is_empty());
+    assert_eq!(resumed.turn_index, 1);
     Ok(())
 }
 

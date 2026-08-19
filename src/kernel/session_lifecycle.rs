@@ -241,7 +241,9 @@ impl ExecutionHost {
             materialized.branch_head_turn_id,
             materialized.branch_head_turn_index,
         );
-        session.turn_index = turn_index;
+        session.turn_index = materialized
+            .branch_head_turn_index
+            .map_or(turn_index, |head| turn_index.max(head.saturating_add(1)));
         session.total_input_tokens = counters.total_input_tokens;
         session.total_output_tokens = counters.total_output_tokens;
         session.next_task_id = counters.next_task_id;
@@ -289,7 +291,9 @@ impl ExecutionHost {
             materialized.branch_head_turn_id,
             materialized.branch_head_turn_index,
         );
-        session.turn_index = turn_index;
+        session.turn_index = materialized
+            .branch_head_turn_index
+            .map_or(turn_index, |head| turn_index.max(head.saturating_add(1)));
         session.total_input_tokens = counters.total_input_tokens;
         session.total_output_tokens = counters.total_output_tokens;
         session.next_task_id = counters.next_task_id;
@@ -487,6 +491,7 @@ impl ExecutionHost {
             let persistence_lock = Arc::clone(&session.persistence_lock);
             let handle = tokio::spawn(async move {
                 let mut event_writer = None;
+                let mut pending_error = None;
                 while let Some(record) = durability_rx.recv().await {
                     match record {
                         PersistedKernelRecord::Event(record) => {
@@ -500,6 +505,7 @@ impl ExecutionHost {
                                         Ok(writer) => event_writer = Some(writer),
                                         Err(e) => {
                                             warn!(error = %e, "Background persistence error");
+                                            pending_error.get_or_insert_with(|| e.to_string());
                                             continue;
                                         }
                                     }
@@ -512,6 +518,7 @@ impl ExecutionHost {
                                     .await
                                 {
                                     warn!(error = %e, "Background persistence error");
+                                    pending_error.get_or_insert_with(|| e.to_string());
                                     event_writer = None;
                                 }
                             } else {
@@ -520,7 +527,8 @@ impl ExecutionHost {
                         }
                         PersistedKernelRecord::Barrier(tx) => {
                             let _guard = persistence_lock.lock().await;
-                            let _ = tx.send(());
+                            let result = pending_error.take().map_or(Ok(()), Err);
+                            let _ = tx.send(result);
                         }
                     }
                 }
@@ -673,6 +681,8 @@ impl ExecutionHost {
             engine.set_active_queue(None);
         }
 
+        let mut durability_error = self.wait_for_session_durability(session).await.err();
+
         // Close durability lane and await background persistence flush.
         session.durability_tx.take();
         if let Some(task_slot) = &session.event_task
@@ -680,12 +690,14 @@ impl ExecutionHost {
             && let Err(e) = handle.await
         {
             warn!(error = %e, "Background persistence task join error");
+            durability_error
+                .get_or_insert_with(|| anyhow!("Background persistence task failed: {e}"));
         }
         session.cancel_token.cancel();
 
         session.status = SessionStatus::Inactive;
         self.clear_session_harness_engine(session);
-        Ok(())
+        durability_error.map_or(Ok(()), Err)
     }
 }
 

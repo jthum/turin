@@ -31,7 +31,7 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
 - `src/kernel/execution_host.rs`
   - Host construction, persistence locks, run-loop entry points, and task execution coordination.
 - `src/persistence/state/*`
-  - Session rows, messages, events, branches, turns, and worklist persistence.
+  - Session rows, messages, events, branches, atomic turn allocation, and worklist persistence.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 
@@ -49,8 +49,18 @@ Resume or refresh:
 1. Resolve the session reference and state store.
 2. Load the session row and active branch target.
 3. Materialize messages/events for the execution target.
-4. Rebuild history, counters, and context compaction checkpoint.
+4. Rebuild history, scalar counters, and the latest context compaction checkpoint.
 5. Reapply hot-history pruning.
+
+Durable turn writes:
+
+1. Allocate a turn and advance its branch head in one transaction.
+2. Persist the user message before adding it to resident history or invoking inference.
+3. Stream events through the ordered background durability lane.
+4. Persist the complete assistant message before emitting `TurnEnd` and adding it to resident history.
+5. Persist finalized tool records and the tool-result message before exposing the result in resident history.
+6. At task completion, use a barrier to report any background event-write failure to the caller.
+7. Resume derives its next turn index from both materialized messages and the durable branch-head depth, so an allocated partial turn cannot move runtime progression backward.
 
 Local context selection:
 
@@ -85,6 +95,11 @@ Delete persisted session:
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
+- Turn insertion and branch-head advancement must commit or roll back together.
+- Durable transcript and tool-record write failures must stop the active task; they must not be reduced to warnings.
+- A durability barrier must report event-writer failures that occurred before it, then allow a recreated writer to serve later tasks.
+- Resident history must not advance past a transcript write that failed.
+- Resume must advance beyond the durable branch-head depth even when its newest turn has no messages.
 - Deleting a session must never race an open runtime or leave a partial graph.
 - Session deletion owns session-scoped KV and memory, including namespaced scope
   keys, but must not delete agent/user/global memory or worklist records.
@@ -100,6 +115,10 @@ cargo test -p turin --test session_tests test_local_branch_selection_does_not_mu
 cargo test -p turin --test session_tests test_local_turn_selection_materializes_prefix_without_new_execution
 cargo test -p turin --test session_tests test_local_external_reference_selection_materializes_remote_context_detached
 cargo test -p turin --test session_tests test_tool_transcript_restores_and_continues_after_cold_resume
+cargo test -p turin --test session_tests test_run_stops_when_user_message_persistence_fails
+cargo test -p turin --test session_tests test_run_stops_when_assistant_message_persistence_fails
+cargo test -p turin --test session_tests test_run_reports_background_event_persistence_failure
+cargo test -p turin --test session_tests test_resume_advances_past_allocated_turn_without_messages
 cargo test -p turin --test daemon_integration_tests daemon_session_resume_round_trip_over_restart
 cargo test -p turin --test daemon_integration_tests daemon_task_sidestep_can_fork_a_sibling_branch
 ```
@@ -121,4 +140,4 @@ The current pass keeps lifecycle orchestration in `session_lifecycle.rs` and ext
 
 `session.rs` remains the public facade for session-domain types. Completed-task retention and queued-task construction live in child modules and are re-exported at the original `crate::kernel::session::*` paths.
 
-This is an organization/context improvement, not a semantic change. Keep future splits tied to similarly clear lifecycle subdomains.
+Turn durability is incremental rather than one transaction held across inference or tool execution. This is deliberate: external provider and tool work must not hold a database transaction open. A stopped process may therefore leave a partial turn as durable evidence, but committed rows remain ordered, write failures are surfaced, branch allocation is atomic, and resume progresses from the durable branch head.

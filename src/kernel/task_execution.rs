@@ -44,6 +44,8 @@ impl ExecutionHost {
         }
 
         self.begin_turn_persistence(session, Some(task)).await?;
+        self.persist_turn_message(session, "user", &encode_content_json(&user_content))
+            .await?;
         self.append_task_user_message(session, &user_content);
 
         let effective_tools = crate::tools::policy::resolve_effective_tools_config(
@@ -72,7 +74,6 @@ impl ExecutionHost {
             tools: Arc::new(effective_tools),
         };
 
-        self.persist_task_user_message(session, &user_content).await;
         self.set_task_active_session(session, task);
 
         let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
@@ -117,23 +118,27 @@ impl ExecutionHost {
         );
     }
 
-    async fn persist_task_user_message(
+    pub(super) async fn persist_turn_message(
         &self,
         session: &SessionState,
-        content: &[InferenceContent],
-    ) {
-        if let Ok(store) = self.store_manager.open(&session.store_selector).await {
-            if let (Some(iid), Some(target)) =
-                (session.internal_id, session.active_turn_write_target())
-            {
-                let _guard = session.persistence_lock.lock().await;
-                let _ = store
-                    .insert_message(iid, target, "user", &encode_content_json(content), None)
-                    .await;
-            } else if session.internal_id.is_none() {
-                warn!("Session missing internal_id, skipping message persistence");
-            }
-        }
+        role: &str,
+        content: &serde_json::Value,
+    ) -> Result<()> {
+        let (Some(internal_id), Some(target)) =
+            (session.internal_id, session.active_turn_write_target())
+        else {
+            return Ok(());
+        };
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .context("Failed to open state store for turn message persistence")?;
+        let _guard = session.persistence_lock.lock().await;
+        store
+            .insert_message(internal_id, target, role, content, None)
+            .await
+            .with_context(|| format!("Failed to persist {role} turn message"))
     }
 
     fn set_task_active_session(&self, session: &SessionState, task: &QueuedTask) {
