@@ -200,6 +200,12 @@ fn scan_agent_dir(
             agent_id
         );
     }
+    if let Some(lanes) = parsed.linked_runtime_lanes {
+        anyhow::ensure!(
+            lanes > 0,
+            "agent linked_runtime_lanes must be greater than 0"
+        );
+    }
 
     let local_harness_dir = agent_dir.join("harness");
     let local_harness_exists = local_harness_dir.is_dir();
@@ -249,6 +255,7 @@ fn scan_agent_dir(
         idle_timeout_seconds: parsed
             .idle_timeout_seconds
             .or(bootstrap.agent.idle_timeout_seconds),
+        linked_runtime_lanes: parsed.linked_runtime_lanes,
         tools: parsed.tools,
         inference: parsed.inference,
         persistence: parsed.persistence,

@@ -69,6 +69,7 @@ type = "openai"
     assert_eq!(config.agent.provider, "openai");
     assert_eq!(config.kernel.workspace_root, ".");
     assert_eq!(config.kernel.max_turns, 50);
+    assert_eq!(config.runtime.linked_runtime_lanes, 4);
     assert_eq!(
         config.persistence.state,
         StoreTargetConfig::from_path("data/state.db")
@@ -78,6 +79,78 @@ type = "openai"
     assert_eq!(config.remote.bind, "127.0.0.1:9324");
     assert_eq!(config.remote.auth_token_env, "TURIN_REMOTE_TOKEN");
     assert!(!config.remote.allow_non_loopback);
+}
+
+#[test]
+fn linked_runtime_lanes_resolve_global_and_per_agent_overrides() {
+    let config = TurinConfig::from_str(
+        r#"
+[agent]
+model = "primary-model"
+provider = "mock"
+linked_runtime_lanes = 8
+
+[runtime]
+linked_runtime_lanes = 16
+
+[agents.researcher]
+model = "research-model"
+provider = "mock"
+linked_runtime_lanes = 100
+
+[agents.reviewer]
+model = "review-model"
+provider = "mock"
+
+[providers.mock]
+type = "mock"
+"#,
+    )
+    .expect("runtime lane config should parse");
+
+    assert_eq!(config.runtime.linked_runtime_lanes, 16);
+    assert_eq!(config.linked_runtime_lanes_for_agent("default").unwrap(), 8);
+    assert_eq!(
+        config.linked_runtime_lanes_for_agent("researcher").unwrap(),
+        100
+    );
+    assert_eq!(
+        config.linked_runtime_lanes_for_agent("reviewer").unwrap(),
+        16
+    );
+}
+
+#[test]
+fn linked_runtime_lane_counts_must_be_positive() {
+    let global = TurinConfig::from_str(
+        r#"
+[agent]
+model = "primary-model"
+provider = "mock"
+
+[runtime]
+linked_runtime_lanes = 0
+
+[providers.mock]
+type = "mock"
+"#,
+    )
+    .expect_err("zero global lane count should fail validation");
+    assert!(global.to_string().contains("runtime.linked_runtime_lanes"));
+
+    let agent = TurinConfig::from_str(
+        r#"
+[agent]
+model = "primary-model"
+provider = "mock"
+linked_runtime_lanes = 0
+
+[providers.mock]
+type = "mock"
+"#,
+    )
+    .expect_err("zero agent lane count should fail validation");
+    assert!(agent.to_string().contains("linked_runtime_lanes"));
 }
 
 #[test]

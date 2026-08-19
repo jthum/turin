@@ -58,6 +58,7 @@ impl DaemonState {
             thinking: input.thinking,
             harness: input.harness,
             idle_timeout_seconds: input.idle_timeout_seconds,
+            linked_runtime_lanes: None,
             tools: input.tools,
             inference: Default::default(),
             persistence: ContextPersistenceConfig::default(),

@@ -67,6 +67,10 @@ impl TurinConfig {
             self.kernel.heartbeat_interval_seconds,
             "kernel.heartbeat_interval_seconds",
         )?;
+        require_positive(
+            self.runtime.linked_runtime_lanes,
+            "runtime.linked_runtime_lanes",
+        )?;
         require_optional_non_empty(self.layout.root.as_deref(), "layout.root")?;
         require_non_empty(&self.layout.data_dir, "layout.data_dir")?;
         require_non_empty(&self.layout.states_dir, "layout.states_dir")?;
@@ -261,6 +265,10 @@ impl TurinConfig {
         for (agent_id, agent_cfg) in
             std::iter::once((&self.agent.id, &self.agent)).chain(self.agents.iter())
         {
+            require_optional_positive(
+                agent_cfg.linked_runtime_lanes,
+                format!("agent '{}'.linked_runtime_lanes", agent_id),
+            )?;
             agent_cfg
                 .inference
                 .validate_shallow(&self.providers, &format!("agent '{}'.inference", agent_id))?;

@@ -26,6 +26,7 @@ fn task_status_prompt_preview_is_normalized_and_bounded() {
 
 #[test]
 fn linked_runtime_keys_are_bounded_to_physical_lanes() {
+    const LANES: usize = 4;
     let keys = (0..100)
         .map(|index| {
             RuntimeSlotKey::linked_for_excluding(
@@ -33,23 +34,26 @@ fn linked_runtime_keys_are_bounded_to_physical_lanes() {
                 "parent@state",
                 &format!("thread-{index}"),
                 &std::collections::HashSet::new(),
+                LANES,
             )
             .expect("an empty exclusion set leaves a lane")
             .slot_id
         })
         .collect::<std::collections::HashSet<_>>();
 
-    assert_eq!(keys.len(), RuntimeSlotKey::LINKED_RUNTIME_LANES as usize);
+    assert_eq!(keys.len(), LANES);
     assert!(keys.iter().all(|slot_id| slot_id.starts_with("linked_")));
 }
 
 #[test]
 fn linked_runtime_keys_probe_around_occupied_ancestor_lanes() {
+    const LANES: usize = 4;
     let first = RuntimeSlotKey::linked_for_excluding(
         "worker",
         "parent@state",
         "thread",
         &std::collections::HashSet::new(),
+        LANES,
     )
     .expect("an empty exclusion set leaves a lane");
     let second = RuntimeSlotKey::linked_for_excluding(
@@ -57,17 +61,31 @@ fn linked_runtime_keys_probe_around_occupied_ancestor_lanes() {
         "parent@state",
         "thread",
         &std::collections::HashSet::from([first.slot_id.clone()]),
+        LANES,
     )
     .expect("three lanes remain");
     assert_ne!(first.slot_id, second.slot_id);
 
-    let all_lanes = (0..RuntimeSlotKey::LINKED_RUNTIME_LANES)
-        .map(|lane| format!("linked_{lane}"))
-        .collect();
+    let all_lanes = (0..LANES).map(|lane| format!("linked_{lane}")).collect();
     assert!(
-        RuntimeSlotKey::linked_for_excluding("worker", "parent@state", "thread", &all_lanes)
-            .is_none()
+        RuntimeSlotKey::linked_for_excluding(
+            "worker",
+            "parent@state",
+            "thread",
+            &all_lanes,
+            LANES,
+        )
+        .is_none()
     );
+}
+
+#[test]
+fn linked_runtime_keys_support_large_configured_lane_counts() {
+    let excluded = (0..99).map(|lane| format!("linked_{lane}")).collect();
+    let selected =
+        RuntimeSlotKey::linked_for_excluding("worker", "parent@state", "thread", &excluded, 100)
+            .expect("the hundredth lane remains available");
+    assert_eq!(selected.slot_id, "linked_99");
 }
 
 #[tokio::test]
@@ -144,7 +162,7 @@ async fn linked_runtime_routing_excludes_busy_same_agent_ancestor_lanes() -> any
         .await?
         .expect("child session should exist");
     let occupied = manager
-        .occupied_ancestor_linked_slots(&store, &child, "worker")
+        .occupied_ancestor_linked_slots(&store, &child, "worker", 4)
         .await?;
     assert_eq!(
         occupied,
@@ -206,10 +224,12 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
             thinking: None,
             harness: None,
             idle_timeout_seconds: None,
+            linked_runtime_lanes: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
         agents: HashMap::new(),
+        runtime: Default::default(),
         kernel: KernelConfig {
             workspace_root: workspace_root.to_string_lossy().to_string(),
             max_turns: 4,
@@ -252,6 +272,7 @@ fn signal_test_config(
             thinking: None,
             harness: Some("reviewer".to_string()),
             idle_timeout_seconds: Some(30),
+            linked_runtime_lanes: None,
             inference: Default::default(),
             persistence: Default::default(),
         },

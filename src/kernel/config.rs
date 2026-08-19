@@ -36,6 +36,8 @@ pub struct TurinConfig {
     #[serde(default)]
     pub agents: std::collections::HashMap<String, AgentConfig>,
     #[serde(default)]
+    pub runtime: RuntimeConfig,
+    #[serde(default)]
     pub kernel: KernelConfig,
     #[serde(default)]
     pub layout: LayoutConfig,
@@ -102,12 +104,30 @@ pub struct AgentConfig {
     /// and `None` keeps the runtime hot indefinitely.
     #[serde(default = "default_idle_timeout_seconds")]
     pub idle_timeout_seconds: Option<u64>,
+    /// Optional override for the number of hot linked-session runtime lanes.
+    #[serde(default)]
+    pub linked_runtime_lanes: Option<usize>,
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
     pub inference: InferenceOverrideConfig,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RuntimeConfig {
+    /// Default number of hot linked-session runtime lanes per agent profile.
+    #[serde(default = "default_linked_runtime_lanes")]
+    pub linked_runtime_lanes: usize,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            linked_runtime_lanes: default_linked_runtime_lanes(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,6 +158,19 @@ impl Default for KernelConfig {
 }
 
 impl TurinConfig {
+    pub fn linked_runtime_lanes_for_agent(&self, agent_id: &str) -> Result<usize> {
+        let agent = if agent_id == self.agent.id {
+            &self.agent
+        } else {
+            self.agents
+                .get(agent_id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
+        };
+        Ok(agent
+            .linked_runtime_lanes
+            .unwrap_or(self.runtime.linked_runtime_lanes))
+    }
+
     pub fn effective_inference_config_for_agent(
         &self,
         agent_id: &str,
@@ -713,6 +746,7 @@ impl Default for AgentConfig {
             thinking: None,
             harness: None,
             idle_timeout_seconds: default_idle_timeout_seconds(),
+            linked_runtime_lanes: None,
             tools: ToolsConfig::default(),
             inference: InferenceOverrideConfig::default(),
             persistence: ContextPersistenceConfig::default(),

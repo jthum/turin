@@ -75,7 +75,7 @@ Peer result promotion:
 Linked runtime residency:
 
 1. The parent session and thread key identify a durable logical child session.
-2. Their stable hash selects one of four physical runtime lanes for the target agent.
+2. Their stable hash selects one of the configured physical runtime lanes for the target agent.
    Busy lanes belonging to same-agent ancestors are excluded to prevent await cycles.
 3. Each task envelope carries its linked-session target; the lane creates or resumes
    that target before allocating the runtime task id and running inference.

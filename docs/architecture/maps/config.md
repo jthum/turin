@@ -9,7 +9,7 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 ## Files
 
 - `src/kernel/config.rs`
-  - Top-level `TurinConfig`, core agent/provider/harness/daemon/remote schema, config loading, layout/path normalization, and inference route entry points.
+  - Top-level `TurinConfig`, core runtime/agent/provider/harness/daemon/remote schema, config loading, layout/path normalization, and inference route entry points.
 - `src/kernel/config/defaults.rs`
   - Default values used by serde and manual defaults.
 - `src/kernel/config/inference.rs`
@@ -32,6 +32,8 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - `from_file` normalizes runtime paths after loading the adjacent env file and before validation.
 - `from_str` parses and validates without filesystem path normalization.
 - Plain daemon filesystem paths share one normalization helper; the daemon endpoint stays separate because local IPC endpoint resolution has different semantics.
+- `runtime.linked_runtime_lanes` is a positive startup-stable global default; an
+  agent's positive `linked_runtime_lanes` overrides it for that profile.
 
 ## Common Changes
 

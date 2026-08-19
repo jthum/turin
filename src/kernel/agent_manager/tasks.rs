@@ -273,6 +273,7 @@ impl AgentManager {
             .ok_or_else(|| anyhow!("Origin session '{}' not found", origin_session_id))?;
         let parent_session_reference =
             format_session_reference(&session_ref.public_id, &state_selector);
+        let lane_capacity = self.config.linked_runtime_lanes_for_agent(agent_id)?;
         let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
             .await?;
@@ -304,18 +305,19 @@ impl AgentManager {
             Some(runtime_key) => runtime_key,
             None => {
                 let excluded_slots = self
-                    .occupied_ancestor_linked_slots(&store, &parent, agent_id)
+                    .occupied_ancestor_linked_slots(&store, &parent, agent_id, lane_capacity)
                     .await?;
                 RuntimeSlotKey::linked_for_excluding(
                     agent_id,
                     &parent_session_reference,
                     thread_key,
                     &excluded_slots,
+                    lane_capacity,
                 )
                 .ok_or_else(|| {
                     anyhow!(
                         "Same-agent delegation requires another linked runtime lane, but all {} lanes are occupied by awaiting ancestors",
-                        RuntimeSlotKey::linked_lane_capacity()
+                        lane_capacity
                     )
                 })?
             }
@@ -367,6 +369,7 @@ impl AgentManager {
         store: &StateStore,
         parent: &SessionRow,
         target_agent_id: &str,
+        lane_capacity: usize,
     ) -> Result<HashSet<String>> {
         let live_ancestor_slots = {
             let runtimes = self.runtimes.read().await;
@@ -404,7 +407,7 @@ impl AgentManager {
                 .to_string();
             if let Some(slot_id) = live_ancestor_slots.get(&public_id) {
                 occupied.insert(slot_id.clone());
-                if occupied.len() == RuntimeSlotKey::linked_lane_capacity() {
+                if occupied.len() == lane_capacity {
                     break;
                 }
             }

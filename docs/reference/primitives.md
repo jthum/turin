@@ -1799,6 +1799,32 @@ when a runtime hibernates after a logical request completes.
 - positive integer => stay hot for that many idle seconds
 - `nil` / `json.null` => keep the runtime hot indefinitely
 
+### Linked-agent parallelism
+
+Linked peer sessions share a bounded pool of hot Lua runtime lanes per agent profile.
+The global startup default is four:
+
+```toml
+[runtime]
+linked_runtime_lanes = 4
+```
+
+Override it for the primary agent or an additional agent when the machine and provider
+capacity justify more parallel work:
+
+```toml
+[agent]
+linked_runtime_lanes = 8
+
+[agents.researcher]
+linked_runtime_lanes = 100
+```
+
+The value must be positive. More lanes permit more linked tasks for that agent to execute
+in parallel, but each hot lane can own a Lua VM, session history, and inference/tool state,
+so memory and external concurrency can grow accordingly. Changes require a Turin restart;
+lane counts do not mutate while work is running.
+
 ## Notes on Old Namespaces
 
 Turin’s canonical harness API is now `runtime.*` + top-level aliases described above.

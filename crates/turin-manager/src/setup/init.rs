@@ -66,10 +66,16 @@ impl GovernanceChoice {
 #[derive(Debug, Serialize)]
 struct GeneratedTurinConfig {
     agent: GeneratedAgentConfig,
+    runtime: GeneratedRuntimeConfig,
     kernel: GeneratedKernelConfig,
     persistence: GeneratedPersistenceConfig,
     harness: GeneratedHarnessConfig,
     providers: BTreeMap<String, GeneratedProviderConfig>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedRuntimeConfig {
+    linked_runtime_lanes: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -237,6 +243,9 @@ fn generate_turin_config(
             provider: provider.name().to_string(),
             idle_timeout_seconds: 20,
         },
+        runtime: GeneratedRuntimeConfig {
+            linked_runtime_lanes: 4,
+        },
         kernel: GeneratedKernelConfig {
             workspace_root: ".".to_string(),
             max_turns: 50,
@@ -286,6 +295,7 @@ mod tests {
         .expect("rendered");
         assert!(body.contains("[providers.anthropic]"));
         assert!(body.contains("api_key_env = \"ANTHROPIC_API_KEY\""));
+        assert!(body.contains("linked_runtime_lanes = 4"));
         assert!(body.contains("[governance.capabilities]"));
         assert!(body.contains("\"shell.exec\" = false"));
     }

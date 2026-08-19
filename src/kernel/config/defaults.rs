@@ -28,6 +28,10 @@ pub(super) fn default_idle_timeout_seconds() -> Option<u64> {
     Some(20)
 }
 
+pub(super) fn default_linked_runtime_lanes() -> usize {
+    4
+}
+
 pub(super) fn default_state_path() -> String {
     format!("{DEFAULT_LAYOUT_DATA_DIR}/state.db")
 }

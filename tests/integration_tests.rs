@@ -36,10 +36,12 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
             thinking: None,
             harness: None,
             idle_timeout_seconds: None,
+            linked_runtime_lanes: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
         agents: std::collections::HashMap::new(),
+        runtime: Default::default(),
         kernel: turin::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,

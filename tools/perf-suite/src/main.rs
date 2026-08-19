@@ -2558,6 +2558,7 @@ fn build_config(
             persistence: Default::default(),
         },
         agents: HashMap::new(),
+        runtime: Default::default(),
         kernel: KernelConfig {
             workspace_root: workspace_root.to_string_lossy().to_string(),
             max_turns: requested_turns

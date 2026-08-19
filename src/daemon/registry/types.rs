@@ -116,6 +116,8 @@ pub(crate) struct AgentFileConfig {
     #[serde(default)]
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default)]
+    pub linked_runtime_lanes: Option<usize>,
+    #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
     pub inference: InferenceOverrideConfig,

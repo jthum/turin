@@ -123,10 +123,10 @@ Delete persisted session:
 - Repeated peer calls without an explicit `thread` reuse the `default` child thread.
   A named `thread` creates or reuses a separate child context under the same parent.
 - Linked-session durability is independent of runtime residency. Any number of logical
-  children may exist, but each agent owns at most four hot linked Lua runtimes; colliding
-  threads execute serially and switch session context at envelope boundaries.
+  children may exist, but each agent owns at most its configured number of hot linked Lua
+  runtimes; colliding threads execute serially and switch session context at envelope boundaries.
 - Same-agent nested delegation excludes linked lanes occupied by busy ancestor sessions
-  and probes the remaining lanes deterministically. Exhausting all four ancestor lanes
+  and probes the remaining lanes deterministically. Exhausting all configured ancestor lanes
   fails submission explicitly instead of queueing a child behind an ancestor awaiting it.
 - A linked session that is already resident retains its physical lane so concurrent
   submissions cannot run one durable transcript through two Lua runtimes.

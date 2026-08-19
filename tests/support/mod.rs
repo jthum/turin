@@ -162,10 +162,12 @@ pub fn base_config(
             thinking: None,
             harness: None,
             idle_timeout_seconds: None,
+            linked_runtime_lanes: None,
             inference: Default::default(),
             persistence: Default::default(),
         },
         agents: HashMap::new(),
+        runtime: Default::default(),
         kernel: KernelConfig {
             workspace_root: workspace_root.to_string_lossy().to_string(),
             max_turns: 4,
