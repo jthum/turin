@@ -261,7 +261,7 @@ impl StateStore {
         let Some(head_turn_id) = branch.head_turn_id else {
             return Ok(Vec::new());
         };
-        let (turns, _has_older, _ancestry_queries) = self
+        let (turns, _has_prior_history, _ancestry_queries) = self
             .ancestry_path_turns(session_id, head_turn_id, None)
             .await?;
         perf_stage_finish!(
@@ -290,7 +290,7 @@ impl StateStore {
         };
         self.ancestry_path_turns(session_id, head_turn_id, Some(max_turns.max(1)))
             .await
-            .map(|(turns, has_older, _)| (turns, has_older))
+            .map(|(turns, has_prior_history, _)| (turns, has_prior_history))
     }
 
     pub(crate) async fn turn_path_to_turn_id(
@@ -311,7 +311,7 @@ impl StateStore {
     ) -> Result<(Vec<TurnRow>, bool)> {
         self.ancestry_path_turns(session_id, turn_id, Some(max_turns.max(1)))
             .await
-            .map(|(turns, has_older, _)| (turns, has_older))
+            .map(|(turns, has_prior_history, _)| (turns, has_prior_history))
     }
 
     async fn ancestry_path_turns(
@@ -393,12 +393,12 @@ impl StateStore {
             upper_depth = lower_depth - 1;
         }
 
-        let has_older = reverse_path
+        let has_prior_history = reverse_path
             .last()
             .and_then(|oldest_loaded| oldest_loaded.parent_turn_id)
             .is_some();
         reverse_path.reverse();
-        Ok((reverse_path, has_older, ancestry_queries))
+        Ok((reverse_path, has_prior_history, ancestry_queries))
     }
 
     pub(crate) async fn turn_rows_for_selected_path(

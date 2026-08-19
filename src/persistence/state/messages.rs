@@ -16,7 +16,7 @@ type OrderedMessageRow = (usize, i64, MessageRow);
 pub struct TokenBoundedMessages {
     pub messages: Vec<MessageRow>,
     pub estimated_tokens: u64,
-    pub has_older: bool,
+    pub has_prior_history: bool,
 }
 
 impl StateStore {
@@ -141,7 +141,7 @@ impl StateStore {
         max_messages: usize,
     ) -> Result<(Vec<MessageRow>, bool)> {
         let max_turns = max_turns.max(1);
-        let (turns, mut has_older) = match target {
+        let (turns, mut has_prior_history) = match target {
             SessionReadTarget::ActiveBranch => {
                 self.recent_branch_path_turns(session_id, None, max_turns)
                     .await?
@@ -174,10 +174,10 @@ impl StateStore {
             }
             if retain_from > 0 {
                 messages.drain(0..retain_from);
-                has_older = true;
+                has_prior_history = true;
             }
         }
-        Ok((messages, has_older))
+        Ok((messages, has_prior_history))
     }
 
     pub async fn get_token_bounded_context_messages(
@@ -209,30 +209,31 @@ impl StateStore {
         let mut selected_message_count = 0usize;
         let mut visited_turns = 0usize;
         let mut estimated_tokens = 0u64;
-        let mut has_older = false;
+        let mut has_prior_history = false;
 
         while visited_turns < max_turns {
             let page_limit = CONTEXT_ANCESTRY_PAGE_TURNS.min(max_turns - visited_turns);
-            let (turns, page_has_older) = if let Some(selected_path) = remaining_selected_path {
-                if selected_path.is_empty() {
-                    break;
-                }
-                let page_start = selected_path.len().saturating_sub(page_limit);
-                let turns = self
-                    .turn_rows_for_selected_path(session_id, &selected_path[page_start..])
-                    .await?;
-                remaining_selected_path = Some(&selected_path[..page_start]);
-                (turns, page_start > 0)
-            } else {
-                let Some(page_head_id) = next_turn_id else {
-                    break;
+            let (turns, page_has_prior_history) =
+                if let Some(selected_path) = remaining_selected_path {
+                    if selected_path.is_empty() {
+                        break;
+                    }
+                    let page_start = selected_path.len().saturating_sub(page_limit);
+                    let turns = self
+                        .turn_rows_for_selected_path(session_id, &selected_path[page_start..])
+                        .await?;
+                    remaining_selected_path = Some(&selected_path[..page_start]);
+                    (turns, page_start > 0)
+                } else {
+                    let Some(page_head_id) = next_turn_id else {
+                        break;
+                    };
+                    let (turns, has_prior_history) = self
+                        .recent_turn_path_to_turn_id(session_id, page_head_id, page_limit)
+                        .await?;
+                    next_turn_id = turns.first().and_then(|turn| turn.parent_turn_id);
+                    (turns, has_prior_history)
                 };
-                let (turns, has_older) = self
-                    .recent_turn_path_to_turn_id(session_id, page_head_id, page_limit)
-                    .await?;
-                next_turn_id = turns.first().and_then(|turn| turn.parent_turn_id);
-                (turns, has_older)
-            };
             visited_turns = visited_turns.saturating_add(turns.len());
             let rows = self.messages_for_turns(session_id, &turns).await?;
             let mut page_groups = group_messages_by_turn(rows);
@@ -241,7 +242,7 @@ impl StateStore {
                 let group_tokens = group.iter().map(estimated_message_tokens).sum::<u64>();
                 let exceeds_budget = estimated_tokens.saturating_add(group_tokens) > token_budget;
                 if exceeds_budget && selected_message_count >= minimum_messages.max(1) {
-                    has_older = true;
+                    has_prior_history = true;
                     break;
                 }
                 estimated_tokens = estimated_tokens.saturating_add(group_tokens);
@@ -249,28 +250,28 @@ impl StateStore {
                 selected_turn_groups.push(group);
             }
 
-            if has_older {
+            if has_prior_history {
                 break;
             }
             if !page_groups.is_empty() {
-                has_older = true;
+                has_prior_history = true;
                 break;
             }
-            has_older = page_has_older;
-            if !page_has_older {
+            has_prior_history = page_has_prior_history;
+            if !page_has_prior_history {
                 break;
             }
             if visited_turns >= max_turns {
                 break;
             }
-            has_older = false;
+            has_prior_history = false;
         }
 
         selected_turn_groups.reverse();
         Ok(TokenBoundedMessages {
             messages: selected_turn_groups.into_iter().flatten().collect(),
             estimated_tokens,
-            has_older,
+            has_prior_history,
         })
     }
 

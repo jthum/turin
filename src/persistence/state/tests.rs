@@ -1315,11 +1315,11 @@ async fn bounded_context_reads_only_the_recent_ancestry_suffix() {
     assert!(full.first().unwrap().content.contains("message 0"));
     assert!(full.last().unwrap().content.contains("message 269"));
 
-    let (bounded, has_older) = store
+    let (bounded, has_prior_history) = store
         .get_bounded_context_messages(session, &active_branch(), 3, 3)
         .await
         .unwrap();
-    assert!(has_older);
+    assert!(has_prior_history);
     assert_eq!(bounded.len(), 3);
     assert!(bounded[0].content.contains("message 267"));
     assert!(bounded[2].content.contains("message 269"));
@@ -1328,7 +1328,7 @@ async fn bounded_context_reads_only_the_recent_ancestry_suffix() {
         .get_token_bounded_context_messages(session, &active_branch(), 1, 1, 270)
         .await
         .unwrap();
-    assert!(token_bounded.has_older);
+    assert!(token_bounded.has_prior_history);
     assert_eq!(token_bounded.messages.len(), 1);
     assert!(token_bounded.messages[0].content.contains("message 269"));
     assert!(token_bounded.estimated_tokens > 1);
