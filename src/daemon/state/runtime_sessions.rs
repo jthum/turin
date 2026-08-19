@@ -1003,6 +1003,7 @@ fn task_terminal_status(status: TaskTerminalStatus) -> &'static str {
         TaskTerminalStatus::MaxTurns => "max_turns",
         TaskTerminalStatus::Error => "error",
         TaskTerminalStatus::Cancelled => "cancelled",
+        TaskTerminalStatus::TimedOut => "timed_out",
         TaskTerminalStatus::Killed => "killed",
     }
 }

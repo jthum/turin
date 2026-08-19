@@ -45,6 +45,8 @@ pub enum TaskTerminalStatus {
     Error,
     /// The task was cancelled cooperatively.
     Cancelled,
+    /// The task exceeded an inference or runtime timeout boundary.
+    TimedOut,
     /// The task was forcefully killed.
     Killed,
 }

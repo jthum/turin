@@ -169,6 +169,59 @@ struct SequenceCaptureProvider {
     seen_messages: Arc<Mutex<Vec<Vec<InferenceMessage>>>>,
 }
 
+struct StalledStreamProvider;
+
+#[async_trait]
+impl InferenceProvider for StalledStreamProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        Box::pin(async move { Ok(Box::pin(futures::stream::pending()) as InferenceStream) })
+    }
+}
+
+struct ToolCallProvider;
+
+#[async_trait]
+impl InferenceProvider for ToolCallProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "tool-call-model".to_string(),
+                    provider_id: "tool-call".to_string(),
+                }),
+                Ok(InferenceEvent::ToolCallStart {
+                    id: "call_stall_1".to_string(),
+                    name: "shell_exec".to_string(),
+                }),
+                Ok(InferenceEvent::ToolCallDelta {
+                    delta: serde_json::json!({
+                        "command": "touch tool-started && sleep 60",
+                        "timeout_seconds": 60
+                    })
+                    .to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
+}
+
 #[async_trait]
 impl InferenceProvider for SequenceCaptureProvider {
     fn stream<'a>(
@@ -521,6 +574,75 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
     );
 
     kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_cancelling_stalled_inference_does_not_append_assistant_output() -> Result<()> {
+    let tmp = tempdir()?;
+    let config = make_config(tmp.path());
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new("mock", Arc::new(StalledStreamProvider)),
+    );
+    let mut session = kernel.create_session().await;
+    let cancel_token = session.cancel_token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        cancel_token.cancel();
+    });
+
+    kernel
+        .run(&mut session, Some("Wait for cancellation".to_string()))
+        .await?;
+    assert_eq!(session.history.len(), 1);
+    assert_eq!(
+        session.history.messages()[0].role,
+        turin::inference::provider::InferenceRole::User
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = make_config(tmp.path());
+    config.tools.selection.allow = Some(vec!["shell_exec".to_string()]);
+    config.agent.tools.selection.allow = Some(vec!["shell_exec".to_string()]);
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "mock".to_string(),
+        ProviderClient::new("mock", Arc::new(ToolCallProvider)),
+    );
+    let mut session = kernel.create_session().await;
+    let cancel_token = session.cancel_token.clone();
+    let started_path = tmp.path().join("tool-started");
+    tokio::spawn(async move {
+        for _ in 0..100 {
+            if started_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        cancel_token.cancel();
+    });
+
+    kernel
+        .run(&mut session, Some("Run the stalled tool".to_string()))
+        .await?;
+    assert_eq!(session.history.len(), 2);
+    assert!(
+        session
+            .history
+            .messages()
+            .iter()
+            .all(|message| { message.role != turin::inference::provider::InferenceRole::Tool })
+    );
     Ok(())
 }
 

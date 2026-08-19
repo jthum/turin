@@ -62,6 +62,14 @@ Durable turn writes:
 6. At task completion, use a barrier to report any background event-write failure to the caller.
 7. Resume derives its next turn index from both materialized messages and the durable branch-head depth, so an allocated partial turn cannot move runtime progression backward.
 
+Cancellation and timeout outcomes:
+
+1. Inference streaming races the session cancellation token against the next provider event.
+2. Parallel tool collection races the same token against all active tool futures; losing futures are dropped and must not publish tool results.
+3. If cancellation and a provider error race, cancellation is the terminal task status.
+4. Provider request and total-budget timeout errors become `timed_out`, distinct from cooperative `cancelled`, forceful `killed`, and generic `error`.
+5. Individual tool timeouts remain tool errors that the agent or harness may recover from; they do not automatically terminate the whole task.
+
 Local context selection:
 
 1. Validate the branch, turn, or external session reference.
@@ -100,6 +108,9 @@ Delete persisted session:
 - A durability barrier must report event-writer failures that occurred before it, then allow a recreated writer to serve later tasks.
 - Resident history must not advance past a transcript write that failed.
 - Resume must advance beyond the durable branch-head depth even when its newest turn has no messages.
+- Cancellation must not append assistant output or tool results that did not complete before cancellation won.
+- Runtime error classification must prefer cancellation over a concurrent provider failure.
+- Provider timeout failures must remain distinguishable from cancellation and generic runtime errors.
 - Deleting a session must never race an open runtime or leave a partial graph.
 - Session deletion owns session-scoped KV and memory, including namespaced scope
   keys, but must not delete agent/user/global memory or worklist records.
@@ -119,6 +130,8 @@ cargo test -p turin --test session_tests test_run_stops_when_user_message_persis
 cargo test -p turin --test session_tests test_run_stops_when_assistant_message_persistence_fails
 cargo test -p turin --test session_tests test_run_reports_background_event_persistence_failure
 cargo test -p turin --test session_tests test_resume_advances_past_allocated_turn_without_messages
+cargo test -p turin --test session_tests test_cancelling_stalled_inference_does_not_append_assistant_output
+cargo test -p turin --test session_tests test_cancelling_stalled_tool_does_not_append_tool_result
 cargo test -p turin --test daemon_integration_tests daemon_session_resume_round_trip_over_restart
 cargo test -p turin --test daemon_integration_tests daemon_task_sidestep_can_fork_a_sibling_branch
 ```

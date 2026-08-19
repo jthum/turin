@@ -216,6 +216,12 @@ impl ExecutionHost {
                     "Task failed with runtime error"
                 );
                 let error_message = error.to_string();
+                if let Some(status) = terminal_status_for_runtime_error(session, &error) {
+                    return Ok(TaskRunAttempt::Terminal {
+                        status,
+                        error_message,
+                    });
+                }
                 if crate::persistence::state::is_turn_write_conflict(&error) {
                     match session.effective_conflict_policy() {
                         crate::kernel::session::ExecutionConflictPolicy::Reject
@@ -241,6 +247,14 @@ impl ExecutionHost {
                                         "Detached retry failed with runtime error"
                                     );
                                     let error_message = detached_error.to_string();
+                                    if let Some(status) =
+                                        terminal_status_for_runtime_error(session, &detached_error)
+                                    {
+                                        return Ok(TaskRunAttempt::Terminal {
+                                            status,
+                                            error_message,
+                                        });
+                                    }
                                     let recovered = self
                                         .handle_inference_error(session, task, &error_message)
                                         .await?;
@@ -403,5 +417,56 @@ impl ExecutionHost {
             error,
         };
         session.completed_task_results.write().await.insert(result);
+    }
+}
+
+fn terminal_status_for_runtime_error(
+    session: &SessionState,
+    error: &anyhow::Error,
+) -> Option<TaskTerminalStatus> {
+    if session.cancel_token.is_cancelled() {
+        return Some(TaskTerminalStatus::Cancelled);
+    }
+    error
+        .chain()
+        .any(inference_error_is_timeout)
+        .then_some(TaskTerminalStatus::TimedOut)
+}
+
+fn inference_error_is_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
+    use crate::inference::provider::SdkError;
+
+    let Some(error) = error.downcast_ref::<SdkError>() else {
+        return false;
+    };
+    match error {
+        SdkError::NetworkError(error) => error.is_timeout(),
+        SdkError::IoError(error) => error.kind() == std::io::ErrorKind::TimedOut,
+        SdkError::ApiError(message) => message.contains("total timeout budget"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inference::provider::SdkError;
+
+    #[test]
+    fn runtime_error_classification_distinguishes_timeout_and_cancellation() {
+        let session = SessionState::new();
+        let timeout = anyhow::Error::new(SdkError::ApiError(
+            "API request aborted: total timeout budget of 10s was exceeded".to_string(),
+        ));
+        assert_eq!(
+            terminal_status_for_runtime_error(&session, &timeout),
+            Some(TaskTerminalStatus::TimedOut)
+        );
+
+        session.cancel_token.cancel();
+        assert_eq!(
+            terminal_status_for_runtime_error(&session, &anyhow::anyhow!("stream closed")),
+            Some(TaskTerminalStatus::Cancelled)
+        );
     }
 }
