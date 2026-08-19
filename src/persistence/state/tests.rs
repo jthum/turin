@@ -1290,6 +1290,42 @@ async fn test_get_messages_follows_active_branch_path() {
 }
 
 #[tokio::test]
+async fn bounded_context_reads_only_the_recent_ancestry_suffix() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for index in 0..270 {
+        store
+            .insert_message(
+                session,
+                turn(index),
+                "user",
+                &json!([{"type": "text", "text": format!("message {index}")}]),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    let full = store.get_messages(session, &active_branch()).await.unwrap();
+    assert_eq!(full.len(), 270);
+    assert!(full.first().unwrap().content.contains("message 0"));
+    assert!(full.last().unwrap().content.contains("message 269"));
+
+    let (bounded, has_older) = store
+        .get_bounded_context_messages(session, &active_branch(), 3, 3)
+        .await
+        .unwrap();
+    assert!(has_older);
+    assert_eq!(bounded.len(), 3);
+    assert!(bounded[0].content.contains("message 267"));
+    assert!(bounded[2].content.contains("message 269"));
+}
+
+#[tokio::test]
 async fn test_explicit_branch_head_reads_and_writes_ignore_active_branch() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

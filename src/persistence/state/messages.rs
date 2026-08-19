@@ -125,6 +125,53 @@ impl StateStore {
             .await
     }
 
+    pub async fn get_bounded_context_messages(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+        max_turns: usize,
+        max_messages: usize,
+    ) -> Result<(Vec<MessageRow>, bool)> {
+        let max_turns = max_turns.max(1);
+        let (turns, mut has_older) = match target {
+            SessionReadTarget::ActiveBranch => {
+                self.recent_branch_path_turns(session_id, None, max_turns)
+                    .await?
+            }
+            SessionReadTarget::BranchHead(branch_head_id) => {
+                self.recent_branch_path_turns(session_id, Some(*branch_head_id), max_turns)
+                    .await?
+            }
+            SessionReadTarget::TurnId(turn_id) => {
+                self.recent_turn_path_to_turn_id(session_id, *turn_id, max_turns)
+                    .await?
+            }
+            SessionReadTarget::SelectedPath(turn_ids) => {
+                let retain_from = turn_ids.len().saturating_sub(max_turns);
+                (
+                    self.turn_rows_for_selected_path(session_id, &turn_ids[retain_from..])
+                        .await?,
+                    retain_from > 0,
+                )
+            }
+        };
+        let mut messages = self.messages_for_turns(session_id, &turns).await?;
+        let max_messages = max_messages.max(1);
+        if messages.len() > max_messages {
+            let mut retain_from = messages.len().saturating_sub(max_messages);
+            while retain_from > 0
+                && messages[retain_from - 1].turn_index == messages[retain_from].turn_index
+            {
+                retain_from -= 1;
+            }
+            if retain_from > 0 {
+                messages.drain(0..retain_from);
+                has_older = true;
+            }
+        }
+        Ok((messages, has_older))
+    }
+
     pub async fn get_message_window(
         &self,
         session_id: i64,

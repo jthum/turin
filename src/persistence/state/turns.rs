@@ -261,7 +261,7 @@ impl StateStore {
         let Some(head_turn_id) = branch.head_turn_id else {
             return Ok(Vec::new());
         };
-        let (turns, _ancestry_queries) = self
+        let (turns, _has_older, _ancestry_queries) = self
             .ancestry_path_turns(session_id, head_turn_id, None)
             .await?;
         perf_stage_finish!(
@@ -276,6 +276,23 @@ impl StateStore {
         Ok(turns)
     }
 
+    pub(crate) async fn recent_branch_path_turns(
+        &self,
+        session_id: i64,
+        branch_head_id: Option<i64>,
+        max_turns: usize,
+    ) -> Result<(Vec<TurnRow>, bool)> {
+        let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
+            return Ok((Vec::new(), false));
+        };
+        let Some(head_turn_id) = branch.head_turn_id else {
+            return Ok((Vec::new(), false));
+        };
+        self.ancestry_path_turns(session_id, head_turn_id, Some(max_turns.max(1)))
+            .await
+            .map(|(turns, has_older, _)| (turns, has_older))
+    }
+
     pub(crate) async fn turn_path_to_turn_id(
         &self,
         session_id: i64,
@@ -283,7 +300,18 @@ impl StateStore {
     ) -> Result<Vec<TurnRow>> {
         self.ancestry_path_turns(session_id, turn_id, None)
             .await
-            .map(|(turns, _)| turns)
+            .map(|(turns, _, _)| turns)
+    }
+
+    pub(crate) async fn recent_turn_path_to_turn_id(
+        &self,
+        session_id: i64,
+        turn_id: i64,
+        max_turns: usize,
+    ) -> Result<(Vec<TurnRow>, bool)> {
+        self.ancestry_path_turns(session_id, turn_id, Some(max_turns.max(1)))
+            .await
+            .map(|(turns, has_older, _)| (turns, has_older))
     }
 
     async fn ancestry_path_turns(
@@ -291,7 +319,7 @@ impl StateStore {
         session_id: i64,
         head_turn_id: i64,
         max_turns: Option<usize>,
-    ) -> Result<(Vec<TurnRow>, usize)> {
+    ) -> Result<(Vec<TurnRow>, bool, usize)> {
         let conn = self.connect().await?;
         let Some(head) = self.get_turn_row_with_conn(&conn, head_turn_id).await? else {
             anyhow::bail!("Turn {} could not be loaded", head_turn_id);
@@ -365,8 +393,12 @@ impl StateStore {
             upper_depth = lower_depth - 1;
         }
 
+        let has_older = reverse_path
+            .last()
+            .and_then(|oldest_loaded| oldest_loaded.parent_turn_id)
+            .is_some();
         reverse_path.reverse();
-        Ok((reverse_path, ancestry_queries))
+        Ok((reverse_path, has_older, ancestry_queries))
     }
 
     pub(crate) async fn turn_rows_for_selected_path(
