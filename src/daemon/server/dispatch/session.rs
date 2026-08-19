@@ -188,6 +188,41 @@ pub(super) async fn graph_get(
     )
 }
 
+pub(super) async fn family_get(
+    id: Option<String>,
+    params: SessionIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    optional_response(
+        id,
+        guard.get_session_family(&params.session_id).await,
+        "session family",
+        ErrorCode::SessionNotFound,
+        || format!("Session '{}' not found", params.session_id),
+    )
+}
+
+pub(super) async fn archive(
+    id: Option<String>,
+    params: SessionIdParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    match guard.archive_linked_session(&params.session_id).await {
+        Ok(Some(archived)) => ResponseEnvelope::ok(
+            id,
+            serde_json::json!({ "session_id": params.session_id, "archived": archived }),
+        ),
+        Ok(None) => not_found_error(
+            id,
+            ErrorCode::SessionNotFound,
+            format!("Session '{}' not found", params.session_id),
+        ),
+        Err(error) => validation_error(id, error),
+    }
+}
+
 pub(super) async fn set_title(
     id: Option<String>,
     params: SessionTitleParams,

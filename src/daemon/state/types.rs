@@ -56,6 +56,27 @@ pub struct SessionSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SessionFamilyMember {
+    pub session: SessionSummary,
+    pub depth: usize,
+    pub direct_children: usize,
+    pub live_slots: Vec<String>,
+    pub active_tasks: usize,
+    pub queued_tasks: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionFamilyDetail {
+    pub requested_session_id: String,
+    pub root_session_id: String,
+    pub requested_depth: usize,
+    pub direct_children: usize,
+    pub descendants: usize,
+    pub family_size: usize,
+    pub members: Vec<SessionFamilyMember>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionEventDetail {
     pub id: i64,
     pub event_type: String,

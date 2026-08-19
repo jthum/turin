@@ -318,6 +318,11 @@ impl AgentManager {
         let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
             .await?;
+        if let Some(linked) = linked.as_ref()
+            && linked.visibility == "archived"
+        {
+            store.restore_linked_session(linked.id).await?;
+        }
         let promotion_origin_turn_id = linked
             .as_ref()
             .and_then(|session| session.origin_turn_id)

@@ -9,8 +9,8 @@ use turin_daemon_protocol::{
 use crate::client::ControlClient;
 use crate::models::{
     LiveSession, LiveSessionList, SessionActionResult, SessionBranchDetail, SessionBranchList,
-    SessionDetail, SessionGraphDetail, SessionList, SessionSearchHit, SessionSearchResultList,
-    SessionSummary,
+    SessionDetail, SessionFamilyDetail, SessionGraphDetail, SessionList, SessionSearchHit,
+    SessionSearchResultList, SessionSummary,
 };
 
 impl ControlClient {
@@ -18,6 +18,26 @@ impl ControlClient {
         self.request_ok(
             None,
             DaemonRequest::SessionGraphGet(SessionIdParams {
+                session_id: session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_session_family(&self, session_id: &str) -> Result<SessionFamilyDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionFamilyGet(SessionIdParams {
+                session_id: session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    pub async fn archive_linked_session(&self, session_id: &str) -> Result<serde_json::Value> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionArchive(SessionIdParams {
                 session_id: session_id.to_string(),
             }),
         )

@@ -104,6 +104,8 @@ pub(super) async fn dispatch(
         DaemonRequest::SessionResume(params) => session::resume(id, params, &context).await,
         DaemonRequest::SessionGet(params) => session::get(id, params, &context).await,
         DaemonRequest::SessionGraphGet(params) => session::graph_get(id, params, &context).await,
+        DaemonRequest::SessionFamilyGet(params) => session::family_get(id, params, &context).await,
+        DaemonRequest::SessionArchive(params) => session::archive(id, params, &context).await,
         DaemonRequest::SessionSetTitle(params) => session::set_title(id, params, &context).await,
         DaemonRequest::SessionDelete(params) => session::delete(id, params, &context).await,
         DaemonRequest::SessionBranchList(params) => {

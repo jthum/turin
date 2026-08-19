@@ -288,6 +288,28 @@ fn promote_task_request_round_trips_typed_shape() {
 }
 
 #[test]
+fn linked_family_operations_use_session_id_params() {
+    for (request, expected_op) in [
+        (
+            DaemonRequest::SessionFamilyGet(SessionIdParams {
+                session_id: "child@state".to_string(),
+            }),
+            "session.family_get",
+        ),
+        (
+            DaemonRequest::SessionArchive(SessionIdParams {
+                session_id: "child@state".to_string(),
+            }),
+            "session.archive",
+        ),
+    ] {
+        let value = serde_json::to_value(RequestEnvelope::new(None, request)).unwrap();
+        assert_eq!(value["op"], expected_op);
+        assert_eq!(value["params"]["session_id"], "child@state");
+    }
+}
+
+#[test]
 fn harness_action_run_request_round_trips_typed_shape() {
     let request = RequestEnvelope::new(
         Some("req_action".to_string()),

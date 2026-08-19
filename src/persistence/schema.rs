@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 32;
+pub(crate) const SCHEMA_VERSION: u32 = 33;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     thread_key            TEXT,
     visibility            TEXT NOT NULL DEFAULT 'top_level',
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    CHECK (visibility IN ('top_level', 'contextual', 'hidden')),
+    CHECK (visibility IN ('top_level', 'contextual', 'hidden', 'archived')),
     CHECK (
         (parent_session_id IS NULL AND root_session_id IS NULL AND relation_kind IS NULL AND thread_key IS NULL AND visibility = 'top_level')
         OR

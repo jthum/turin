@@ -144,6 +144,10 @@ Delete persisted session:
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are
   discovered through their indexed parent relationship rather than mixed into the
   conversation list.
+- Explicit linked-session archival marks an idle subtree `archived` atomically. Archived
+  children disappear from normal linked lists but remain in family topology and storage;
+  deleting them remains a separate explicit operation. Reusing an archived named thread
+  restores it to contextual visibility.
 - Relationship indexes are partial and contain linked rows only; top-level sessions do
   not pay index-entry storage for nullable parent/root/thread relationships.
 - Family statistics read only session ids and parent ids. They must not materialize

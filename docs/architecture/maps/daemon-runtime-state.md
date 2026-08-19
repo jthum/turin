@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The daemon runtime state surface bridges daemon protocol handlers to the kernel agent manager and persisted session stores. It owns runtime task submission, live session control, sidestep execution, session listing/search/detail/deletion, and branch operations.
+The daemon runtime state surface bridges daemon protocol handlers to the kernel agent manager and persisted session stores. It owns runtime task submission, live session control, sidestep execution, session listing/search/detail/deletion, linked-family topology and archival, and branch operations.
 
 This subsystem should preserve three guarantees:
 

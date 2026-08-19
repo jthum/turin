@@ -2315,9 +2315,10 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
     let root_id = store
         .create_session(root_public_id, "default", None)
         .await?;
+    let child_public_id = uuid::Uuid::now_v7();
     store
         .create_linked_session(
-            uuid::Uuid::now_v7(),
+            child_public_id,
             "reviewer",
             None,
             &LinkedSessionCreate {
@@ -2343,6 +2344,36 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
     assert_eq!(children[0].parent_internal_id, Some(root_id));
     assert_eq!(children[0].thread_key.as_deref(), Some("review"));
     assert_eq!(children[0].visibility, "contextual");
+
+    let family = state
+        .get_session_family(&child_public_id.simple().to_string())
+        .await?
+        .expect("child family exists");
+    assert_eq!(family.family_size, 2);
+    assert_eq!(family.requested_depth, 1);
+    assert_eq!(family.members.len(), 2);
+
+    assert_eq!(
+        state
+            .archive_linked_session(&child_public_id.simple().to_string())
+            .await?,
+        Some(1)
+    );
+    let visible_children = state
+        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0)
+        .await?
+        .expect("root exists");
+    assert!(visible_children.is_empty());
+    let archived_family = state
+        .get_session_family(&root_public_id.simple().to_string())
+        .await?
+        .expect("root family exists");
+    assert!(
+        archived_family
+            .members
+            .iter()
+            .any(|member| member.session.visibility == "archived")
+    );
     Ok(())
 }
 

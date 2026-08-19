@@ -41,6 +41,8 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 - `DaemonRequest` variant serde names are the daemon wire contract.
 - `session.delete` uses the shared session-id shape and remains transport
   independent; deletion semantics belong to daemon state and persistence.
+- `session.family_get` is an on-demand relationship/runtime projection;
+  `session.archive` marks an idle linked subtree without deleting it.
 - Response error codes serialize as snake_case.
 - Default values must stay explicit where they affect wire behavior.
 - Domain DTO modules should not depend on daemon server, manager, or control-client code.

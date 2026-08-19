@@ -132,9 +132,25 @@ impl StateStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionRow>> {
+        self.list_linked_session_rows_with_archived(parent_session_id, limit, offset, false)
+            .await
+    }
+
+    pub async fn list_linked_session_rows_with_archived(
+        &self,
+        parent_session_id: i64,
+        limit: usize,
+        offset: usize,
+        include_archived: bool,
+    ) -> Result<Vec<SessionRow>> {
         let conn = self.connect().await?;
+        let archived_filter = if include_archived {
+            ""
+        } else {
+            " AND visibility != 'archived'"
+        };
         let sql = format!(
-            "{SESSION_SELECT} WHERE parent_session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3"
+            "{SESSION_SELECT} WHERE parent_session_id = ?1{archived_filter} ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3"
         );
         let mut rows = conn
             .query(
@@ -147,6 +163,39 @@ impl StateStore {
             sessions.push(map_session_row(&row)?);
         }
         Ok(sessions)
+    }
+
+    pub async fn archive_linked_session_family(&self, session_id: i64) -> Result<usize> {
+        let Some(session) = self.get_session_row(session_id).await? else {
+            return Ok(0);
+        };
+        anyhow::ensure!(
+            session.parent_session_id.is_some(),
+            "Top-level sessions cannot be archived as linked work"
+        );
+        let mut family = self.list_linked_session_descendants(session_id).await?;
+        family.push(session);
+        let mut conn = self.connect().await?;
+        let tx = conn.transaction().await?;
+        for row in &family {
+            tx.execute(
+                "UPDATE sessions SET visibility = 'archived' WHERE id = ?1",
+                [row.id],
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(family.len())
+    }
+
+    pub async fn restore_linked_session(&self, session_id: i64) -> Result<()> {
+        let conn = self.connect().await?;
+        conn.execute(
+            "UPDATE sessions SET visibility = 'contextual' WHERE id = ?1 AND visibility = 'archived'",
+            [session_id],
+        )
+        .await?;
+        Ok(())
     }
 
     /// Count one session's children and descendants without loading transcripts or session rows.
