@@ -125,6 +125,8 @@ Delete persisted session:
   exists. Reusing that child preserves its first origin rather than moving the thread.
 - Repeated peer calls without an explicit `thread` reuse the `default` child thread.
   A named `thread` creates or reuses a separate child context under the same parent.
+- Peer mode `fresh` generates a unique durable child thread for a one-shot independent
+  context. It remains promotable and inspectable but is never selected by a later default call.
 - Linked-session durability is independent of runtime residency. Any number of logical
   children may exist, but each agent owns at most its configured number of hot linked Lua
   runtimes; colliding threads execute serially and switch session context at envelope boundaries.

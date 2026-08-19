@@ -15,7 +15,7 @@ use crate::persistence::schema::SessionRow;
 use crate::persistence::state::StateStore;
 
 use super::{
-    AgentManager, AgentRuntimeHandle, DelegationAdmission, LinkedSessionTarget,
+    AgentManager, AgentRuntimeHandle, DelegationAdmission, LinkedSessionMode, LinkedSessionTarget,
     PeerAgentTaskEnvelope, PeerAgentTaskResult, PeerTaskSubmission, PendingTaskRecord,
     PendingTaskState, PromotedTaskBranch, PromotedTaskBranchFingerprint, RuntimeSlotKey,
     SessionContextOverrides, TaskBranchOutcomeFingerprint, TaskSessionTarget,
@@ -257,10 +257,11 @@ impl AgentManager {
         origin_session_id: &str,
         origin_turn_id: Option<i64>,
         agent_id: &str,
-        thread_key: &str,
+        mode: LinkedSessionMode,
         mut task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
+        let thread_key = mode.into_thread_key();
         let thread_key = thread_key.trim();
         anyhow::ensure!(!thread_key.is_empty(), "Peer thread key must not be empty");
         anyhow::ensure!(

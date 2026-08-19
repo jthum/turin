@@ -1273,12 +1273,18 @@ Peer-agent orchestration API.
 
 ```lua
 {
+  mode = "thread", -- default; reuse a logical child context
+  thread = "review", -- default key is "default"
   capabilities = {
     ["runtime.db.query"] = true,
     ["runtime.db.exec"] = false,
   }
 }
 ```
+
+Use `{ mode = "fresh" }` to create a durable one-shot child context. `fresh` cannot be
+combined with `thread`; Turin generates an isolated thread key. Reusable threads and fresh
+contexts are both linked sessions with independent turn trees.
 
 `opts` for `await`:
 
@@ -1793,12 +1799,15 @@ Selector-derived scoped data aliases based on the active `RuntimeIdentity`.
   - `opts.agent_id` (defaults to current configured agent id)
   - `opts.capabilities` (delegated ceiling)
   - `opts.execution`
+  - `opts.mode = "thread"|"fresh"` (`thread` is the default)
+  - `opts.thread` names a reusable child context when mode is `thread`
 - `agent.ask(prompt, opts?) -> output`
   - submits to a peer agent and awaits result in one call
   - `opts.agent_id` (defaults to current configured agent id)
   - `opts.timeout_ms`
   - `opts.capabilities` (delegated ceiling)
   - `opts.execution`
+  - `opts.mode = "thread"|"fresh"` and optional reusable `opts.thread`
 
 ### Runtime retention
 

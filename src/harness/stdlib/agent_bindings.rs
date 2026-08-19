@@ -29,8 +29,8 @@ use crate::kernel::task_promotion::promote_task_result;
 use branch_lua::{branch_row_to_lua_table, branch_rows_to_lua_table};
 use options::{
     opt_activate, opt_conflict_policy, opt_execution_overrides, opt_from_turn_index,
-    opt_peer_agent_id, opt_session_id, opt_sidestep_context_target, opt_sidestep_mode, opt_slot_id,
-    peer_prompt_task, sidestep_opts_table_from_value,
+    opt_linked_session_mode, opt_peer_agent_id, opt_session_id, opt_sidestep_context_target,
+    opt_sidestep_mode, opt_slot_id, peer_prompt_task, sidestep_opts_table_from_value,
 };
 use queue::queue_push_many;
 pub(crate) use queue::{active_trace_id, queue_max, queue_push_one};
@@ -44,7 +44,7 @@ struct PreparedPeerSubmission {
     target_agent: String,
     origin_session_id: String,
     origin_turn_id: Option<i64>,
-    thread_key: String,
+    session_mode: crate::kernel::agent_manager::LinkedSessionMode,
     task: QueuedTask,
     delegated_capabilities: Option<BTreeMap<String, bool>>,
 }
@@ -97,15 +97,16 @@ fn prepare_peer_submission(
             .and_then(|context| context.turn_id);
         (session_id, turn_id)
     };
-    let thread_key = opts
-        .and_then(|table| table.get::<String>("thread").ok())
-        .unwrap_or_else(|| "default".to_string());
+    let session_mode = match opt_linked_session_mode(opts) {
+        Ok(mode) => mode,
+        Err(err) => return Ok(Err(err)),
+    };
 
     Ok(Ok(PreparedPeerSubmission {
         target_agent,
         origin_session_id,
         origin_turn_id,
-        thread_key,
+        session_mode,
         task,
         delegated_capabilities,
     }))
@@ -398,7 +399,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             &prepared.origin_session_id,
                             prepared.origin_turn_id,
                             &prepared.target_agent,
-                            &prepared.thread_key,
+                            prepared.session_mode,
                             prepared.task,
                             prepared.delegated_capabilities,
                         )
@@ -442,7 +443,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                             &prepared.origin_session_id,
                             prepared.origin_turn_id,
                             &prepared.target_agent,
-                            &prepared.thread_key,
+                            prepared.session_mode,
                             prepared.task,
                             prepared.delegated_capabilities,
                         )

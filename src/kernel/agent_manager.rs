@@ -254,6 +254,22 @@ struct TaskSessionTarget {
     reserves_new_child: bool,
 }
 
+/// Selects whether linked delegation reuses a logical child context or creates a new one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkedSessionMode {
+    Thread(String),
+    Fresh,
+}
+
+impl LinkedSessionMode {
+    fn into_thread_key(self) -> String {
+        match self {
+            Self::Thread(key) => key,
+            Self::Fresh => format!("fresh-{}", uuid::Uuid::now_v7().simple()),
+        }
+    }
+}
+
 impl TaskSessionTarget {
     fn matches_session(&self, session_id: &str) -> bool {
         self.session_id.as_deref().is_some_and(|target| {

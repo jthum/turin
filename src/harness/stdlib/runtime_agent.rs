@@ -13,6 +13,7 @@ use crate::harness::stdlib::governance_support::{
     require_child_agent as require_child_agent_governance,
 };
 use crate::harness::stdlib::policy_support::{policy_bool, runtime_policy_snapshot};
+use crate::kernel::agent_manager::LinkedSessionMode;
 use crate::kernel::prepare_persisted_session_sidestep;
 use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, QueuedTask, SidestepMode,
@@ -30,7 +31,7 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
 fn linked_submission_scope(
     app_data: &HarnessAppData,
     opts: Option<&Table>,
-) -> std::result::Result<(String, Option<i64>, String), String> {
+) -> std::result::Result<(String, Option<i64>, LinkedSessionMode), String> {
     let (origin_session_id, origin_turn_id) = {
         let execution = app_data
             .execution_ctx
@@ -46,10 +47,21 @@ fn linked_submission_scope(
             .and_then(|context| context.turn_id);
         (session_id, turn_id)
     };
-    let thread_key = opts
-        .and_then(|table| table.get::<String>("thread").ok())
-        .unwrap_or_else(|| "default".to_string());
-    Ok((origin_session_id, origin_turn_id, thread_key))
+    let mode = opts
+        .and_then(|table| table.get::<String>("mode").ok())
+        .unwrap_or_else(|| "thread".to_string());
+    let thread = opts.and_then(|table| table.get::<String>("thread").ok());
+    let mode = match mode.as_str() {
+        "thread" => LinkedSessionMode::Thread(thread.unwrap_or_else(|| "default".to_string())),
+        "fresh" if thread.is_none() => LinkedSessionMode::Fresh,
+        "fresh" => return Err("peer mode='fresh' cannot be combined with thread".to_string()),
+        other => {
+            return Err(format!(
+                "invalid peer mode '{other}'; expected thread|fresh"
+            ));
+        }
+    };
+    Ok((origin_session_id, origin_turn_id, mode))
 }
 
 fn parse_submit_task(
@@ -326,7 +338,7 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.submit",
                     )?;
-                    let (origin_session_id, origin_turn_id, thread_key) =
+                    let (origin_session_id, origin_turn_id, session_mode) =
                         match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
                             Ok(scope) => scope,
                             Err(err) => return nil_err(lua, &err),
@@ -339,7 +351,7 @@ pub fn register_runtime_agent_namespace(
                                 &origin_session_id,
                                 origin_turn_id,
                                 &agent_id,
-                                &thread_key,
+                                session_mode,
                                 task,
                                 delegated_capabilities,
                             )
@@ -499,7 +511,7 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.ask",
                     )?;
-                    let (origin_session_id, origin_turn_id, thread_key) =
+                    let (origin_session_id, origin_turn_id, session_mode) =
                         match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
                             Ok(scope) => scope,
                             Err(err) => return nil_err(lua, &err),
@@ -512,7 +524,7 @@ pub fn register_runtime_agent_namespace(
                                 &origin_session_id,
                                 origin_turn_id,
                                 &agent_id,
-                                &thread_key,
+                                session_mode,
                                 task,
                                 delegated_capabilities,
                             )

@@ -50,6 +50,8 @@ Peer-agent calls:
 4. `AgentManager` owns peer submission and result waiting.
 5. Linked-session admission checks persisted ancestry, direct fan-out, outstanding
    children, and any trace-scoped root delegation budget before queueing work.
+6. `mode = "thread"` reuses a named logical child context; `mode = "fresh"` assigns a
+   unique child key for one-shot durable delegation. The omitted mode remains `thread`.
 
 Session branch helpers:
 
@@ -100,6 +102,8 @@ Linked runtime residency:
 - Cooperative family cancellation reaches materialized and not-yet-materialized linked
   descendants. Force-killing a family is rejected because physical lanes may contain
   unrelated logical sessions.
+- Context choices reuse existing primitives: ephemeral sidesteps are asides, durable
+  fork-sibling sidesteps are branches, and peer submissions are reusable or fresh linked threads.
 - Linked runtime lane reuse must switch sessions only between envelopes. It must never
   reset a lane globally while another logical session has queued work.
 - Force-killing the active session in a shared linked lane must reject the operation

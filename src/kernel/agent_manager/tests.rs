@@ -1239,7 +1239,7 @@ async fn linked_submission_depth_uses_persisted_session_ancestry() -> anyhow::Re
             &child_public_id.simple().to_string(),
             None,
             "worker",
-            "too-deep",
+            LinkedSessionMode::Thread("too-deep".to_string()),
             QueuedTask::ad_hoc("reject"),
             None,
         )

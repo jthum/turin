@@ -6558,6 +6558,18 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             if isolated == nil then error("named thread await failed: " .. tostring(isolated_await_err)) end
             if isolated.status ~= "success" then error("named peer thread should succeed") end
 
+            for index = 1, 2 do
+                local fresh_id, fresh_err = runtime.agent.submit(
+                    "worker",
+                    { prompt = "fresh review " .. tostring(index) },
+                    { mode = "fresh" }
+                )
+                if fresh_id == nil then error("fresh submit failed: " .. tostring(fresh_err)) end
+                local fresh, fresh_await_err = runtime.agent.await(fresh_id, { timeout_ms = 5000 })
+                if fresh == nil then error("fresh await failed: " .. tostring(fresh_await_err)) end
+                if fresh.status ~= "success" then error("fresh peer task should succeed") end
+            end
+
             -- Five logical threads force at least one collision across four physical lanes.
             -- Each must still activate and preserve its own durable linked session.
             for index = 1, 5 do
@@ -6692,7 +6704,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         .await?;
     assert_eq!(
         linked.len(),
-        7,
+        9,
         "logical peer threads should remain isolated while sharing bounded runtime lanes"
     );
     assert!(linked.iter().all(|row| row.agent_id == "worker"));
@@ -6718,7 +6730,11 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         .filter_map(|row| row.thread_key.as_deref())
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(
-        thread_keys,
+        thread_keys
+            .iter()
+            .filter(|key| !key.starts_with("fresh-"))
+            .copied()
+            .collect::<std::collections::HashSet<_>>(),
         std::collections::HashSet::from([
             "default",
             "independent-review",
@@ -6728,6 +6744,14 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             "pool-4",
             "pool-5",
         ])
+    );
+    assert_eq!(
+        thread_keys
+            .iter()
+            .filter(|key| key.starts_with("fresh-"))
+            .count(),
+        2,
+        "fresh peer submissions must not reuse a logical child context"
     );
     assert_eq!(store.list_session_rows(10, 0).await?.len(), 1);
     let promoted = store
