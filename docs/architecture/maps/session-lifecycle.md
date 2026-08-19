@@ -121,6 +121,9 @@ Delete persisted session:
   exists. Reusing that child preserves its first origin rather than moving the thread.
 - Repeated peer calls without an explicit `thread` reuse the `default` child thread.
   A named `thread` creates or reuses a separate child context under the same parent.
+- Successful linked-task results are promotable from their recorded origin into a new
+  parent branch; promotion copies the task/result boundary, not the child's internal
+  transcript or tool lifecycle.
 - Normal persisted-session listing returns top-level sessions only. Linked sessions are
   discovered through their indexed parent relationship rather than mixed into the
   conversation list.

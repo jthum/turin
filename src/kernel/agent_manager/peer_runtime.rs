@@ -122,7 +122,11 @@ impl PeerRuntime {
         let prompt_preview = task_prompt_preview(&envelope.task.prompt);
         self.prepare_task_execution(request_id.clone(), runtime_task_id);
         let result = self
-            .run_queued_task(envelope.task, envelope.delegated_capabilities)
+            .run_queued_task(
+                envelope.task,
+                envelope.delegated_capabilities,
+                envelope.promotion_candidate,
+            )
             .await;
 
         if let Some(tx_result) = envelope.result_tx {
@@ -211,6 +215,7 @@ impl PeerRuntime {
         &mut self,
         mut task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
+        linked_promotion_candidate: Option<TaskPromotionCandidate>,
     ) -> Result<PeerRunOutcome> {
         self.allocate_runtime_task_id(&mut task);
 
@@ -407,9 +412,13 @@ impl PeerRuntime {
 
             let output = self.host.last_assistant_text(&self.session);
             let assistant_content = self.host.last_assistant_content(&self.session);
-            let promotion_candidate = self
-                .host
-                .promotable_detached_candidate(&self.session, run_result.status);
+            let promotion_candidate = (run_result.status == TaskTerminalStatus::Success)
+                .then_some(linked_promotion_candidate)
+                .flatten()
+                .or_else(|| {
+                    self.host
+                        .promotable_detached_candidate(&self.session, run_result.status)
+                });
 
             Ok(PeerRunOutcome {
                 runtime_task_id: task.task_id.clone(),

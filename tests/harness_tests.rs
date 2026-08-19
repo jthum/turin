@@ -6440,6 +6440,13 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             if second == nil then error("second runtime.agent.await failed: " .. tostring(second_await_err)) end
             if second.status ~= "success" then error("second peer task should succeed") end
 
+            local promoted, promote_err = runtime.agent.promote(second_id, {
+                branch_name = "promoted-peer-review"
+            })
+            if promoted == nil then error("linked peer promotion failed: " .. tostring(promote_err)) end
+            if promoted.name ~= "promoted-peer-review" then error("unexpected promoted branch name") end
+            if promoted.origin_kind ~= "promotion" then error("linked promotion provenance missing") end
+
             local isolated_id, isolated_err = runtime.agent.submit(
                 "worker",
                 { prompt = "review independently", title = "independent review" },
@@ -6587,6 +6594,23 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         std::collections::HashSet::from(["default", "independent-review"])
     );
     assert_eq!(store.list_session_rows(10, 0).await?.len(), 1);
+    let promoted = store
+        .get_branch_head_by_name(root_session_id, "promoted-peer-review")
+        .await?
+        .expect("linked peer result should promote into the parent turn tree");
+    assert_eq!(promoted.origin_kind, "promotion");
+    let provenance: serde_json::Value = serde_json::from_str(
+        promoted
+            .origin_metadata
+            .as_deref()
+            .expect("linked promotion should retain source-session provenance"),
+    )?;
+    assert!(
+        provenance
+            .get("source_session_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+    );
 
     kernel.end_session(&mut session).await?;
 

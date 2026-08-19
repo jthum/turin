@@ -391,6 +391,7 @@ impl ExecutionHost {
         Some(TaskPromotionCandidate {
             session_id: self.session_reference(session),
             source_turn_id,
+            source_session_id: None,
         })
     }
 

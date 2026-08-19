@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTask};
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
-use crate::kernel::task_promotion::promote_task_result;
+use crate::kernel::task_promotion::{TaskPromotionCandidate, promote_task_result};
 use crate::persistence::schema::LinkedSessionCreate;
 
 use super::{
@@ -274,10 +274,14 @@ impl AgentManager {
         let runtime_key =
             RuntimeSlotKey::linked_for(agent_id, &parent_session_reference, thread_key);
 
-        let handle = if let Some(linked) = store
+        let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
-            .await?
-        {
+            .await?;
+        let promotion_origin_turn_id = linked
+            .as_ref()
+            .and_then(|session| session.origin_turn_id)
+            .or(origin_turn_id);
+        let handle = if let Some(linked) = linked {
             let public_id = uuid::Uuid::from_slice(&linked.public_id)
                 .context("Linked session has an invalid public id")?
                 .simple()
@@ -291,7 +295,7 @@ impl AgentManager {
         } else {
             self.ensure_runtime_slot_linked(
                 runtime_key.clone(),
-                state_selector,
+                state_selector.clone(),
                 None,
                 SessionContextOverrides::default(),
                 LinkedSessionCreate {
@@ -305,8 +309,21 @@ impl AgentManager {
             .await?
         };
 
-        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities)
-            .await
+        let promotion_candidate =
+            promotion_origin_turn_id.map(|source_turn_id| TaskPromotionCandidate {
+                session_id: parent_session_reference,
+                source_turn_id,
+                source_session_id: handle.control.current_session_id(),
+            });
+
+        self.submit_to_handle(
+            runtime_key,
+            handle,
+            task,
+            delegated_capabilities,
+            promotion_candidate,
+        )
+        .await
     }
 
     pub async fn submit_to_session(
@@ -328,7 +345,7 @@ impl AgentManager {
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
         let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
-        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities)
+        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities, None)
             .await
     }
 
@@ -338,6 +355,7 @@ impl AgentManager {
         handle: Arc<AgentRuntimeHandle>,
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
+        promotion_candidate: Option<TaskPromotionCandidate>,
     ) -> Result<String> {
         let trace_id = task.trace_id.clone();
         let title = task.title.clone();
@@ -372,6 +390,7 @@ impl AgentManager {
                     request_id: Some(request_id.clone()),
                     result_tx: Some(tx_result),
                     delegated_capabilities,
+                    promotion_candidate,
                 },
             )
             .await

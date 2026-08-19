@@ -554,12 +554,14 @@ impl BranchProvenance {
         }
     }
 
-    pub fn promotion(task_id: Option<String>) -> Self {
+    pub fn promotion(task_id: Option<String>, source_session_id: Option<String>) -> Self {
         Self {
             origin_kind: "promotion".to_string(),
             origin_task_id: task_id,
             origin_execution_id: None,
-            origin_metadata: None,
+            origin_metadata: source_session_id.map(|session_id| {
+                serde_json::json!({ "source_session_id": session_id }).to_string()
+            }),
         }
     }
 }

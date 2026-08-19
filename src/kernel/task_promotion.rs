@@ -13,6 +13,8 @@ use turin_types::TaskInputContent;
 pub struct TaskPromotionCandidate {
     pub session_id: String,
     pub source_turn_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -78,7 +80,10 @@ pub(crate) async fn promote_task_result(
             &branch_name,
             promotion.source_turn_id,
             false,
-            BranchProvenance::promotion(origin_task_id.map(str::to_string)),
+            BranchProvenance::promotion(
+                origin_task_id.map(str::to_string),
+                promotion.source_session_id.clone(),
+            ),
         )
         .await?;
     let turn_target = store

@@ -482,6 +482,7 @@ struct PeerAgentTaskEnvelope {
     request_id: Option<String>,
     result_tx: Option<oneshot::Sender<PeerAgentTaskResult>>,
     delegated_capabilities: Option<BTreeMap<String, bool>>,
+    promotion_candidate: Option<TaskPromotionCandidate>,
 }
 
 /// A handle to a running peer agent.

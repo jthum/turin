@@ -63,6 +63,15 @@ Session metadata helpers:
 2. The requested or active session resolves through the same store helper as branch operations.
 3. Normal updates preserve unrelated metadata; `if_empty = true` uses a database-side conditional update so generated titles cannot overwrite an existing title.
 
+Peer result promotion:
+
+1. A linked peer task completed from a durable parent turn carries that parent/origin
+   as its promotion target.
+2. `agent.promote` or `runtime.agent.promote` creates a sibling branch from the
+   origin turn and writes the delegated input plus selected assistant result.
+3. Branch provenance retains the linked source session. Internal child tool/event
+   history remains in the child session and is not merged into the parent transcript.
+
 ## Invariants
 
 - `agent.spawn` requires `runtime.agent.spawn`.

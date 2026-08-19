@@ -403,6 +403,7 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
         request_id: Some(request_id.clone()),
         result_tx: Some(tx_result),
         delegated_capabilities: None,
+        promotion_candidate: None,
     });
 
     manager.runtimes.write().await.insert(
@@ -540,6 +541,7 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
         request_id: Some(request_id.clone()),
         result_tx: Some(tx_result),
         delegated_capabilities: None,
+        promotion_candidate: None,
     });
 
     manager.runtimes.write().await.insert(
@@ -634,6 +636,7 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
         request_id: Some(queued_request_id.clone()),
         result_tx: Some(tx_result),
         delegated_capabilities: None,
+        promotion_candidate: None,
     });
 
     manager.runtimes.write().await.insert(
