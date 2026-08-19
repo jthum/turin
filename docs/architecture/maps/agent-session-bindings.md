@@ -76,6 +76,7 @@ Linked runtime residency:
 
 1. The parent session and thread key identify a durable logical child session.
 2. Their stable hash selects one of four physical runtime lanes for the target agent.
+   Busy lanes belonging to same-agent ancestors are excluded to prevent await cycles.
 3. Each task envelope carries its linked-session target; the lane creates or resumes
    that target before allocating the runtime task id and running inference.
 4. Threads sharing a lane queue serially, bounding resident Lua VMs without combining
@@ -91,6 +92,9 @@ Linked runtime residency:
   temporary grants; nested delegation may narrow authority but never widen it.
 - Linked runtime lane reuse must switch sessions only between envelopes. It must never
   reset a lane globally while another logical session has queued work.
+- Resolve live linked-session affinity before hashing or probing a new lane.
+- Same-agent delegation must never queue onto a busy ancestor's lane. If every linked
+  lane is occupied by an awaiting ancestor, fail with bounded-capacity feedback.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.

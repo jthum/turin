@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -9,6 +9,8 @@ use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTa
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::kernel::task_promotion::{TaskPromotionCandidate, promote_task_result};
 use crate::persistence::schema::LinkedSessionCreate;
+use crate::persistence::schema::SessionRow;
+use crate::persistence::state::StateStore;
 
 use super::{
     AgentManager, AgentRuntimeHandle, LinkedSessionTarget, PeerAgentTaskEnvelope,
@@ -271,9 +273,6 @@ impl AgentManager {
             .ok_or_else(|| anyhow!("Origin session '{}' not found", origin_session_id))?;
         let parent_session_reference =
             format_session_reference(&session_ref.public_id, &state_selector);
-        let runtime_key =
-            RuntimeSlotKey::linked_for(agent_id, &parent_session_reference, thread_key);
-
         let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
             .await?;
@@ -289,6 +288,37 @@ impl AgentManager {
             Some(format_session_reference(&public_id, &state_selector))
         } else {
             None
+        };
+        let runtime_key = if let Some(linked_session_id) = linked_session_id.as_deref() {
+            self.find_runtimes_by_session(linked_session_id)
+                .await
+                .into_iter()
+                .find_map(|(runtime_key, _)| {
+                    (runtime_key.agent_id == agent_id && runtime_key.is_linked())
+                        .then_some(runtime_key)
+                })
+        } else {
+            None
+        };
+        let runtime_key = match runtime_key {
+            Some(runtime_key) => runtime_key,
+            None => {
+                let excluded_slots = self
+                    .occupied_ancestor_linked_slots(&store, &parent, agent_id)
+                    .await?;
+                RuntimeSlotKey::linked_for_excluding(
+                    agent_id,
+                    &parent_session_reference,
+                    thread_key,
+                    &excluded_slots,
+                )
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Same-agent delegation requires another linked runtime lane, but all {} lanes are occupied by awaiting ancestors",
+                        RuntimeSlotKey::linked_lane_capacity()
+                    )
+                })?
+            }
         };
         let link = LinkedSessionCreate {
             parent_session_id: parent.id,
@@ -330,6 +360,60 @@ impl AgentManager {
             }),
         )
         .await
+    }
+
+    pub(super) async fn occupied_ancestor_linked_slots(
+        &self,
+        store: &StateStore,
+        parent: &SessionRow,
+        target_agent_id: &str,
+    ) -> Result<HashSet<String>> {
+        let live_ancestor_slots = {
+            let runtimes = self.runtimes.read().await;
+            runtimes
+                .iter()
+                .filter_map(|(runtime_key, handle)| {
+                    if runtime_key.agent_id != target_agent_id
+                        || !runtime_key.is_linked()
+                        || (handle.active_tasks.load(Ordering::Relaxed) == 0
+                            && handle.queued_tasks.load(Ordering::Relaxed) == 0)
+                    {
+                        return None;
+                    }
+                    let session_id = handle.control.current_session_id()?;
+                    let public_id = parse_session_reference(&session_id).ok()?.public_id;
+                    Some((public_id, runtime_key.slot_id.clone()))
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        if live_ancestor_slots.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let mut occupied = HashSet::new();
+        let mut current = Some(parent.clone());
+        let mut visited = HashSet::new();
+        while let Some(session) = current {
+            anyhow::ensure!(
+                visited.insert(session.id),
+                "Linked session ancestry contains a cycle at session '{}'",
+                session.id
+            );
+            let public_id = uuid::Uuid::from_slice(&session.public_id)?
+                .simple()
+                .to_string();
+            if let Some(slot_id) = live_ancestor_slots.get(&public_id) {
+                occupied.insert(slot_id.clone());
+                if occupied.len() == RuntimeSlotKey::linked_lane_capacity() {
+                    break;
+                }
+            }
+            current = match session.parent_session_id {
+                Some(parent_id) => store.get_session_row(parent_id).await?,
+                None => None,
+            };
+        }
+        Ok(occupied)
     }
 
     pub async fn submit_to_session(

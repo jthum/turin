@@ -28,12 +28,129 @@ fn task_status_prompt_preview_is_normalized_and_bounded() {
 fn linked_runtime_keys_are_bounded_to_physical_lanes() {
     let keys = (0..100)
         .map(|index| {
-            RuntimeSlotKey::linked_for("worker", "parent@state", &format!("thread-{index}")).slot_id
+            RuntimeSlotKey::linked_for_excluding(
+                "worker",
+                "parent@state",
+                &format!("thread-{index}"),
+                &std::collections::HashSet::new(),
+            )
+            .expect("an empty exclusion set leaves a lane")
+            .slot_id
         })
         .collect::<std::collections::HashSet<_>>();
 
     assert_eq!(keys.len(), RuntimeSlotKey::LINKED_RUNTIME_LANES as usize);
     assert!(keys.iter().all(|slot_id| slot_id.starts_with("linked_")));
+}
+
+#[test]
+fn linked_runtime_keys_probe_around_occupied_ancestor_lanes() {
+    let first = RuntimeSlotKey::linked_for_excluding(
+        "worker",
+        "parent@state",
+        "thread",
+        &std::collections::HashSet::new(),
+    )
+    .expect("an empty exclusion set leaves a lane");
+    let second = RuntimeSlotKey::linked_for_excluding(
+        "worker",
+        "parent@state",
+        "thread",
+        &std::collections::HashSet::from([first.slot_id.clone()]),
+    )
+    .expect("three lanes remain");
+    assert_ne!(first.slot_id, second.slot_id);
+
+    let all_lanes = (0..RuntimeSlotKey::LINKED_RUNTIME_LANES)
+        .map(|lane| format!("linked_{lane}"))
+        .collect();
+    assert!(
+        RuntimeSlotKey::linked_for_excluding("worker", "parent@state", "thread", &all_lanes)
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn linked_runtime_routing_excludes_busy_same_agent_ancestor_lanes() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let mut config = test_config(tmp.path(), &harness_dir);
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().to_string(),
+    );
+    let mut kernel = Kernel::builder(config).build()?;
+    kernel.init_state().await?;
+    let manager = Arc::clone(kernel.agent_manager());
+    let store = kernel.store_manager().get_default().await?;
+
+    let root = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await?;
+    let parent_public_id = uuid::Uuid::now_v7();
+    let parent = store
+        .create_linked_session(
+            parent_public_id,
+            "worker",
+            None,
+            &crate::persistence::schema::LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "parent".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await?;
+    let child_public_id = uuid::Uuid::now_v7();
+    let child = store
+        .create_linked_session(
+            child_public_id,
+            "worker",
+            None,
+            &crate::persistence::schema::LinkedSessionCreate {
+                parent_session_id: parent,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "child".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await?;
+
+    for (lane, public_id) in [(0, parent_public_id), (1, child_public_id)] {
+        let control = Arc::new(RuntimeControl::default());
+        control.set_current_session_id(Some(public_id.simple().to_string()));
+        let handle = Arc::new(AgentRuntimeHandle {
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            notify: Arc::new(Notify::new()),
+            control,
+            shutdown_token: CancellationToken::new(),
+            task: None,
+            queued_tasks: Arc::new(AtomicUsize::new(0)),
+            active_tasks: Arc::new(AtomicUsize::new(1)),
+        });
+        manager.runtimes.write().await.insert(
+            RuntimeSlotKey {
+                agent_id: "worker".to_string(),
+                slot_id: format!("linked_{lane}"),
+            },
+            handle,
+        );
+    }
+
+    let child = store
+        .get_session_row(child)
+        .await?
+        .expect("child session should exist");
+    let occupied = manager
+        .occupied_ancestor_linked_slots(&store, &child, "worker")
+        .await?;
+    assert_eq!(
+        occupied,
+        std::collections::HashSet::from(["linked_0".to_string(), "linked_1".to_string()])
+    );
+    Ok(())
 }
 
 struct TestTool;

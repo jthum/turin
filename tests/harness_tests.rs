@@ -1709,6 +1709,18 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
                 error("worker denial should mention delegated capabilities")
             end
 
+            if ctx.prompt ~= "nested same-agent delegation" then
+                local nested_id, nested_err = runtime.agent.submit(
+                    "worker",
+                    { prompt = "nested same-agent delegation" },
+                    { thread = "nested-self" }
+                )
+                if nested_id == nil then error("same-agent nested submit failed: " .. tostring(nested_err)) end
+                local nested, nested_await_err = runtime.agent.await(nested_id, { timeout_ms = 5000 })
+                if nested == nil then error("same-agent nested await failed: " .. tostring(nested_await_err)) end
+                if nested.status ~= "success" then error("same-agent nested task should succeed") end
+            end
+
             local leaf_id, leaf_err = runtime.agent.submit("leaf", { prompt = "nested delegation" })
             if leaf_id == nil then error("nested submit failed: " .. tostring(leaf_err)) end
             local leaf, await_err = runtime.agent.await(leaf_id, { timeout_ms = 5000 })

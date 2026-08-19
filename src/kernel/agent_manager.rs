@@ -184,6 +184,7 @@ struct RuntimeSlotKey {
 
 impl RuntimeSlotKey {
     const DEFAULT_SLOT_ID: &str = "default";
+    // Conservative provisional bound; make this startup-configurable only with stable routing.
     const LINKED_RUNTIME_LANES: u64 = 4;
 
     fn default_for(agent_id: &str) -> Self {
@@ -193,15 +194,32 @@ impl RuntimeSlotKey {
         }
     }
 
-    fn linked_for(agent_id: &str, parent_session_reference: &str, thread_key: &str) -> Self {
+    fn linked_for_excluding(
+        agent_id: &str,
+        parent_session_reference: &str,
+        thread_key: &str,
+        excluded_slots: &std::collections::HashSet<String>,
+    ) -> Option<Self> {
         let mut hasher = DefaultHasher::new();
         parent_session_reference.hash(&mut hasher);
         thread_key.hash(&mut hasher);
-        let lane = hasher.finish() % Self::LINKED_RUNTIME_LANES;
-        Self {
-            agent_id: agent_id.to_string(),
-            slot_id: format!("linked_{lane}"),
-        }
+        let initial_lane = hasher.finish() % Self::LINKED_RUNTIME_LANES;
+        (0..Self::LINKED_RUNTIME_LANES).find_map(|offset| {
+            let lane = (initial_lane + offset) % Self::LINKED_RUNTIME_LANES;
+            let slot_id = format!("linked_{lane}");
+            (!excluded_slots.contains(&slot_id)).then(|| Self {
+                agent_id: agent_id.to_string(),
+                slot_id,
+            })
+        })
+    }
+
+    fn is_linked(&self) -> bool {
+        self.slot_id.starts_with("linked_")
+    }
+
+    fn linked_lane_capacity() -> usize {
+        Self::LINKED_RUNTIME_LANES as usize
     }
 }
 
