@@ -22,7 +22,11 @@ This subsystem should preserve two guarantees:
 - `src/work_items.rs`
   - Shared row-level work item domain helpers: public id formatting, pause/claimability/orphan checks, dependency checks, where filtering, and `WorkItemRow` to `QueuedTask` conversion.
 - `src/harness/stdlib/runtime_worklist.rs`
-  - Harness runtime worklist API exposed to Lua, worklist/work item proxy construction, runtime dispatch, and store opening/hydration.
+  - Harness runtime worklist namespace registration, shared row conversion and dispatch helpers, and store opening/hydration.
+- `src/harness/stdlib/runtime_worklist/item_proxy.rs`
+  - Lua work-item fields and claim, heartbeat, dispatch, completion, failure, update, and child methods.
+- `src/harness/stdlib/runtime_worklist/list_proxy.rs`
+  - Lua worklist add, selection, claim-next, stale-release, progress, and dispatch-next methods.
 - `src/harness/stdlib/runtime_worklist/params.rs`
   - Lua option and payload parsing for runtime worklist scope, add/update payloads, where/limit filters, stale-release options, and JSON field serialization.
 - `src/harness/stdlib/runtime_worklist_selection.rs`
@@ -156,7 +160,8 @@ The current module split is deliberate:
 - `scheduled_worklist_actions.rs` answers "how do scheduled jobs operate on worklists?"
 - `work_items.rs` answers "what are the shared row-level work item rules?"
 - `runtime_worklist_selection.rs` answers "which runtime-visible work items match this proxy method?"
-- `runtime_worklist.rs` answers "how is the Lua worklist API registered and converted to/from proxies?"
+- `runtime_worklist.rs` answers "how is the Lua worklist API registered and how are stores and shared values resolved?"
+- `runtime_worklist/item_proxy.rs` and `list_proxy.rs` own the two proxy method surfaces.
 - `runtime_worklist/params.rs` answers "how do Lua worklist options and payloads become typed runtime inputs?"
 - `runtime_schedule/params.rs` answers "how do Lua schedule options become daemon protocol params?"
 - `persistence/state/scheduler/runs.rs` answers "how are scheduled job run rows recorded and reconciled with active job state?"
