@@ -13,7 +13,9 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/kernel/session.rs`
-  - `SessionState`, turn-addressed resident history, execution write policy, context targets, and context checkpoint state.
+  - `SessionState`, execution write policy, context targets, and context checkpoint state.
+- `src/kernel/session/resident_history.rs`
+  - Turn-addressed resident message storage, origin alignment, and checkpoint-relative suffix selection.
 - `src/kernel/session_lifecycle.rs`
   - Session creation, restore/materialization, branch checkout, persisted history rebuild, and hot-history policy application.
 - `src/kernel/hot_history.rs`
