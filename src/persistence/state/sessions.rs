@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
 use super::{
-    LinkedSessionCreate, SessionRow, SessionSearchRow, StateStore, update_session_title_metadata,
+    LinkedSessionCreate, LinkedSessionFamilyStats, SessionRow, SessionSearchRow, StateStore,
+    update_session_title_metadata,
 };
 
 #[derive(Debug)]
@@ -146,6 +147,63 @@ impl StateStore {
             sessions.push(map_session_row(&row)?);
         }
         Ok(sessions)
+    }
+
+    /// Count one session's children and descendants without loading transcripts or session rows.
+    pub async fn linked_session_family_stats(
+        &self,
+        session_id: i64,
+    ) -> Result<Option<LinkedSessionFamilyStats>> {
+        let conn = self.connect().await?;
+        let mut target_rows = conn
+            .query(
+                "SELECT root_session_id FROM sessions WHERE id = ?1",
+                [session_id],
+            )
+            .await?;
+        let Some(target) = target_rows.next().await? else {
+            return Ok(None);
+        };
+        let root_session_id = target.get::<Option<i64>>(0)?.unwrap_or(session_id);
+        drop(target_rows);
+
+        let mut rows = conn
+            .query(
+                "SELECT id, parent_session_id FROM sessions WHERE id = ?1 OR root_session_id = ?1",
+                [root_session_id],
+            )
+            .await?;
+        let mut family_size = 0usize;
+        let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+        while let Some(row) = rows.next().await? {
+            family_size += 1;
+            let id = row.get::<i64>(0)?;
+            if let Some(parent_id) = row.get::<Option<i64>>(1)? {
+                children.entry(parent_id).or_default().push(id);
+            }
+        }
+
+        let direct_child_count = children.get(&session_id).map_or(0, Vec::len);
+        let mut visited = HashSet::from([session_id]);
+        let mut stack = children.get(&session_id).cloned().unwrap_or_default();
+        let mut descendant_count = 0usize;
+        while let Some(current_id) = stack.pop() {
+            anyhow::ensure!(
+                visited.insert(current_id),
+                "Linked session ancestry contains a cycle at session '{}'",
+                current_id
+            );
+            descendant_count += 1;
+            if let Some(child_ids) = children.get(&current_id) {
+                stack.extend(child_ids);
+            }
+        }
+
+        Ok(Some(LinkedSessionFamilyStats {
+            direct_child_count,
+            descendant_count,
+            root_family_size: family_size,
+        }))
     }
 
     /// Return descendants in deletion order (deepest children first).

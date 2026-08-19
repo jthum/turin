@@ -141,6 +141,11 @@ Delete persisted session:
   conversation list.
 - Relationship indexes are partial and contain linked rows only; top-level sessions do
   not pay index-entry storage for nullable parent/root/thread relationships.
+- Family statistics read only session ids and parent ids. They must not materialize
+  transcripts, events, graph rows, or complete session records.
+- Relationship and visibility values remain validated text deliberately: they are sparse,
+  operator-readable metadata, and compact numeric codes would add migration and DX cost
+  without reducing the dominant transcript storage.
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.

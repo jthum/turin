@@ -353,6 +353,14 @@ pub struct LinkedSessionCreate {
     pub visibility: String,
 }
 
+/// Compact relationship statistics for one session inside its rooted family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkedSessionFamilyStats {
+    pub direct_child_count: usize,
+    pub descendant_count: usize,
+    pub root_family_size: usize,
+}
+
 /// A row from the `events` table.
 #[derive(Debug, Clone)]
 pub struct EventRow {

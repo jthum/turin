@@ -887,6 +887,42 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
         descendants.iter().map(|row| row.id).collect::<Vec<_>>(),
         vec![nested.id, reviewer]
     );
+    assert_eq!(
+        store
+            .linked_session_family_stats(root)
+            .await
+            .unwrap()
+            .unwrap(),
+        LinkedSessionFamilyStats {
+            direct_child_count: 1,
+            descendant_count: 2,
+            root_family_size: 3,
+        }
+    );
+    assert_eq!(
+        store
+            .linked_session_family_stats(reviewer)
+            .await
+            .unwrap()
+            .unwrap(),
+        LinkedSessionFamilyStats {
+            direct_child_count: 1,
+            descendant_count: 1,
+            root_family_size: 3,
+        }
+    );
+    assert_eq!(
+        store
+            .linked_session_family_stats(nested.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        LinkedSessionFamilyStats {
+            direct_child_count: 0,
+            descendant_count: 0,
+            root_family_size: 3,
+        }
+    );
     assert!(
         store
             .delete_session_by_public_id(root_public_id)
