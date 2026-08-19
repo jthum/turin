@@ -10,7 +10,7 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::SignalRow;
+use crate::persistence::schema::{LinkedSessionCreate, SignalRow};
 use turin_types::TaskInputContent;
 
 use super::{
@@ -34,6 +34,7 @@ pub(super) struct SessionBootstrap {
     pub(super) initial_state_selector: Option<StoreSelector>,
     pub(super) initial_default_store_selector: Option<StoreSelector>,
     pub(super) context: SessionContextOverrides,
+    pub(super) link: Option<LinkedSessionCreate>,
 }
 
 #[derive(Debug)]
@@ -68,6 +69,18 @@ impl PeerRuntime {
                 session_id,
                 bootstrap.context.channel_id.clone(),
                 bootstrap.context.inference.clone(),
+            )
+            .await?
+        } else if let Some(link) = bootstrap.link {
+            host.create_linked_session_for_agent_with_context(
+                agent_id,
+                bootstrap
+                    .initial_state_selector
+                    .ok_or_else(|| anyhow::anyhow!("Linked peer session requires a state store"))?,
+                bootstrap.initial_default_store_selector,
+                bootstrap.context.channel_id.clone(),
+                bootstrap.context.inference.clone(),
+                link,
             )
             .await?
         } else {

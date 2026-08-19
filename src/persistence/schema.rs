@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 29;
+pub(crate) const SCHEMA_VERSION: u32 = 30;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -14,7 +14,19 @@ CREATE TABLE IF NOT EXISTS sessions (
     agent_id              TEXT NOT NULL,
     metadata              TEXT,
     active_branch_head_id INTEGER REFERENCES branch_heads(id),
-    created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+    parent_session_id     INTEGER REFERENCES sessions(id),
+    root_session_id       INTEGER REFERENCES sessions(id),
+    origin_turn_id        INTEGER REFERENCES turns(id),
+    relation_kind         TEXT,
+    thread_key            TEXT,
+    visibility            TEXT NOT NULL DEFAULT 'top_level',
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (visibility IN ('top_level', 'contextual', 'hidden')),
+    CHECK (
+        (parent_session_id IS NULL AND root_session_id IS NULL AND relation_kind IS NULL AND thread_key IS NULL AND visibility = 'top_level')
+        OR
+        (parent_session_id IS NOT NULL AND root_session_id IS NOT NULL AND relation_kind IS NOT NULL AND thread_key IS NOT NULL AND visibility != 'top_level')
+    )
 );
 
 -- Core event log (append-only)
@@ -127,6 +139,9 @@ CREATE TABLE IF NOT EXISTS schema_info (
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_parent_created ON sessions(parent_session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_root_created ON sessions(root_session_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_linked_thread ON sessions(parent_session_id, agent_id, thread_key);
 CREATE INDEX IF NOT EXISTS idx_events_turn ON events(turn_id);
 CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
@@ -313,7 +328,23 @@ pub struct SessionRow {
     pub agent_id: String,
     pub metadata: Option<String>,
     pub active_branch_head_id: Option<i64>,
+    pub parent_session_id: Option<i64>,
+    pub root_session_id: Option<i64>,
+    pub origin_turn_id: Option<i64>,
+    pub relation_kind: Option<String>,
+    pub thread_key: Option<String>,
+    pub visibility: String,
     pub created_at: String,
+}
+
+/// Structural relationship used when creating an agent-owned child session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedSessionCreate {
+    pub parent_session_id: i64,
+    pub origin_turn_id: Option<i64>,
+    pub relation_kind: String,
+    pub thread_key: String,
+    pub visibility: String,
 }
 
 /// A row from the `events` table.

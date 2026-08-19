@@ -806,6 +806,82 @@ async fn test_update_session_title_preserves_other_metadata() {
 }
 
 #[tokio::test]
+async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
+    let store = StateStore::open_memory().await.unwrap();
+    let root = store
+        .create_session(uuid::Uuid::now_v7(), "primary", None)
+        .await
+        .unwrap();
+    let reviewer_public_id = uuid::Uuid::now_v7();
+    let reviewer = store
+        .create_linked_session(
+            reviewer_public_id,
+            "reviewer",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "architecture".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let found = store
+        .find_linked_session(root, "reviewer", "architecture")
+        .await
+        .unwrap()
+        .expect("linked session should resolve");
+    assert_eq!(found.id, reviewer);
+    assert_eq!(found.parent_session_id, Some(root));
+    assert_eq!(found.root_session_id, Some(root));
+    assert_eq!(found.relation_kind.as_deref(), Some("delegated"));
+    assert_eq!(found.thread_key.as_deref(), Some("architecture"));
+    assert_eq!(found.visibility, "contextual");
+
+    let nested = store
+        .create_linked_session(
+            uuid::Uuid::now_v7(),
+            "researcher",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: reviewer,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "evidence".to_string(),
+                visibility: "hidden".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let nested = store.get_session_row(nested).await.unwrap().unwrap();
+    assert_eq!(nested.parent_session_id, Some(reviewer));
+    assert_eq!(nested.root_session_id, Some(root));
+
+    let children = store.list_linked_session_rows(root, 10, 0).await.unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].id, reviewer);
+
+    let duplicate = store
+        .create_linked_session(
+            uuid::Uuid::now_v7(),
+            "reviewer",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "architecture".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await;
+    assert!(duplicate.is_err());
+}
+
+#[tokio::test]
 async fn test_update_session_title_if_empty_preserves_existing_title() {
     let store = StateStore::open_memory().await.unwrap();
     let public_id = uuid::Uuid::now_v7();

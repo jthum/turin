@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
-use super::{SessionRow, SessionSearchRow, StateStore, update_session_title_metadata};
+use super::{
+    LinkedSessionCreate, SessionRow, SessionSearchRow, StateStore, update_session_title_metadata,
+};
 
 #[derive(Debug)]
 struct RankedSessionSearchHit {
@@ -10,8 +12,7 @@ struct RankedSessionSearchHit {
     sort_id: i64,
 }
 
-const SESSION_SELECT: &str =
-    "SELECT id, public_id, agent_id, metadata, active_branch_head_id, created_at FROM sessions";
+pub(super) const SESSION_SELECT: &str = "SELECT id, public_id, agent_id, metadata, active_branch_head_id, parent_session_id, root_session_id, origin_turn_id, relation_kind, thread_key, visibility, created_at FROM sessions";
 
 impl StateStore {
     pub async fn create_session(
@@ -33,6 +34,118 @@ impl StateStore {
         let session_id = conn.last_insert_rowid();
         self.initialize_main_branch(session_id).await?;
         Ok(session_id)
+    }
+
+    pub async fn create_linked_session(
+        &self,
+        public_id: uuid::Uuid,
+        agent_id: &str,
+        metadata: Option<&str>,
+        link: &LinkedSessionCreate,
+    ) -> Result<i64> {
+        anyhow::ensure!(
+            matches!(link.visibility.as_str(), "contextual" | "hidden"),
+            "Linked session visibility must be 'contextual' or 'hidden'"
+        );
+        anyhow::ensure!(
+            !link.relation_kind.trim().is_empty(),
+            "Linked session relation kind must not be empty"
+        );
+        anyhow::ensure!(
+            !link.thread_key.trim().is_empty(),
+            "Linked session thread key must not be empty"
+        );
+
+        let parent = self
+            .get_session_row(link.parent_session_id)
+            .await?
+            .with_context(|| format!("Parent session '{}' not found", link.parent_session_id))?;
+        if let Some(origin_turn_id) = link.origin_turn_id {
+            let origin = self
+                .get_turn_row(origin_turn_id)
+                .await?
+                .with_context(|| format!("Origin turn '{}' not found", origin_turn_id))?;
+            anyhow::ensure!(
+                origin.session_id == parent.id,
+                "Origin turn '{}' does not belong to parent session '{}'",
+                origin_turn_id,
+                parent.id
+            );
+        }
+
+        let root_session_id = parent.root_session_id.unwrap_or(parent.id);
+        let conn = self.connect().await?;
+        let public_id_bytes = public_id.into_bytes().to_vec();
+        conn.execute(
+            r#"
+            INSERT INTO sessions (
+                public_id, agent_id, metadata, parent_session_id, root_session_id,
+                origin_turn_id, relation_kind, thread_key, visibility
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            turso::params![
+                public_id_bytes,
+                agent_id,
+                metadata,
+                link.parent_session_id,
+                root_session_id,
+                link.origin_turn_id,
+                link.relation_kind.trim(),
+                link.thread_key.trim(),
+                link.visibility.as_str(),
+            ],
+        )
+        .await
+        .context("Failed to insert linked session")?;
+
+        let session_id = conn.last_insert_rowid();
+        self.initialize_main_branch(session_id).await?;
+        Ok(session_id)
+    }
+
+    pub async fn find_linked_session(
+        &self,
+        parent_session_id: i64,
+        agent_id: &str,
+        thread_key: &str,
+    ) -> Result<Option<SessionRow>> {
+        let conn = self.connect().await?;
+        let sql = format!(
+            "{SESSION_SELECT} WHERE parent_session_id = ?1 AND agent_id = ?2 AND thread_key = ?3"
+        );
+        let mut rows = conn
+            .query(
+                &sql,
+                turso::params![parent_session_id, agent_id, thread_key],
+            )
+            .await?;
+        rows.next()
+            .await?
+            .map(|row| map_session_row(&row))
+            .transpose()
+    }
+
+    pub async fn list_linked_session_rows(
+        &self,
+        parent_session_id: i64,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionRow>> {
+        let conn = self.connect().await?;
+        let sql = format!(
+            "{SESSION_SELECT} WHERE parent_session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2 OFFSET ?3"
+        );
+        let mut rows = conn
+            .query(
+                &sql,
+                turso::params![parent_session_id, limit as i64, offset as i64],
+            )
+            .await?;
+        let mut sessions = Vec::new();
+        while let Some(row) = rows.next().await? {
+            sessions.push(map_session_row(&row)?);
+        }
+        Ok(sessions)
     }
 
     pub async fn get_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<Option<i64>> {
@@ -318,7 +431,13 @@ pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
         agent_id: row.get::<String>(2)?,
         metadata: row.get::<Option<String>>(3)?,
         active_branch_head_id: row.get::<Option<i64>>(4)?,
-        created_at: row.get::<String>(5)?,
+        parent_session_id: row.get::<Option<i64>>(5)?,
+        root_session_id: row.get::<Option<i64>>(6)?,
+        origin_turn_id: row.get::<Option<i64>>(7)?,
+        relation_kind: row.get::<Option<String>>(8)?,
+        thread_key: row.get::<Option<String>>(9)?,
+        visibility: row.get::<String>(10)?,
+        created_at: row.get::<String>(11)?,
     })
 }
 

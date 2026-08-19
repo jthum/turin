@@ -42,6 +42,8 @@ use sidestep_graph::{attach_sidestep_graph_relation, opt_sidestep_graph_relation
 
 struct PreparedPeerSubmission {
     target_agent: String,
+    origin_session_id: String,
+    thread_key: String,
     task: QueuedTask,
     delegated_capabilities: Option<BTreeMap<String, bool>>,
 }
@@ -79,9 +81,21 @@ fn prepare_peer_submission(
         Ok(task) => task,
         Err(err) => return Ok(Err(err)),
     };
+    let origin_session_id = app_data
+        .execution_ctx
+        .lock()
+        .map_err(|_| mlua::Error::runtime("execution context mutex poisoned"))?
+        .session_id
+        .clone()
+        .ok_or_else(|| mlua::Error::runtime("No active session context"))?;
+    let thread_key = opts
+        .and_then(|table| table.get::<String>("thread").ok())
+        .unwrap_or_else(|| "default".to_string());
 
     Ok(Ok(PreparedPeerSubmission {
         target_agent,
+        origin_session_id,
+        thread_key,
         task,
         delegated_capabilities,
     }))
@@ -370,8 +384,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let manager = manager.clone();
                 let result = bridge_async_display_err(async move {
                     manager
-                        .submit(
+                        .submit_linked(
+                            &prepared.origin_session_id,
                             &prepared.target_agent,
+                            &prepared.thread_key,
                             prepared.task,
                             prepared.delegated_capabilities,
                         )
@@ -411,8 +427,10 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                 let manager_submit = manager.clone();
                 let request_id = bridge_async_display_err(async move {
                     manager_submit
-                        .submit(
+                        .submit_linked(
+                            &prepared.origin_session_id,
                             &prepared.target_agent,
+                            &prepared.thread_key,
                             prepared.task,
                             prepared.delegated_capabilities,
                         )

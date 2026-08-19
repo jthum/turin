@@ -29,7 +29,7 @@ use crate::kernel::session_refs::{
 };
 use crate::perf_diagnostics::{perf_session_scope, perf_stage, perf_stage_finish};
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::SessionRow;
+use crate::persistence::schema::{LinkedSessionCreate, SessionRow};
 use crate::persistence::state::StateStore;
 
 #[cfg_attr(not(feature = "perf-diagnostics"), allow(unused_variables))]
@@ -144,6 +144,52 @@ impl ExecutionHost {
         channel_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
     ) -> SessionState {
+        self.create_session_for_agent_with_context_and_link(
+            agent_id,
+            state_selector,
+            default_store_selector,
+            channel_id,
+            inference,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn create_linked_session_for_agent_with_context(
+        &self,
+        agent_id: &str,
+        state_selector: StoreSelector,
+        default_store_selector: Option<StoreSelector>,
+        channel_id: Option<String>,
+        inference: crate::kernel::config::InferenceOverrideConfig,
+        link: LinkedSessionCreate,
+    ) -> Result<SessionState> {
+        let session = self
+            .create_session_for_agent_with_context_and_link(
+                agent_id,
+                Some(state_selector),
+                default_store_selector,
+                channel_id,
+                inference,
+                Some(link),
+            )
+            .await;
+        anyhow::ensure!(
+            session.internal_id.is_some(),
+            "Failed to create linked session in its parent state store"
+        );
+        Ok(session)
+    }
+
+    async fn create_session_for_agent_with_context_and_link(
+        &self,
+        agent_id: &str,
+        state_selector: Option<StoreSelector>,
+        default_store_selector: Option<StoreSelector>,
+        channel_id: Option<String>,
+        inference: crate::kernel::config::InferenceOverrideConfig,
+        link: Option<LinkedSessionCreate>,
+    ) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
         session.identity.set_channel_id(channel_id);
@@ -152,7 +198,8 @@ impl ExecutionHost {
         session.default_store_selector =
             default_store_selector.or_else(|| self.resolve_agent_default_store_selector(agent_id));
         session.inference = inference;
-        self.attach_session_persistence(&mut session, true).await;
+        self.attach_session_persistence(&mut session, true, link.as_ref())
+            .await;
         session
     }
 
@@ -250,7 +297,8 @@ impl ExecutionHost {
         session.next_plan_id = counters.next_plan_id;
         session.restored_from_persistence = true;
         self.prune_session_hot_history(&mut session);
-        self.attach_session_persistence(&mut session, false).await;
+        self.attach_session_persistence(&mut session, false, None)
+            .await;
         Ok(session)
     }
 
@@ -419,7 +467,12 @@ impl ExecutionHost {
         Ok(true)
     }
 
-    async fn attach_session_persistence(&self, session: &mut SessionState, create_row: bool) {
+    async fn attach_session_persistence(
+        &self,
+        session: &mut SessionState,
+        create_row: bool,
+        link: Option<&LinkedSessionCreate>,
+    ) {
         if let Ok(store) = self.store_manager.open(&session.store_selector).await {
             if create_row
                 && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id())
@@ -428,10 +481,28 @@ impl ExecutionHost {
                     session.default_store_selector.as_ref(),
                     session.identity.channel_id(),
                 );
-                match store
-                    .create_session(public_id, session.identity.agent_id(), metadata.as_deref())
-                    .await
-                {
+                let created = match link {
+                    Some(link) => {
+                        store
+                            .create_linked_session(
+                                public_id,
+                                session.identity.agent_id(),
+                                metadata.as_deref(),
+                                link,
+                            )
+                            .await
+                    }
+                    None => {
+                        store
+                            .create_session(
+                                public_id,
+                                session.identity.agent_id(),
+                                metadata.as_deref(),
+                            )
+                            .await
+                    }
+                };
+                match created {
                     Ok(id) => {
                         session.internal_id = Some(id);
                         match store.get_active_branch_head(id).await {

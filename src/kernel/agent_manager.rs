@@ -8,6 +8,7 @@ mod tasks;
 mod tests;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
@@ -188,6 +189,16 @@ impl RuntimeSlotKey {
         Self {
             agent_id: agent_id.to_string(),
             slot_id: Self::DEFAULT_SLOT_ID.to_string(),
+        }
+    }
+
+    fn linked_for(agent_id: &str, parent_session_reference: &str, thread_key: &str) -> Self {
+        let mut hasher = DefaultHasher::new();
+        parent_session_reference.hash(&mut hasher);
+        thread_key.hash(&mut hasher);
+        Self {
+            agent_id: agent_id.to_string(),
+            slot_id: format!("linked_{:016x}", hasher.finish()),
         }
     }
 }

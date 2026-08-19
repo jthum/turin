@@ -25,9 +25,12 @@ impl StateStore {
         let mut rows = conn
             .query(
                 r#"
-                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.active_branch_head_id, s.created_at
+                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.active_branch_head_id,
+                       s.parent_session_id, s.root_session_id, s.origin_turn_id,
+                       s.relation_kind, s.thread_key, s.visibility, s.created_at
                 FROM sessions s
                 LEFT JOIN events e ON e.session_id = s.id
+                WHERE s.parent_session_id IS NULL
                 GROUP BY s.id
                 ORDER BY COALESCE(MAX(e.id), s.id) DESC
                 LIMIT ?1 OFFSET ?2

@@ -6380,11 +6380,30 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             if after == nil then error("runtime.agent.get_status after submit failed: " .. tostring(afe)) end
             if after.awaiting_results ~= 0 then error("awaiting_results should be 0 after await") end
 
+            local second_id, second_err = runtime.agent.submit("worker", {
+                prompt = "say hello again",
+                title = "hello again"
+            })
+            if second_id == nil then error("second runtime.agent.submit failed: " .. tostring(second_err)) end
+            local second, second_await_err = runtime.agent.await(second_id, { timeout_ms = 5000 })
+            if second == nil then error("second runtime.agent.await failed: " .. tostring(second_await_err)) end
+            if second.status ~= "success" then error("second peer task should succeed") end
+
+            local isolated_id, isolated_err = runtime.agent.submit(
+                "worker",
+                { prompt = "review independently", title = "independent review" },
+                { thread = "independent-review" }
+            )
+            if isolated_id == nil then error("named thread submit failed: " .. tostring(isolated_err)) end
+            local isolated, isolated_await_err = runtime.agent.await(isolated_id, { timeout_ms = 5000 })
+            if isolated == nil then error("named thread await failed: " .. tostring(isolated_await_err)) end
+            if isolated.status ~= "success" then error("named peer thread should succeed") end
+
             return ALLOW
         end
     "#;
     std::fs::write(
-        orchestrator_harness_dir.join("orchestrator.lua"),
+        orchestrator_harness_dir.join("main.lua"),
         orchestrator_harness,
     )?;
 
@@ -6467,6 +6486,10 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
+    assert_eq!(
+        kernel.loaded_scripts_for_agent("orchestrator")?,
+        vec!["main"]
+    );
 
     let mut session = kernel.create_session().await;
     kernel
@@ -6475,6 +6498,43 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
             Some("exercise runtime agent peer".to_string()),
         )
         .await?;
+
+    let root_session_id = session.internal_id.expect("root session should persist");
+    let store = kernel.store_manager().get_default().await?;
+    let linked = store
+        .list_linked_session_rows(root_session_id, 10, 0)
+        .await?;
+    assert_eq!(
+        linked.len(),
+        2,
+        "default peer calls should reuse one thread and a named thread should stay isolated"
+    );
+    assert!(linked.iter().all(|row| row.agent_id == "worker"));
+    assert!(
+        linked
+            .iter()
+            .all(|row| row.parent_session_id == Some(root_session_id))
+    );
+    assert!(
+        linked
+            .iter()
+            .all(|row| row.root_session_id == Some(root_session_id))
+    );
+    assert!(
+        linked
+            .iter()
+            .all(|row| row.relation_kind.as_deref() == Some("delegated"))
+    );
+    assert!(linked.iter().all(|row| row.visibility == "contextual"));
+    let thread_keys = linked
+        .iter()
+        .filter_map(|row| row.thread_key.as_deref())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        thread_keys,
+        std::collections::HashSet::from(["default", "independent-review"])
+    );
+    assert_eq!(store.list_session_rows(10, 0).await?.len(), 1);
 
     kernel.end_session(&mut session).await?;
 

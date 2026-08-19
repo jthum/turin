@@ -27,6 +27,23 @@ fn active_trace_id(app_data: &HarnessAppData) -> Option<String> {
         .and_then(|ctx| ctx.trace_id.clone())
 }
 
+fn linked_submission_scope(
+    app_data: &HarnessAppData,
+    opts: Option<&Table>,
+) -> std::result::Result<(String, String), String> {
+    let origin_session_id = app_data
+        .execution_ctx
+        .lock()
+        .map_err(|_| "execution context mutex poisoned".to_string())?
+        .session_id
+        .clone()
+        .ok_or_else(|| "No active session context".to_string())?;
+    let thread_key = opts
+        .and_then(|table| table.get::<String>("thread").ok())
+        .unwrap_or_else(|| "default".to_string());
+    Ok((origin_session_id, thread_key))
+}
+
 fn parse_submit_task(
     lua: &Lua,
     task_val: Value,
@@ -49,7 +66,9 @@ fn parse_submit_task(
             if let Ok(conflict_policy) = t.get::<String>("conflict_policy") {
                 task.conflict_policy = Some(parse_conflict_policy(&conflict_policy)?);
             }
-            if let Ok(execution) = t.get::<Value>("execution") {
+            if let Ok(execution) = t.get::<Value>("execution")
+                && !matches!(execution, Value::Nil)
+            {
                 task.execution = Some(parse_execution_overrides_with_lua(lua, execution)?);
             }
             Ok(task)
@@ -299,11 +318,22 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.submit",
                     )?;
+                    let (origin_session_id, thread_key) =
+                        match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
+                            Ok(scope) => scope,
+                            Err(err) => return nil_err(lua, &err),
+                        };
 
                     let manager = manager.clone();
                     let result = bridge_async_display_err(async move {
                         manager
-                            .submit(&agent_id, task, delegated_capabilities)
+                            .submit_linked(
+                                &origin_session_id,
+                                &agent_id,
+                                &thread_key,
+                                task,
+                                delegated_capabilities,
+                            )
                             .await
                     });
                     lua_string_result(lua, result)
@@ -460,11 +490,22 @@ pub fn register_runtime_agent_namespace(
                         opts.as_ref(),
                         "runtime.agent.ask",
                     )?;
+                    let (origin_session_id, thread_key) =
+                        match linked_submission_scope(&app_data_snapshot, opts.as_ref()) {
+                            Ok(scope) => scope,
+                            Err(err) => return nil_err(lua, &err),
+                        };
 
                     let manager = manager.clone();
                     let result = bridge_async_display_err(async move {
                         let request_id = manager
-                            .submit(&agent_id, task, delegated_capabilities)
+                            .submit_linked(
+                                &origin_session_id,
+                                &agent_id,
+                                &thread_key,
+                                task,
+                                delegated_capabilities,
+                            )
                             .await?;
                         let result = manager.await_result(&request_id, timeout_ms).await?;
                         if let Some(err) = result.error {

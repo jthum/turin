@@ -44,6 +44,15 @@ Create session:
 3. Persist a session row when possible.
 4. Attach the background persistence lane.
 
+Create linked peer session:
+
+1. Resolve the originating session and its state store.
+2. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
+3. Otherwise create an agent-owned child session with explicit parent, root, relation,
+   thread, and visibility columns.
+4. Start or resume a deterministic peer runtime slot for that child and execute tasks
+   against the child's independent turn tree.
+
 Resume or refresh:
 
 1. Resolve the session reference and state store.
@@ -104,6 +113,13 @@ Delete persisted session:
 ## Invariants
 
 - A resumed session must belong to the requested agent.
+- A linked session has one direct parent, one stable root session, and an independent
+  agent-owned transcript; linkage never changes turn ancestry or inference lookup.
+- Repeated peer calls without an explicit `thread` reuse the `default` child thread.
+  A named `thread` creates or reuses a separate child context under the same parent.
+- Normal persisted-session listing returns top-level sessions only. Linked sessions are
+  discovered through their indexed parent relationship rather than mixed into the
+  conversation list.
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.

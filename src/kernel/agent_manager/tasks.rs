@@ -2,17 +2,19 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use tokio::sync::oneshot;
 
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTask};
+use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::kernel::task_promotion::promote_task_result;
+use crate::persistence::schema::LinkedSessionCreate;
 
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, PeerAgentTaskResult,
     PendingTaskRecord, PendingTaskState, PromotedTaskBranch, PromotedTaskBranchFingerprint,
-    RuntimeSlotKey, TaskBranchOutcomeFingerprint, TaskStatusFingerprint, TaskStatusSnapshot,
-    task_prompt_preview,
+    RuntimeSlotKey, SessionContextOverrides, TaskBranchOutcomeFingerprint, TaskStatusFingerprint,
+    TaskStatusSnapshot, task_prompt_preview,
 };
 
 fn intended_task_execution_snapshot(
@@ -240,6 +242,72 @@ impl AgentManager {
         .await
     }
 
+    /// Submit into an agent-owned child session scoped to the originating session.
+    pub async fn submit_linked(
+        self: &Arc<Self>,
+        origin_session_id: &str,
+        agent_id: &str,
+        thread_key: &str,
+        task: QueuedTask,
+        delegated_capabilities: Option<BTreeMap<String, bool>>,
+    ) -> Result<String> {
+        let thread_key = thread_key.trim();
+        anyhow::ensure!(!thread_key.is_empty(), "Peer thread key must not be empty");
+        anyhow::ensure!(
+            thread_key.chars().count() <= 120,
+            "Peer thread key must be at most 120 characters"
+        );
+
+        let session_ref = parse_session_reference(origin_session_id)?;
+        let state_selector = session_ref
+            .store_selector
+            .unwrap_or(self.config.persistence.top_level_state_selector()?);
+        let store = self.store_manager.open(&state_selector).await?;
+        let parent_public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
+        let parent = store
+            .get_session_row_by_public_id(parent_public_id)
+            .await?
+            .ok_or_else(|| anyhow!("Origin session '{}' not found", origin_session_id))?;
+        let parent_session_reference =
+            format_session_reference(&session_ref.public_id, &state_selector);
+        let runtime_key =
+            RuntimeSlotKey::linked_for(agent_id, &parent_session_reference, thread_key);
+
+        let handle = if let Some(linked) = store
+            .find_linked_session(parent.id, agent_id, thread_key)
+            .await?
+        {
+            let public_id = uuid::Uuid::from_slice(&linked.public_id)
+                .context("Linked session has an invalid public id")?
+                .simple()
+                .to_string();
+            self.ensure_runtime_slot_resumed(
+                runtime_key.clone(),
+                format_session_reference(&public_id, &state_selector),
+                SessionContextOverrides::default(),
+            )
+            .await?
+        } else {
+            self.ensure_runtime_slot_linked(
+                runtime_key.clone(),
+                state_selector,
+                None,
+                SessionContextOverrides::default(),
+                LinkedSessionCreate {
+                    parent_session_id: parent.id,
+                    origin_turn_id: None,
+                    relation_kind: "delegated".to_string(),
+                    thread_key: thread_key.to_string(),
+                    visibility: "contextual".to_string(),
+                },
+            )
+            .await?
+        };
+
+        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities)
+            .await
+    }
+
     pub async fn submit_to_session(
         self: &Arc<Self>,
         session_id: &str,
@@ -258,12 +326,23 @@ impl AgentManager {
         task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
+        let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
+        self.submit_to_handle(runtime_key, handle, task, delegated_capabilities)
+            .await
+    }
+
+    async fn submit_to_handle(
+        &self,
+        runtime_key: RuntimeSlotKey,
+        handle: Arc<AgentRuntimeHandle>,
+        task: QueuedTask,
+        delegated_capabilities: Option<BTreeMap<String, bool>>,
+    ) -> Result<String> {
         let trace_id = task.trace_id.clone();
         let title = task.title.clone();
         let prompt_preview = task_prompt_preview(&task.prompt);
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
-        let handle = self.ensure_runtime_slot(runtime_key.clone()).await?;
         {
             let mut pending = self.pending_results.write().await;
             pending.insert(request_id.clone(), rx_result);

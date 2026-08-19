@@ -59,6 +59,9 @@ Runtime graph:
 - Graph refs that materialize to turns must belong to the resolved session.
 - Selected paths must reject duplicate materialized turns.
 - Runtime graph is sparse relationship metadata; durable transcript/session state remains owned by persistence/session modules.
+- Parent/child session ownership is structural persistence data, not a semantic graph
+  edge or JSON metadata. It uses normalized session columns and dedicated indexes so
+  peer-thread lookup does not scan or parse metadata.
 - The operator-facing Session Graph visualizes the durable turn tree and branch
   heads. It is not a renderer for `runtime.graph.*`; a future semantic overlay
   should remain visually and contractually distinct.
