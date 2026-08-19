@@ -77,7 +77,6 @@ impl StateStore {
         branch_head_id: Option<i64>,
         turn_index: u32,
     ) -> Result<Option<TurnRow>> {
-        let conn = self.connect().await?;
         let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
             return Ok(None);
         };
@@ -106,7 +105,7 @@ impl StateStore {
                 );
             }
             return self
-                .create_turn_for_branch(&conn, session_id, branch_id, Some(existing.id), turn_index)
+                .create_turn_for_branch(session_id, branch_id, Some(existing.id), turn_index)
                 .await
                 .map(Some);
         }
@@ -118,7 +117,7 @@ impl StateStore {
             );
         }
 
-        self.create_turn_for_branch(&conn, session_id, branch_id, None, 0)
+        self.create_turn_for_branch(session_id, branch_id, None, 0)
             .await
             .map(Some)
     }
@@ -154,7 +153,6 @@ impl StateStore {
                 expected_head_turn_id: Some(expected_head_turn_id),
                 turn_index,
             } => {
-                let conn = self.connect().await?;
                 let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await?
                 else {
                     return Ok(None);
@@ -191,7 +189,6 @@ impl StateStore {
                     );
                 }
                 self.create_turn_for_branch(
-                    &conn,
                     session_id,
                     branch.id,
                     Some(expected_parent.id),
@@ -205,7 +202,6 @@ impl StateStore {
                 expected_head_turn_id: None,
                 turn_index,
             } => {
-                let conn = self.connect().await?;
                 let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await?
                 else {
                     return Ok(None);
@@ -221,7 +217,7 @@ impl StateStore {
                         turn_index
                     );
                 }
-                self.create_turn_for_branch(&conn, session_id, branch.id, None, 0)
+                self.create_turn_for_branch(session_id, branch.id, None, 0)
                     .await
                     .map(Some)
             }
@@ -450,14 +446,18 @@ impl StateStore {
 
     async fn create_turn_for_branch(
         &self,
-        conn: &turso::Connection,
         session_id: i64,
         branch_id: i64,
         parent_turn_id: Option<i64>,
         branch_depth: u32,
     ) -> Result<TurnRow> {
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start turn allocation transaction")?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
-        conn.execute(
+        tx.execute(
             r#"
             INSERT INTO turns (public_id, session_id, parent_turn_id, branch_depth)
             VALUES (?1, ?2, ?3, ?4)
@@ -466,15 +466,15 @@ impl StateStore {
         )
         .await
         .context("Failed to create turn row")?;
-        let turn_id = conn.last_insert_rowid();
-        conn.execute(
+        let turn_id = tx.last_insert_rowid();
+        tx.execute(
             "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2",
             turso::params![turn_id, branch_id],
         )
         .await
         .context("Failed to advance active branch head")?;
 
-        let mut rows = conn
+        let mut rows = tx
             .query(
                 "SELECT public_id, created_at FROM turns WHERE id = ?1",
                 [turn_id],
@@ -484,14 +484,19 @@ impl StateStore {
             .next()
             .await?
             .ok_or_else(|| anyhow!("Turn row missing immediately after insert"))?;
-        Ok(TurnRow {
+        let turn = TurnRow {
             id: turn_id,
             public_id: row.get::<Vec<u8>>(0)?,
             session_id,
             parent_turn_id,
             branch_depth,
             created_at: row.get::<String>(1)?,
-        })
+        };
+        drop(rows);
+        tx.commit()
+            .await
+            .context("Failed to commit turn allocation transaction")?;
+        Ok(turn)
     }
 }
 

@@ -1835,6 +1835,76 @@ async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_res
 }
 
 #[tokio::test]
+async fn test_turn_allocation_rolls_back_when_branch_advance_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let main = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch");
+    let original_head = main.head_turn_id.expect("root turn");
+
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_branch_advance
+        BEFORE UPDATE OF head_turn_id ON branch_heads
+        BEGIN
+            SELECT RAISE(FAIL, 'injected branch advance failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .prepare_turn_write_target(
+            session,
+            TurnWriteTarget::branch_head_with_expectation(Some(main.id), Some(original_head), 1),
+        )
+        .await
+        .expect_err("injected branch update failure should abort allocation");
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to advance active branch head")
+    );
+
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM turns WHERE session_id = ?1",
+            [session],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
+    drop(rows);
+    let head = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch after rollback");
+    assert_eq!(head.head_turn_id, Some(original_head));
+}
+
+#[tokio::test]
 async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
     let store = StateStore::open_memory()
         .await
