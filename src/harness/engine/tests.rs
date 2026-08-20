@@ -1232,7 +1232,19 @@ async fn test_runtime_signals_support_terminal_wildcard_subscriptions() {
 
     let mut engine = HarnessEngine::new(app_data).unwrap();
     engine.load_dir(dir.path()).unwrap();
-    let invoked = engine.dispatch_runtime_signal(&signals[0]).unwrap();
+    let signal = &signals[0];
+    let invoked = engine
+        .dispatch_runtime_signal(crate::kernel::harness_contract::HarnessSignal {
+            signal_id: uuid::Uuid::from_slice(&signal.public_id).ok(),
+            topic: &signal.topic,
+            source_agent_id: &signal.source_agent_id,
+            target_agent_id: &signal.target_agent_id,
+            source_session_id: signal.source_session_id.as_deref(),
+            target_session_id: signal.target_session_id.as_deref(),
+            payload: &signal.payload,
+            created_at: &signal.created_at,
+        })
+        .unwrap();
     assert_eq!(invoked, 3);
 
     let result = engine

@@ -26,7 +26,8 @@ use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_contract::{
-    HarnessExecutionBinding, HarnessHook, HarnessTurnRequest, HarnessTurnServices, SessionQueue,
+    HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest, HarnessTurnServices,
+    SessionQueue,
 };
 use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 use crate::kernel::policy::RuntimePolicyManager;
@@ -94,10 +95,7 @@ pub(crate) trait HarnessInstance: Send {
         default_is_error: bool,
     ) -> Result<VirtualToolResultResolution>;
     fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()>;
-    fn dispatch_runtime_signal(
-        &self,
-        signal: &crate::persistence::schema::SignalRow,
-    ) -> Result<usize>;
+    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize>;
 }
 
 #[cfg(feature = "lua")]
@@ -125,7 +123,7 @@ impl HarnessInstance for NativeHarnessInstance {
         Vec::new()
     }
     fn runtime_signal_topics(&self) -> Vec<String> {
-        Vec::new()
+        self.harness.borrow().runtime_signal_topics()
     }
     fn ui_intents(&self) -> Vec<UiIntentMessage> {
         Vec::new()
@@ -195,11 +193,9 @@ impl HarnessInstance for NativeHarnessInstance {
     fn discard_virtual_tool_result_handler(&self, _key: &str) -> Result<()> {
         Ok(())
     }
-    fn dispatch_runtime_signal(
-        &self,
-        _signal: &crate::persistence::schema::SignalRow,
-    ) -> Result<usize> {
-        Ok(0)
+    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize> {
+        self.harness.borrow_mut().on_signal(signal)?;
+        Ok(1)
     }
 }
 
@@ -325,10 +321,7 @@ impl HarnessInstance for LuaHarnessInstance {
         self.engine.discard_virtual_tool_result_handler(key)
     }
 
-    fn dispatch_runtime_signal(
-        &self,
-        signal: &crate::persistence::schema::SignalRow,
-    ) -> Result<usize> {
+    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize> {
         self.engine.dispatch_runtime_signal(signal)
     }
 }

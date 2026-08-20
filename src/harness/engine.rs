@@ -602,7 +602,7 @@ impl HarnessEngine {
 
     pub fn dispatch_runtime_signal(
         &self,
-        signal: &crate::persistence::schema::SignalRow,
+        signal: crate::kernel::harness_contract::HarnessSignal<'_>,
     ) -> Result<usize> {
         runtime_signal::dispatch_runtime_signal(&self.lua, signal).map_err(anyhow::Error::from)
     }

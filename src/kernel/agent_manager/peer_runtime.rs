@@ -688,7 +688,16 @@ impl PeerRuntime {
                 .session_harness_engine(&self.session)
                 .expect("session harness engine should be present after ensure");
             let engine = harness.lock().expect("session harness mutex poisoned");
-            engine.dispatch_runtime_signal(signal)
+            engine.dispatch_runtime_signal(crate::kernel::harness_contract::HarnessSignal {
+                signal_id: uuid::Uuid::from_slice(&signal.public_id).ok(),
+                topic: &signal.topic,
+                source_agent_id: &signal.source_agent_id,
+                target_agent_id: &signal.target_agent_id,
+                source_session_id: signal.source_session_id.as_deref(),
+                target_session_id: signal.target_session_id.as_deref(),
+                payload: &signal.payload,
+                created_at: &signal.created_at,
+            })
         };
         self.host.unbind_harness_execution_context(&self.session);
         result

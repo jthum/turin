@@ -11,6 +11,7 @@ use crate::harness::stdlib::governance_support::{
 };
 use crate::harness::stdlib::object_refs;
 use crate::harness::stdlib::system_globals::ensure_load_time;
+use crate::kernel::harness_contract::HarnessSignal;
 use crate::persistence::schema::SignalRow;
 use crate::persistence::state::SignalInsert;
 use crate::signal_topics::{signal_topic_subscription_candidates, validate_signal_topic_pattern};
@@ -312,26 +313,30 @@ pub(crate) fn runtime_signal_topics(lua: &Lua) -> LuaResult<Vec<String>> {
     Ok(out)
 }
 
-pub(crate) fn dispatch_runtime_signal(lua: &Lua, signal: &SignalRow) -> Result<usize, mlua::Error> {
+pub(crate) fn dispatch_runtime_signal(
+    lua: &Lua,
+    signal: HarnessSignal<'_>,
+) -> Result<usize, mlua::Error> {
     let registry = ensure_runtime_signal_listener_registry(lua)?;
     let event_ctx = lua.create_table()?;
-    event_ctx.set("name", signal.topic.clone())?;
+    event_ctx.set("name", signal.topic)?;
     event_ctx.set(
         "signal_id",
-        uuid::Uuid::from_slice(&signal.public_id)
+        signal
+            .signal_id
             .map(|uuid| uuid.to_string())
-            .unwrap_or_else(|_| "<invalid>".to_string()),
+            .unwrap_or_else(|| "<invalid>".to_string()),
     )?;
-    event_ctx.set("source_agent_id", signal.source_agent_id.clone())?;
-    event_ctx.set("target_agent_id", signal.target_agent_id.clone())?;
-    event_ctx.set("source_session_id", signal.source_session_id.clone())?;
-    event_ctx.set("target_session_id", signal.target_session_id.clone())?;
-    event_ctx.set("created_at", signal.created_at.clone())?;
+    event_ctx.set("source_agent_id", signal.source_agent_id)?;
+    event_ctx.set("target_agent_id", signal.target_agent_id)?;
+    event_ctx.set("source_session_id", signal.source_session_id)?;
+    event_ctx.set("target_session_id", signal.target_session_id)?;
+    event_ctx.set("created_at", signal.created_at)?;
 
     let event_payload = build_runtime_signal_event_payload(lua, signal)?;
 
     let mut invoked = 0usize;
-    for pattern in signal_topic_subscription_candidates(&signal.topic) {
+    for pattern in signal_topic_subscription_candidates(signal.topic) {
         let listeners = match registry.get::<Value>(pattern.clone())? {
             Value::Nil => continue,
             Value::Table(table) => table,
@@ -393,8 +398,11 @@ fn ensure_runtime_signal_topic_registry(lua: &Lua) -> LuaResult<Table> {
     globals.get(RUNTIME_SIGNAL_TOPIC_REGISTRY_KEY)
 }
 
-fn build_runtime_signal_event_payload(lua: &Lua, signal: &SignalRow) -> Result<Value, mlua::Error> {
-    let payload = serde_json::from_str::<JsonValue>(&signal.payload).unwrap_or(JsonValue::Null);
+fn build_runtime_signal_event_payload(
+    lua: &Lua,
+    signal: HarnessSignal<'_>,
+) -> Result<Value, mlua::Error> {
+    let payload = serde_json::from_str::<JsonValue>(signal.payload).unwrap_or(JsonValue::Null);
     let mut base = match payload {
         JsonValue::Object(map) => map,
         other => {
@@ -406,39 +414,41 @@ fn build_runtime_signal_event_payload(lua: &Lua, signal: &SignalRow) -> Result<V
     base.insert(
         "signal_id".to_string(),
         JsonValue::String(
-            uuid::Uuid::from_slice(&signal.public_id)
+            signal
+                .signal_id
                 .map(|uuid| uuid.to_string())
-                .unwrap_or_else(|_| "<invalid>".to_string()),
+                .unwrap_or_else(|| "<invalid>".to_string()),
         ),
     );
-    base.insert("topic".to_string(), JsonValue::String(signal.topic.clone()));
+    base.insert(
+        "topic".to_string(),
+        JsonValue::String(signal.topic.to_string()),
+    );
     base.insert(
         "source".to_string(),
-        JsonValue::String(signal.source_agent_id.clone()),
+        JsonValue::String(signal.source_agent_id.to_string()),
     );
     base.insert(
         "source_agent_id".to_string(),
-        JsonValue::String(signal.source_agent_id.clone()),
+        JsonValue::String(signal.source_agent_id.to_string()),
     );
     base.insert(
         "source_session_id".to_string(),
         signal
             .source_session_id
-            .clone()
-            .map(JsonValue::String)
+            .map(|value| JsonValue::String(value.to_string()))
             .unwrap_or(JsonValue::Null),
     );
     base.insert(
         "target_session_id".to_string(),
         signal
             .target_session_id
-            .clone()
-            .map(JsonValue::String)
+            .map(|value| JsonValue::String(value.to_string()))
             .unwrap_or(JsonValue::Null),
     );
     base.insert(
         "emitted_at".to_string(),
-        JsonValue::String(signal.created_at.clone()),
+        JsonValue::String(signal.created_at.to_string()),
     );
     object_refs::decode_json_payload(lua, &JsonValue::Object(base))
 }

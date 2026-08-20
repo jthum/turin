@@ -111,27 +111,41 @@ mod tests {
 
     use super::*;
     use crate::harness::verdict::Verdict;
-    use crate::kernel::harness_contract::HarnessHook;
+    use crate::kernel::harness_contract::{HarnessHook, HarnessSignal};
     use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 
     struct RecordingHarness {
         calls: Arc<AtomicUsize>,
+        signals: Arc<AtomicUsize>,
     }
 
     impl NativeHarness for RecordingHarness {
+        fn runtime_signal_topics(&self) -> Vec<String> {
+            vec!["build.*".to_string()]
+        }
+
         fn on_hook(&mut self, _hook: HarnessHook<'_>) -> Result<Verdict> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Ok(Verdict::Allow)
+        }
+
+        fn on_signal(&mut self, signal: HarnessSignal<'_>) -> Result<()> {
+            assert_eq!(signal.topic, "build.complete");
+            self.signals.fetch_add(1, Ordering::Relaxed);
+            Ok(())
         }
     }
 
     #[test]
     fn native_factory_creates_isolated_session_harnesses_without_watch_roots() -> Result<()> {
         let calls = Arc::new(AtomicUsize::new(0));
+        let signals = Arc::new(AtomicUsize::new(0));
         let factory_calls = Arc::clone(&calls);
+        let factory_signals = Arc::clone(&signals);
         let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
             Ok(Box::new(RecordingHarness {
                 calls: Arc::clone(&factory_calls),
+                signals: Arc::clone(&factory_signals),
             }) as Box<dyn NativeHarness>)
         });
         let kernel = RuntimeBuilder::new(TurinConfig::default())
@@ -157,6 +171,21 @@ mod tests {
         assert_eq!(first_verdict, Verdict::Allow);
         assert_eq!(second_verdict, Verdict::Allow);
         assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert_eq!(first.runtime_signal_topics(), ["build.*"]);
+        assert_eq!(
+            first.dispatch_runtime_signal(HarnessSignal {
+                signal_id: None,
+                topic: "build.complete",
+                source_agent_id: "builder",
+                target_agent_id: "default",
+                source_session_id: None,
+                target_session_id: None,
+                payload: "{}",
+                created_at: "2026-08-20T00:00:00Z",
+            })?,
+            1
+        );
+        assert_eq!(signals.load(Ordering::Relaxed), 1);
         Ok(())
     }
 }

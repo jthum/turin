@@ -133,6 +133,22 @@ pub struct HarnessTurnRequest {
     pub tool_exposure: ToolExposure,
 }
 
+/// A durable runtime signal delivered to a harness subscription.
+///
+/// The contract borrows delivery data and deliberately omits persistence bookkeeping
+/// such as database row IDs and retry counters.
+#[derive(Clone, Copy, Debug)]
+pub struct HarnessSignal<'a> {
+    pub signal_id: Option<uuid::Uuid>,
+    pub topic: &'a str,
+    pub source_agent_id: &'a str,
+    pub target_agent_id: &'a str,
+    pub source_session_id: Option<&'a str>,
+    pub target_session_id: Option<&'a str>,
+    pub payload: &'a str,
+    pub created_at: &'a str,
+}
+
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub(crate) struct HarnessTurnServices<'a> {
     pub(crate) clients: &'a HashMap<String, ProviderClient>,
