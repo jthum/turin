@@ -2,17 +2,21 @@ use super::*;
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{
-    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
-    LayoutConfig, PersistenceConfig, ProviderConfig, TurinConfig,
+    AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig,
+    InferenceOverrideConfig, KernelConfig, LayoutConfig, PersistenceConfig, ProviderConfig,
+    TurinConfig,
 };
+use crate::kernel::session::QueuedTask;
 use crate::kernel::session_refs::{parse_session_reference, session_references_match};
 use crate::persistence::state::StateStore;
 use crate::tools::{Tool, ToolContext, ToolEffect, ToolError};
 use async_trait::async_trait;
 use serde_json::json;
-use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn task_status_prompt_preview_is_normalized_and_bounded() {

@@ -1,38 +1,46 @@
 mod allocator;
+mod caches;
 mod cancellation;
 mod operations;
 mod peer_runtime;
+mod records;
+mod runtime_control;
 mod runtime_registry;
 mod task_status;
 mod tasks;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock, RwLock as StdRwLock};
 
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
-use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::config::TurinConfig;
-use crate::kernel::delegation_budget::{DelegationBudget, DelegationBudgetLimits};
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::SessionPersistenceCoordinator;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_manager::HarnessManager;
 use crate::kernel::policy::RuntimePolicyManager;
 pub use crate::kernel::session::ExecutionStatusSnapshot;
-use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask, SessionState};
+use crate::kernel::session::{ExecutionConflictPolicy, SessionState};
 pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
-use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock, oneshot};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{Mutex as AsyncMutex, RwLock, oneshot};
 use turin_types::TaskInputContent;
+
+use caches::{CompletedTaskCache, DelegationBudgetCache};
+pub use records::AgentRuntimeHandle;
+use records::{
+    DelegationAdmission, LinkedSessionTarget, PeerAgentTaskEnvelope, PeerTaskSubmission,
+    PendingTaskRecord, PendingTaskState, RuntimeSlotKey, TaskSessionTarget, task_prompt_preview,
+};
+pub(crate) use runtime_control::{
+    RuntimeControl, RuntimeControlSnapshot, SessionContextOverrides, SessionResetRequest,
+};
 
 pub(crate) type SessionEventRecord = (Option<i64>, KernelEvent);
 pub(crate) type SessionEventSender = tokio::sync::broadcast::Sender<SessionEventRecord>;
@@ -181,80 +189,6 @@ impl LiveSessionHistorySnapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct RuntimeSlotKey {
-    agent_id: String,
-    slot_id: String,
-}
-
-impl RuntimeSlotKey {
-    const DEFAULT_SLOT_ID: &str = "default";
-
-    fn default_for(agent_id: &str) -> Self {
-        Self {
-            agent_id: agent_id.to_string(),
-            slot_id: Self::DEFAULT_SLOT_ID.to_string(),
-        }
-    }
-
-    fn linked_for_excluding(
-        agent_id: &str,
-        parent_session_reference: &str,
-        thread_key: &str,
-        excluded_slots: &std::collections::HashSet<String>,
-        lane_capacity: usize,
-    ) -> Option<Self> {
-        let mut hasher = DefaultHasher::new();
-        parent_session_reference.hash(&mut hasher);
-        thread_key.hash(&mut hasher);
-        let lane_capacity = u64::try_from(lane_capacity).ok()?;
-        if lane_capacity == 0 {
-            return None;
-        }
-        let initial_lane = hasher.finish() % lane_capacity;
-        (0..lane_capacity).find_map(|offset| {
-            let lane = (initial_lane + offset) % lane_capacity;
-            let slot_id = format!("linked_{lane}");
-            (!excluded_slots.contains(&slot_id)).then(|| Self {
-                agent_id: agent_id.to_string(),
-                slot_id,
-            })
-        })
-    }
-
-    fn is_linked(&self) -> bool {
-        self.slot_id.starts_with("linked_")
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PendingTaskState {
-    Queued,
-    Running,
-    Cancelling,
-}
-
-#[derive(Debug, Clone)]
-struct PendingTaskRecord {
-    runtime_key: RuntimeSlotKey,
-    session_target: TaskSessionTarget,
-    trace_id: String,
-    title: Option<String>,
-    prompt_preview: String,
-    state: PendingTaskState,
-    runtime_task_id: Option<String>,
-    execution: ExecutionStatusSnapshot,
-}
-
-#[derive(Debug, Clone, Default)]
-struct TaskSessionTarget {
-    session_id: Option<String>,
-    store_selector: Option<crate::persistence::manager::StoreSelector>,
-    linked_parent_session_id: Option<i64>,
-    thread_key: Option<String>,
-    reserves_new_child: bool,
-}
-
 /// Selects whether linked delegation reuses a logical child context or creates a new one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkedSessionMode {
@@ -268,350 +202,6 @@ impl LinkedSessionMode {
             Self::Thread(key) => key,
             Self::Fresh => format!("fresh-{}", uuid::Uuid::now_v7().simple()),
         }
-    }
-}
-
-impl TaskSessionTarget {
-    fn matches_session(&self, session_id: &str) -> bool {
-        self.session_id.as_deref().is_some_and(|target| {
-            crate::kernel::session_refs::session_references_match(target, session_id)
-        })
-    }
-
-    fn belongs_to_family(
-        &self,
-        session_ids: &[String],
-        persisted_ids: &std::collections::HashSet<(
-            crate::persistence::manager::StoreSelector,
-            i64,
-        )>,
-    ) -> bool {
-        self.session_id.as_deref().is_some_and(|target| {
-            session_ids.iter().any(|session_id| {
-                crate::kernel::session_refs::session_references_match(target, session_id)
-            })
-        }) || self
-            .store_selector
-            .as_ref()
-            .zip(self.linked_parent_session_id)
-            .is_some_and(|(store, parent_id)| persisted_ids.contains(&(store.clone(), parent_id)))
-    }
-}
-
-fn task_prompt_preview(prompt: &str) -> String {
-    const MAX_CHARS: usize = 240;
-
-    let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.chars().count() <= MAX_CHARS {
-        return normalized;
-    }
-
-    let mut preview = normalized.chars().take(MAX_CHARS - 3).collect::<String>();
-    preview.push_str("...");
-    preview
-}
-
-pub(crate) struct RuntimeControl {
-    state: StdRwLock<RuntimeControlState>,
-    session_reset_request: Mutex<Option<SessionResetRequest>>,
-}
-
-#[derive(Clone)]
-pub(crate) struct RuntimeControlSnapshot {
-    session_id: Option<String>,
-    session_events: Option<SessionEventSender>,
-    session_context: SessionContextOverrides,
-    execution: Option<ExecutionStatusSnapshot>,
-    conflict_policy: ExecutionConflictPolicy,
-    history: Option<LiveSessionHistorySnapshot>,
-    request_id: Option<String>,
-    runtime_task_id: Option<String>,
-    cancel_token: Option<CancellationToken>,
-    generation: u64,
-}
-
-#[derive(Clone)]
-struct RuntimeControlState {
-    session_id: Option<String>,
-    session_events: Option<SessionEventSender>,
-    session_context: SessionContextOverrides,
-    execution: Option<ExecutionStatusSnapshot>,
-    conflict_policy: ExecutionConflictPolicy,
-    history: Option<LiveSessionHistorySnapshot>,
-    request_id: Option<String>,
-    runtime_task_id: Option<String>,
-    cancel_token: Option<CancellationToken>,
-    generation: u64,
-}
-
-impl Default for RuntimeControlState {
-    fn default() -> Self {
-        Self {
-            session_id: None,
-            session_events: None,
-            session_context: SessionContextOverrides::default(),
-            execution: None,
-            conflict_policy: ExecutionConflictPolicy::Reject,
-            history: None,
-            request_id: None,
-            runtime_task_id: None,
-            cancel_token: None,
-            generation: 0,
-        }
-    }
-}
-
-impl Default for RuntimeControl {
-    fn default() -> Self {
-        Self {
-            state: StdRwLock::new(RuntimeControlState::default()),
-            session_reset_request: Mutex::new(None),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SessionContextOverrides {
-    pub(crate) origin_id: Option<String>,
-    pub(crate) inference: InferenceOverrideConfig,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum SessionResetRequest {
-    Fresh(SessionContextOverrides),
-    Resume {
-        session_id: String,
-        context: SessionContextOverrides,
-    },
-}
-
-impl RuntimeControl {
-    fn set_current_session(
-        &self,
-        session_id: Option<String>,
-        event_tx: Option<SessionEventSender>,
-        context: SessionContextOverrides,
-        execution: Option<ExecutionStatusSnapshot>,
-        conflict_policy: ExecutionConflictPolicy,
-        history: Option<LiveSessionHistorySnapshot>,
-    ) {
-        let mut state = self.write_state();
-        state.session_id = session_id;
-        state.session_events = event_tx;
-        state.session_context = context;
-        state.execution = execution;
-        state.conflict_policy = conflict_policy;
-        state.history = history;
-        state.generation = state.generation.wrapping_add(1);
-    }
-
-    #[cfg(test)]
-    fn set_current_session_id(&self, session_id: Option<String>) {
-        self.set_current_session(
-            session_id,
-            None,
-            SessionContextOverrides::default(),
-            None,
-            ExecutionConflictPolicy::Reject,
-            None,
-        );
-    }
-
-    fn current_session_id(&self) -> Option<String> {
-        self.snapshot().session_id
-    }
-
-    fn session_generation(&self) -> u64 {
-        self.snapshot().generation
-    }
-
-    fn current_session_context(&self) -> SessionContextOverrides {
-        self.snapshot().session_context
-    }
-
-    fn current_execution(&self) -> Option<ExecutionStatusSnapshot> {
-        self.snapshot().execution
-    }
-
-    fn set_current_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
-        self.write_state().conflict_policy = conflict_policy;
-    }
-
-    fn current_conflict_policy(&self) -> ExecutionConflictPolicy {
-        self.snapshot().conflict_policy
-    }
-
-    fn set_current_execution_snapshot(&self, execution: ExecutionStatusSnapshot) {
-        self.write_state().execution = Some(execution);
-    }
-
-    fn set_current_history_snapshot(&self, history: LiveSessionHistorySnapshot) {
-        self.write_state().history = Some(history);
-    }
-
-    #[cfg(test)]
-    fn set_current_execution_conflict_policy(&self, conflict_policy: ExecutionConflictPolicy) {
-        self.set_current_conflict_policy(conflict_policy);
-    }
-
-    fn subscribe_current_session_events(&self) -> Option<SessionEventReceiver> {
-        self.snapshot()
-            .session_events
-            .as_ref()
-            .map(SessionEventSender::subscribe)
-    }
-
-    fn activate_task(
-        &self,
-        request_id: Option<String>,
-        runtime_task_id: String,
-        cancel_token: CancellationToken,
-    ) {
-        let mut state = self.write_state();
-        state.request_id = request_id;
-        state.runtime_task_id = Some(runtime_task_id);
-        state.cancel_token = Some(cancel_token);
-    }
-
-    fn clear_active_task(&self) {
-        let mut state = self.write_state();
-        state.request_id = None;
-        state.runtime_task_id = None;
-        state.cancel_token = None;
-    }
-
-    fn current_request_id(&self) -> Option<String> {
-        self.snapshot().request_id
-    }
-
-    fn current_runtime_task_id(&self) -> Option<String> {
-        self.snapshot().runtime_task_id
-    }
-
-    fn request_task_cancel(&self) -> bool {
-        let token = self.snapshot().cancel_token;
-        if let Some(token) = token {
-            token.cancel();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn request_session_cancel(&self) -> bool {
-        *self
-            .session_reset_request
-            .lock()
-            .expect("runtime control session reset lock poisoned") =
-            Some(SessionResetRequest::Fresh(self.current_session_context()));
-        self.request_task_cancel()
-    }
-
-    fn request_session_resume(&self, session_id: String, context: SessionContextOverrides) {
-        *self
-            .session_reset_request
-            .lock()
-            .expect("runtime control session reset lock poisoned") =
-            Some(SessionResetRequest::Resume {
-                session_id,
-                context,
-            });
-    }
-
-    fn take_session_reset_request(&self) -> Option<SessionResetRequest> {
-        self.session_reset_request
-            .lock()
-            .expect("runtime control session reset lock poisoned")
-            .take()
-    }
-
-    pub(crate) fn snapshot(&self) -> RuntimeControlSnapshot {
-        let state = self.read_state();
-        RuntimeControlSnapshot {
-            session_id: state.session_id.clone(),
-            session_events: state.session_events.clone(),
-            session_context: state.session_context.clone(),
-            execution: state.execution.clone(),
-            conflict_policy: state.conflict_policy,
-            history: state.history.clone(),
-            request_id: state.request_id.clone(),
-            runtime_task_id: state.runtime_task_id.clone(),
-            cancel_token: state.cancel_token.clone(),
-            generation: state.generation,
-        }
-    }
-
-    fn read_state(&self) -> std::sync::RwLockReadGuard<'_, RuntimeControlState> {
-        self.state
-            .read()
-            .expect("runtime control state lock poisoned")
-    }
-
-    fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, RuntimeControlState> {
-        self.state
-            .write()
-            .expect("runtime control state lock poisoned")
-    }
-}
-
-struct PeerAgentTaskEnvelope {
-    task: QueuedTask,
-    request_id: Option<String>,
-    result_tx: Option<oneshot::Sender<PeerAgentTaskResult>>,
-    delegated_capabilities: Option<BTreeMap<String, bool>>,
-    promotion_candidate: Option<TaskPromotionCandidate>,
-    linked_session: Option<LinkedSessionTarget>,
-    session_target: TaskSessionTarget,
-}
-
-struct PeerTaskSubmission {
-    delegated_capabilities: Option<BTreeMap<String, bool>>,
-    promotion_candidate: Option<TaskPromotionCandidate>,
-    linked_session: Option<LinkedSessionTarget>,
-    session_target: TaskSessionTarget,
-    delegation_admission: Option<DelegationAdmission>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DelegationAdmission {
-    parent_session_id: i64,
-    persisted_direct_children: usize,
-    max_fan_out: usize,
-    max_concurrent_children: usize,
-}
-
-#[derive(Debug, Clone)]
-struct LinkedSessionTarget {
-    state_selector: crate::persistence::manager::StoreSelector,
-    default_store_selector: Option<crate::persistence::manager::StoreSelector>,
-    context: SessionContextOverrides,
-    link: crate::persistence::schema::LinkedSessionCreate,
-}
-
-/// A handle to a running peer agent.
-pub struct AgentRuntimeHandle {
-    /// Explicit queued envelopes awaiting execution.
-    queue: Arc<Mutex<VecDeque<PeerAgentTaskEnvelope>>>,
-    /// Notification used to wake the background runtime when new work arrives.
-    notify: Arc<Notify>,
-    /// Shared execution/session control state for the runtime.
-    control: Arc<RuntimeControl>,
-    /// Cooperative stop signal for the runtime event loop.
-    shutdown_token: CancellationToken,
-    /// The background task running the agent's event loop.
-    task: Option<JoinHandle<()>>,
-    /// Approximate number of tasks currently queued in the runtime channel.
-    queued_tasks: Arc<AtomicUsize>,
-    /// Number of tasks currently executing inside the runtime loop.
-    active_tasks: Arc<AtomicUsize>,
-}
-
-impl AgentRuntimeHandle {
-    fn is_running(&self) -> bool {
-        self.task
-            .as_ref()
-            .map(|jh| !jh.is_finished())
-            .unwrap_or(false)
     }
 }
 
@@ -629,77 +219,6 @@ pub(crate) struct SharedPeerRuntimeContext {
 pub(crate) struct SharedInferenceState {
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-}
-
-#[derive(Default)]
-struct CompletedTaskCache {
-    order: VecDeque<String>,
-    results: HashMap<String, PeerAgentTaskResult>,
-}
-
-#[derive(Default)]
-struct DelegationBudgetCache {
-    order: VecDeque<String>,
-    budgets: HashMap<String, Arc<DelegationBudget>>,
-}
-
-impl DelegationBudgetCache {
-    const MAX_ENTRIES: usize = 1024;
-
-    fn get_or_create(
-        &mut self,
-        trace_id: &str,
-        limits: DelegationBudgetLimits,
-    ) -> Arc<DelegationBudget> {
-        if let Some(budget) = self.budgets.get(trace_id) {
-            budget.tighten(limits);
-            return Arc::clone(budget);
-        }
-        let budget = DelegationBudget::new(limits);
-        self.order.push_back(trace_id.to_string());
-        self.budgets
-            .insert(trace_id.to_string(), Arc::clone(&budget));
-        let mut eviction_attempts = self.order.len();
-        while self.budgets.len() > Self::MAX_ENTRIES && eviction_attempts > 0 {
-            eviction_attempts -= 1;
-            let Some(candidate) = self.order.pop_front() else {
-                break;
-            };
-            let can_evict = self
-                .budgets
-                .get(&candidate)
-                .is_some_and(|budget| Arc::strong_count(budget) == 1);
-            if can_evict {
-                self.budgets.remove(&candidate);
-            } else {
-                self.order.push_back(candidate);
-            }
-        }
-        budget
-    }
-}
-
-impl CompletedTaskCache {
-    const MAX_ENTRIES: usize = 1024;
-
-    fn insert(&mut self, result: PeerAgentTaskResult) {
-        let request_id = result.request_id.clone();
-        if !self.results.contains_key(&request_id) {
-            self.order.push_back(request_id.clone());
-        }
-        self.results.insert(request_id, result);
-        while self.order.len() > Self::MAX_ENTRIES {
-            if let Some(evicted) = self.order.pop_front() {
-                self.results.remove(&evicted);
-            }
-        }
-    }
-
-    fn mark_promoted(&mut self, request_id: &str, branch: PromotedTaskBranch) {
-        if let Some(result) = self.results.get_mut(request_id) {
-            result.promoted_branch = Some(branch);
-        }
-    }
 }
 
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.

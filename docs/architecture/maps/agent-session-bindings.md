@@ -25,6 +25,10 @@ This surface sits between harness code and core runtime state. It should stay bo
   - Lua-facing `runtime.agent.*` API for peer-agent submit, await, status, sidestep, and promotion.
 - `src/kernel/agent_manager/*`
   - Peer-agent lifecycle, task submission, result await, and live-session reload.
+  - `records.rs` owns physical runtime-slot identity plus queued task/session records.
+  - `runtime_control.rs` owns each resident runtime's coherent session, execution,
+    cancellation, and reset snapshot.
+  - `caches.rs` owns bounded completed-result and trace delegation-budget retention.
 - `src/kernel/session.rs`
   - Queued task, execution context target, conflict policy, and branch outcome types.
 - `src/kernel/task_promotion.rs`
@@ -117,6 +121,8 @@ Linked runtime residency:
   lane is occupied by an awaiting ancestor, fail with bounded-capacity feedback.
 - Per-agent catalog gates serialize task admission against that agent's rare
   configuration replacement without blocking submissions to unrelated agents.
+- AgentManager's root module composes orchestration and public snapshots; mutable
+  runtime-control state, queue records, and bounded caches retain focused internal owners.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.
