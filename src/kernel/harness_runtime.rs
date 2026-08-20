@@ -43,83 +43,132 @@ pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
-pub struct HarnessInstance {
+pub(crate) trait HarnessInstance: Send {
+    fn loaded_scripts(&self) -> Vec<String>;
+    fn explicit_watch_roots(&self) -> Vec<PathBuf>;
+    fn runtime_signal_topics(&self) -> Vec<String>;
+    fn ui_intents(&self) -> Vec<UiIntentMessage>;
+    fn ui_intent_count(&self) -> Result<usize>;
+    fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>>;
+    fn load_script_str(&mut self, script: &str) -> Result<()>;
+    fn evaluate(&self, hook_name: &str, payload: serde_json::Value) -> Result<Verdict>;
+    fn has_hook(&self, hook_name: &str) -> bool;
+    fn evaluate_turn_prepare(
+        &self,
+        context: crate::harness::context::ContextWrapper,
+    ) -> Result<Verdict>;
+    fn bind_execution_context(&self, binding: HarnessExecutionBinding);
+    fn unbind_execution_context(&self);
+    fn set_active_queue(&self, queue: Option<SessionQueue>);
+    fn set_active_capability_delegation(
+        &self,
+        capabilities: Option<std::collections::BTreeMap<String, bool>>,
+    );
+    fn take_pending_session_branch_checkout(&self) -> Option<String>;
+    fn invoke_declared_action_for_agent(
+        &self,
+        agent_id: &str,
+        name: &str,
+        params: serde_json::Value,
+    ) -> Result<Option<serde_json::Value>>;
+    fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>>;
+    fn invoke_virtual_tool(
+        &self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<Option<VirtualToolResultResolution>>;
+    fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>>;
+    fn invoke_virtual_tool_result_handler(
+        &self,
+        key: &str,
+        payload: serde_json::Value,
+        default_is_error: bool,
+    ) -> Result<VirtualToolResultResolution>;
+    fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()>;
+    fn dispatch_runtime_signal(
+        &self,
+        signal: &crate::persistence::schema::SignalRow,
+    ) -> Result<usize>;
+}
+
+struct LuaHarnessInstance {
     engine: HarnessEngine,
 }
 
-impl HarnessInstance {
+impl LuaHarnessInstance {
     fn new(engine: HarnessEngine) -> Self {
         Self { engine }
     }
+}
 
-    pub(crate) fn loaded_scripts(&self) -> Vec<String> {
+impl HarnessInstance for LuaHarnessInstance {
+    fn loaded_scripts(&self) -> Vec<String> {
         self.engine.loaded_scripts()
     }
 
-    pub(crate) fn explicit_watch_roots(&self) -> Vec<PathBuf> {
+    fn explicit_watch_roots(&self) -> Vec<PathBuf> {
         self.engine.explicit_watch_roots()
     }
 
-    pub(crate) fn runtime_signal_topics(&self) -> Vec<String> {
+    fn runtime_signal_topics(&self) -> Vec<String> {
         self.engine.runtime_signal_topics().unwrap_or_default()
     }
 
-    pub(crate) fn ui_intents(&self) -> Vec<UiIntentMessage> {
+    fn ui_intents(&self) -> Vec<UiIntentMessage> {
         self.engine.ui_intents().unwrap_or_default()
     }
 
-    pub(crate) fn ui_intent_count(&self) -> Result<usize> {
+    fn ui_intent_count(&self) -> Result<usize> {
         self.engine.ui_intent_count()
     }
 
-    pub(crate) fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>> {
+    fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>> {
         self.engine.ui_intents_from(start_index)
     }
 
-    pub(crate) fn load_script_str(&mut self, script: &str) -> Result<()> {
+    fn load_script_str(&mut self, script: &str) -> Result<()> {
         self.engine.load_script_str(script)
     }
 
-    pub(crate) fn evaluate(&self, hook_name: &str, payload: serde_json::Value) -> Result<Verdict> {
+    fn evaluate(&self, hook_name: &str, payload: serde_json::Value) -> Result<Verdict> {
         self.engine.evaluate(hook_name, payload)
     }
 
-    pub(crate) fn has_hook(&self, hook_name: &str) -> bool {
+    fn has_hook(&self, hook_name: &str) -> bool {
         self.engine.has_hook(hook_name)
     }
 
-    pub(crate) fn evaluate_userdata(
+    fn evaluate_turn_prepare(
         &self,
-        hook_name: &str,
-        data: impl mlua::UserData + Clone + Send + Sync + 'static,
+        context: crate::harness::context::ContextWrapper,
     ) -> Result<Verdict> {
-        self.engine.evaluate_userdata(hook_name, data)
+        self.engine.evaluate_userdata("on_turn_prepare", context)
     }
 
-    pub(crate) fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
+    fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
         self.engine.bind_execution_context(binding);
     }
 
-    pub(crate) fn unbind_execution_context(&self) {
+    fn unbind_execution_context(&self) {
         self.engine.unbind_execution_context();
     }
 
-    pub(crate) fn set_active_queue(&self, queue: Option<SessionQueue>) {
+    fn set_active_queue(&self, queue: Option<SessionQueue>) {
         self.engine.set_active_queue(queue);
     }
 
-    pub(crate) fn set_active_capability_delegation(
+    fn set_active_capability_delegation(
         &self,
         capabilities: Option<std::collections::BTreeMap<String, bool>>,
     ) {
         self.engine.set_active_capability_delegation(capabilities);
     }
 
-    pub(crate) fn take_pending_session_branch_checkout(&self) -> Option<String> {
+    fn take_pending_session_branch_checkout(&self) -> Option<String> {
         self.engine.take_pending_session_branch_checkout()
     }
 
-    pub(crate) fn invoke_declared_action_for_agent(
+    fn invoke_declared_action_for_agent(
         &self,
         agent_id: &str,
         name: &str,
@@ -129,11 +178,11 @@ impl HarnessInstance {
             .invoke_declared_action_for_agent(agent_id, name, params)
     }
 
-    pub(crate) fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
+    fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
         self.engine.declared_virtual_tools()
     }
 
-    pub(crate) fn invoke_virtual_tool(
+    fn invoke_virtual_tool(
         &self,
         name: &str,
         args: serde_json::Value,
@@ -141,11 +190,11 @@ impl HarnessInstance {
         self.engine.invoke_virtual_tool(name, args)
     }
 
-    pub(crate) fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>> {
+    fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>> {
         self.engine.virtual_tool_follow_up(name)
     }
 
-    pub(crate) fn invoke_virtual_tool_result_handler(
+    fn invoke_virtual_tool_result_handler(
         &self,
         key: &str,
         payload: serde_json::Value,
@@ -155,11 +204,11 @@ impl HarnessInstance {
             .invoke_virtual_tool_result_handler(key, payload, default_is_error)
     }
 
-    pub(crate) fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()> {
+    fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()> {
         self.engine.discard_virtual_tool_result_handler(key)
     }
 
-    pub(crate) fn dispatch_runtime_signal(
+    fn dispatch_runtime_signal(
         &self,
         signal: &crate::persistence::schema::SignalRow,
     ) -> Result<usize> {
@@ -354,7 +403,7 @@ impl HarnessRuntime {
     pub(crate) fn create_instance(
         &self,
         ctx: HarnessRuntimeInitContext,
-    ) -> Result<HarnessInstance> {
+    ) -> Result<Box<dyn HarnessInstance>> {
         self.build_instance(ctx)
     }
 
@@ -384,7 +433,7 @@ impl HarnessRuntime {
         }
     }
 
-    fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<HarnessInstance> {
+    fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<Box<dyn HarnessInstance>> {
         self.build_instance_with_overlay(ctx, None)
     }
 
@@ -392,7 +441,7 @@ impl HarnessRuntime {
         &self,
         ctx: HarnessRuntimeInitContext,
         source_overlay: Option<Arc<HarnessSourceOverlay>>,
-    ) -> Result<HarnessInstance> {
+    ) -> Result<Box<dyn HarnessInstance>> {
         let mut engine = HarnessEngine::new(self.build_app_data(ctx, source_overlay))
             .context("Failed to create harness engine")?;
         engine.load_dir(&self.directory).with_context(|| {
@@ -402,7 +451,7 @@ impl HarnessRuntime {
             )
         })?;
         engine.set_loading_phase(false);
-        Ok(HarnessInstance::new(engine))
+        Ok(Box::new(LuaHarnessInstance::new(engine)))
     }
 }
 

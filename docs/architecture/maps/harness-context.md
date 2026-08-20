@@ -19,8 +19,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
-  - Owns the explicit session-harness capability surface. Kernel and daemon code must
-    not dereference or otherwise reach through this wrapper into the Lua engine.
+  - Owns the object-safe session-harness capability contract and its Lua adapter.
+    Kernel and daemon code must not reach through the adapter into the Lua engine.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -56,8 +56,9 @@ Structured inference:
 - Conditional exposure must not bypass native policy, governance, or tool-call hooks.
 - Lua engine operations used outside the harness subsystem must be represented by an
   explicit session-harness capability. Do not restore unrestricted `Deref` access to
-  `HarnessEngine`; this boundary is the migration seam for native harnesses and
-  optional scripting adapters.
+  `HarnessEngine`; session state stores `Box<dyn HarnessInstance>`, not a concrete Lua
+  engine. This boundary is the migration seam for native harnesses and optional
+  scripting adapters.
 
 ## Common Changes
 
@@ -104,6 +105,7 @@ git diff --check
 The current shape keeps Lua property and message mutation in `context.rs`, request-option
 layering in `request_options.rs`, and the structured inference operation in
 `structured_call.rs`. Normal inference and structured harness inference use the same
-header/retry/timeout override policy. `HarnessInstance` now encapsulates its Lua engine
-behind explicit hook, binding, virtual-tool, signal, action, and metadata operations;
-runtime call sites no longer gain arbitrary engine access through `Deref`.
+header/retry/timeout override policy. The object-safe `HarnessInstance` capability
+contract sits between session execution and the private `LuaHarnessInstance` adapter.
+It currently retains some Lua-shaped method inputs while those contracts move to typed
+kernel DTOs, but runtime call sites no longer store or reach a concrete Lua engine.

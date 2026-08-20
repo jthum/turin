@@ -24,7 +24,7 @@ pub use completed_tasks::{
 pub use queued_tasks::QueuedTask;
 pub use resident_history::{HistoryOrigin, ResidentHistory};
 
-pub type SessionHarnessEngine = Arc<std::sync::Mutex<HarnessInstance>>;
+pub(crate) type SessionHarnessEngine = Arc<std::sync::Mutex<Box<dyn HarnessInstance>>>;
 
 /// Transient per-task execution state that is reset when a task completes.
 #[derive(Debug, Default)]
@@ -438,8 +438,8 @@ pub struct SessionState {
     pub execution: ExecutionContext,
     pub active_task: ActiveTaskState,
     pub selected_branch_head_cursor: Option<BranchHeadCursor>,
-    pub harness_engine: Option<SessionHarnessEngine>,
-    pub harness_generation: u64,
+    pub(crate) harness_engine: Option<SessionHarnessEngine>,
+    pub(crate) harness_generation: u64,
     pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub completed_task_results: CompletedLocalTaskResultsHandle,
     pub plans: HashMap<String, PlanProgress>,

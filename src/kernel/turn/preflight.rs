@@ -366,7 +366,7 @@ impl ExecutionHost {
                 available_tools: available_tool_names,
             });
 
-            match engine.evaluate_userdata("on_turn_prepare", ctx.clone()) {
+            match engine.evaluate_turn_prepare(ctx.clone()) {
                 Ok(Verdict::Reject(reason)) => {
                     warn!(reason = %reason, "Turn rejected by on_turn_prepare");
                     return Ok(true);
