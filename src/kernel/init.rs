@@ -216,7 +216,10 @@ impl Kernel {
             .await?;
         let config = Arc::new(config);
         let harness_manager = Arc::new(
-            crate::kernel::harness_manager::HarnessManager::from_config(config.as_ref())?,
+            crate::kernel::harness_manager::HarnessManager::from_config_with_native(
+                config.as_ref(),
+                self.host.native_harness_factory.clone(),
+            )?,
         );
         let mut init_context = self.harness_init_context();
         init_context.config = Arc::clone(&config);

@@ -22,6 +22,7 @@ pub struct RuntimeBuilder {
     tool_registry: ToolRegistry,
 
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    native_harness_factory: Option<Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>>,
 }
 
 impl RuntimeBuilder {
@@ -33,6 +34,7 @@ impl RuntimeBuilder {
             tool_registry: create_default_registry(),
 
             embedding_provider: None,
+            native_harness_factory: None,
         }
     }
 
@@ -48,6 +50,15 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Use a compiled Rust harness for the default harness binding.
+    pub fn with_native_harness_factory(
+        mut self,
+        factory: Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>,
+    ) -> Self {
+        self.native_harness_factory = Some(factory);
+        self
+    }
+
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
         let store_manager = Arc::new(StoreManager::new(
@@ -58,7 +69,10 @@ impl RuntimeBuilder {
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
-        let harness_manager = Arc::new(HarnessManager::from_config(config_arc.as_ref())?);
+        let harness_manager = Arc::new(HarnessManager::from_config_with_native(
+            config_arc.as_ref(),
+            self.native_harness_factory.clone(),
+        )?);
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
@@ -83,9 +97,66 @@ impl RuntimeBuilder {
                 persistence_locks,
                 clients: HashMap::new(),
                 embedding_provider: self.embedding_provider,
+                native_harness_factory: self.native_harness_factory,
                 mcp_clients: Vec::new(),
             },
             check_watcher: Arc::new(std::sync::Mutex::new(None)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::harness::verdict::Verdict;
+    use crate::kernel::harness_contract::HarnessHook;
+    use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
+
+    struct RecordingHarness {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl NativeHarness for RecordingHarness {
+        fn on_hook(&mut self, _hook: HarnessHook<'_>) -> Result<Verdict> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Verdict::Allow)
+        }
+    }
+
+    #[test]
+    fn native_factory_creates_isolated_session_harnesses_without_watch_roots() -> Result<()> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let factory_calls = Arc::clone(&calls);
+        let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
+            Ok(Box::new(RecordingHarness {
+                calls: Arc::clone(&factory_calls),
+            }) as Box<dyn NativeHarness>)
+        });
+        let kernel = RuntimeBuilder::new(TurinConfig::default())
+            .with_native_harness_factory(factory)
+            .build()?;
+        let runtime = kernel.host.runtime_for_agent("default");
+
+        assert!(runtime.watch_roots().is_empty());
+        let first = runtime.create_instance(kernel.host.harness_init_context())?;
+        let second = runtime.create_instance(kernel.host.harness_init_context())?;
+        let args = serde_json::json!({});
+        let first_verdict = first.evaluate_hook(HarnessHook::ToolCall {
+            name: "test",
+            id: "call-1",
+            args: &args,
+        })?;
+        let second_verdict = second.evaluate_hook(HarnessHook::ToolCall {
+            name: "test",
+            id: "call-2",
+            args: &args,
+        })?;
+
+        assert_eq!(first_verdict, Verdict::Allow);
+        assert_eq!(second_verdict, Verdict::Allow);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        Ok(())
     }
 }

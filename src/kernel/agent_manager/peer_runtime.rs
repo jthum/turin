@@ -744,6 +744,7 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
         persistence_locks: Arc::clone(&shared.persistence_locks),
         clients: inference.clients,
         embedding_provider: inference.embedding_provider,
+        native_harness_factory: None,
         mcp_clients: Vec::new(),
     }
 }

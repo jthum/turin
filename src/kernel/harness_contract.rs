@@ -107,27 +107,27 @@ use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 /// Ownership moves into this value before the hook and back into the provider request
 /// afterward. Native harnesses mutate it directly; scripting adapters may temporarily
 /// wrap it without making JSON the canonical representation.
-pub(crate) struct HarnessTurnRequest {
-    pub(crate) inference: Option<String>,
-    pub(crate) model: String,
-    pub(crate) provider: String,
-    pub(crate) system_prompt: String,
-    pub(crate) messages: Vec<InferenceMessage>,
-    pub(crate) turn_index: u32,
-    pub(crate) task_turn_index: u32,
-    pub(crate) is_first_turn_in_task: bool,
-    pub(crate) task_id: String,
-    pub(crate) plan_id: Option<String>,
-    pub(crate) token_count: u32,
-    pub(crate) token_limit: u32,
-    pub(crate) thinking_budget: u32,
-    pub(crate) request_options: RequestOptionsOverride,
-    pub(crate) agent_id: String,
-    pub(crate) session_inference: InferenceOverrideConfig,
-    pub(crate) session_id: String,
-    pub(crate) session_title: Option<String>,
-    pub(crate) available_tools: BTreeSet<String>,
-    pub(crate) tool_exposure: ToolExposure,
+pub struct HarnessTurnRequest {
+    pub inference: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub system_prompt: String,
+    pub messages: Vec<InferenceMessage>,
+    pub turn_index: u32,
+    pub task_turn_index: u32,
+    pub is_first_turn_in_task: bool,
+    pub task_id: String,
+    pub plan_id: Option<String>,
+    pub token_count: u32,
+    pub token_limit: u32,
+    pub thinking_budget: u32,
+    pub request_options: RequestOptionsOverride,
+    pub agent_id: String,
+    pub session_inference: InferenceOverrideConfig,
+    pub session_id: String,
+    pub session_title: Option<String>,
+    pub available_tools: BTreeSet<String>,
+    pub tool_exposure: ToolExposure,
 }
 
 pub(crate) struct HarnessTurnServices<'a> {
@@ -139,7 +139,7 @@ pub(crate) struct HarnessTurnServices<'a> {
 ///
 /// Scripting adapters own conversion from this contract into language values. Native
 /// harnesses can inspect the borrowed domain values directly.
-pub(crate) enum HarnessHook<'a> {
+pub enum HarnessHook<'a> {
     SessionStart {
         identity: &'a RuntimeIdentity,
         session_id: &'a str,

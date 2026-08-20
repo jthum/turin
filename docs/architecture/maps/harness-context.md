@@ -26,6 +26,12 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     harness implementations. Lua payload conversion belongs here as adapter behavior;
     generic JSON hook dispatch is not part of the session-harness contract.
   - Owns the neutral mutable turn-preparation request and execution-binding DTOs.
+- `src/kernel/native_harness.rs`
+  - Public compiled-harness and per-session factory contracts. Default hook methods
+    allow fixed-purpose applications to implement only the policy they need.
+- `src/kernel/builder.rs`
+  - `with_native_harness_factory` replaces the default Lua harness binding with a
+    compiled Rust factory while preserving named Lua harness definitions.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -70,6 +76,11 @@ Structured inference:
 - Kernel hook call sites must construct `HarnessHook` variants from domain values.
   Do not reintroduce hook-name strings plus generic JSON payloads at the contract
   boundary. JSON remains appropriate inside dynamic fields such as tool arguments.
+- A native factory creates one logical harness object per active session. Immutable
+  application state should be shared explicitly with `Arc`; mutable session policy
+  must not leak through a globally shared harness object.
+- Native default harnesses do not watch the configured Lua harness directory. Named
+  Lua harnesses retain their normal loading and hot-reload behavior.
 
 ## Common Changes
 
@@ -123,3 +134,5 @@ Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
 ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation
 detail. Execution bindings and session queues are kernel-owned DTOs rather than Lua
 globals, while registration and virtual-tool capabilities remain to be generalized.
+`RuntimeBuilder::with_native_harness_factory` now provides the first compiled-harness
+entry point for typed lifecycle hooks and request preparation. Lua remains the default.

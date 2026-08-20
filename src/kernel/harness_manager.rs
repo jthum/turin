@@ -7,6 +7,7 @@ use tracing::debug;
 
 use super::config::TurinConfig;
 use super::harness_runtime::HarnessRuntime;
+use super::native_harness::NativeHarnessFactory;
 
 pub(crate) struct HarnessManager {
     agent_bindings: HashMap<String, String>,
@@ -15,12 +16,22 @@ pub(crate) struct HarnessManager {
 }
 
 impl HarnessManager {
+    #[cfg(test)]
     pub(crate) fn from_config(config: &TurinConfig) -> Result<Self> {
+        Self::from_config_with_native(config, None)
+    }
+
+    pub(crate) fn from_config_with_native(
+        config: &TurinConfig,
+        native_factory: Option<Arc<dyn NativeHarnessFactory>>,
+    ) -> Result<Self> {
         let default_harness_id = "default".to_string();
-        let default_runtime = Arc::new(HarnessRuntime::from_config(
-            default_harness_id.clone(),
-            config,
-        ));
+        let default_runtime = Arc::new(match native_factory {
+            Some(factory) => {
+                HarnessRuntime::from_config_with_native(default_harness_id.clone(), config, factory)
+            }
+            None => HarnessRuntime::from_config(default_harness_id.clone(), config),
+        });
 
         let fs_root = if config.harness.fs_root == "." {
             PathBuf::from(&config.kernel.workspace_root)

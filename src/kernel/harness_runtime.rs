@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,6 +24,7 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_contract::{
     HarnessExecutionBinding, HarnessHook, HarnessTurnRequest, HarnessTurnServices, SessionQueue,
 };
+use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
@@ -95,6 +97,104 @@ pub(crate) trait HarnessInstance: Send {
 
 struct LuaHarnessInstance {
     engine: HarnessEngine,
+}
+
+struct NativeHarnessInstance {
+    harness: RefCell<Box<dyn NativeHarness>>,
+}
+
+impl NativeHarnessInstance {
+    fn new(harness: Box<dyn NativeHarness>) -> Self {
+        Self {
+            harness: RefCell::new(harness),
+        }
+    }
+}
+
+impl HarnessInstance for NativeHarnessInstance {
+    fn loaded_scripts(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn explicit_watch_roots(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+    fn runtime_signal_topics(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn ui_intents(&self) -> Vec<UiIntentMessage> {
+        Vec::new()
+    }
+    fn ui_intent_count(&self) -> Result<usize> {
+        Ok(0)
+    }
+    fn ui_intents_from(&self, _start_index: usize) -> Result<Vec<UiIntentMessage>> {
+        Ok(Vec::new())
+    }
+    fn load_script_str(&mut self, _script: &str) -> Result<()> {
+        anyhow::bail!("native harnesses do not load Lua source")
+    }
+    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
+        self.harness.borrow_mut().on_hook(hook)
+    }
+    fn has_hook(&self, hook_name: &str) -> bool {
+        hook_name == "on_turn_prepare"
+    }
+    fn prepare_turn(
+        &self,
+        request: &mut HarnessTurnRequest,
+        _services: HarnessTurnServices<'_>,
+    ) -> Result<Verdict> {
+        self.harness.borrow_mut().on_turn_prepare(request)
+    }
+    fn bind_execution_context(&self, _binding: HarnessExecutionBinding) {}
+    fn unbind_execution_context(&self) {}
+    fn set_active_queue(&self, _queue: Option<SessionQueue>) {}
+    fn set_active_capability_delegation(
+        &self,
+        _capabilities: Option<std::collections::BTreeMap<String, bool>>,
+    ) {
+    }
+    fn take_pending_session_branch_checkout(&self) -> Option<String> {
+        None
+    }
+    fn invoke_declared_action_for_agent(
+        &self,
+        _agent_id: &str,
+        _name: &str,
+        _params: serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+    fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
+        Ok(Vec::new())
+    }
+    fn invoke_virtual_tool(
+        &self,
+        _name: &str,
+        _args: serde_json::Value,
+    ) -> Result<Option<VirtualToolResultResolution>> {
+        Ok(None)
+    }
+    fn virtual_tool_follow_up(&self, _name: &str) -> Result<Option<VirtualToolFollowUp>> {
+        Ok(None)
+    }
+    fn invoke_virtual_tool_result_handler(
+        &self,
+        key: &str,
+        _payload: serde_json::Value,
+        _default_is_error: bool,
+    ) -> Result<VirtualToolResultResolution> {
+        anyhow::bail!("native harness has no virtual result handler '{key}'")
+    }
+    fn discard_virtual_tool_result_handler(&self, _key: &str) -> Result<()> {
+        Ok(())
+    }
+    fn dispatch_runtime_signal(
+        &self,
+        _signal: &crate::persistence::schema::SignalRow,
+    ) -> Result<usize> {
+        Ok(0)
+    }
 }
 
 impl LuaHarnessInstance {
@@ -243,6 +343,7 @@ pub(crate) struct HarnessRuntime {
     spawn_depth: u32,
     loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,
+    native_factory: Option<Arc<dyn NativeHarnessFactory>>,
 }
 
 impl HarnessRuntime {
@@ -261,7 +362,18 @@ impl HarnessRuntime {
             spawn_depth,
             loaded_state: std::sync::Mutex::new(HarnessLoadedState::default()),
             generation: AtomicU64::new(0),
+            native_factory: None,
         }
+    }
+
+    pub(crate) fn from_config_with_native(
+        harness_id: impl Into<String>,
+        config: &TurinConfig,
+        factory: Arc<dyn NativeHarnessFactory>,
+    ) -> Self {
+        let mut runtime = Self::from_config(harness_id, config);
+        runtime.native_factory = Some(factory);
+        runtime
     }
 
     pub(crate) fn from_config(harness_id: impl Into<String>, config: &TurinConfig) -> Self {
@@ -301,6 +413,9 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn watch_roots(&self) -> Vec<HarnessWatchRoot> {
+        if self.native_factory.is_some() {
+            return Vec::new();
+        }
         let mut roots = vec![HarnessWatchRoot {
             path: absolutize_path(&self.directory),
             recursive: false,
@@ -361,7 +476,9 @@ impl HarnessRuntime {
         let runtime_signal_topics = instance.runtime_signal_topics();
         let ui_intents = instance.ui_intents();
         let script_count = loaded_scripts.len();
-        if script_count > 0 {
+        if self.native_factory.is_some() {
+            info!(harness_id = %self.harness_id, "Native harness initialized");
+        } else if script_count > 0 {
             info!(
                 harness_id = %self.harness_id,
                 count = script_count,
@@ -443,6 +560,9 @@ impl HarnessRuntime {
     }
 
     fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<Box<dyn HarnessInstance>> {
+        if let Some(factory) = &self.native_factory {
+            return Ok(Box::new(NativeHarnessInstance::new(factory.create()?)));
+        }
         self.build_instance_with_overlay(ctx, None)
     }
 

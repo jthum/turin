@@ -76,6 +76,8 @@ pub struct ExecutionHost {
     pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    pub(crate) native_harness_factory:
+        Option<Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>>,
     pub(crate) mcp_clients: Vec<McpClientEntry>,
 }
 
