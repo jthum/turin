@@ -33,6 +33,9 @@ This surface sits between harness code and core runtime state. It should stay bo
   - `peer_session.rs` owns peer session bootstrap, linked-session activation, switching,
     and shutdown.
   - `peer_signals.rs` owns durable runtime-signal polling, delivery, and acknowledgement.
+  - `runtime_registry.rs` owns runtime-slot reuse, resume, creation, and registry publication.
+  - `runtime_worker.rs` owns background worker startup, polling, idle policy, and shutdown.
+  - `lane_scheduler.rs` owns fair cross-session selection while preserving per-session FIFO.
 - `src/kernel/session.rs`
   - Queued task, execution context target, conflict policy, and branch outcome types.
 - `src/kernel/task_promotion.rs`
@@ -118,6 +121,8 @@ Linked runtime residency:
   fork-sibling sidesteps are branches, and peer submissions are reusable or fresh linked threads.
 - Linked runtime lane reuse must switch sessions only between envelopes. It must never
   reset a lane globally while another logical session has queued work.
+- Runtime handles are published only after the worker reports successful session bootstrap.
+  Failed bootstrap must never leave a dead handle in the registry.
 - Force-killing the active session in a shared linked lane must reject the operation
   while unrelated work is queued; cooperative cancellation remains session-selective.
 - Resolve live linked-session affinity before hashing or probing a new lane.

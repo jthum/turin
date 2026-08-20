@@ -1,6 +1,7 @@
 mod allocator;
 mod caches;
 mod cancellation;
+mod lane_scheduler;
 mod operations;
 mod peer_runtime;
 mod peer_session;
@@ -8,6 +9,7 @@ mod peer_signals;
 mod records;
 mod runtime_control;
 mod runtime_registry;
+mod runtime_worker;
 mod task_status;
 mod tasks;
 #[cfg(test)]
