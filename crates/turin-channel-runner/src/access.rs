@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use turin_channel_core::{ChannelConversationKey, ChannelKind, ChannelUser, string_enum_setting};
 
+use crate::state_io;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairingMode {
     Off,
@@ -200,25 +202,26 @@ impl FileAccessStateStore {
     }
 
     pub(crate) async fn load(&self) -> Result<AccessStateFile> {
-        if !self.path.exists() {
-            return Ok(AccessStateFile::default());
-        }
-        let raw = tokio::fs::read_to_string(&self.path)
-            .await
-            .with_context(|| format!("Failed to read '{}'", self.path.display()))?;
-        serde_json::from_str(&raw)
-            .with_context(|| format!("Failed to parse '{}'", self.path.display()))
+        state_io::read_json(&self.path).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn save(&self, state: &AccessStateFile) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let tmp = self.path.with_extension("json.tmp");
-        let body = serde_json::to_string_pretty(state)?;
-        tokio::fs::write(&tmp, body).await?;
-        tokio::fs::rename(&tmp, &self.path).await?;
-        Ok(())
+        state_io::write_json(&self.path, state).await
+    }
+
+    pub(crate) async fn update<R>(
+        &self,
+        update: impl FnOnce(&mut AccessStateFile) -> Result<R>,
+    ) -> Result<R> {
+        state_io::update_json(&self.path, update).await
+    }
+
+    pub(crate) async fn update_if<R>(
+        &self,
+        update: impl FnOnce(&mut AccessStateFile) -> Result<(R, bool)>,
+    ) -> Result<R> {
+        state_io::update_json_if(&self.path, update).await
     }
 
     pub async fn snapshot(&self) -> Result<ChannelAccessSnapshot> {
@@ -232,39 +235,42 @@ impl FileAccessStateStore {
         approved_by_user_id: Option<String>,
         approved_by_username: Option<String>,
     ) -> Result<ChannelAccessSnapshot> {
-        let mut state = self.load().await?;
-        let room_key = ChannelRoomKey::from(room);
-        let serialized_room = serialize_room_key(&room_key)?;
-        state.pending_rooms.remove(&serialized_room);
-        state.approved_rooms.insert(
-            serialized_room,
-            ApprovedRoom {
-                room: room_key,
-                approved_at_unix_seconds: unix_seconds(SystemTime::now()),
-                approved_by_user_id,
-                approved_by_username,
-            },
-        );
-        self.save(&state).await?;
-        Ok(channel_access_snapshot(&state))
+        self.update(|state| {
+            let room_key = ChannelRoomKey::from(room);
+            let serialized_room = serialize_room_key(&room_key)?;
+            state.pending_rooms.remove(&serialized_room);
+            state.approved_rooms.insert(
+                serialized_room,
+                ApprovedRoom {
+                    room: room_key,
+                    approved_at_unix_seconds: unix_seconds(SystemTime::now()),
+                    approved_by_user_id,
+                    approved_by_username,
+                },
+            );
+            Ok(channel_access_snapshot(state))
+        })
+        .await
     }
 
     pub async fn reject_pending(&self, room: &ChannelRoomRef) -> Result<ChannelAccessSnapshot> {
-        let mut state = self.load().await?;
-        state
-            .pending_rooms
-            .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
-        self.save(&state).await?;
-        Ok(channel_access_snapshot(&state))
+        self.update(|state| {
+            state
+                .pending_rooms
+                .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
+            Ok(channel_access_snapshot(state))
+        })
+        .await
     }
 
     pub async fn revoke(&self, room: &ChannelRoomRef) -> Result<ChannelAccessSnapshot> {
-        let mut state = self.load().await?;
-        state
-            .approved_rooms
-            .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
-        self.save(&state).await?;
-        Ok(channel_access_snapshot(&state))
+        self.update(|state| {
+            state
+                .approved_rooms
+                .remove(&serialize_room_key(&ChannelRoomKey::from(room))?);
+            Ok(channel_access_snapshot(state))
+        })
+        .await
     }
 }
 

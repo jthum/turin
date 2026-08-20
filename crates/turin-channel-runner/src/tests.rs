@@ -1,6 +1,6 @@
 use super::*;
 use crate::stream::{WorkerStreamConfig, should_subscribe_to_session_events};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tempfile::tempdir;
 use turin_channel_core::{
     ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
@@ -80,15 +80,44 @@ fn sample_key() -> ChannelConversationKey {
 async fn file_binding_store_round_trips() {
     let dir = tempdir().unwrap();
     let store = FileBindingStore::new(dir.path().join("bindings.json"));
-    let key = serialize_binding_key(&sample_key()).unwrap();
-    let mut map = HashMap::new();
-    map.insert(
-        key,
-        ConversationBinding::new("writer", "session-1", &sample_key(), SystemTime::UNIX_EPOCH),
-    );
-    store.save(&map).await.unwrap();
-    let loaded = store.load().await.unwrap();
+    let key = sample_key();
+    store
+        .upsert(
+            &key,
+            ConversationBinding::new("writer", "session-1", &key, SystemTime::UNIX_EPOCH),
+        )
+        .await
+        .unwrap();
+    let loaded = store.snapshot().await.unwrap();
     assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].conversation, key);
+    assert!(store.clear(&key).await.unwrap());
+    assert!(store.snapshot().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn independent_binding_stores_do_not_lose_concurrent_updates() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("bindings.json");
+    let first_store = FileBindingStore::new(&path);
+    let second_store = FileBindingStore::new(&path);
+    let first_key = sample_key();
+    let mut second_key = sample_key();
+    second_key.thread_id = "other-thread".into();
+
+    let first = first_store.upsert(
+        &first_key,
+        ConversationBinding::new("writer", "session-1", &first_key, SystemTime::UNIX_EPOCH),
+    );
+    let second = second_store.upsert(
+        &second_key,
+        ConversationBinding::new("writer", "session-2", &second_key, SystemTime::UNIX_EPOCH),
+    );
+    let (first, second) = tokio::join!(first, second);
+    first.unwrap();
+    second.unwrap();
+
+    assert_eq!(first_store.snapshot().await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -136,6 +165,37 @@ async fn file_access_state_store_manages_public_snapshot() {
 
     let snapshot = store.revoke(&room).await.unwrap();
     assert!(snapshot.approved_rooms.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn independent_access_stores_do_not_lose_concurrent_approvals() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("access.json");
+    let first_store = FileAccessStateStore::new(&path);
+    let second_store = FileAccessStateStore::new(&path);
+    let first_room = ChannelRoomRef {
+        channel: ChannelKind::new("telegram"),
+        workspace_id: "telegram".into(),
+        room_id: Some("room-1".into()),
+        thread_id: "room-1".into(),
+    };
+    let second_room = ChannelRoomRef {
+        channel: ChannelKind::new("telegram"),
+        workspace_id: "telegram".into(),
+        room_id: Some("room-2".into()),
+        thread_id: "room-2".into(),
+    };
+
+    let first = first_store.approve(&first_room, None, None);
+    let second = second_store.approve(&second_room, None, None);
+    let (first, second) = tokio::join!(first, second);
+    first.unwrap();
+    second.unwrap();
+
+    assert_eq!(
+        first_store.snapshot().await.unwrap().approved_rooms.len(),
+        2
+    );
 }
 
 #[test]

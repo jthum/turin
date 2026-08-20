@@ -4,8 +4,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use turin_channel_discord::DiscordChannelDriver;
 use turin_channel_runner::{
-    ChannelRunArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing, parse_auth_flow_poll_request,
-    parse_auth_flow_start_request, parse_channel_settings_json, prepare_channel_run,
+    ChannelRunArgs, ChannelStateArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing,
+    parse_auth_flow_poll_request, parse_auth_flow_start_request, parse_channel_settings_json,
+    prepare_channel_run,
 };
 
 #[derive(Parser)]
@@ -18,6 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
+    State(ChannelStateArgs),
     Describe,
     ValidateSettings(ValidateSettingsArgs),
     SetupAuthFlowStart(AuthFlowRequestArgs),
@@ -50,6 +52,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
+        Command::State(args) => args.run("discord").await,
         Command::Describe => describe(),
         Command::ValidateSettings(args) => validate_settings(args),
         Command::SetupAuthFlowStart(args) => setup_auth_flow_start(args),

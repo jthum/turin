@@ -38,7 +38,14 @@ fn slot_id_is_stable() {
 fn reset_forces_fresh_session() {
     let key = key();
     let binding = ConversationBinding::new("writer", "sess-1", &key, SystemTime::UNIX_EPOCH);
-    let decision = decide_routing(&key, Some(&binding), SystemTime::UNIX_EPOCH, None, true);
+    let decision = decide_routing(
+        "writer",
+        &key,
+        Some(&binding),
+        SystemTime::UNIX_EPOCH,
+        None,
+        true,
+    );
     assert!(matches!(decision, RoutingDecision::StartFresh { .. }));
 }
 
@@ -47,10 +54,26 @@ fn ttl_expiry_forces_fresh_session() {
     let key = key();
     let binding = ConversationBinding::new("writer", "sess-1", &key, SystemTime::UNIX_EPOCH);
     let decision = decide_routing(
+        "writer",
         &key,
         Some(&binding),
         SystemTime::UNIX_EPOCH + Duration::from_secs(120),
         Some(Duration::from_secs(60)),
+        false,
+    );
+    assert!(matches!(decision, RoutingDecision::StartFresh { .. }));
+}
+
+#[test]
+fn changing_agent_forces_fresh_session() {
+    let key = key();
+    let binding = ConversationBinding::new("writer", "sess-1", &key, SystemTime::UNIX_EPOCH);
+    let decision = decide_routing(
+        "reviewer",
+        &key,
+        Some(&binding),
+        SystemTime::UNIX_EPOCH,
+        None,
         false,
     );
     assert!(matches!(decision, RoutingDecision::StartFresh { .. }));

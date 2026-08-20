@@ -217,7 +217,7 @@ Practical recommendations:
   - `respond_mode = "mentions_or_replies"`
 - cautious rollout into unknown groups:
   - `pairing_mode = "pending"`
-  - then inspect/approve with `turin daemon channel access ...`
+  - then inspect and approve with `turin-channel-telegram state ... access`
 
 ## 6. Session Scope
 
@@ -240,38 +240,20 @@ Practical recommendations:
 - shared bot per topic/forum thread: `session_scope = "thread"`
 - one shared bot for a small group chat: `session_scope = "room"`
 
-## 7. Create The Turin Channel
+## 7. Configure And Run The Channel
 
-Create the channel with the daemon CLI:
+Use Turin Manager to create the channel-owned config:
 
 ```bash
-turin daemon channel create telegram-ops \
-  --kind telegram \
-  --agent default \
-  --setting token_env=TELEGRAM_BOT_TOKEN \
-  --setting chat_id=-1001234567890
+turin-manager channels configure telegram
 ```
 
-Useful optional settings:
+Then run it independently:
 
 ```bash
-turin daemon channel create telegram-ops \
-  --kind telegram \
-  --agent default \
-  --setting token_env=TELEGRAM_BOT_TOKEN \
-  --setting chat_ids=-1001234567890,-100987654321,498502840 \
-  --setting poll_timeout_seconds=10 \
-  --setting poll_interval_ms=250 \
-  --setting respond_mode=mentions_or_replies \
-  --setting session_scope=user \
-  --setting pairing_mode=auto \
-  --setting pairing_users=498502840 \
-  --setting stream_mode=block \
-  --setting stream_thinking=false \
-  --setting persist_thinking=false \
-  --setting start_from_latest=true \
-  --setting ignore_bot_messages=true \
-  --setting workspace_id=telegram
+turin-channel-telegram run \
+  --config .turin/channels/telegram/config.toml \
+  --turin-config .turin/config.toml
 ```
 
 Setting notes:
@@ -299,40 +281,40 @@ Setting notes:
 When `pairing_mode` is `pending`, inspect and manage discovered rooms with:
 
 ```bash
-turin daemon channel access telegram-ops
-turin daemon channel approve telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
-turin daemon channel reject telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
-turin daemon channel revoke telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
+turin-channel-telegram state \
+  --config .turin/channels/telegram/config.toml \
+  access list
+
+turin-channel-telegram state \
+  --config .turin/channels/telegram/config.toml \
+  access approve \
+  --room-json '{"channel":"telegram","workspace_id":"telegram","room_id":"-1001234567890","thread_id":"-1001234567890"}'
 ```
 
-`approve` moves a room from pending to approved. `reject` clears a pending room without approving it. `revoke` removes a previously approved room.
+Use the exact room object returned by `access list`. `approve` moves a room from
+pending to approved. `reject` clears a pending room without approving it.
+`revoke` removes a previously approved room.
 
-## 7. Verify Runtime Status
+## 8. Verify Runtime Status
 
-Check whether the runtime reached `running`:
+The runner logs connection and runtime failures in its foreground process.
+Turin Manager reports configuration readiness rather than daemon-owned process
+health:
 
 ```bash
-turin daemon channel status telegram-ops
+turin-manager channels status
+turin-manager doctor
 ```
 
-You can also inspect the daemon-wide runtime view:
+You can independently verify the Turin daemon:
 
 ```bash
 turin daemon status --json
 ```
 
-If startup fails, check:
+## 9. Equivalent `config.toml`
 
-```bash
-turin daemon channel issues telegram-ops
-turin daemon channel status telegram-ops --json
-```
-
-The normalized `last_error_code` is especially useful for fast diagnosis.
-
-## 8. Equivalent `config.toml`
-
-The daemon stores channel settings under `.turin/runtime/channels/<id>/config.toml`.
+Channel settings live under `.turin/channels/<id>/config.toml` by convention.
 
 Example:
 
@@ -355,7 +337,7 @@ ignore_bot_messages = true
 workspace_id = "telegram"
 ```
 
-You can manage this file directly through the filesystem or via `turin daemon channel ...` commands.
+You can manage this file directly or regenerate it through Turin Manager.
 
 If you prefer explicit room allowlisting instead of pairing, replace the pairing settings with:
 
@@ -363,7 +345,7 @@ If you prefer explicit room allowlisting instead of pairing, replace the pairing
 chat_ids = [-1001234567890, -100987654321, 498502840]
 ```
 
-## 9. Outbound Reply And Formatting Behavior
+## 10. Outbound Reply And Formatting Behavior
 
 Turin now defaults Telegram responses to replying to the inbound Telegram message when the inbound event includes `telegram_message_id`.
 
@@ -396,7 +378,7 @@ Streaming notes:
 - Thinking previews only appear when the selected model/provider actually emits thinking deltas.
 - Final replies still use the normal Telegram HTML renderer even when preview streaming is enabled.
 
-## 10. Validate With The Smoke Script
+## 11. Validate With The Smoke Script
 
 For a quick live validation against the real Telegram Bot API:
 

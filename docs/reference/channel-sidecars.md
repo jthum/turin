@@ -12,6 +12,8 @@ the current domain term.
 Every runner exposes:
 
 - `run --config <channel-config> [--turin-config <turin-config>]`
+- `state --config <channel-config> access <list|approve|reject|revoke>`
+- `state --config <channel-config> bindings <list|clear>`
 - `describe`
 - `validate-settings --settings-json <json>`
 - `setup-auth-flow-start --request-json <json>` when auth flows are supported
@@ -40,6 +42,37 @@ turin-channel-telegram run \
 
 During workspace development, Turin Manager prints the equivalent
 `cargo run -p turin-channel-<kind> -- ...` command.
+
+## Durable State
+
+Each runner owns these files under `<channel-dir>/runtime`:
+
+- `bindings.json` maps normalized platform conversation keys to Turin sessions.
+- `access.json` records approved and pending rooms.
+- `bindings.lock` and `access.lock` serialize state mutations across runner and
+  management processes.
+
+State writes use atomic file replacement. Changing the configured `agent_id`
+does not reuse a binding created for the previous agent; the next event starts
+a fresh session and replaces that conversation's binding.
+
+State inspection does not require a running daemon and also works for a disabled
+channel. For example:
+
+```bash
+turin-channel-telegram state \
+  --config .turin/channels/telegram/config.toml \
+  access list
+
+turin-channel-telegram state \
+  --config .turin/channels/telegram/config.toml \
+  bindings list
+```
+
+The list output contains canonical `room` and `conversation` JSON objects.
+Pass one of those exact objects back through `--room-json` or
+`--conversation-json` for mutation commands. This avoids adapter-specific CLI
+flags and preserves user-, room-, and thread-scoped routing keys exactly.
 
 ## Channel Config
 

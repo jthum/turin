@@ -18,6 +18,8 @@ mod bindings;
 mod config;
 mod driver_loop;
 mod sidecar;
+mod state_commands;
+mod state_io;
 mod stream;
 mod task_payloads;
 
@@ -25,13 +27,14 @@ pub use access::{
     ApprovedRoomView, ChannelAccessPolicy, ChannelAccessSnapshot, ChannelRoomRef,
     FileAccessStateStore, PairingMode, PendingRoomView,
 };
-pub use bindings::FileBindingStore;
+pub use bindings::{ChannelBindingView, FileBindingStore};
 pub use config::{RunnerConfig, task_timeout_ms_from_settings, tools_config_from_settings};
 pub use sidecar::{
     ChannelRunArgs, DEFAULT_TURIN_CONFIG_PATH, PreparedChannelRun, init_channel_tracing,
     parse_auth_flow_poll_request, parse_auth_flow_start_request, parse_channel_settings_json,
     prepare_channel_run,
 };
+pub use state_commands::ChannelStateArgs;
 pub use stream::{ChannelProgressUpdate, ChannelStreamMode};
 pub use task_payloads::TaskSnapshot;
 
@@ -132,20 +135,18 @@ impl ChannelRunner {
         key: &ChannelConversationKey,
         reset_requested: bool,
     ) -> Result<ConversationBinding> {
-        let binding_key = serialize_binding_key(key)?;
-        let (current, decision) = {
-            let _guard = self.bindings_lock.lock().await;
-            let bindings = self.bindings.load().await?;
-            let current = bindings.get(&binding_key).cloned();
-            let decision = decide_routing(
-                key,
-                current.as_ref(),
-                SystemTime::now(),
-                self.idle_ttl,
-                reset_requested,
-            );
-            (current, decision)
-        };
+        // Serialize resolution through persistence so concurrent events cannot
+        // create competing sessions for one durable conversation binding.
+        let _guard = self.bindings_lock.lock().await;
+        let current = self.bindings.get(key).await?;
+        let decision = decide_routing(
+            agent_id,
+            key,
+            current.as_ref(),
+            SystemTime::now(),
+            self.idle_ttl,
+            reset_requested,
+        );
 
         let session: serde_json::Value = match decision {
             RoutingDecision::Reuse {
@@ -197,12 +198,7 @@ impl ChannelRunner {
             .context("daemon session response missing session_id")?;
         let mut binding = ConversationBinding::new(agent_id, session_id, key, SystemTime::now());
         binding.touch(SystemTime::now());
-        {
-            let _guard = self.bindings_lock.lock().await;
-            let mut bindings = self.bindings.load().await?;
-            bindings.insert(binding_key, binding.clone());
-            self.bindings.save(&bindings).await?;
-        }
+        self.bindings.upsert(key, binding.clone()).await?;
         Ok(binding)
     }
 
@@ -295,86 +291,79 @@ impl ChannelRunner {
 
         let room = ChannelRoomKey::from(&event.conversation);
         let room_key = serialize_room_key(&room)?;
-        let mut state = self.access_state.load().await?;
-        if state.approved_rooms.contains_key(&room_key) {
-            return Ok(
-                if self
+        self.access_state
+            .update_if(|state| {
+                if state.approved_rooms.contains_key(&room_key) {
+                    let decision = if self
+                        .access_policy
+                        .allows_interaction(&event.user, |selector, user| {
+                            driver.user_matches_selector(selector, user)
+                        }) {
+                        EventAccessDecision::Allow
+                    } else {
+                        EventAccessDecision::Ignore
+                    };
+                    return Ok((decision, false));
+                }
+
+                if self.access_policy.is_banned(&event.user, |selector, user| {
+                    driver.user_matches_selector(selector, user)
+                }) || !self
                     .access_policy
-                    .allows_interaction(&event.user, |selector, user| {
+                    .allows_pairing(&event.user, |selector, user| {
                         driver.user_matches_selector(selector, user)
                     })
                 {
-                    EventAccessDecision::Allow
-                } else {
-                    EventAccessDecision::Ignore
-                },
-            );
-        }
+                    return Ok((EventAccessDecision::Ignore, false));
+                }
 
-        if self.access_policy.is_banned(&event.user, |selector, user| {
-            driver.user_matches_selector(selector, user)
-        }) {
-            return Ok(EventAccessDecision::Ignore);
-        }
-
-        if !self
-            .access_policy
-            .allows_pairing(&event.user, |selector, user| {
-                driver.user_matches_selector(selector, user)
-            })
-        {
-            return Ok(EventAccessDecision::Ignore);
-        }
-
-        match self.access_policy.pairing_mode {
-            PairingMode::Off => Ok(EventAccessDecision::Allow),
-            PairingMode::Auto => {
-                let now = SystemTime::now();
-                state.approved_rooms.insert(
-                    room_key.clone(),
-                    ApprovedRoom {
-                        room,
-                        approved_at_unix_seconds: unix_seconds(now),
-                        approved_by_user_id: Some(event.user.id.clone()),
-                        approved_by_username: event.user.username.clone(),
-                    },
-                );
-                state.pending_rooms.remove(&room_key);
-                self.access_state.save(&state).await?;
-                Ok(EventAccessDecision::Allow)
-            }
-            PairingMode::Pending => {
-                let now_seconds = unix_seconds(SystemTime::now());
-                let notify = match state.pending_rooms.get_mut(&room_key) {
-                    Some(existing) => {
-                        existing.last_seen_unix_seconds = now_seconds;
-                        false
-                    }
-                    None => {
-                        state.pending_rooms.insert(
-                            room_key,
-                            PendingRoom {
+                match self.access_policy.pairing_mode {
+                    PairingMode::Off => Ok((EventAccessDecision::Allow, false)),
+                    PairingMode::Auto => {
+                        let now = SystemTime::now();
+                        state.approved_rooms.insert(
+                            room_key.clone(),
+                            ApprovedRoom {
                                 room,
-                                first_seen_unix_seconds: now_seconds,
-                                last_seen_unix_seconds: now_seconds,
-                                sample_user_id: Some(event.user.id.clone()),
-                                sample_username: event.user.username.clone(),
+                                approved_at_unix_seconds: unix_seconds(now),
+                                approved_by_user_id: Some(event.user.id.clone()),
+                                approved_by_username: event.user.username.clone(),
                             },
                         );
-                        true
+                        state.pending_rooms.remove(&room_key);
+                        Ok((EventAccessDecision::Allow, true))
                     }
-                };
-                self.access_state.save(&state).await?;
-                Ok(EventAccessDecision::Pending { notify })
-            }
-        }
+                    PairingMode::Pending => {
+                        let now_seconds = unix_seconds(SystemTime::now());
+                        let notify = match state.pending_rooms.get_mut(&room_key) {
+                            Some(existing) => {
+                                existing.last_seen_unix_seconds = now_seconds;
+                                false
+                            }
+                            None => {
+                                state.pending_rooms.insert(
+                                    room_key,
+                                    PendingRoom {
+                                        room,
+                                        first_seen_unix_seconds: now_seconds,
+                                        last_seen_unix_seconds: now_seconds,
+                                        sample_user_id: Some(event.user.id.clone()),
+                                        sample_username: event.user.username.clone(),
+                                    },
+                                );
+                                true
+                            }
+                        };
+                        Ok((EventAccessDecision::Pending { notify }, true))
+                    }
+                }
+            })
+            .await
     }
 
     pub async fn clear_binding(&self, key: &ChannelConversationKey) -> Result<()> {
         let _guard = self.bindings_lock.lock().await;
-        let mut bindings = self.bindings.load().await?;
-        bindings.remove(&serialize_binding_key(key)?);
-        self.bindings.save(&bindings).await
+        self.bindings.clear(key).await.map(|_| ())
     }
 
     pub async fn prune_expired(&self) -> Result<()> {
@@ -382,10 +371,10 @@ impl ChannelRunner {
             return Ok(());
         };
         let _guard = self.bindings_lock.lock().await;
-        let mut bindings = self.bindings.load().await?;
-        let now = SystemTime::now();
-        bindings.retain(|_, binding| !binding.is_expired(now, ttl));
-        self.bindings.save(&bindings).await
+        self.bindings
+            .prune_expired(SystemTime::now(), ttl)
+            .await
+            .map(|_| ())
     }
 }
 

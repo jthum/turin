@@ -20,6 +20,8 @@ retries, rendering, and process lifecycle remain channel-owned.
   This directory is not part of `TurinConfig`, the daemon registry, or daemon
   filesystem watching.
 - Conversation bindings and access state are durable channel-owned files.
+- Binding and access mutations use atomic replacement under per-file OS locks,
+  so a runner and a separate channel state command cannot lose each other's updates.
 - A runner accepts `run --config <channel-config> --turin-config <turin-config>`.
   Shared startup derives the channel id from the config directory, loads the
   adjacent Turin `.env`, resolves the local daemon endpoint, checks daemon
@@ -39,7 +41,8 @@ Shared channel implementation:
     conversation routing decisions.
 - `crates/turin-channel-runner/src/*`
   - Access policy, durable bindings, inbound queues, task submission, progress
-    streaming, completion delivery, and shared runner startup.
+    streaming, completion delivery, shared runner startup, atomic state I/O,
+    and daemon-free state management commands.
 - `crates/turin-channel-host/src/*`
   - Optional adapter discovery and invocation used by setup tooling. It is not
     a Turin daemon dependency.
@@ -67,6 +70,15 @@ Concrete channels:
 5. The runner follows task events, renders progress and completion for the
    platform, and updates its own binding state.
 
+Channel state management:
+
+1. Each concrete runner exposes `state --config <path> access ...` and
+   `state --config <path> bindings ...`.
+2. These commands validate adapter kind but do not connect to the daemon and
+   remain usable while the channel is disabled.
+3. Access commands list, approve, reject, or revoke room state. Binding commands
+   list or clear exact platform-conversation bindings.
+
 ## Vocabulary
 
 - **Channel** is the user-facing integration concept, such as a Telegram or
@@ -84,6 +96,10 @@ Concrete channels:
   UI may depend on channel DTOs or channel process state.
 - Access checks happen before task submission and remain channel-owned.
 - Binding keys are stable serialized `ChannelConversationKey` values.
+- A binding is reusable only while its configured agent matches the requested
+  agent. Rebinding a channel to another agent starts a fresh Turin session.
+- Concurrent events in one runner must not create competing sessions for the
+  same durable conversation key.
 - Adapters normalize inbound events before the runner handles them.
 - Shared policy belongs in `turin-channel-runner`; platform formatting and
   identity rules remain adapter-owned.

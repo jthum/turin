@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use turin_channel_runner::{
-    ChannelAccessPolicy, ChannelRunArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing,
-    parse_auth_flow_poll_request, parse_auth_flow_start_request, parse_channel_settings_json,
-    prepare_channel_run,
+    ChannelAccessPolicy, ChannelRunArgs, ChannelStateArgs, DEFAULT_TURIN_CONFIG_PATH,
+    init_channel_tracing, parse_auth_flow_poll_request, parse_auth_flow_start_request,
+    parse_channel_settings_json, prepare_channel_run,
 };
 use turin_channel_telegram::TelegramChannelDriver;
 
@@ -19,6 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
+    State(ChannelStateArgs),
     Describe,
     ValidateSettings(ValidateSettingsArgs),
     SetupAuthFlowStart(AuthFlowRequestArgs),
@@ -51,6 +52,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run(args) => run(args).await,
+        Command::State(args) => args.run("telegram").await,
         Command::Describe => describe(),
         Command::ValidateSettings(args) => validate_settings(args),
         Command::SetupAuthFlowStart(args) => setup_auth_flow_start(args),

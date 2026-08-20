@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use turin_channel_fs::FsChannelDriver;
 use turin_channel_runner::{
-    ChannelRunArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing, parse_channel_settings_json,
-    prepare_channel_run,
+    ChannelRunArgs, ChannelStateArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing,
+    parse_channel_settings_json, prepare_channel_run,
 };
 
 #[derive(Parser)]
@@ -18,6 +18,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
+    State(ChannelStateArgs),
     Describe,
     ValidateSettings(ValidateSettingsArgs),
 }
@@ -38,11 +39,12 @@ struct ValidateSettingsArgs {
     settings_json: String,
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_channel_tracing();
     match Cli::parse().command {
         Command::Run(args) => run(args).await,
+        Command::State(args) => args.run("fs").await,
         Command::Describe => {
             println!(
                 "{}",

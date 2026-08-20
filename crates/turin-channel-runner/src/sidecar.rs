@@ -55,7 +55,7 @@ struct ChannelFile {
 }
 
 pub async fn prepare_channel_run(args: ChannelRunArgs) -> Result<PreparedChannelRun> {
-    let config = load_channel_file(&args.config_path, &args.expected_kind)?;
+    let config = load_channel_file(&args.config_path, &args.expected_kind, true)?;
     load_turin_env(&args.turin_config_path)?;
 
     let settings = serde_json::to_value(config.settings)
@@ -119,12 +119,16 @@ pub async fn prepare_channel_run(args: ChannelRunArgs) -> Result<PreparedChannel
     })
 }
 
-fn load_channel_file(path: &Path, expected_kind: &str) -> Result<ChannelFile> {
+fn load_channel_file(
+    path: &Path,
+    expected_kind: &str,
+    require_enabled: bool,
+) -> Result<ChannelFile> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read channel config '{}'", path.display()))?;
     let config: ChannelFile = toml::from_str(&raw)
         .with_context(|| format!("Failed to parse channel config '{}'", path.display()))?;
-    if !config.enabled {
+    if require_enabled && !config.enabled {
         anyhow::bail!("Channel in '{}' is disabled", path.display());
     }
     if config.kind != expected_kind {
@@ -139,6 +143,10 @@ fn load_channel_file(path: &Path, expected_kind: &str) -> Result<ChannelFile> {
         anyhow::bail!("Channel config '{}' has an empty agent_id", path.display());
     }
     Ok(config)
+}
+
+pub(crate) fn validate_channel_file(path: &Path, expected_kind: &str) -> Result<()> {
+    load_channel_file(path, expected_kind, false).map(|_| ())
 }
 
 fn load_turin_env(turin_config_path: &Path) -> Result<()> {
@@ -240,7 +248,7 @@ allow = ["read_file"]
         )
         .unwrap();
 
-        let config = load_channel_file(&path, "telegram").unwrap();
+        let config = load_channel_file(&path, "telegram", true).unwrap();
         assert_eq!(config.agent_id, "default");
         assert_eq!(config.idle_timeout_seconds, Some(30));
         assert_eq!(
@@ -264,13 +272,13 @@ allow = ["read_file"]
             "enabled = false\nkind = \"telegram\"\nagent_id = \"default\"\n",
         )
         .unwrap();
-        assert!(load_channel_file(&path, "telegram").is_err());
+        assert!(load_channel_file(&path, "telegram", true).is_err());
 
         std::fs::write(
             &path,
             "enabled = true\nkind = \"discord\"\nagent_id = \"default\"\n",
         )
         .unwrap();
-        assert!(load_channel_file(&path, "telegram").is_err());
+        assert!(load_channel_file(&path, "telegram", true).is_err());
     }
 }

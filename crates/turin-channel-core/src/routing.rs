@@ -42,6 +42,7 @@ pub enum RoutingDecision {
 }
 
 pub fn decide_routing(
+    agent_id: &str,
     key: &ChannelConversationKey,
     binding: Option<&ConversationBinding>,
     now: SystemTime,
@@ -54,7 +55,7 @@ pub fn decide_routing(
     }
 
     match binding {
-        Some(binding) => {
+        Some(binding) if binding.agent_id == agent_id => {
             if ttl.is_some_and(|ttl| binding.is_expired(now, ttl)) {
                 RoutingDecision::StartFresh { slot_id }
             } else {
@@ -64,7 +65,7 @@ pub fn decide_routing(
                 }
             }
         }
-        None => RoutingDecision::StartFresh { slot_id },
+        Some(_) | None => RoutingDecision::StartFresh { slot_id },
     }
 }
 
