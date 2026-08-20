@@ -40,6 +40,10 @@ impl ToolRegistry {
         self.tools.contains_key(name)
     }
 
+    pub fn names(&self) -> std::collections::BTreeSet<String> {
+        self.tools.keys().cloned().collect()
+    }
+
     /// Generate JSON tool definitions for the LLM API.
     ///
     /// Returns a Vec of tool definition objects matching the standard format:

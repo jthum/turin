@@ -119,6 +119,11 @@ pub trait Tool: Send + Sync {
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> Value;
 
+    /// Governance capability required to execute this tool, if any.
+    fn capability(&self) -> Option<&str> {
+        None
+    }
+
     /// Execute the tool with validated parameters
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolEffect, ToolError>;
 }

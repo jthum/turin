@@ -303,8 +303,10 @@ impl ExecutionHost {
 
                 let start = Instant::now();
                 let mut governance_denial = None;
-                let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
-                    if let Some(capability) = tool_capability_name(&tc.name) {
+                let effect_res = if let Some(tool) = kernel.tool_registry.get(&tc.name) {
+                    if let Some(capability) =
+                        tool.capability().or_else(|| tool_capability_name(&tc.name))
+                    {
                         let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
                         let decision = kernel
                             .governance_manager

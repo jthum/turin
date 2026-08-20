@@ -18,6 +18,10 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
   - Exact/wildcard capability rule matching.
   - Shared bool-rule ceiling checks used by temporary grants, peer delegation, and import delegation.
   - Tool-name to capability-name mapping.
+- `src/tools/mod.rs`
+  - Optional capability declaration for application-supplied Rust tools.
+- `src/kernel/turn/tool_execution.rs`
+  - Resolves a tool's declared capability before falling back to Turin's built-in mapping.
 - `src/kernel/governance/grants.rs`
   - Temporary grant snapshot DTO.
   - Active grant storage entry.
@@ -89,6 +93,9 @@ Nested peer delegation:
 - Delegated grants cannot widen parent grant capabilities.
 - Nested peer delegation is monotonic: omitting or restating capabilities cannot
   widen the active ceiling inherited from an ancestor task.
+- Application-supplied tools use their declared capability when present. Existing
+  built-in tools retain the centralized static mapping, and tools without a capability
+  preserve their existing ungoverned execution behavior.
 
 ## Tests
 

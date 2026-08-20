@@ -62,6 +62,41 @@ fn request_override_can_subset_agent_tools() {
 }
 
 #[test]
+fn registered_custom_tools_participate_in_selection() {
+    let config = config_with_tools(
+        ToolSelectionConfig {
+            allow: Some(vec!["records_write".into()]),
+            exclude: Vec::new(),
+        },
+        ToolSelectionConfig::default(),
+    );
+    let available = BTreeSet::from(["records_write".to_string()]);
+
+    let resolved =
+        resolve_effective_tools_config_for_registry(&config, "default", None, &available).unwrap();
+    assert_eq!(resolved.selection.allow, Some(vec!["records_write".into()]));
+}
+
+#[test]
+fn registry_validation_rejects_unknown_exact_tool_names() {
+    let config = config_with_tools(
+        ToolSelectionConfig {
+            allow: Some(vec!["misspelled_tool".into()]),
+            exclude: Vec::new(),
+        },
+        ToolSelectionConfig::default(),
+    );
+    let error =
+        resolve_effective_tools_config_for_registry(&config, "default", None, &BTreeSet::new())
+            .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Unknown registered tool selector")
+    );
+}
+
+#[test]
 fn effective_tools_merge_root_agent_and_request_behavior() {
     let mut config = config_with_tools(
         ToolSelectionConfig::default(),

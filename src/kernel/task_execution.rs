@@ -48,10 +48,11 @@ impl ExecutionHost {
             .await?;
         self.append_task_user_message(session, &user_content);
 
-        let effective_tools = crate::tools::policy::resolve_effective_tools_config(
+        let effective_tools = crate::tools::policy::resolve_effective_tools_config_for_registry(
             &self.config,
             session.identity.agent_id(),
             task.tools.as_ref(),
+            &self.tool_registry.names(),
         )?;
         let allowed_native_tools = Arc::new(
             effective_tools

@@ -71,6 +71,20 @@ impl RuntimeBuilder {
 
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
+        let available_tools = self.tool_registry.names();
+        for agent_id in std::iter::once(self.config.agent.id.as_str())
+            .chain(self.config.agents.keys().map(String::as_str))
+        {
+            crate::tools::policy::resolve_effective_tools_config_for_registry(
+                &self.config,
+                agent_id,
+                None,
+                &available_tools,
+            )
+            .map_err(|error| {
+                anyhow::anyhow!("invalid tool registry for agent '{}': {}", agent_id, error)
+            })?;
+        }
         let store_manager = Arc::new(StoreManager::new(
             &self.config.kernel.workspace_root,
             &self.config.layout.stores_dir,

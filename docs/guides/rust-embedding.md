@@ -74,6 +74,37 @@ values and install them with `RuntimeBuilder::with_tool_registry`. This keeps go
 tool exposure, persistence, and effect application inside the kernel rather than giving
 harness callbacks unrestricted access to process-wide managers.
 
+Registered application tools participate in the same root, agent, and per-request tool
+selection as Turin's built-ins. A custom tool is exposed by default unless an explicit
+selection narrows it. Declare a governance capability when execution should pass through
+Turin's capability policy:
+
+```rust
+#[async_trait::async_trait]
+impl turin::tools::Tool for SaveRecord {
+    fn name(&self) -> &str { "save_record" }
+    fn description(&self) -> &str { "Save an application record" }
+    fn parameters_schema(&self) -> serde_json::Value { /* JSON Schema */ }
+
+    fn capability(&self) -> Option<&str> {
+        Some("records.write")
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        context: &turin::tools::ToolContext,
+    ) -> Result<turin::tools::ToolEffect, turin::tools::ToolError> {
+        todo!()
+    }
+}
+```
+
+The capability method defaults to `None`, so existing tools remain source-compatible.
+Built-in tools retain their existing static capability mapping. Exact custom tool names
+in configuration are checked against the installed registry when the kernel is built,
+which catches configuration mistakes before a session starts.
+
 ## Runnable Example
 
 The repository includes `examples/rust_harness.rs`:

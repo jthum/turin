@@ -11,26 +11,40 @@ use crate::tools::builtins::{
     BUILTIN_TOOL_NAMES, DEFAULT_EXPOSED_TOOL_NAMES, expand_builtin_group,
 };
 
-fn expand_selector(selector: &str) -> Result<BTreeSet<String>> {
+fn expand_selector(
+    selector: &str,
+    available_tools: Option<&BTreeSet<String>>,
+) -> Result<BTreeSet<String>> {
     if let Some(group_name) = selector.strip_prefix("group:") {
         let members = expand_builtin_group(group_name)
             .ok_or_else(|| anyhow!("Unknown tool group '{}'", selector))?;
         return Ok(members.iter().map(|name| (*name).to_string()).collect());
     }
 
-    if BUILTIN_TOOL_NAMES.contains(&selector) {
-        return Ok(BTreeSet::from([selector.to_string()]));
+    if selector.trim().is_empty() {
+        bail!("Tool selector must not be empty");
     }
 
-    bail!("Unknown native tool selector '{}'", selector)
+    if available_tools.is_some_and(|available| !available.contains(selector)) {
+        bail!("Unknown registered tool selector '{}'", selector);
+    }
+
+    Ok(BTreeSet::from([selector.to_string()]))
+}
+
+fn expand_tool_selectors_with_available(
+    selectors: &[String],
+    available_tools: Option<&BTreeSet<String>>,
+) -> Result<BTreeSet<String>> {
+    let mut expanded = BTreeSet::new();
+    for selector in selectors {
+        expanded.extend(expand_selector(selector, available_tools)?);
+    }
+    Ok(expanded)
 }
 
 pub fn expand_tool_selectors(selectors: &[String]) -> Result<BTreeSet<String>> {
-    let mut expanded = BTreeSet::new();
-    for selector in selectors {
-        expanded.extend(expand_selector(selector)?);
-    }
-    Ok(expanded)
+    expand_tool_selectors_with_available(selectors, None)
 }
 
 pub fn default_native_tool_set() -> BTreeSet<String> {
@@ -47,27 +61,50 @@ pub fn full_native_tool_set() -> BTreeSet<String> {
         .collect()
 }
 
-pub fn resolve_root_tool_selection(selection: &ToolSelectionConfig) -> Result<BTreeSet<String>> {
+fn default_tool_set_for_registry(available_tools: &BTreeSet<String>) -> BTreeSet<String> {
+    available_tools
+        .iter()
+        .filter(|name| {
+            !BUILTIN_TOOL_NAMES.contains(&name.as_str())
+                || DEFAULT_EXPOSED_TOOL_NAMES.contains(&name.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+fn resolve_root_tool_selection_inner(
+    selection: &ToolSelectionConfig,
+    available_tools: Option<&BTreeSet<String>>,
+) -> Result<BTreeSet<String>> {
     let mut current = if let Some(allow) = selection.allow.as_ref() {
-        expand_tool_selectors(allow)?
+        expand_tool_selectors_with_available(allow, available_tools)?
+    } else if let Some(available_tools) = available_tools {
+        default_tool_set_for_registry(available_tools)
     } else {
         default_native_tool_set()
     };
-    current.retain(|name| full_native_tool_set().contains(name));
+    if let Some(available_tools) = available_tools {
+        current.retain(|name| available_tools.contains(name));
+    }
     if !selection.exclude.is_empty() {
-        let excluded = expand_tool_selectors(&selection.exclude)?;
+        let excluded = expand_tool_selectors_with_available(&selection.exclude, available_tools)?;
         current.retain(|name| !excluded.contains(name));
     }
     Ok(current)
 }
 
-pub fn resolve_child_tool_selection(
+pub fn resolve_root_tool_selection(selection: &ToolSelectionConfig) -> Result<BTreeSet<String>> {
+    resolve_root_tool_selection_inner(selection, None)
+}
+
+fn resolve_child_tool_selection_inner(
     parent: &BTreeSet<String>,
     selection: &ToolSelectionConfig,
     scope: &str,
+    available_tools: Option<&BTreeSet<String>>,
 ) -> Result<BTreeSet<String>> {
     let mut current = if let Some(allow) = selection.allow.as_ref() {
-        let requested = expand_tool_selectors(allow)?;
+        let requested = expand_tool_selectors_with_available(allow, available_tools)?;
         let disallowed = requested.difference(parent).cloned().collect::<Vec<_>>();
         if !disallowed.is_empty() {
             bail!(
@@ -82,11 +119,19 @@ pub fn resolve_child_tool_selection(
     };
 
     if !selection.exclude.is_empty() {
-        let excluded = expand_tool_selectors(&selection.exclude)?;
+        let excluded = expand_tool_selectors_with_available(&selection.exclude, available_tools)?;
         current.retain(|name| !excluded.contains(name));
     }
 
     Ok(current)
+}
+
+pub fn resolve_child_tool_selection(
+    parent: &BTreeSet<String>,
+    selection: &ToolSelectionConfig,
+    scope: &str,
+) -> Result<BTreeSet<String>> {
+    resolve_child_tool_selection_inner(parent, selection, scope, None)
 }
 
 fn agent_config<'a>(config: &'a TurinConfig, agent_id: &str) -> Result<&'a AgentConfig> {
@@ -105,17 +150,30 @@ pub fn resolve_effective_native_tools(
     agent_id: &str,
     request_override: Option<&ToolSelectionConfig>,
 ) -> Result<BTreeSet<String>> {
-    let root = resolve_root_tool_selection(&config.tools.selection)?;
+    resolve_effective_native_tools_inner(config, agent_id, request_override, None)
+}
+
+fn resolve_effective_native_tools_inner(
+    config: &TurinConfig,
+    agent_id: &str,
+    request_override: Option<&ToolSelectionConfig>,
+    available_tools: Option<&BTreeSet<String>>,
+) -> Result<BTreeSet<String>> {
+    let root = resolve_root_tool_selection_inner(&config.tools.selection, available_tools)?;
     let agent = agent_config(config, agent_id)?;
-    let agent_tools = resolve_child_tool_selection(
+    let agent_tools = resolve_child_tool_selection_inner(
         &root,
         &agent.tools.selection,
         &format!("agent '{agent_id}'"),
+        available_tools,
     )?;
     match request_override {
-        Some(selection) if !selection.is_empty() => {
-            resolve_child_tool_selection(&agent_tools, selection, "request tool override")
-        }
+        Some(selection) if !selection.is_empty() => resolve_child_tool_selection_inner(
+            &agent_tools,
+            selection,
+            "request tool override",
+            available_tools,
+        ),
         _ => Ok(agent_tools),
     }
 }
@@ -205,21 +263,31 @@ pub fn resolve_effective_tools_config(
     agent_id: &str,
     request_override: Option<&ToolsConfig>,
 ) -> Result<ToolsConfig> {
-    let root = resolve_root_tool_selection(&config.tools.selection)?;
+    resolve_effective_tools_config_inner(config, agent_id, request_override, None)
+}
+
+pub(crate) fn resolve_effective_tools_config_for_registry(
+    config: &TurinConfig,
+    agent_id: &str,
+    request_override: Option<&ToolsConfig>,
+    available_tools: &BTreeSet<String>,
+) -> Result<ToolsConfig> {
+    resolve_effective_tools_config_inner(config, agent_id, request_override, Some(available_tools))
+}
+
+fn resolve_effective_tools_config_inner(
+    config: &TurinConfig,
+    agent_id: &str,
+    request_override: Option<&ToolsConfig>,
+    available_tools: Option<&BTreeSet<String>>,
+) -> Result<ToolsConfig> {
     let agent = agent_config(config, agent_id)?;
-    let agent_tools = resolve_child_tool_selection(
-        &root,
-        &agent.tools.selection,
-        &format!("agent '{agent_id}'"),
+    let resolved = resolve_effective_native_tools_inner(
+        config,
+        agent_id,
+        request_override.map(|tools| &tools.selection),
+        available_tools,
     )?;
-    let resolved = match request_override {
-        Some(selection) if !selection.selection.is_empty() => resolve_child_tool_selection(
-            &agent_tools,
-            &selection.selection,
-            "request tool override",
-        )?,
-        _ => agent_tools,
-    };
 
     let mut effective = merge_tools_config(&config.tools, &agent.tools);
     if let Some(request_override) = request_override {

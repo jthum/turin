@@ -122,6 +122,9 @@ Structured inference:
 - Rust harness callbacks are policy boundaries, not process-wide service locators.
   Agent-triggered async operations belong in governed native tools and kernel effects;
   do not pass internal manager collections through a generic native services object.
+- `tests/rust_embedding.rs` is the outside-in contract fixture. It must continue to use
+  only public APIs while covering multiple compiled harnesses, custom tools, governance,
+  provider inference, and persistence in a build without Lua.
 
 ## Common Changes
 
@@ -154,6 +157,7 @@ cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
 cargo test -p turin --test rust_harness_api --no-default-features
+cargo test -p turin --test rust_embedding --no-default-features
 cargo check -p turin --example rust_harness --no-default-features
 ```
 
