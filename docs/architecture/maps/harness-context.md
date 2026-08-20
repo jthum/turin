@@ -39,8 +39,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     layout. Native harnesses can declare durable signal topic subscriptions and receive
     typed borrowed `HarnessSignal` deliveries without depending on persistence rows.
 - `src/kernel/builder.rs`
-  - `with_native_harness_factory` replaces the default Lua harness binding with a
-    compiled Rust factory while preserving named Lua harness definitions.
+  - Owns the construction-time native factory registry. `with_native_harness_factory`
+    registers `default`; `with_native_harness` registers a configured harness ID.
 - `Cargo.toml`
   - The default `lua` feature includes `mlua`. Native-only embedders can use
     `default-features = false` and must install a native harness factory.
@@ -97,8 +97,11 @@ Structured inference:
 - Runtime signal delivery crosses the harness boundary as `HarnessSignal`, not
   `persistence::SignalRow`. Persistence retry metadata remains owned by the scheduler;
   Lua and native harnesses receive the same semantic signal fields.
-- Native default harnesses do not watch the configured Lua harness directory. Named
-  Lua harnesses retain their normal loading and hot-reload behavior.
+- Native harness runtimes do not watch configured Lua harness directories. Lua harnesses
+  retain their normal loading and hot-reload behavior.
+- Config remains authoritative for agent-to-harness bindings. A named native factory
+  must correspond to a declared `config.harnesses` ID; factory registration does not
+  create a second binding system.
 - A build without the `lua` feature must fail clearly if no native factory is installed;
   it must not silently run with an empty harness. Scheduler, native tools, persistence,
   inference, governance, memory, and session graph support remain available.
@@ -137,6 +140,7 @@ cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
 cargo test -p turin --test native_harness_api --no-default-features
+cargo check -p turin --example native_harness --no-default-features
 ```
 
 The native harness integration test must include a full kernel inference run so the
@@ -156,13 +160,13 @@ The current shape keeps Lua property and message mutation in `context.rs`, engin
 request-option layering in `kernel/harness_contract/request_options.rs`, and structured inference in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
-contract sits between session execution and the private `LuaHarnessInstance` adapter.
+contract sits between session execution and private native and Lua adapters.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
 Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
 ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation
 detail. Execution bindings and session queues are kernel-owned DTOs rather than Lua
-globals, while registration and virtual-tool capabilities remain to be generalized.
-`RuntimeBuilder::with_native_harness_factory` now provides the first compiled-harness
-entry point for typed lifecycle hooks and request preparation. Lua remains the default
-Cargo feature, while `--no-default-features` excludes `mlua` and all Lua VM, context,
-DX, globals, and standard-library binding modules.
+globals. Native tools are the compiled operational surface rather than a translation of
+Lua virtual tools. Runtime builder factories are keyed by the same harness IDs used by
+agent configuration, with the existing default-factory method retained as shorthand.
+Lua remains the default Cargo feature, while `--no-default-features` excludes `mlua`
+and all Lua VM, context, DX, globals, and standard-library binding modules.

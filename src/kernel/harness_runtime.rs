@@ -162,16 +162,6 @@ impl HarnessRuntime {
         }
     }
 
-    pub(crate) fn from_config_with_native(
-        harness_id: impl Into<String>,
-        config: &TurinConfig,
-        factory: Arc<dyn NativeHarnessFactory>,
-    ) -> Self {
-        let mut runtime = Self::from_config(harness_id, config);
-        runtime.native_factory = Some(factory);
-        runtime
-    }
-
     pub(crate) fn from_config(harness_id: impl Into<String>, config: &TurinConfig) -> Self {
         let fs_root = if config.harness.fs_root == "." {
             PathBuf::from(&config.kernel.workspace_root)
@@ -186,6 +176,11 @@ impl HarnessRuntime {
             PathBuf::from(&config.kernel.workspace_root),
             config.kernel.initial_spawn_depth,
         )
+    }
+
+    pub(crate) fn with_native_factory(mut self, factory: Arc<dyn NativeHarnessFactory>) -> Self {
+        self.native_factory = Some(factory);
+        self
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -349,7 +344,8 @@ impl HarnessRuntime {
         {
             let _ = ctx;
             anyhow::bail!(
-                "No native harness factory was configured and Turin was built without Lua"
+                "Harness '{}' has no native factory and Turin was built without Lua",
+                self.harness_id
             )
         }
     }

@@ -23,6 +23,7 @@ This is the documentation landing page for Turin.
 - `docs/concepts/worklists.md` — durable work coordination model, core operations, and workflow examples
 - `docs/guides/inference-routing.md` — named inference profiles, context-window management, and compaction policy
 - `docs/guides/multimodal.md` — multimodal Phase 1 input, attachment persistence, and current channel/provider support
+- `docs/guides/native-embedding.md` — compiled Rust harnesses and native-only embedding
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
 - `docs/operations/ui-clients.md` — local/remote operator shells for the Turin daemon control plane

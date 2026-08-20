@@ -11,8 +11,8 @@ use turin::inference::provider::{
 };
 use turin::kernel::Kernel;
 use turin::kernel::config::{
-    AgentConfig, EmbeddingConfig, InferenceOverrideConfig, PersistenceConfig, ProviderConfig,
-    TurinConfig,
+    AgentConfig, EmbeddingConfig, HarnessConfig, InferenceOverrideConfig, PersistenceConfig,
+    ProviderConfig, TurinConfig,
 };
 use turin::kernel::harness_contract::{
     HarnessActionRequest, HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
@@ -24,7 +24,7 @@ struct FixedHarness {
 }
 
 struct CaptureProvider {
-    request: Arc<Mutex<Option<InferenceRequest>>>,
+    requests: Arc<Mutex<Vec<InferenceRequest>>>,
 }
 
 #[async_trait]
@@ -34,7 +34,10 @@ impl InferenceProvider for CaptureProvider {
         request: InferenceRequest,
         _options: Option<RequestOptions>,
     ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
-        *self.request.lock().expect("request mutex poisoned") = Some(request);
+        self.requests
+            .lock()
+            .expect("request mutex poisoned")
+            .push(request);
         Box::pin(async move {
             let stream = futures::stream::iter(vec![
                 Ok(InferenceEvent::MessageStart {
@@ -55,6 +58,15 @@ impl InferenceProvider for CaptureProvider {
             ]);
             Ok(Box::pin(stream) as InferenceStream)
         })
+    }
+}
+
+struct PromptHarness(&'static str);
+
+impl NativeHarness for PromptHarness {
+    fn on_turn_prepare(&mut self, request: &mut HarnessTurnRequest) -> Result<Verdict> {
+        request.system_prompt.push_str(self.0);
+        Ok(Verdict::Allow)
     }
 }
 
@@ -183,7 +195,7 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
             received_signals: Arc::clone(&factory_signals),
         }) as Box<dyn NativeHarness>)
     });
-    let captured = Arc::new(Mutex::new(None));
+    let captured = Arc::new(Mutex::new(Vec::new()));
     let mut kernel = Kernel::builder(config)
         .with_native_harness_factory(factory)
         .build()?;
@@ -194,7 +206,7 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
         ProviderClient::new(
             "capture",
             Arc::new(CaptureProvider {
-                request: Arc::clone(&captured),
+                requests: Arc::clone(&captured),
             }),
         ),
     );
@@ -210,11 +222,144 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
     let request = captured
         .lock()
         .expect("request mutex poisoned")
-        .clone()
+        .first()
+        .cloned()
         .expect("provider received an inference request");
     assert_eq!(
         request.system.as_deref(),
         Some("Base instructions.\nUse concise answers.")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn agents_can_bind_to_distinct_native_harnesses_without_lua() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = TurinConfig::default();
+    config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().into_owned(),
+    );
+    config.embeddings = Some(EmbeddingConfig::noop());
+    config.agent = AgentConfig {
+        id: "default".to_string(),
+        model: "capture-model".to_string(),
+        provider: "capture".to_string(),
+        system_prompt: "Default agent.".to_string(),
+        ..AgentConfig::default()
+    };
+    config.agents.insert(
+        "reviewer".to_string(),
+        AgentConfig {
+            id: "reviewer".to_string(),
+            model: "capture-model".to_string(),
+            provider: "capture".to_string(),
+            system_prompt: "Reviewer agent.".to_string(),
+            harness: Some("review".to_string()),
+            ..AgentConfig::default()
+        },
+    );
+    config
+        .harnesses
+        .insert("review".to_string(), HarnessConfig::default());
+    config.providers = HashMap::from([(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "capture".to_string(),
+            ..ProviderConfig::default()
+        },
+    )]);
+
+    let default_factory: Arc<dyn NativeHarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn NativeHarness>));
+    let review_factory: Arc<dyn NativeHarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [review harness]")) as Box<dyn NativeHarness>));
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let mut kernel = Kernel::builder(config)
+        .with_native_harness_factory(default_factory)
+        .with_native_harness("review", review_factory)
+        .build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureProvider {
+                requests: Arc::clone(&captured),
+            }),
+        ),
+    );
+
+    let mut default_session = kernel.create_session().await;
+    kernel
+        .run(&mut default_session, Some("Default task".to_string()))
+        .await?;
+    let mut review_session = kernel.create_session_for_agent("reviewer").await;
+    kernel
+        .run(&mut review_session, Some("Review task".to_string()))
+        .await?;
+
+    let requests = captured.lock().expect("request mutex poisoned");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].system.as_deref(),
+        Some("Default agent. [default harness]")
+    );
+    assert_eq!(
+        requests[1].system.as_deref(),
+        Some("Reviewer agent. [review harness]")
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "lua"))]
+#[tokio::test]
+async fn named_harness_without_native_factory_fails_without_lua() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = TurinConfig::default();
+    config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().into_owned(),
+    );
+    config
+        .harnesses
+        .insert("missing".to_string(), HarnessConfig::default());
+
+    let factory: Arc<dyn NativeHarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn NativeHarness>));
+    let mut kernel = Kernel::builder(config)
+        .with_native_harness_factory(factory)
+        .build()?;
+    kernel.init_state().await?;
+
+    let error = kernel
+        .init_harness()
+        .await
+        .expect_err("named harness without native factory must fail without Lua");
+    assert!(
+        error
+            .to_string()
+            .contains("Harness 'missing' has no native factory")
+    );
+    Ok(())
+}
+
+#[test]
+fn native_harness_registration_rejects_undeclared_id() -> Result<()> {
+    let factory: Arc<dyn NativeHarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [typo]")) as Box<dyn NativeHarness>));
+    let result = Kernel::builder(TurinConfig::default())
+        .with_native_harness("typo", factory)
+        .build();
+
+    let error = match result {
+        Ok(_) => anyhow::bail!("undeclared native harness ID unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.to_string(),
+        "Native harness 'typo' is not declared in config.harnesses"
     );
     Ok(())
 }

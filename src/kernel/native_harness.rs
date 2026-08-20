@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use anyhow::Result;
 
 use super::harness_contract::{
@@ -40,6 +43,8 @@ pub trait NativeHarness: Send {
 pub trait NativeHarnessFactory: Send + Sync {
     fn create(&self) -> Result<Box<dyn NativeHarness>>;
 }
+
+pub(crate) type NativeHarnessFactories = HashMap<String, Arc<dyn NativeHarnessFactory>>;
 
 impl<F> NativeHarnessFactory for F
 where

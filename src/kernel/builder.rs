@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::governance::GovernanceManager;
+use crate::kernel::native_harness::NativeHarnessFactories;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{
     Kernel, TurinConfig,
@@ -22,7 +23,7 @@ pub struct RuntimeBuilder {
     tool_registry: ToolRegistry,
 
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-    native_harness_factory: Option<Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>>,
+    native_harness_factories: NativeHarnessFactories,
 }
 
 impl RuntimeBuilder {
@@ -34,7 +35,7 @@ impl RuntimeBuilder {
             tool_registry: create_default_registry(),
 
             embedding_provider: None,
-            native_harness_factory: None,
+            native_harness_factories: HashMap::new(),
         }
     }
 
@@ -52,10 +53,20 @@ impl RuntimeBuilder {
 
     /// Use a compiled Rust harness for the default harness binding.
     pub fn with_native_harness_factory(
-        mut self,
+        self,
         factory: Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>,
     ) -> Self {
-        self.native_harness_factory = Some(factory);
+        self.with_native_harness("default", factory)
+    }
+
+    /// Register a compiled Rust harness factory for a configured harness ID.
+    pub fn with_native_harness(
+        mut self,
+        harness_id: impl Into<String>,
+        factory: Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>,
+    ) -> Self {
+        self.native_harness_factories
+            .insert(harness_id.into(), factory);
         self
     }
 
@@ -69,9 +80,10 @@ impl RuntimeBuilder {
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
+        let native_harness_factories = Arc::new(self.native_harness_factories);
         let harness_manager = Arc::new(HarnessManager::from_config_with_native(
             config_arc.as_ref(),
-            self.native_harness_factory.clone(),
+            native_harness_factories.as_ref(),
         )?);
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
@@ -97,7 +109,7 @@ impl RuntimeBuilder {
                 persistence_locks,
                 clients: HashMap::new(),
                 embedding_provider: self.embedding_provider,
-                native_harness_factory: self.native_harness_factory,
+                native_harness_factories: Some(native_harness_factories),
                 mcp_clients: Vec::new(),
             },
             check_watcher: Arc::new(std::sync::Mutex::new(None)),
