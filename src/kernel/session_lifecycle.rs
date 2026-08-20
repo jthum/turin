@@ -19,9 +19,7 @@ use crate::kernel::session_lifecycle::materialization::{
     materialize_token_bounded_messages, rebuild_history,
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
-use crate::kernel::session_metadata::{
-    session_default_store_selector_from_metadata, session_origin_id_from_metadata,
-};
+use crate::kernel::session_metadata::session_default_store_selector_from_metadata;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
@@ -269,9 +267,7 @@ impl ExecutionHost {
 
         let mut session = SessionState::new();
         session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
-        session.identity.set_origin_id(
-            origin_id.or_else(|| session_origin_id_from_metadata(row.metadata.as_deref())),
-        );
+        session.identity.set_origin_id(origin_id.or(row.origin_id));
         session.internal_id = Some(row.id);
         session.store_selector = store_selector;
         session.default_store_selector =
@@ -325,9 +321,7 @@ impl ExecutionHost {
 
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
-        session
-            .identity
-            .set_origin_id(session_origin_id_from_metadata(row.metadata.as_deref()));
+        session.identity.set_origin_id(row.origin_id);
         session.context_checkpoint = materialized.context_checkpoint;
         session
             .history

@@ -62,6 +62,9 @@ Runtime graph:
 - Parent/child session ownership is structural persistence data, not a semantic graph
   edge or JSON metadata. It uses normalized session columns and dedicated indexes so
   peer-thread lookup does not scan or parse metadata.
+- Opaque client-origin provenance is likewise a normalized nullable session field
+  with a partial index. It organizes root-session discovery and is not a semantic
+  graph edge, authenticated identity, or authority grant.
 - The operator-facing Session Graph visualizes the durable turn tree and branch
   heads. It is not a renderer for `runtime.graph.*`; a future semantic overlay
   should remain visually and contractually distinct.

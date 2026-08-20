@@ -20,24 +20,41 @@ pub struct TokenBoundedMessages {
 }
 
 impl StateStore {
-    pub async fn list_session_rows(&self, limit: usize, offset: usize) -> Result<Vec<SessionRow>> {
+    pub async fn list_session_rows(
+        &self,
+        limit: usize,
+        offset: usize,
+        origin_id: Option<&str>,
+    ) -> Result<Vec<SessionRow>> {
         let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT s.id, s.public_id, s.agent_id, s.metadata, s.active_branch_head_id,
+        let origin_filter = if origin_id.is_some() {
+            " AND s.origin_id = ?3"
+        } else {
+            ""
+        };
+        let sql = format!(
+            r#"
+                SELECT s.id, s.public_id, s.agent_id, s.origin_id, s.metadata, s.active_branch_head_id,
                        s.parent_session_id, s.root_session_id, s.origin_turn_id,
                        s.relation_kind, s.thread_key, s.visibility, s.created_at
                 FROM sessions s
                 LEFT JOIN events e ON e.session_id = s.id
-                WHERE s.parent_session_id IS NULL
+                WHERE s.parent_session_id IS NULL{origin_filter}
                 GROUP BY s.id
                 ORDER BY COALESCE(MAX(e.id), s.id) DESC
                 LIMIT ?1 OFFSET ?2
-                "#,
-                turso::params![limit as i64, offset as i64],
-            )
-            .await?;
+            "#
+        );
+        let mut rows = match origin_id {
+            Some(origin_id) => {
+                conn.query(&sql, turso::params![limit as i64, offset as i64, origin_id])
+                    .await?
+            }
+            None => {
+                conn.query(&sql, turso::params![limit as i64, offset as i64])
+                    .await?
+            }
+        };
 
         let mut sessions = Vec::new();
         while let Some(row) = rows.next().await? {

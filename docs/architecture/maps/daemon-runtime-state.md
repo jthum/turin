@@ -119,9 +119,11 @@ Persisted session detail:
 Persisted session discovery:
 
 1. Ordinary `session.list` returns top-level sessions only.
-2. A `parent_session_id` request resolves that parent and returns its direct
+2. An optional `origin_id` filters those roots through the normalized partial
+   index in the selected store; it cannot be combined with linked-child discovery.
+3. A `parent_session_id` request resolves that parent and returns its direct
    linked children from the same store.
-3. Session summaries expose normalized linkage fields; relationship discovery
+4. Session summaries expose normalized origin and linkage fields; discovery
    does not parse metadata or query the semantic graph overlay.
 
 Session graph:
@@ -182,7 +184,9 @@ Persisted session deletion:
 - A projected message's `turn_id` is durable identity; `turn_index` remains a
   path-relative presentation depth and must not be used for exact branch writes.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
-- Session origin is opaque provenance. It must not select storage, inference, authorization, or the client currently viewing the session.
+- Session origin is opaque provenance. It must not select storage, inference,
+  authorization, or the client currently viewing the session. Filtering by an
+  origin is organization/discovery, not an access-control decision.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.
 - Explicit harness action targets must run in the named harness runtime; agent identity must not silently redirect them to another harness.
 - Harness source paths must not be absolute, traverse above the harness root, escape through symlinks, or target non-Lua files.

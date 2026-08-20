@@ -140,6 +140,7 @@ pub(super) fn session_summary_from_row(
         internal_id: row.id,
         session_id: format_uuid_bytes_simple(&row.public_id),
         agent_id: row.agent_id.clone(),
+        origin_id: row.origin_id.clone(),
         metadata: row
             .metadata
             .as_deref()

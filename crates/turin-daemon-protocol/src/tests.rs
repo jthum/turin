@@ -167,7 +167,21 @@ fn session_delete_request_round_trips() {
 }
 
 #[test]
-fn session_list_can_target_direct_linked_children() {
+fn session_list_can_filter_by_origin_or_target_direct_linked_children() {
+    let origin_request = RequestEnvelope::new(
+        Some("req_origin_sessions".to_string()),
+        DaemonRequest::SessionList(SessionListParams {
+            limit: 20,
+            offset: 0,
+            store: None,
+            path: None,
+            origin_id: Some("client:desktop".to_string()),
+            parent_session_id: None,
+        }),
+    );
+    let origin_value = serde_json::to_value(origin_request).expect("serialize origin session list");
+    assert_eq!(origin_value["params"]["origin_id"], "client:desktop");
+
     let request = RequestEnvelope::new(
         Some("req_linked_sessions".to_string()),
         DaemonRequest::SessionList(SessionListParams {
@@ -175,6 +189,7 @@ fn session_list_can_target_direct_linked_children() {
             offset: 0,
             store: None,
             path: None,
+            origin_id: None,
             parent_session_id: Some("019f-parent".to_string()),
         }),
     );

@@ -163,6 +163,25 @@ async fn assert_session_and_task_workflow(client: &ControlClient) -> Result<()> 
             .any(|session| session.session_id == opened.session_id)
     );
 
+    let attributed = client
+        .open_session_with_origin("default", None, "client:test")
+        .await?;
+    let attributed_sessions = client
+        .list_sessions_for_origin("client:test", 20, 0)
+        .await?;
+    assert_eq!(attributed_sessions.len(), 1);
+    assert_eq!(
+        attributed_sessions[0].session_id,
+        attributed
+            .session_id
+            .split_once('@')
+            .map_or(attributed.session_id.as_str(), |(public_id, _)| public_id)
+    );
+    assert_eq!(
+        attributed_sessions[0].origin_id.as_deref(),
+        Some("client:test")
+    );
+
     let submitted = client
         .submit_task(
             None,

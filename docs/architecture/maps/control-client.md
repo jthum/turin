@@ -66,6 +66,9 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - Persisted session listing returns roots by default. `list_linked_sessions`
   requests only direct children of an explicit parent; it must not turn the
   control client into a generic session-relationship query layer.
+- `open_session_with_origin` and `list_sessions_for_origin` expose opaque
+  client provenance without defining client identity, authentication, or
+  ownership in this crate.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
 - Harness source editing must go through daemon protocol operations so local and remote clients share path, conflict, validation, and persistence semantics.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.

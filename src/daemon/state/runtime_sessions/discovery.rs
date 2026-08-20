@@ -14,12 +14,13 @@ impl DaemonState {
         limit: usize,
         offset: usize,
         store_selector: Option<StoreSelector>,
+        origin_id: Option<&str>,
     ) -> Result<Vec<SessionSummary>> {
         let store = match &store_selector {
             Some(selector) => self.kernel.store_manager().open(selector).await?,
             None => self.kernel.store_manager().get_default().await?,
         };
-        let rows = store.list_session_rows(limit, offset).await?;
+        let rows = store.list_session_rows(limit, offset, origin_id).await?;
         debug!(count = rows.len(), "Listed persisted sessions");
         Ok(rows
             .iter()

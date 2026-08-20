@@ -66,6 +66,10 @@ Nested peer delegation:
 
 ## Invariants
 
+- Session `origin_id` is caller-supplied provenance, not an authenticated
+  principal, capability grant, or ownership boundary. Governance authority
+  continues to come from the authenticated transport and resolved execution
+  subject; matching an origin must never grant access.
 - Delegation resource policy is independently configurable: depth and direct fan-out
   bound durable topology, concurrent-child limits bound outstanding work, and nullable
   root token/time/tool budgets bound one transitive task family.

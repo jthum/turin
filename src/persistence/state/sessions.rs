@@ -8,7 +8,7 @@ use super::{
 
 mod search;
 
-pub(super) const SESSION_SELECT: &str = "SELECT id, public_id, agent_id, metadata, active_branch_head_id, parent_session_id, root_session_id, origin_turn_id, relation_kind, thread_key, visibility, created_at FROM sessions";
+pub(super) const SESSION_SELECT: &str = "SELECT id, public_id, agent_id, origin_id, metadata, active_branch_head_id, parent_session_id, root_session_id, origin_turn_id, relation_kind, thread_key, visibility, created_at FROM sessions";
 
 impl StateStore {
     pub async fn create_session(
@@ -17,12 +17,23 @@ impl StateStore {
         agent_id: &str,
         metadata: Option<&str>,
     ) -> Result<i64> {
+        self.create_session_with_origin(public_id, agent_id, None, metadata)
+            .await
+    }
+
+    pub async fn create_session_with_origin(
+        &self,
+        public_id: uuid::Uuid,
+        agent_id: &str,
+        origin_id: Option<&str>,
+        metadata: Option<&str>,
+    ) -> Result<i64> {
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
 
         conn.execute(
-            "INSERT INTO sessions (public_id, agent_id, metadata) VALUES (?1, ?2, ?3)",
-            turso::params![public_id_bytes, agent_id, metadata],
+            "INSERT INTO sessions (public_id, agent_id, origin_id, metadata) VALUES (?1, ?2, ?3, ?4)",
+            turso::params![public_id_bytes, agent_id, origin_id, metadata],
         )
         .await
         .context("Failed to insert into sessions table")?;
@@ -75,13 +86,14 @@ impl StateStore {
         conn.execute(
             r#"
             INSERT INTO sessions (
-                public_id, agent_id, metadata, parent_session_id, root_session_id,
+                public_id, agent_id, origin_id, metadata, parent_session_id, root_session_id,
                 origin_turn_id, relation_kind, thread_key, visibility
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             turso::params![
                 public_id_bytes,
                 agent_id,
+                parent.origin_id.as_deref(),
                 metadata,
                 link.parent_session_id,
                 root_session_id,
@@ -548,14 +560,15 @@ pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
         id: row.get::<i64>(0)?,
         public_id: row.get::<Vec<u8>>(1)?,
         agent_id: row.get::<String>(2)?,
-        metadata: row.get::<Option<String>>(3)?,
-        active_branch_head_id: row.get::<Option<i64>>(4)?,
-        parent_session_id: row.get::<Option<i64>>(5)?,
-        root_session_id: row.get::<Option<i64>>(6)?,
-        origin_turn_id: row.get::<Option<i64>>(7)?,
-        relation_kind: row.get::<Option<String>>(8)?,
-        thread_key: row.get::<Option<String>>(9)?,
-        visibility: row.get::<String>(10)?,
-        created_at: row.get::<String>(11)?,
+        origin_id: row.get::<Option<String>>(3)?,
+        metadata: row.get::<Option<String>>(4)?,
+        active_branch_head_id: row.get::<Option<i64>>(5)?,
+        parent_session_id: row.get::<Option<i64>>(6)?,
+        root_session_id: row.get::<Option<i64>>(7)?,
+        origin_turn_id: row.get::<Option<i64>>(8)?,
+        relation_kind: row.get::<Option<String>>(9)?,
+        thread_key: row.get::<Option<String>>(10)?,
+        visibility: row.get::<String>(11)?,
+        created_at: row.get::<String>(12)?,
     })
 }

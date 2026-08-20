@@ -780,7 +780,7 @@ pub fn register_agent_bindings(lua: &Lua, app_data: &HarnessAppData) -> LuaResul
                         let selector = current_session_store_selector(&execution_ctx)?;
                         let store = manager.open(&selector).await.map_err(|e| e.to_string())?;
                         store
-                            .list_session_rows(limit, offset)
+                            .list_session_rows(limit, offset, None)
                             .await
                             .map_err(|e| e.to_string())
                     });

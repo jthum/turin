@@ -19,10 +19,12 @@ pub(super) async fn list(
 ) -> ResponseEnvelope {
     let guard = ctx.state.read().await;
     if let Some(parent_session_id) = params.parent_session_id.as_deref() {
-        if params.store.is_some() || params.path.is_some() {
+        if params.store.is_some() || params.path.is_some() || params.origin_id.is_some() {
             return validation_error(
                 id,
-                anyhow::anyhow!("'store' and 'path' cannot be combined with 'parent_session_id'"),
+                anyhow::anyhow!(
+                    "'store', 'path', and 'origin_id' cannot be combined with 'parent_session_id'"
+                ),
             );
         }
         return match guard
@@ -48,7 +50,12 @@ pub(super) async fn list(
         Err(err) => return validation_error(id, err),
     };
     match guard
-        .list_sessions(params.limit, params.offset, store_selector)
+        .list_sessions(
+            params.limit,
+            params.offset,
+            store_selector,
+            params.origin_id.as_deref(),
+        )
         .await
     {
         Ok(sessions) => ResponseEnvelope::ok(id, serde_json::json!({ "sessions": sessions })),

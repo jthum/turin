@@ -58,6 +58,9 @@ pub struct SessionListParams {
     pub store: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    /// Restrict top-level sessions to immutable client-origin provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_id: Option<String>,
     /// Return direct child sessions of this persisted session instead of roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,

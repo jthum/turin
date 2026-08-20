@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 33;
+pub(crate) const SCHEMA_VERSION: u32 = 34;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     public_id             BLOB(16) UNIQUE NOT NULL,
     agent_id              TEXT NOT NULL,
+    origin_id             TEXT,
     metadata              TEXT,
     active_branch_head_id INTEGER REFERENCES branch_heads(id),
     parent_session_id     INTEGER REFERENCES sessions(id),
@@ -148,6 +149,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_root_created
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_linked_thread
     ON sessions(parent_session_id, agent_id, thread_key)
     WHERE parent_session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_origin_created
+    ON sessions(origin_id, created_at)
+    WHERE origin_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_events_turn ON events(turn_id);
 CREATE INDEX IF NOT EXISTS idx_kv_scope ON kv(scope_kind, scope_key);
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
@@ -336,6 +340,7 @@ pub struct SessionRow {
     pub id: i64,
     pub public_id: Vec<u8>,
     pub agent_id: String,
+    pub origin_id: Option<String>,
     pub metadata: Option<String>,
     pub active_branch_head_id: Option<i64>,
     pub parent_session_id: Option<i64>,

@@ -32,6 +32,7 @@ pub struct SessionSummary {
     pub internal_id: i64,
     pub session_id: String,
     pub agent_id: String,
+    pub origin_id: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub parent_internal_id: Option<i64>,
     pub root_internal_id: Option<i64>,

@@ -6753,7 +6753,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         2,
         "fresh peer submissions must not reuse a logical child context"
     );
-    assert_eq!(store.list_session_rows(10, 0).await?.len(), 1);
+    assert_eq!(store.list_session_rows(10, 0, None).await?.len(), 1);
     let promoted = store
         .get_branch_head_by_name(root_session_id, "promoted-peer-review")
         .await?

@@ -856,6 +856,7 @@ provider = "noop"
             20,
             0,
             Some(StoreSelector::Alias("project_alpha".to_string())),
+            None,
         )
         .await?;
     assert!(
@@ -2305,7 +2306,7 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     }
     assert!(saw_completed, "daemon task did not complete in time");
 
-    let sessions = state.list_sessions(10, 0, None).await?;
+    let sessions = state.list_sessions(10, 0, None, None).await?;
     assert!(!sessions.is_empty());
     let session = &sessions[0];
     assert_eq!(session.agent_id, "default");
@@ -2348,7 +2349,7 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
         )
         .await?;
 
-    let roots = state.list_sessions(10, 0, None).await?;
+    let roots = state.list_sessions(10, 0, None, None).await?;
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].visibility, "top_level");
 
@@ -2422,7 +2423,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
         "completed"
     );
 
-    let default_sessions = state.list_sessions(20, 0, None).await?;
+    let default_sessions = state.list_sessions(20, 0, None, None).await?;
     assert!(
         default_sessions
             .iter()
@@ -2432,7 +2433,12 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
 
     let reviewer_path = temp.path().join("reviewer.db").display().to_string();
     let reviewer_sessions = state
-        .list_sessions(20, 0, Some(StoreSelector::Path(reviewer_path.clone())))
+        .list_sessions(
+            20,
+            0,
+            Some(StoreSelector::Path(reviewer_path.clone())),
+            None,
+        )
         .await?;
     assert_eq!(reviewer_sessions.len(), 1);
     assert_eq!(reviewer_sessions[0].agent_id, "reviewer");

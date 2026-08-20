@@ -995,6 +995,58 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
 }
 
 #[tokio::test]
+async fn session_origin_is_filterable_and_inherited_by_linked_sessions() {
+    let store = StateStore::open_memory().await.unwrap();
+    let root_public_id = uuid::Uuid::now_v7();
+    let root = store
+        .create_session_with_origin(root_public_id, "primary", Some("client:desktop"), None)
+        .await
+        .unwrap();
+    store
+        .create_session_with_origin(
+            uuid::Uuid::now_v7(),
+            "primary",
+            Some("client:terminal"),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .create_session(uuid::Uuid::now_v7(), "primary", None)
+        .await
+        .unwrap();
+
+    let desktop_sessions = store
+        .list_session_rows(10, 0, Some("client:desktop"))
+        .await
+        .unwrap();
+    assert_eq!(desktop_sessions.len(), 1);
+    assert_eq!(desktop_sessions[0].id, root);
+    assert_eq!(
+        desktop_sessions[0].origin_id.as_deref(),
+        Some("client:desktop")
+    );
+
+    let child = store
+        .create_linked_session(
+            uuid::Uuid::now_v7(),
+            "reviewer",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "review".to_string(),
+                visibility: "hidden".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let child = store.get_session_row(child).await.unwrap().unwrap();
+    assert_eq!(child.origin_id.as_deref(), Some("client:desktop"));
+}
+
+#[tokio::test]
 async fn linked_session_indexes_exclude_top_level_sessions() {
     let store = StateStore::open_memory().await.unwrap();
     let conn = store.connect().await.unwrap();
@@ -1020,6 +1072,27 @@ async fn linked_session_indexes_exclude_top_level_sessions() {
         assert!(sql.contains("WHERE"), "{index_name} should be partial");
         assert!(sql.contains("IS NOT NULL"));
     }
+}
+
+#[tokio::test]
+async fn session_origin_index_excludes_unattributed_sessions() {
+    let store = StateStore::open_memory().await.unwrap();
+    let conn = store.connect().await.unwrap();
+    let mut rows = conn
+        .query(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            ["idx_sessions_origin_created"],
+        )
+        .await
+        .unwrap();
+    let sql = rows
+        .next()
+        .await
+        .unwrap()
+        .expect("session origin index should exist")
+        .get::<String>(0)
+        .unwrap();
+    assert!(sql.contains("WHERE origin_id IS NOT NULL"));
 }
 
 #[tokio::test]
@@ -1472,7 +1545,7 @@ async fn test_file_based_store() {
 
     {
         let store = StateStore::open(db_path_str).await.unwrap();
-        let sessions = store.list_session_rows(4, 0).await.unwrap();
+        let sessions = store.list_session_rows(4, 0, None).await.unwrap();
         let session = sessions.first().expect("persisted session").id;
         let events = store.get_events(session, &active_branch()).await.unwrap();
         assert_eq!(events.len(), 1);

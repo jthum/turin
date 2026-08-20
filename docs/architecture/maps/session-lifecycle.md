@@ -48,7 +48,8 @@ Create session:
 
 1. Build a fresh `SessionState`.
 2. Resolve agent state/default store selectors.
-3. Record an optional opaque origin as creation provenance without treating it as ownership or configuration.
+3. Record an optional opaque origin in the normalized session row as creation
+   provenance without treating it as ownership or configuration.
 4. Persist a session row when possible.
 5. Attach the background persistence lane.
 
@@ -59,7 +60,8 @@ Create linked peer session:
    trace-scoped root delegation budget.
 3. Reuse the child identified by `(parent session, agent, thread key)` when it exists.
 4. Otherwise create an agent-owned child session with explicit parent, root, relation,
-   thread, visibility, and originating-turn columns.
+   thread, visibility, and originating-turn columns. The child inherits its
+   immutable client origin from the direct parent.
 5. Route the child onto one of the configured deterministic linked-runtime lanes for its agent.
 6. The lane creates or resumes the envelope's logical child session immediately before
    execution, then runs against that child's independent turn tree.
@@ -162,6 +164,8 @@ Delete persisted session:
   restores it to contextual visibility.
 - Relationship indexes are partial and contain linked rows only; top-level sessions do
   not pay index-entry storage for nullable parent/root/thread relationships.
+- Client-origin provenance has its own partial index. Sessions without an origin
+  pay no origin index-entry cost, and origin filtering never parses JSON metadata.
 - Family statistics read only session ids and parent ids. They must not materialize
   transcripts, events, graph rows, or complete session records.
 - Relationship and visibility values remain validated text deliberately: they are sparse,
@@ -174,7 +178,9 @@ Delete persisted session:
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.
-- Persisted origin identifies where a session was created, not which client owns it or which store and inference configuration it uses.
+- Persisted origin identifies where a session family was created, not which client
+  owns it or which store, inference configuration, or authority it uses. Linked
+  descendants inherit the root provenance rather than accepting a new assertion.
 - Local target switches must not run while tasks are queued.
 - Branch-head targets preserve the active branch when no branch id is explicitly selected.
 - External references must be normalized with an explicit store selector before being stored in the execution target.

@@ -62,6 +62,28 @@ impl ControlClient {
         store: Option<&str>,
         path: Option<&str>,
     ) -> Result<Vec<SessionSummary>> {
+        self.list_sessions_filtered(limit, offset, store, path, None)
+            .await
+    }
+
+    pub async fn list_sessions_for_origin(
+        &self,
+        origin_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSummary>> {
+        self.list_sessions_filtered(limit, offset, None, None, Some(origin_id))
+            .await
+    }
+
+    async fn list_sessions_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        store: Option<&str>,
+        path: Option<&str>,
+        origin_id: Option<&str>,
+    ) -> Result<Vec<SessionSummary>> {
         let response: SessionList = self
             .request_ok(
                 None,
@@ -70,6 +92,7 @@ impl ControlClient {
                     offset,
                     store: store.map(str::to_string),
                     path: path.map(str::to_string),
+                    origin_id: origin_id.map(str::to_string),
                     parent_session_id: None,
                 }),
             )
@@ -91,6 +114,7 @@ impl ControlClient {
                     offset,
                     store: None,
                     path: None,
+                    origin_id: None,
                     parent_session_id: Some(parent_session_id.to_string()),
                 }),
             )
@@ -347,12 +371,31 @@ impl ControlClient {
         agent_id: &str,
         slot_id: Option<String>,
     ) -> Result<LiveSession> {
+        self.open_session_request(agent_id, slot_id, None).await
+    }
+
+    pub async fn open_session_with_origin(
+        &self,
+        agent_id: &str,
+        slot_id: Option<String>,
+        origin_id: &str,
+    ) -> Result<LiveSession> {
+        self.open_session_request(agent_id, slot_id, Some(origin_id.to_string()))
+            .await
+    }
+
+    async fn open_session_request(
+        &self,
+        agent_id: &str,
+        slot_id: Option<String>,
+        origin_id: Option<String>,
+    ) -> Result<LiveSession> {
         self.request_ok(
             None,
             DaemonRequest::SessionOpen(OpenSessionParams {
                 agent_id: agent_id.to_string(),
                 slot_id,
-                origin_id: None,
+                origin_id,
             }),
         )
         .await

@@ -416,6 +416,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                     offset: 0,
                     store: None,
                     path: None,
+                    origin_id: None,
                     parent_session_id: None,
                 },
             ))
@@ -1432,12 +1433,42 @@ poll_interval_ms = 25
         .get_session_row_by_public_id(public_id)
         .await?
         .context("origin-tagged session should use the primary state db")?;
-    let metadata: serde_json::Value = serde_json::from_str(
-        row.metadata
-            .as_deref()
-            .context("origin-tagged session should have metadata")?,
-    )?;
-    assert_eq!(metadata["_turin"]["origin_id"], "relay:fs-isolated");
+    assert_eq!(row.origin_id.as_deref(), Some("relay:fs-isolated"));
+    assert!(row.metadata.is_none());
+
+    let matching = result_value(
+        daemon
+            .request(DaemonRequest::SessionList(
+                turin::daemon::protocol::SessionListParams {
+                    limit: 20,
+                    offset: 0,
+                    store: None,
+                    path: None,
+                    origin_id: Some("relay:fs-isolated".to_string()),
+                    parent_session_id: None,
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(matching["sessions"].as_array().map(Vec::len), Some(1));
+    assert_eq!(matching["sessions"][0]["session_id"], session_ref.public_id);
+    assert_eq!(matching["sessions"][0]["origin_id"], "relay:fs-isolated");
+
+    let absent = result_value(
+        daemon
+            .request(DaemonRequest::SessionList(
+                turin::daemon::protocol::SessionListParams {
+                    limit: 20,
+                    offset: 0,
+                    store: None,
+                    path: None,
+                    origin_id: Some("client:other".to_string()),
+                    parent_session_id: None,
+                },
+            ))
+            .await?,
+    );
+    assert!(absent["sessions"].as_array().is_some_and(Vec::is_empty));
 
     let channel_store = StateStore::open(
         &workspace_root

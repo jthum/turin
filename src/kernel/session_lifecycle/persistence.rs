@@ -20,10 +20,7 @@ impl ExecutionHost {
         };
 
         if create_row && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id()) {
-            let metadata = create_session_metadata(
-                session.default_store_selector.as_ref(),
-                session.identity.origin_id(),
-            );
+            let metadata = create_session_metadata(session.default_store_selector.as_ref());
             let created = match link {
                 Some(link) => {
                     store
@@ -37,7 +34,12 @@ impl ExecutionHost {
                 }
                 None => {
                     store
-                        .create_session(public_id, session.identity.agent_id(), metadata.as_deref())
+                        .create_session_with_origin(
+                            public_id,
+                            session.identity.agent_id(),
+                            session.identity.origin_id(),
+                            metadata.as_deref(),
+                        )
                         .await
                 }
             };
