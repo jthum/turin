@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`turin-manager` is the operator setup and troubleshooting CLI. It owns first-run config generation, local environment file updates, generic messaging-relay setup flows driven by adapter manifests, relay inventory views, and doctor checks.
+`turin-manager` is the operator setup and troubleshooting CLI. It owns first-run config generation, local environment file updates, generic channel setup flows driven by adapter manifests, channel inventory views, and doctor checks.
 
 Keep this crate as an operator-facing orchestration layer. It should not duplicate daemon runtime behavior, adapter internals, or control-client transport details.
 
@@ -15,15 +15,15 @@ Keep this crate as an operator-facing orchestration layer. It should not duplica
 - `crates/turin-manager/src/setup/init.rs`
   - `turin-manager init`: default provider/model prompts, generated Turin config, starter harness, optional `.env` update.
 - `crates/turin-manager/src/setup/doctor.rs`
-  - `turin-manager doctor`: config presence, configured relay discovery, adapter/secret checks, and daemon reachability.
+  - `turin-manager doctor`: config presence, configured channel discovery, adapter/secret checks, and daemon reachability.
 - `crates/turin-manager/src/setup/channels.rs`
   - Channel command facade and run-function re-exports.
 - `crates/turin-manager/src/setup/channels/configure.rs`
   - `turin-manager channels configure`: manifest-driven setup prompts, validation checks, auth-flow polling, channel config rendering, and optional `.env` updates.
 - `crates/turin-manager/src/setup/channels/inventory.rs`
-  - `turin-manager channels list/status`: adapter discovery, configured-relay grouping, and configuration status rendering.
+  - `turin-manager channels list/status`: adapter discovery, configured-channel grouping, and configuration status rendering.
 - `crates/turin-manager/src/files.rs`
-  - Config-path/layout resolution, relay config discovery/rendering, planned writes, TOML/env merge helpers, and redacted diffs.
+  - Config-path/layout resolution, channel config discovery/rendering, planned writes, TOML/env merge helpers, and redacted diffs.
 - `crates/turin-manager/src/runner.rs`
   - Re-export boundary for `turin-channel-host` sidecar discovery, manifest, validation, and auth-flow helpers.
 
@@ -46,9 +46,9 @@ Channel configure:
 
 Doctor/status:
 
-1. Load configured channel files from the manager-owned `.turin/relays` directory.
+1. Load configured channel files from the channel-owned `.turin/channels` directory.
 2. Check sidecar availability and required secrets.
-3. Check daemon reachability independently; the daemon does not expose relay runtime state.
+3. Check daemon reachability independently; the daemon does not expose channel runtime state.
 4. Print operator-facing diagnostics without mutating runtime state.
 
 ## Invariants
@@ -56,8 +56,8 @@ Doctor/status:
 - User-facing command names, prompts, and generated config shape are part of manager DX; change them deliberately.
 - Channel setup must remain manifest-driven so new sidecars can be configured without hard-coding adapter-specific prompts in manager.
 - Secret values may be written to disk only through the planned-write flow and redacted display contents.
-- Relay runtime status must not be inferred from daemon status. Process health
-  belongs to the adapter's launcher or a future relay host.
+- Channel runtime status must not be inferred from daemon status. Process
+  health belongs to the channel's launcher or a future channel host.
 - Sidecar discovery, settings validation, and auth-flow IPC should use `turin-channel-host` helpers via `runner.rs`.
 - `files.rs` owns channel config rendering and `.env` merge mechanics; setup modules should not hand-edit TOML/env strings.
 
@@ -79,7 +79,7 @@ Change channel setup behavior:
 Change channel inventory/status behavior:
 
 1. Update `setup/channels/inventory.rs`.
-2. Keep configuration status local to relay setup storage.
+2. Keep configuration status local to channel setup storage.
 3. Add focused row/table tests when changing status display precedence.
 
 Change generated config or file rendering:

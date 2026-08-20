@@ -137,8 +137,8 @@ mod tests {
             message: "reviewer issue".into(),
         };
         let unrelated_issue = RegistryIssue {
-            path: "/tmp/work/.turin/relays/telegram/config.toml".into(),
-            message: "relay issue".into(),
+            path: "/tmp/work/.turin/channels/telegram/config.toml".into(),
+            message: "channel issue".into(),
         };
 
         let matches = |issue| {

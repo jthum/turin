@@ -44,8 +44,8 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 - Response error codes serialize as snake_case.
 - Default values must stay explicit where they affect wire behavior.
 - Domain DTO modules should not depend on daemon server, manager, or control-client code.
-- Messaging relays use generic session/task/event operations; the daemon
-  protocol must not grow relay configuration, access, binding, presence, or
+- Channels use generic session/task/event operations; the daemon protocol must
+  not grow channel configuration, access, binding, presence, or
   lifecycle operations.
 
 ## Common Changes
@@ -61,7 +61,7 @@ Change an existing DTO:
 
 1. Treat it as a protocol change unless the serialized shape is provably unchanged.
 2. Add or update a wire-shape test.
-3. Check manager, control-client, and independent relay call sites.
+3. Check manager, control-client, and independent channel call sites.
 
 ## Tests
 

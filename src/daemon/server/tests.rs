@@ -39,12 +39,12 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
     ));
     assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/.turin/relays/discord")]
+        &[PathBuf::from("/tmp/turin/.turin/channels/discord")]
     ));
     assert!(!should_rescan_daemon(
         &watch_paths,
         &[PathBuf::from(
-            "/tmp/turin/.turin/relays/discord/config.toml"
+            "/tmp/turin/.turin/channels/discord/config.toml"
         )]
     ));
 
@@ -88,8 +88,8 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         path: "/tmp/work/.turin/harnesses/reviewer/main.lua".to_string(),
         message: "bad lua".to_string(),
     };
-    let relay_issue = RegistryIssue {
-        path: "/tmp/work/.turin/relays/discord/config.toml".to_string(),
+    let channel_issue = RegistryIssue {
+        path: "/tmp/work/.turin/channels/discord/config.toml".to_string(),
         message: "bad toml".to_string(),
     };
 
@@ -103,7 +103,7 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
     assert_eq!(harness_event, "harness.load_failed");
     assert_eq!(harness_data["harness_id"], "reviewer");
 
-    assert!(classify_registry_issue(&status, &relay_issue).is_none());
+    assert!(classify_registry_issue(&status, &channel_issue).is_none());
 }
 
 #[test]

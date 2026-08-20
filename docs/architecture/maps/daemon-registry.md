@@ -7,7 +7,7 @@ the effective runtime configuration. It owns config file IO, directory
 scanning, isolated issue reporting, effective config assembly, and status
 snapshot shaping.
 
-External clients and messaging relays are not registry entries. Their
+External clients and channels are not registry entries. Their
 configuration, credentials, health, and process lifecycle stay outside Turin
 daemon.
 
@@ -44,7 +44,7 @@ daemon.
 - An agent cannot declare both a shared harness and local `harness/` directory.
 - Agent writes use temp-file plus atomic rename.
 - Snapshot shaping performs no additional scanning or validation.
-- Relay paths do not trigger daemon rescans or registry issue events.
+- Channel paths do not trigger daemon rescans or registry issue events.
 
 ## Tests
 

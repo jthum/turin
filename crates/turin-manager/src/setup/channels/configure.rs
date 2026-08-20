@@ -13,7 +13,7 @@ use turin_channel_core::{
 
 use crate::files::{
     PlannedWrite, config_dir, confirm_and_write, load_existing, merge_env_file,
-    render_channel_file, resolve_relays_dir,
+    render_channel_file, resolve_channels_dir,
 };
 use crate::runner::{
     describe_external_runner, poll_external_auth_flow, start_external_auth_flow,
@@ -122,7 +122,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
         },
     )?;
 
-    let channel_path = resolve_relays_dir(&config_path)?
+    let channel_path = resolve_channels_dir(&config_path)?
         .join(&channel_id)
         .join("config.toml");
     let existing_channel = load_existing(&channel_path)?;

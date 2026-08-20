@@ -97,7 +97,7 @@ Kernel shutdown:
 3. Give peer runtimes a bounded grace period to end their sessions, flush durability, and close their MCP clients.
 4. Record work still active after the grace period as `killed` and abort the stalled runtime task.
 5. Stop the kernel watcher and close root MCP clients within their own bounded grace period.
-6. Daemon shutdown broadcasts shutdown to background services, drains the kernel, and then removes its endpoint. Independent relays have their own lifecycle.
+6. Daemon shutdown broadcasts shutdown to background services, drains the kernel, and then removes its endpoint. Independent channels have their own lifecycle.
 
 Local context selection:
 
