@@ -432,7 +432,11 @@ async fn count_messages_for_turns(conn: &Connection, turns: &[super::TurnRow]) -
         let mut stmt = conn.prepare(&sql).await?;
         let mut rows = stmt.query(params).await?;
         if let Some(row) = rows.next().await? {
-            total = total.saturating_add(row.get::<i64>(0)? as usize);
+            total = total.saturating_add(super::persisted_usize(
+                "message count aggregate",
+                "count",
+                row.get::<i64>(0)?,
+            )?);
         }
     }
     Ok(total)
@@ -451,7 +455,15 @@ async fn message_counts_for_turns(
         let mut stmt = conn.prepare(&sql).await?;
         let mut rows = stmt.query(turn_params(chunk)).await?;
         while let Some(row) = rows.next().await? {
-            counts.insert(row.get::<i64>(0)?, row.get::<i64>(1)? as usize);
+            let turn_id = row.get::<i64>(0)?;
+            counts.insert(
+                turn_id,
+                super::persisted_usize(
+                    &format!("turn {turn_id} message count"),
+                    "count",
+                    row.get::<i64>(1)?,
+                )?,
+            );
         }
     }
     Ok(counts)
@@ -489,7 +501,11 @@ async fn query_message_chunk(
                 turn_index: *turn_index,
                 role: row.get::<String>(2)?,
                 content: row.get::<String>(3)?,
-                token_count: row.get::<Option<i64>>(4)?.map(|t| t as u64),
+                token_count: super::persisted_optional_u64(
+                    &format!("message {message_id}"),
+                    "token count",
+                    row.get::<Option<i64>>(4)?,
+                )?,
                 created_at: row.get::<String>(5)?,
             },
         ));

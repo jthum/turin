@@ -219,8 +219,9 @@ fn push_signal_filter(
 }
 
 fn map_signal_row(row: &turso::Row) -> Result<SignalRow> {
+    let id = row.get::<i64>(0)?;
     Ok(SignalRow {
-        id: row.get(0)?,
+        id,
         public_id: row.get(1)?,
         topic: row.get(2)?,
         source_agent_id: row.get(3)?,
@@ -228,7 +229,11 @@ fn map_signal_row(row: &turso::Row) -> Result<SignalRow> {
         source_session_id: row.get(5)?,
         target_session_id: row.get(6)?,
         payload: row.get(7)?,
-        attempt_count: row.get::<i64>(8)? as u64,
+        attempt_count: super::persisted_u64(
+            &format!("signal {id}"),
+            "attempt count",
+            row.get::<i64>(8)?,
+        )?,
         last_attempted_at: row.get(9)?,
         last_error: row.get(10)?,
         created_at: row.get(11)?,

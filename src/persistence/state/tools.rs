@@ -99,8 +99,9 @@ impl StateStore {
                 )
                 .await?;
             while let Some(row) = rows.next().await? {
+                let id = row.get::<i64>(0)?;
                 execs.push(ToolExecutionRow {
-                    id: row.get::<i64>(0)?,
+                    id,
                     session_id,
                     turn_index: turn.branch_depth,
                     tool_call_id: row.get::<String>(1)?,
@@ -108,7 +109,11 @@ impl StateStore {
                     args: row.get::<String>(3)?,
                     output: row.get::<Option<String>>(4)?,
                     is_error: row.get::<i64>(5)? != 0,
-                    duration_ms: row.get::<Option<i64>>(6)?.map(|d| d as u64),
+                    duration_ms: super::persisted_optional_u64(
+                        &format!("tool execution {id}"),
+                        "duration milliseconds",
+                        row.get::<Option<i64>>(6)?,
+                    )?,
                     verdict: row.get::<String>(7)?,
                     created_at: row.get::<String>(8)?,
                 });

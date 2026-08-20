@@ -46,10 +46,20 @@ impl StateStore {
             .await?;
         let mut turns = Vec::new();
         while let Some(row) = rows.next().await? {
+            let turn = turn_row_from_row(&row)?;
+            let record = format!("turn {} graph summary", turn.id);
             turns.push(SessionGraphTurnRow {
-                turn: turn_row_from_row(&row)?,
-                message_count: row.get::<i64>(6)? as usize,
-                tool_execution_count: row.get::<i64>(7)? as usize,
+                turn,
+                message_count: super::persisted_usize(
+                    &record,
+                    "message count",
+                    row.get::<i64>(6)?,
+                )?,
+                tool_execution_count: super::persisted_usize(
+                    &record,
+                    "tool execution count",
+                    row.get::<i64>(7)?,
+                )?,
                 preview: row.get::<Option<String>>(8)?,
             });
         }
@@ -57,7 +67,9 @@ impl StateStore {
     }
 
     pub async fn active_branch_turn_count(&self, session_id: i64) -> Result<u32> {
-        Ok(self.branch_path_turns(session_id, None).await?.len() as u32)
+        let count = self.branch_path_turns(session_id, None).await?.len();
+        u32::try_from(count)
+            .map_err(|_| anyhow!("Session '{}' has more than u32::MAX turns", session_id))
     }
 
     pub async fn prepare_turn_write_target(

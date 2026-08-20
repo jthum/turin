@@ -974,6 +974,35 @@ async fn test_tool_execution_with_error() {
 }
 
 #[tokio::test]
+async fn negative_persisted_counters_fail_as_integrity_errors() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "hello"}]),
+            Some(1),
+        )
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute("UPDATE messages SET token_count = -1", ())
+        .await
+        .unwrap();
+
+    let error = store
+        .get_messages(session, &active_branch())
+        .await
+        .expect_err("negative token counts must not wrap into large unsigned values");
+    assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
+}
+
+#[tokio::test]
 async fn test_update_session_title_preserves_other_metadata() {
     let store = StateStore::open_memory().await.unwrap();
     let public_id = uuid::Uuid::now_v7();

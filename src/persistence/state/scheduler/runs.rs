@@ -63,7 +63,11 @@ impl StateStore {
             )
             .await?;
         if let Some(row) = rows.next().await? {
-            Ok(row.get::<i64>(0)? as u32)
+            super::super::persisted_u32(
+                "scheduled job run aggregate",
+                "active run count",
+                row.get::<i64>(0)?,
+            )
         } else {
             Ok(0)
         }

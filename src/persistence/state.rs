@@ -83,6 +83,44 @@ pub(crate) fn persisted_u32(record: &str, field: &str, value: i64) -> Result<u32
     })
 }
 
+pub(crate) fn persisted_u64(record: &str, field: &str, value: i64) -> Result<u64> {
+    u64::try_from(value).map_err(|_| {
+        persistence_integrity_error(
+            record,
+            format!("{field} must be a non-negative integer, found {value}"),
+        )
+    })
+}
+
+pub(crate) fn persisted_usize(record: &str, field: &str, value: i64) -> Result<usize> {
+    usize::try_from(value).map_err(|_| {
+        persistence_integrity_error(
+            record,
+            format!("{field} must be a non-negative platform-sized integer, found {value}"),
+        )
+    })
+}
+
+pub(crate) fn persisted_optional_u32(
+    record: &str,
+    field: &str,
+    value: Option<i64>,
+) -> Result<Option<u32>> {
+    value
+        .map(|value| persisted_u32(record, field, value))
+        .transpose()
+}
+
+pub(crate) fn persisted_optional_u64(
+    record: &str,
+    field: &str,
+    value: Option<i64>,
+) -> Result<Option<u64>> {
+    value
+        .map(|value| persisted_u64(record, field, value))
+        .transpose()
+}
+
 pub(crate) fn validate_session_metadata(record: &str, metadata: Option<&str>) -> Result<()> {
     let Some(raw) = metadata else {
         return Ok(());
@@ -256,7 +294,7 @@ impl StateStore {
 
     /// Initialize the database schema.
     async fn init_schema(&self) -> Result<()> {
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
 
         match self.schema_version(&conn).await? {
             Some(version) if version != SCHEMA_VERSION.to_string() => {
@@ -277,21 +315,28 @@ impl StateStore {
         // 1. Init Core Schema
         conn.execute("PRAGMA journal_mode = WAL;", ()).await.ok();
 
-        conn.execute_batch(INIT_SCHEMA_CORE)
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start state schema initialization transaction")?;
+        tx.execute_batch(INIT_SCHEMA_CORE)
             .await
             .with_context(|| "Failed to initialize database core schema")?;
 
         // 2. Init native Turso FTS schema. This is part of the required baseline now.
-        conn.execute_batch(INIT_SCHEMA_FTS)
+        tx.execute_batch(INIT_SCHEMA_FTS)
             .await
             .with_context(|| "Failed to initialize database FTS schema")?;
 
         // Record schema version
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES ('version', ?1)",
             [SCHEMA_VERSION.to_string()],
         )
         .await?;
+        tx.commit()
+            .await
+            .context("Failed to commit state schema initialization")?;
 
         Ok(())
     }

@@ -128,12 +128,16 @@ impl StateStore {
             .query(params.clone())
             .await
             .context("Failed to count memories for inspection")?;
-        let total = count_rows
-            .next()
-            .await?
-            .map(|row| row.get::<i64>(0))
-            .transpose()?
-            .unwrap_or(0) as u64;
+        let total = super::state::persisted_u64(
+            "memory inspection aggregate",
+            "total count",
+            count_rows
+                .next()
+                .await?
+                .map(|row| row.get::<i64>(0))
+                .transpose()?
+                .unwrap_or(0),
+        )?;
 
         let scope_where = if include_superseded {
             String::new()
@@ -150,10 +154,16 @@ impl StateStore {
             .context("Failed to list memory scopes for inspection")?;
         let mut scopes = Vec::new();
         while let Some(row) = scope_rows.next().await? {
+            let scope_kind = row.get::<String>(0)?;
+            let scope_key = row.get::<String>(1)?;
             scopes.push(MemoryInspectionScopeRow {
-                scope_kind: row.get(0)?,
-                scope_key: row.get(1)?,
-                count: row.get::<i64>(2)? as u64,
+                count: super::state::persisted_u64(
+                    &format!("memory scope {scope_kind}:{scope_key}"),
+                    "count",
+                    row.get::<i64>(2)?,
+                )?,
+                scope_kind,
+                scope_key,
             });
         }
 
@@ -177,17 +187,27 @@ impl StateStore {
             .context("Failed to list memories for inspection")?;
         let mut memories = Vec::new();
         while let Some(row) = rows.next().await? {
+            let public_id = row.get::<Vec<u8>>(0)?;
+            let record = "memory inspection row";
             memories.push(MemoryInspectionRow {
-                public_id: row.get(0)?,
+                public_id,
                 scope_kind: row.get(1)?,
                 scope_key: row.get(2)?,
                 content: row.get(3)?,
                 metadata: row.get(4)?,
                 embedded: row.get::<i64>(5)? != 0,
                 embedding_key: row.get(6)?,
-                embedding_dimensions: row.get::<Option<i64>>(7)?.map(|value| value as u32),
+                embedding_dimensions: super::state::persisted_optional_u32(
+                    record,
+                    "embedding dimensions",
+                    row.get::<Option<i64>>(7)?,
+                )?,
                 weight: row.get(8)?,
-                retrieval_count: row.get::<i64>(9)? as u64,
+                retrieval_count: super::state::persisted_u64(
+                    record,
+                    "retrieval count",
+                    row.get::<i64>(9)?,
+                )?,
                 last_retrieved_at: row.get(10)?,
                 superseded_at: row.get(11)?,
                 created_at: row.get(12)?,
@@ -539,7 +559,11 @@ impl StateStore {
             let row_id: i64 = row.get(0)?;
             let age_days = row.get::<Option<f64>>(1)?.unwrap_or(0.0);
             let weight: f64 = row.get(2)?;
-            let retrieval_count = row.get::<i64>(3)? as u64;
+            let retrieval_count = super::state::persisted_u64(
+                &format!("memory {row_id}"),
+                "retrieval count",
+                row.get::<i64>(3)?,
+            )?;
             let is_superseded = row.get::<Option<String>>(4)?.is_some();
 
             let matches = if all {
@@ -638,6 +662,7 @@ fn memory_row_from_search_row(
     id: i64,
     include_metadata: bool,
 ) -> Result<MemoryRow> {
+    let record = format!("memory {id}");
     Ok(MemoryRow {
         id,
         public_id: row.get(1)?,
@@ -653,7 +678,11 @@ fn memory_row_from_search_row(
         lexical_score: None,
         semantic_score: None,
         weight: row.get(7)?,
-        retrieval_count: row.get::<i64>(8)? as u64,
+        retrieval_count: super::state::persisted_u64(
+            &record,
+            "retrieval count",
+            row.get::<i64>(8)?,
+        )?,
         last_retrieved_at: row.get(9)?,
         superseded_at: row.get(10)?,
     })

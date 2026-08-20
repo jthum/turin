@@ -249,11 +249,20 @@ impl StateStore {
             .next()
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session counter aggregate returned no row"))?;
+        let record = format!("session {session_id} counters");
         Ok(SessionCounters {
-            next_task_id: row.get::<i64>(0)? as u32,
-            next_plan_id: row.get::<i64>(1)? as u32,
-            total_input_tokens: row.get::<i64>(2)? as u64,
-            total_output_tokens: row.get::<i64>(3)? as u64,
+            next_task_id: super::persisted_u32(&record, "next task id", row.get::<i64>(0)?)?,
+            next_plan_id: super::persisted_u32(&record, "next plan id", row.get::<i64>(1)?)?,
+            total_input_tokens: super::persisted_u64(
+                &record,
+                "total input tokens",
+                row.get::<i64>(2)?,
+            )?,
+            total_output_tokens: super::persisted_u64(
+                &record,
+                "total output tokens",
+                row.get::<i64>(3)?,
+            )?,
         })
     }
 
@@ -339,13 +348,18 @@ impl StateStore {
 
         let mut events = Vec::new();
         while let Some(row) = rows.next().await? {
+            let id = row.get::<i64>(0)?;
             events.push(EventRow {
-                id: row.get::<i64>(0)?,
+                id,
                 session_id: row.get::<i64>(1)?,
                 turn_id: row.get::<Option<i64>>(2)?,
                 event_type: row.get::<String>(3)?,
                 payload: row.get::<String>(4)?,
-                turn_index: row.get::<Option<i64>>(5)?.map(|value| value as u32),
+                turn_index: super::persisted_optional_u32(
+                    &format!("event {id}"),
+                    "turn index",
+                    row.get::<Option<i64>>(5)?,
+                )?,
                 created_at: row.get::<String>(6)?,
             });
         }
@@ -389,13 +403,18 @@ impl StateStore {
         let mut rows = stmt.query(params).await?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().await? {
+            let id = row.get::<i64>(0)?;
             events.push(EventRow {
-                id: row.get::<i64>(0)?,
+                id,
                 session_id: row.get::<i64>(1)?,
                 turn_id: row.get::<Option<i64>>(2)?,
                 event_type: row.get::<String>(3)?,
                 payload: row.get::<String>(4)?,
-                turn_index: row.get::<Option<i64>>(5)?.map(|value| value as u32),
+                turn_index: super::persisted_optional_u32(
+                    &format!("event {id}"),
+                    "turn index",
+                    row.get::<Option<i64>>(5)?,
+                )?,
                 created_at: row.get::<String>(6)?,
             });
         }
@@ -447,13 +466,18 @@ impl StateStore {
         let mut rows = stmt.query(params).await?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().await? {
+            let id = row.get::<i64>(0)?;
             events.push(EventRow {
-                id: row.get::<i64>(0)?,
+                id,
                 session_id: row.get::<i64>(1)?,
                 turn_id: row.get::<Option<i64>>(2)?,
                 event_type: row.get::<String>(3)?,
                 payload: row.get::<String>(4)?,
-                turn_index: row.get::<Option<i64>>(5)?.map(|value| value as u32),
+                turn_index: super::persisted_optional_u32(
+                    &format!("event {id}"),
+                    "turn index",
+                    row.get::<Option<i64>>(5)?,
+                )?,
                 created_at: row.get::<String>(6)?,
             });
         }

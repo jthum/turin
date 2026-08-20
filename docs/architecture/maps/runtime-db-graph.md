@@ -61,6 +61,11 @@ Runtime graph:
 - Runtime graph is sparse relationship metadata; durable transcript/session state remains owned by persistence/session modules.
 - Every state-store connection enables foreign-key enforcement. Runtime DB callers may issue
   advanced SQL, but writes that violate declared state relationships fail at the database boundary.
+- Core schema, FTS schema, and schema-version recording initialize in one transaction. A failed
+  bootstrap must leave the database retryable rather than stranded as an unversioned partial schema.
+- Persisted values represented as unsigned domain counters, indexes, dimensions, or durations are
+  range-checked while mapping rows. Negative values fail as typed persistence-integrity errors and
+  must never wrap into large unsigned values.
 - Persisted turn depths, ancestry links, and branch-head targets are validated as they are
   materialized. Missing or cross-session graph records return a typed persistence-integrity error;
   Turin does not scan the complete database or attempt automatic repair.

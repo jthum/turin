@@ -164,7 +164,11 @@ impl StateStore {
             )
             .await?;
         if let Some(row) = rows.next().await? {
-            Ok(row.get::<i64>(0)? as u32)
+            super::persisted_u32(
+                "scheduled job work-key aggregate",
+                "active run count",
+                row.get::<i64>(0)?,
+            )
         } else {
             Ok(0)
         }
@@ -511,8 +515,10 @@ async fn collect_scheduled_job_rows(mut rows: turso::Rows) -> Result<Vec<Schedul
 }
 
 fn map_scheduled_job_row(row: &turso::Row) -> Result<ScheduledJobRow> {
+    let id = row.get::<i64>(0)?;
+    let record = format!("scheduled job {id}");
     Ok(ScheduledJobRow {
-        id: row.get::<i64>(0)?,
+        id,
         public_id: row.get::<Vec<u8>>(1)?,
         agent_id: row.get::<String>(2)?,
         job_kind: row.get::<String>(3)?,
@@ -525,19 +531,27 @@ fn map_scheduled_job_row(row: &turso::Row) -> Result<ScheduledJobRow> {
         state_target: row.get::<Option<String>>(10)?,
         store_target: row.get::<Option<String>>(11)?,
         next_run_unix_ms: row.get::<i64>(12)?,
-        interval_seconds: row.get::<Option<i64>>(13)?.map(|v| v as u64),
+        interval_seconds: super::persisted_optional_u64(
+            &record,
+            "interval seconds",
+            row.get::<Option<i64>>(13)?,
+        )?,
         recurring_pattern: row.get::<Option<String>>(14)?,
         overlap_policy: row.get::<String>(15)?,
         work_key: row.get::<Option<String>>(16)?,
-        max_concurrency: row.get::<Option<i64>>(17)?.map(|v| v as u32),
+        max_concurrency: super::persisted_optional_u32(
+            &record,
+            "maximum concurrency",
+            row.get::<Option<i64>>(17)?,
+        )?,
         enabled: row.get::<i64>(18)? != 0,
         running_task_id: row.get::<Option<String>>(19)?,
-        active_run_count: row.get::<i64>(20)? as u32,
+        active_run_count: super::persisted_u32(&record, "active run count", row.get::<i64>(20)?)?,
         pending_rerun: row.get::<i64>(21)? != 0,
         last_run_unix_ms: row.get::<Option<i64>>(22)?,
         last_status: row.get::<Option<String>>(23)?,
         last_error_code: row.get::<Option<String>>(24)?,
-        failure_count: row.get::<i64>(25)? as u64,
+        failure_count: super::persisted_u64(&record, "failure count", row.get::<i64>(25)?)?,
         created_at: row.get::<String>(26)?,
         updated_at: row.get::<String>(27)?,
     })
