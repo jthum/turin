@@ -23,6 +23,10 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     lifecycle. Each definition stores one private `HarnessAdapterFactory`; live sessions
     receive fresh `HarnessInstance` values. Kernel and daemon code must not select engines
     or reach through an adapter into its implementation.
+- `src/kernel/harness_runtime/resolver.rs`
+  - Owns construction-time adapter registration validation and implementation selection.
+    `HarnessManager` consumes resolved adapters without knowing whether they came from
+    Rust, Lua, or a future scripting engine.
 - `src/kernel/harness_runtime/lua_adapter.rs`
   - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
     implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.

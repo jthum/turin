@@ -370,8 +370,8 @@ impl DaemonState {
         agent_id: &str,
         action: &ScheduleActionParams,
     ) -> std::result::Result<String, ScheduledJobFailure> {
-        let runtime = self.kernel.runtime_for_agent(agent_id);
-        let instance = runtime
+        let definition = self.kernel.harness_definition_for_agent(agent_id);
+        let instance = definition
             .create_instance(self.kernel.harness_init_context())
             .map_err(|err| {
                 ScheduledJobFailure::new("schedule_action_harness_load_failed", err.to_string())

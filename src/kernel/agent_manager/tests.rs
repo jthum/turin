@@ -1912,7 +1912,7 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
     kernel.init_harness().await?;
 
     let instance = kernel
-        .runtime_for_agent("default")
+        .harness_definition_for_agent("default")
         .create_instance(kernel.harness_init_context())?;
     let result = instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
         agent_id: "default",
@@ -2038,7 +2038,7 @@ async fn runtime_signals_hydrate_reference_payloads_in_subscribed_agent() -> any
     kernel.init_harness().await?;
 
     let instance = kernel
-        .runtime_for_agent("default")
+        .harness_definition_for_agent("default")
         .create_instance(kernel.harness_init_context())?;
     let result = instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
         agent_id: "default",

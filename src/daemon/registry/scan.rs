@@ -12,7 +12,7 @@ use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, TurinConfig};
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_runtime::{
-    HarnessDefinition, HarnessRuntimeInitContext, default_script_adapter_factory,
+    HarnessAdapterResolver, HarnessDefinition, HarnessRuntimeInitContext,
 };
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
@@ -242,13 +242,15 @@ fn validate_harness_dir(
         turin_types::layout::default_stores_dir_for_workspace(&workspace_root),
     ));
     let agent_manager = Arc::new(AgentManager::new(config.clone(), store_manager.clone()));
+    let rust_harness_factories = crate::kernel::harness::RustHarnessFactories::new();
+    let adapters = HarnessAdapterResolver::new(config.as_ref(), &rust_harness_factories)?;
     let runtime = HarnessDefinition::new(
         harness_id.to_string(),
         harness_dir.to_path_buf(),
         fs_root,
         workspace_root,
         bootstrap.kernel.initial_spawn_depth,
-        default_script_adapter_factory()?,
+        adapters.resolve(harness_id)?,
     );
 
     runtime.validate(HarnessRuntimeInitContext {

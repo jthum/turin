@@ -40,10 +40,11 @@ or future scripting adapter implements only the capabilities it supports; it doe
 pretend to provide Lua source loading, virtual-tool continuations, or Lua execution
 globals.
 
-Store one private `HarnessAdapterFactory` on each harness runtime definition. Catalog
-construction adapts either a Rust `HarnessFactory` or a configured scripting engine to
-that interface exactly once. Runtime initialization, validation, source watching,
-reload, and session creation must not branch on a fixed list of adapter implementations.
+Store one private `HarnessAdapterFactory` on each harness definition. Catalog
+construction uses a private resolver to adapt either a Rust `HarnessFactory` or a
+configured scripting engine to that interface exactly once. Runtime initialization,
+validation, source watching, reload, and session creation must not branch on a fixed
+list of adapter implementations.
 The generic adapter factory remains private; the public Rust API exposes domain-level
 `Harness` and `HarnessFactory` contracts rather than scripting-engine plumbing.
 

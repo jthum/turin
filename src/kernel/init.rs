@@ -24,7 +24,7 @@ impl ExecutionHost {
 
         let harness_ids: Vec<_> = self
             .harness_manager
-            .runtime_entries()
+            .definition_entries()
             .map(|(harness_id, _)| harness_id.clone())
             .collect();
         self.sync_runtime_signal_subscriptions_for_harnesses(&harness_ids)
@@ -154,8 +154,8 @@ impl ExecutionHost {
     #[instrument(skip(self), fields(directory = %self.config.harness.directory))]
     pub async fn init_harness(&mut self) -> Result<()> {
         info!("Initializing harness");
-        for runtime in self.harness_manager.runtimes() {
-            runtime.init(self.harness_init_context())?;
+        for definition in self.harness_manager.definitions() {
+            definition.init(self.harness_init_context())?;
         }
         self.sync_runtime_signal_subscriptions().await?;
         Ok(())
@@ -165,31 +165,31 @@ impl ExecutionHost {
     #[instrument(skip(self))]
     pub async fn reload_harness(&mut self) -> Result<()> {
         info!("Reloading harness");
-        for runtime in self.harness_manager.runtimes() {
-            runtime.reload(self.harness_init_context())?;
+        for definition in self.harness_manager.definitions() {
+            definition.reload(self.harness_init_context())?;
         }
         self.sync_runtime_signal_subscriptions().await?;
         Ok(())
     }
 
     pub async fn reload_named_harness(&mut self, harness_id: &str) -> Result<()> {
-        let runtime = self
+        let definition = self
             .harness_manager
-            .runtime_by_id(harness_id)
+            .definition_by_id(harness_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
         info!(harness_id = %harness_id, "Reloading named harness");
-        runtime.reload(self.harness_init_context())?;
+        definition.reload(self.harness_init_context())?;
         self.sync_runtime_signal_subscriptions_for_harnesses(&[harness_id.to_string()])
             .await?;
         Ok(())
     }
 
     pub fn validate_named_harness(&self, harness_id: &str) -> Result<usize> {
-        let runtime = self
+        let definition = self
             .harness_manager
-            .runtime_by_id(harness_id)
+            .definition_by_id(harness_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
-        runtime.validate(self.harness_init_context())
+        definition.validate(self.harness_init_context())
     }
 
     pub(crate) fn validate_named_harness_sources(
@@ -197,11 +197,11 @@ impl ExecutionHost {
         harness_id: &str,
         source_overlay: crate::harness::source::HarnessSourceOverlay,
     ) -> Result<usize> {
-        let runtime = self
+        let definition = self
             .harness_manager
-            .runtime_by_id(harness_id)
+            .definition_by_id(harness_id)
             .ok_or_else(|| anyhow::anyhow!("Unknown harness '{}'", harness_id))?;
-        runtime.validate_sources(self.harness_init_context(), source_overlay)
+        definition.validate_sources(self.harness_init_context(), source_overlay)
     }
 }
 
@@ -229,8 +229,8 @@ impl Kernel {
         );
         let mut init_context = self.harness_init_context();
         init_context.config = Arc::clone(&config);
-        for runtime in harness_manager.runtimes() {
-            runtime.init(init_context.clone())?;
+        for definition in harness_manager.definitions() {
+            definition.init(init_context.clone())?;
         }
 
         self.agent_manager
@@ -256,8 +256,8 @@ impl Kernel {
     pub fn start_watcher(&mut self) -> Result<()> {
         use std::time::Duration;
 
-        let runtimes: Vec<_> = self.harness_manager.runtimes().cloned().collect();
-        let task_runtimes = runtimes.clone();
+        let definitions: Vec<_> = self.harness_manager.definitions().cloned().collect();
+        let task_definitions = definitions.clone();
         let init_ctx = self.harness_init_context();
         let harness_manager = Arc::clone(&self.harness_manager);
         let watcher_slot = Arc::clone(&self.check_watcher);
@@ -276,7 +276,7 @@ impl Kernel {
                     changed_paths.append(&mut more_paths);
                 }
 
-                let affected = affected_runtimes(&task_runtimes, &changed_paths);
+                let affected = affected_definitions(&task_definitions, &changed_paths);
                 if affected.is_empty() {
                     continue;
                 }
@@ -315,7 +315,7 @@ impl Kernel {
                     }
                 }
 
-                match build_harness_watcher(&task_runtimes, reload_tx.clone()) {
+                match build_harness_watcher(&task_definitions, reload_tx.clone()) {
                     Ok(watcher) => {
                         let mut slot = watcher_slot
                             .lock()
@@ -329,7 +329,7 @@ impl Kernel {
             }
         });
 
-        let watcher = build_harness_watcher(&runtimes, tx)?;
+        let watcher = build_harness_watcher(&definitions, tx)?;
         let mut slot = self
             .check_watcher
             .lock()
@@ -340,18 +340,18 @@ impl Kernel {
     }
 }
 
-fn affected_runtimes(
-    runtimes: &[Arc<HarnessDefinition>],
+fn affected_definitions(
+    definitions: &[Arc<HarnessDefinition>],
     changed_paths: &[PathBuf],
 ) -> Vec<Arc<HarnessDefinition>> {
     let mut seen = HashSet::new();
     let mut affected = Vec::new();
 
-    for runtime in runtimes {
-        if changed_paths.iter().any(|path| runtime.owns_path(path))
-            && seen.insert(runtime.harness_id().to_string())
+    for definition in definitions {
+        if changed_paths.iter().any(|path| definition.owns_path(path))
+            && seen.insert(definition.harness_id().to_string())
         {
-            affected.push(Arc::clone(runtime));
+            affected.push(Arc::clone(definition));
         }
     }
 
@@ -359,12 +359,12 @@ fn affected_runtimes(
 }
 
 fn build_harness_watcher(
-    runtimes: &[Arc<HarnessDefinition>],
+    definitions: &[Arc<HarnessDefinition>],
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<Option<notify::RecommendedWatcher>> {
     use notify::{RecursiveMode, Watcher};
 
-    let roots = collect_watch_roots(runtimes);
+    let roots = collect_watch_roots(definitions);
     if roots.is_empty() {
         warn!("No harness directories or explicit watch roots available, skipping watcher");
         return Ok(None);
@@ -412,12 +412,12 @@ struct OwnedWatchRoot {
     recursive: bool,
 }
 
-fn collect_watch_roots(runtimes: &[Arc<HarnessDefinition>]) -> Vec<OwnedWatchRoot> {
+fn collect_watch_roots(definitions: &[Arc<HarnessDefinition>]) -> Vec<OwnedWatchRoot> {
     let mut roots = Vec::new();
-    for runtime in runtimes {
-        for root in runtime.watch_roots() {
+    for definition in definitions {
+        for root in definition.watch_roots() {
             let owned = OwnedWatchRoot {
-                harness_id: runtime.harness_id().to_string(),
+                harness_id: definition.harness_id().to_string(),
                 path: root.path,
                 recursive: root.recursive,
             };

@@ -16,18 +16,18 @@ impl DaemonState {
         let agent_id = self.resolve_harness_action_agent(&params)?;
         self.kernel.agent_config_for(&agent_id)?;
 
-        let runtime = match params
+        let definition = match params
             .harness_id
             .as_deref()
             .filter(|value| !value.is_empty())
         {
             Some(harness_id) => self
                 .kernel
-                .runtime_for_harness(harness_id)
+                .harness_definition_by_id(harness_id)
                 .ok_or_else(|| anyhow!("Harness '{}' not found", harness_id))?,
-            None => self.kernel.runtime_for_agent(&agent_id),
+            None => self.kernel.harness_definition_for_agent(&agent_id),
         };
-        let instance = runtime.create_instance(self.kernel.harness_init_context())?;
+        let instance = definition.create_instance(self.kernel.harness_init_context())?;
         let ui_start = instance.ui_intent_count()?;
         let result =
             instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {

@@ -136,12 +136,12 @@ impl Kernel {
 
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
-        self.harness_manager.default_runtime().loaded_scripts()
+        self.harness_manager.default_definition().loaded_scripts()
     }
 
     pub fn loaded_scripts_for_agent(&self, agent_id: &str) -> Result<Vec<String>> {
         self.agent_config_for(agent_id)?;
-        Ok(self.runtime_for_agent(agent_id).loaded_scripts())
+        Ok(self.harness_definition_for_agent(agent_id).loaded_scripts())
     }
 
     pub fn harness_snapshot(&self, harness_id: &str) -> Option<HarnessRuntimeSnapshot> {
@@ -161,7 +161,7 @@ impl Kernel {
 
         let mut snapshots: Vec<_> = self
             .harness_manager
-            .runtime_entries()
+            .definition_entries()
             .map(|(harness_id, runtime)| {
                 let mut agents = bound_agents.remove(harness_id).unwrap_or_default();
                 agents.sort();
@@ -207,7 +207,7 @@ impl Kernel {
     pub fn run_script(&self, script: &str) -> Result<()> {
         let mut instance = self
             .harness_manager
-            .default_runtime()
+            .default_definition()
             .create_instance(self.harness_init_context())?;
         instance.load_script_str(script)
     }

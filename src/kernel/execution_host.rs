@@ -94,25 +94,25 @@ pub(crate) enum TaskRunAttempt {
 }
 
 impl ExecutionHost {
-    pub(crate) fn runtime_for_agent(
+    pub(crate) fn harness_definition_for_agent(
         &self,
         agent_id: &str,
     ) -> Arc<crate::kernel::harness_runtime::HarnessDefinition> {
-        Arc::clone(self.harness_manager.resolve_harness(Some(agent_id)))
+        Arc::clone(self.harness_manager.resolve_definition(Some(agent_id)))
     }
 
-    pub(crate) fn runtime_for_harness(
+    pub(crate) fn harness_definition_by_id(
         &self,
         harness_id: &str,
     ) -> Option<Arc<crate::kernel::harness_runtime::HarnessDefinition>> {
-        self.harness_manager.runtime_by_id(harness_id).cloned()
+        self.harness_manager.definition_by_id(harness_id).cloned()
     }
 
-    pub(crate) fn runtime_for_session(
+    pub(crate) fn harness_definition_for_session(
         &self,
         session: &SessionState,
     ) -> Arc<crate::kernel::harness_runtime::HarnessDefinition> {
-        self.runtime_for_agent(session.identity.agent_id())
+        self.harness_definition_for_agent(session.identity.agent_id())
     }
 
     pub(crate) fn session_harness_engine(
@@ -126,13 +126,13 @@ impl ExecutionHost {
         &self,
         session: &mut SessionState,
     ) -> anyhow::Result<()> {
-        let runtime = self.runtime_for_session(session);
-        let generation = runtime.generation();
+        let definition = self.harness_definition_for_session(session);
+        let generation = definition.generation();
         if session.harness_engine.is_some() && session.harness_generation == generation {
             return Ok(());
         }
 
-        let instance = runtime.create_instance(self.harness_init_context())?;
+        let instance = definition.create_instance(self.harness_init_context())?;
         instance.set_active_queue(Some(session.queue.clone()));
         session.harness_engine = Some(Arc::new(std::sync::Mutex::new(instance)));
         session.harness_generation = generation;

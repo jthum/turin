@@ -174,7 +174,7 @@ mod tests {
         let kernel = RuntimeBuilder::new(TurinConfig::default())
             .with_default_harness(factory)
             .build()?;
-        let runtime = kernel.host.runtime_for_agent("default");
+        let runtime = kernel.host.harness_definition_for_agent("default");
 
         assert!(runtime.watch_roots().is_empty());
         let first = runtime.create_instance(kernel.host.harness_init_context())?;

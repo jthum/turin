@@ -105,15 +105,15 @@ fn shared_harness_bindings_resolve_to_same_runtime() -> Result<()> {
     };
 
     let manager = HarnessManager::from_config(&config)?;
-    let writer = manager.resolve_harness(Some("writer"));
-    let reviewer = manager.resolve_harness(Some("reviewer"));
-    let default = manager.resolve_harness(Some("default"));
+    let writer = manager.resolve_definition(Some("writer"));
+    let reviewer = manager.resolve_definition(Some("reviewer"));
+    let default = manager.resolve_definition(Some("default"));
 
     assert!(Arc::ptr_eq(writer, reviewer));
     assert!(!Arc::ptr_eq(writer, default));
-    assert_eq!(manager.runtime_id_for_agent(Some("writer")), "shared");
-    assert_eq!(manager.runtime_id_for_agent(Some("reviewer")), "shared");
-    assert_eq!(manager.runtime_id_for_agent(Some("default")), "default");
+    assert_eq!(manager.harness_id_for_agent(Some("writer")), "shared");
+    assert_eq!(manager.harness_id_for_agent(Some("reviewer")), "shared");
+    assert_eq!(manager.harness_id_for_agent(Some("default")), "default");
 
     Ok(())
 }

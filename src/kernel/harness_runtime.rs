@@ -28,7 +28,10 @@ use crate::persistence::manager::StoreManager;
 
 #[cfg(feature = "lua")]
 mod lua_adapter;
+mod resolver;
 mod rust_adapter;
+
+pub(crate) use resolver::HarnessAdapterResolver;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct HarnessWatchRoot {
@@ -350,19 +353,17 @@ impl HarnessDefinition {
     }
 }
 
-pub(crate) fn rust_adapter_factory(
-    factory: Arc<dyn HarnessFactory>,
-) -> Arc<dyn HarnessAdapterFactory> {
+fn rust_adapter_factory(factory: Arc<dyn HarnessFactory>) -> Arc<dyn HarnessAdapterFactory> {
     rust_adapter::factory(factory)
 }
 
 #[cfg(feature = "lua")]
-pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
+fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
     Ok(lua_adapter::factory())
 }
 
 #[cfg(not(feature = "lua"))]
-pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
+fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
     anyhow::bail!("No script harness adapter is enabled in this Turin build")
 }
 
