@@ -18,6 +18,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     request construction, and response validation.
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
+- `src/kernel/harness_runtime.rs`
+  - Owns the explicit session-harness capability surface. Kernel and daemon code must
+    not dereference or otherwise reach through this wrapper into the Lua engine.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -51,6 +54,10 @@ Structured inference:
 - Context token counts must be recomputed after message or system prompt mutation.
 - Tool declarations remain load-time; `ctx.tools` only filters definitions for the current provider inference.
 - Conditional exposure must not bypass native policy, governance, or tool-call hooks.
+- Lua engine operations used outside the harness subsystem must be represented by an
+  explicit session-harness capability. Do not restore unrestricted `Deref` access to
+  `HarnessEngine`; this boundary is the migration seam for native harnesses and
+  optional scripting adapters.
 
 ## Common Changes
 
@@ -97,4 +104,6 @@ git diff --check
 The current shape keeps Lua property and message mutation in `context.rs`, request-option
 layering in `request_options.rs`, and the structured inference operation in
 `structured_call.rs`. Normal inference and structured harness inference use the same
-header/retry/timeout override policy.
+header/retry/timeout override policy. `HarnessInstance` now encapsulates its Lua engine
+behind explicit hook, binding, virtual-tool, signal, action, and metadata operations;
+runtime call sites no longer gain arbitrary engine access through `Deref`.
