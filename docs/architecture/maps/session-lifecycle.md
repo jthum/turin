@@ -182,6 +182,9 @@ Delete persisted session:
   owns it or which store, inference configuration, or authority it uses. Linked
   descendants inherit the root provenance rather than accepting a new assertion.
 - Local target switches must not run while tasks are queued.
+- Local target switches materialize and validate the proposed projection before replacing
+  the live execution target, history, counters, or branch cursor. A failed read must leave
+  the resident session coherent on its previous target.
 - Branch-head targets preserve the active branch when no branch id is explicitly selected.
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.

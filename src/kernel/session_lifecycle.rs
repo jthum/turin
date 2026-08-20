@@ -306,12 +306,38 @@ impl ExecutionHost {
             .await?;
 
         let context_target = resolved_execution_context_target(session.context_target(), &row);
+        self.refresh_session_from_materialized_target(session, &store, &row, context_target)
+            .await
+    }
+
+    async fn refresh_session_from_target(
+        &self,
+        session: &mut SessionState,
+        context_target: ExecutionContextTarget,
+    ) -> Result<()> {
+        let (store, row) = self
+            .load_current_session_row(
+                session,
+                "Session refresh requires a configured persistent state store",
+            )
+            .await?;
+        self.refresh_session_from_materialized_target(session, &store, &row, context_target)
+            .await
+    }
+
+    async fn refresh_session_from_materialized_target(
+        &self,
+        session: &mut SessionState,
+        store: &StateStore,
+        row: &SessionRow,
+        context_target: ExecutionContextTarget,
+    ) -> Result<()> {
         let session_reference = self.session_reference(session);
         let materialized = materialize_session_target(
             self,
-            &store,
+            store,
             &session.store_selector,
-            &row,
+            row,
             &context_target,
             &session_reference,
             "session.refresh.materialize",
@@ -322,7 +348,7 @@ impl ExecutionHost {
 
         session.default_store_selector =
             session_default_store_selector_from_metadata(row.metadata.as_deref());
-        session.identity.set_origin_id(row.origin_id);
+        session.identity.set_origin_id(row.origin_id.clone());
         session.context_checkpoint = materialized.context_checkpoint;
         session
             .history
@@ -403,8 +429,13 @@ impl ExecutionHost {
         };
 
         ensure_local_session_target_idle(session, "branch").await?;
-        session.set_selected_branch_head_id(Some(branch.id));
-        self.refresh_session_from_persistence(session).await?;
+        self.refresh_session_from_target(
+            session,
+            ExecutionContextTarget::BranchHead {
+                branch_head_id: Some(branch.id),
+            },
+        )
+        .await?;
         Ok(true)
     }
 
@@ -427,8 +458,8 @@ impl ExecutionHost {
         }
 
         ensure_local_session_target_idle(session, "target").await?;
-        session.set_selected_turn_id(turn_id);
-        self.refresh_session_from_persistence(session).await?;
+        self.refresh_session_from_target(session, ExecutionContextTarget::TurnId { turn_id })
+            .await?;
         Ok(true)
     }
 
@@ -453,10 +484,13 @@ impl ExecutionHost {
         };
 
         ensure_local_session_target_idle(session, "target").await?;
-        session.set_context_target(ExecutionContextTarget::ExternalReference {
-            reference: format_session_reference(&session_ref.public_id, &store_selector),
-        });
-        self.refresh_session_from_persistence(session).await?;
+        self.refresh_session_from_target(
+            session,
+            ExecutionContextTarget::ExternalReference {
+                reference: format_session_reference(&session_ref.public_id, &store_selector),
+            },
+        )
+        .await?;
         Ok(true)
     }
 
