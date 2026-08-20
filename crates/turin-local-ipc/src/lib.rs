@@ -81,7 +81,7 @@ pub async fn connect(endpoint: &Path) -> io::Result<BoxedLocalIpcStream> {
 pub async fn cleanup_stale_endpoint(endpoint: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
-        if !endpoint.exists() {
+        if !ensure_endpoint_is_socket_or_missing(endpoint).await? {
             return Ok(());
         }
 
@@ -107,8 +107,9 @@ pub async fn cleanup_stale_endpoint(endpoint: &Path) -> io::Result<()> {
 pub async fn remove_endpoint(endpoint: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
-        if endpoint.exists() {
-            tokio::fs::remove_file(endpoint).await?;
+        match ensure_endpoint_is_socket_or_missing(endpoint).await? {
+            true => tokio::fs::remove_file(endpoint).await?,
+            false => return Ok(()),
         }
         Ok(())
     }
@@ -117,6 +118,24 @@ pub async fn remove_endpoint(endpoint: &Path) -> io::Result<()> {
     {
         let _ = endpoint;
         Ok(())
+    }
+}
+
+#[cfg(unix)]
+async fn ensure_endpoint_is_socket_or_missing(endpoint: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::FileTypeExt;
+
+    match tokio::fs::symlink_metadata(endpoint).await {
+        Ok(metadata) if metadata.file_type().is_socket() => Ok(true),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Local IPC endpoint '{}' exists but is not a Unix socket",
+                endpoint.display()
+            ),
+        )),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err),
     }
 }
 
@@ -165,7 +184,16 @@ impl LocalIpcListener {
     pub fn bind(endpoint: &Path) -> io::Result<Self> {
         #[cfg(unix)]
         {
+            use std::os::unix::fs::PermissionsExt;
+
             let listener = tokio::net::UnixListener::bind(endpoint)?;
+            if let Err(err) =
+                std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))
+            {
+                drop(listener);
+                let _ = std::fs::remove_file(endpoint);
+                return Err(err);
+            }
             Ok(Self { listener })
         }
 
@@ -215,8 +243,12 @@ mod tests {
     use super::resolve_endpoint;
     use std::path::Path;
 
+    #[cfg(unix)]
+    use super::{LocalIpcListener, cleanup_stale_endpoint, remove_endpoint};
     #[cfg(not(windows))]
     use super::{TRANSPORT_UNIX, current_transport_name};
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt, symlink};
     #[cfg(not(windows))]
     use std::path::PathBuf;
 
@@ -236,6 +268,49 @@ mod tests {
     fn current_transport_matches_platform() {
         #[cfg(not(windows))]
         assert_eq!(current_transport_name(), TRANSPORT_UNIX);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_listener_endpoint_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = dir.path().join("daemon.sock");
+        let _listener = LocalIpcListener::bind(&endpoint).unwrap();
+
+        let mode = std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stale_socket_cleanup_removes_only_socket_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = dir.path().join("daemon.sock");
+        let listener = LocalIpcListener::bind(&endpoint).unwrap();
+        drop(listener);
+
+        cleanup_stale_endpoint(&endpoint).await.unwrap();
+        assert!(!endpoint.exists());
+
+        std::fs::write(&endpoint, "keep").unwrap();
+        let error = cleanup_stale_endpoint(&endpoint).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_to_string(&endpoint).unwrap(), "keep");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn endpoint_removal_rejects_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let endpoint = dir.path().join("daemon.sock");
+        std::fs::write(&target, "keep").unwrap();
+        symlink(&target, &endpoint).unwrap();
+
+        let error = remove_endpoint(&endpoint).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert!(std::fs::symlink_metadata(&endpoint).is_ok());
     }
 
     #[cfg(windows)]

@@ -50,6 +50,9 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 - Channels use generic session/task/event operations; the daemon protocol must
   not grow channel configuration, access, binding, presence, or
   lifecycle operations.
+- Local IPC is a trusted-operator transport rather than a client ACL system.
+  Unix listener creation sets the endpoint to `0600`, and stale/shutdown
+  cleanup must reject non-socket filesystem entries.
 
 ## Common Changes
 

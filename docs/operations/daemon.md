@@ -207,6 +207,16 @@ Current daemon transport:
 - Windows named pipe on Windows
 - default endpoint seed: `.turin/daemon.sock`
 
+The local endpoint is a trusted-operator boundary, not a per-client ACL
+surface. On Unix, Turin explicitly sets the socket to owner read/write (`0600`)
+after binding. Stale-endpoint cleanup removes only Unix socket entries and
+refuses regular files and symlinks at the configured path.
+
+Local clients such as Turin App, TUI, CLI, and independently operated channel
+runners may connect directly. Network-facing or multi-user deployments should
+place authentication and user authorization in `turin-remote`, `turin-web`, or
+another trusted boundary service rather than exposing local IPC.
+
 Current protocol:
 
 - NDJSON request/response

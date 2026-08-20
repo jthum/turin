@@ -148,6 +148,8 @@ These invariants should have characterization or negative tests:
 - unauthorized channel users are rejected or quarantined
 - oversized inbound content is bounded
 - invalid sidecar settings do not start a broken channel
+- Unix local IPC sockets are owner-only, and endpoint cleanup never deletes a
+  regular file or symlink placed at the configured socket path
 
 ## Known Hardening Opportunities
 
@@ -155,7 +157,6 @@ These invariants should have characterization or negative tests:
 - profile-dependent default exposure for shell/process tools
 - explicit tool risk taxonomy in config/docs
 - constant-time bearer token comparison for remote
-- owner-only local IPC directory/socket permissions on Unix
+- owner-only permissions for the broader local runtime directory on Unix
 - allowlisted MCP command policy for governed deployments
 - clearer minimal/gov/channel runtime profiles
-
