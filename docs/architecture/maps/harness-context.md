@@ -19,9 +19,10 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
-  - Owns the object-safe session-harness capability contract and shared runtime-definition
-    lifecycle. Each runtime stores one private `HarnessAdapterFactory`; kernel and daemon
-    code must not select engines or reach through an adapter into its implementation.
+  - Owns the object-safe session-harness capability contract and `HarnessDefinition`
+    lifecycle. Each definition stores one private `HarnessAdapterFactory`; live sessions
+    receive fresh `HarnessInstance` values. Kernel and daemon code must not select engines
+    or reach through an adapter into its implementation.
 - `src/kernel/harness_runtime/lua_adapter.rs`
   - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
     implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.

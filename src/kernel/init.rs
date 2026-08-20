@@ -13,7 +13,7 @@ use tracing::{error, info, instrument, warn};
 
 use super::Kernel;
 use super::execution_host::ExecutionHost;
-use super::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
+use super::harness_runtime::{HarnessDefinition, HarnessRuntimeInitContext};
 use crate::inference::provider::{self, ProviderClient};
 
 impl ExecutionHost {
@@ -341,9 +341,9 @@ impl Kernel {
 }
 
 fn affected_runtimes(
-    runtimes: &[Arc<HarnessRuntime>],
+    runtimes: &[Arc<HarnessDefinition>],
     changed_paths: &[PathBuf],
-) -> Vec<Arc<HarnessRuntime>> {
+) -> Vec<Arc<HarnessDefinition>> {
     let mut seen = HashSet::new();
     let mut affected = Vec::new();
 
@@ -359,7 +359,7 @@ fn affected_runtimes(
 }
 
 fn build_harness_watcher(
-    runtimes: &[Arc<HarnessRuntime>],
+    runtimes: &[Arc<HarnessDefinition>],
     tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<Option<notify::RecommendedWatcher>> {
     use notify::{RecursiveMode, Watcher};
@@ -412,7 +412,7 @@ struct OwnedWatchRoot {
     recursive: bool,
 }
 
-fn collect_watch_roots(runtimes: &[Arc<HarnessRuntime>]) -> Vec<OwnedWatchRoot> {
+fn collect_watch_roots(runtimes: &[Arc<HarnessDefinition>]) -> Vec<OwnedWatchRoot> {
     let mut roots = Vec::new();
     for runtime in runtimes {
         for root in runtime.watch_roots() {

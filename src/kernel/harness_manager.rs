@@ -8,13 +8,13 @@ use tracing::debug;
 use super::config::TurinConfig;
 use super::harness::RustHarnessFactories;
 use super::harness_runtime::{
-    HarnessRuntime, default_script_adapter_factory, rust_adapter_factory,
+    HarnessDefinition, default_script_adapter_factory, rust_adapter_factory,
 };
 
 pub(crate) struct HarnessManager {
     agent_bindings: HashMap<String, String>,
-    runtimes: HashMap<String, Arc<HarnessRuntime>>,
-    default_runtime: Arc<HarnessRuntime>,
+    runtimes: HashMap<String, Arc<HarnessDefinition>>,
+    default_runtime: Arc<HarnessDefinition>,
 }
 
 impl HarnessManager {
@@ -38,7 +38,7 @@ impl HarnessManager {
         }
 
         let default_harness_id = "default".to_string();
-        let default_runtime = Arc::new(HarnessRuntime::from_config(
+        let default_runtime = Arc::new(HarnessDefinition::from_config(
             default_harness_id.clone(),
             config,
             adapter_for(&default_harness_id, rust_harness_factories)?,
@@ -56,7 +56,7 @@ impl HarnessManager {
         runtimes.insert(default_harness_id.clone(), Arc::clone(&default_runtime));
 
         for (harness_id, harness_cfg) in &config.harnesses {
-            let runtime = Arc::new(HarnessRuntime::new(
+            let runtime = Arc::new(HarnessDefinition::new(
                 harness_id.clone(),
                 PathBuf::from(&harness_cfg.directory),
                 fs_root.clone(),
@@ -86,7 +86,7 @@ impl HarnessManager {
         })
     }
 
-    pub(crate) fn default_runtime(&self) -> &Arc<HarnessRuntime> {
+    pub(crate) fn default_runtime(&self) -> &Arc<HarnessDefinition> {
         &self.default_runtime
     }
 
@@ -105,7 +105,7 @@ impl HarnessManager {
         }
     }
 
-    pub(crate) fn resolve_harness(&self, agent_id: Option<&str>) -> &Arc<HarnessRuntime> {
+    pub(crate) fn resolve_harness(&self, agent_id: Option<&str>) -> &Arc<HarnessDefinition> {
         let runtime_id = self.runtime_id_for_agent(agent_id);
 
         if let Some(runtime) = self.runtimes.get(runtime_id) {
@@ -120,11 +120,13 @@ impl HarnessManager {
         }
     }
 
-    pub(crate) fn runtimes(&self) -> impl Iterator<Item = &Arc<HarnessRuntime>> {
+    pub(crate) fn runtimes(&self) -> impl Iterator<Item = &Arc<HarnessDefinition>> {
         self.runtimes.values()
     }
 
-    pub(crate) fn runtime_entries(&self) -> impl Iterator<Item = (&String, &Arc<HarnessRuntime>)> {
+    pub(crate) fn runtime_entries(
+        &self,
+    ) -> impl Iterator<Item = (&String, &Arc<HarnessDefinition>)> {
         self.runtimes.iter()
     }
 
@@ -132,7 +134,7 @@ impl HarnessManager {
         self.agent_bindings.iter()
     }
 
-    pub(crate) fn runtime_by_id(&self, harness_id: &str) -> Option<&Arc<HarnessRuntime>> {
+    pub(crate) fn runtime_by_id(&self, harness_id: &str) -> Option<&Arc<HarnessDefinition>> {
         self.runtimes.get(harness_id)
     }
 

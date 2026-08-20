@@ -97,21 +97,21 @@ impl ExecutionHost {
     pub(crate) fn runtime_for_agent(
         &self,
         agent_id: &str,
-    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
+    ) -> Arc<crate::kernel::harness_runtime::HarnessDefinition> {
         Arc::clone(self.harness_manager.resolve_harness(Some(agent_id)))
     }
 
     pub(crate) fn runtime_for_harness(
         &self,
         harness_id: &str,
-    ) -> Option<Arc<crate::kernel::harness_runtime::HarnessRuntime>> {
+    ) -> Option<Arc<crate::kernel::harness_runtime::HarnessDefinition>> {
         self.harness_manager.runtime_by_id(harness_id).cloned()
     }
 
     pub(crate) fn runtime_for_session(
         &self,
         session: &SessionState,
-    ) -> Arc<crate::kernel::harness_runtime::HarnessRuntime> {
+    ) -> Arc<crate::kernel::harness_runtime::HarnessDefinition> {
         self.runtime_for_agent(session.identity.agent_id())
     }
 

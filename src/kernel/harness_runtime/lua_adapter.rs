@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use turin_daemon_protocol::UiIntentMessage;
 
 use super::{
-    HarnessAdapterFactory, HarnessInstance, HarnessRuntime, HarnessRuntimeInitContext,
+    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
     HarnessTurnServices,
 };
 use crate::harness::engine::HarnessEngine;
@@ -33,11 +33,11 @@ impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
 
     fn create(
         &self,
-        runtime: &HarnessRuntime,
+        definition: &HarnessDefinition,
         ctx: HarnessRuntimeInitContext,
         source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>> {
-        build_instance(runtime, ctx, source_overlay)
+        build_instance(definition, ctx, source_overlay)
     }
 }
 
@@ -163,14 +163,14 @@ impl HarnessInstance for LuaHarnessInstance {
 }
 
 pub(super) fn build_instance(
-    runtime: &HarnessRuntime,
+    definition: &HarnessDefinition,
     ctx: HarnessRuntimeInitContext,
     source_overlay: Option<Arc<HarnessSourceOverlay>>,
 ) -> Result<Box<dyn HarnessInstance>> {
     let app_data = HarnessAppData {
-        fs_root: runtime.fs_root.clone(),
-        workspace_root: runtime.workspace_root.clone(),
-        harness_directory: runtime.directory.clone(),
+        fs_root: definition.fs_root.clone(),
+        workspace_root: definition.workspace_root.clone(),
+        harness_directory: definition.directory.clone(),
         store_manager: ctx.store_manager,
         agent_manager: ctx.agent_manager,
         policy_manager: ctx.policy_manager,
@@ -180,17 +180,17 @@ pub(super) fn build_instance(
         clients: ctx.clients,
         embedding_provider: ctx.embedding_provider,
         config: ctx.config,
-        spawn_depth: runtime.spawn_depth,
+        spawn_depth: definition.spawn_depth,
         active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
         watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
         loading_phase: Arc::new(std::sync::Mutex::new(true)),
         source_overlay,
     };
     let mut engine = HarnessEngine::new(app_data).context("Failed to create harness engine")?;
-    engine.load_dir(&runtime.directory).with_context(|| {
+    engine.load_dir(&definition.directory).with_context(|| {
         format!(
             "Failed to load harness scripts from '{}'",
-            runtime.directory.display()
+            definition.directory.display()
         )
     })?;
     engine.set_loading_phase(false);

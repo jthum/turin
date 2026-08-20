@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use super::{
-    HarnessAdapterFactory, HarnessInstance, HarnessRuntime, HarnessRuntimeInitContext,
+    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
     HarnessTurnServices,
 };
 use crate::harness::source::HarnessSourceOverlay;
@@ -24,7 +24,7 @@ impl HarnessAdapterFactory for RustHarnessAdapterFactory {
 
     fn create(
         &self,
-        _runtime: &HarnessRuntime,
+        _definition: &HarnessDefinition,
         _ctx: HarnessRuntimeInitContext,
         source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>> {

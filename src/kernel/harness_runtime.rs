@@ -58,7 +58,7 @@ pub(crate) trait HarnessAdapterFactory: Send + Sync {
 
     fn create(
         &self,
-        runtime: &HarnessRuntime,
+        definition: &HarnessDefinition,
         ctx: HarnessRuntimeInitContext,
         source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>>;
@@ -141,9 +141,10 @@ struct HarnessLoadedState {
     ui_intents: Vec<UiIntentMessage>,
 }
 
-// Despite the legacy name, this is the shared harness definition and metadata cache.
-// Live executions use fresh `HarnessInstance` values built from this definition.
-pub(crate) struct HarnessRuntime {
+/// Shared harness configuration, adapter factory, and loaded metadata.
+///
+/// Live sessions use fresh `HarnessInstance` values created from this definition.
+pub(crate) struct HarnessDefinition {
     harness_id: String,
     directory: PathBuf,
     #[cfg_attr(not(feature = "lua"), allow(dead_code))]
@@ -157,7 +158,7 @@ pub(crate) struct HarnessRuntime {
     adapter: Arc<dyn HarnessAdapterFactory>,
 }
 
-impl HarnessRuntime {
+impl HarnessDefinition {
     pub(crate) fn new(
         harness_id: impl Into<String>,
         directory: impl Into<PathBuf>,
