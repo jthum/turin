@@ -10,6 +10,7 @@ Current ADRs:
 - `004-harness-engine-sync-mutex.md` — why harness engine access remains sync and mutex-guarded
 - `005-cooperative-and-forceful-cancellation.md` — why Turin exposes both cancel and kill semantics
 - `006-trace-id-task-lineage.md` — why task lineage is explicit and survives peer-agent hops
+- `007-native-harness-boundary.md` — why compiled harness policy does not receive a bag of runtime managers
 
 Status values used here:
 

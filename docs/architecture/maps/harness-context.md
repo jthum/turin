@@ -19,8 +19,14 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
-  - Owns the object-safe session-harness capability contract and its Lua adapter.
-    Kernel and daemon code must not reach through the adapter into the Lua engine.
+  - Owns the object-safe session-harness capability contract and shared runtime-definition
+    lifecycle. Kernel and daemon code must not reach through an adapter into its engine.
+- `src/kernel/harness_runtime/lua_adapter.rs`
+  - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
+    implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.
+- `src/kernel/harness_runtime/native_adapter.rs`
+  - Adapts a session-local `NativeHarness` to the internal contract. Unsupported optional
+    capabilities use contract defaults instead of fake native implementations.
 - `src/kernel/harness_contract.rs`
   - Typed borrowed lifecycle and policy hook inputs shared by kernel execution and
     harness implementations. Lua payload conversion belongs here as adapter behavior;
@@ -96,6 +102,9 @@ Structured inference:
 - A build without the `lua` feature must fail clearly if no native factory is installed;
   it must not silently run with an empty harness. Scheduler, native tools, persistence,
   inference, governance, memory, and session graph support remain available.
+- Native harness callbacks are policy boundaries, not process-wide service locators.
+  Agent-triggered async operations belong in governed native tools and kernel effects;
+  do not pass internal manager collections through a generic native services object.
 
 ## Common Changes
 
@@ -129,6 +138,9 @@ cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
 cargo test -p turin --test native_harness_api --no-default-features
 ```
+
+The native harness integration test must include a full kernel inference run so the
+no-Lua build proves turn-preparation mutations reach the provider request.
 
 Basic checks:
 

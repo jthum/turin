@@ -1,19 +1,12 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(feature = "lua")]
-use anyhow::Context;
 use anyhow::Result;
 use tracing::{debug, info, warn};
 use turin_daemon_protocol::UiIntentMessage;
 
-#[cfg(feature = "lua")]
-use crate::harness::engine::HarnessEngine;
-#[cfg(feature = "lua")]
-use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::verdict::Verdict;
@@ -29,9 +22,13 @@ use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest,
     HarnessTurnServices, SessionQueue,
 };
-use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
+use crate::kernel::native_harness::NativeHarnessFactory;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
+
+#[cfg(feature = "lua")]
+mod lua_adapter;
+mod native_adapter;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct HarnessWatchRoot {
@@ -53,65 +50,6 @@ pub(crate) struct HarnessRuntimeInitContext {
 }
 
 pub(crate) trait HarnessInstance: Send {
-    fn loaded_scripts(&self) -> Vec<String>;
-    fn explicit_watch_roots(&self) -> Vec<PathBuf>;
-    fn runtime_signal_topics(&self) -> Vec<String>;
-    fn ui_intents(&self) -> Vec<UiIntentMessage>;
-    fn ui_intent_count(&self) -> Result<usize>;
-    fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>>;
-    fn load_script_str(&mut self, script: &str) -> Result<()>;
-    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict>;
-    fn has_hook(&self, hook_name: &str) -> bool;
-    fn prepare_turn(
-        &self,
-        request: &mut HarnessTurnRequest,
-        services: HarnessTurnServices<'_>,
-    ) -> Result<Verdict>;
-    fn bind_execution_context(&self, binding: HarnessExecutionBinding);
-    fn unbind_execution_context(&self);
-    fn set_active_queue(&self, queue: Option<SessionQueue>);
-    fn set_active_capability_delegation(
-        &self,
-        capabilities: Option<std::collections::BTreeMap<String, bool>>,
-    );
-    fn take_pending_session_branch_checkout(&self) -> Option<String>;
-    fn invoke_action(&self, request: HarnessActionRequest<'_>)
-    -> Result<Option<serde_json::Value>>;
-    fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>>;
-    fn invoke_virtual_tool(
-        &self,
-        name: &str,
-        args: serde_json::Value,
-    ) -> Result<Option<VirtualToolResultResolution>>;
-    fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>>;
-    fn invoke_virtual_tool_result_handler(
-        &self,
-        key: &str,
-        payload: serde_json::Value,
-        default_is_error: bool,
-    ) -> Result<VirtualToolResultResolution>;
-    fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()>;
-    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize>;
-}
-
-#[cfg(feature = "lua")]
-struct LuaHarnessInstance {
-    engine: HarnessEngine,
-}
-
-struct NativeHarnessInstance {
-    harness: RefCell<Box<dyn NativeHarness>>,
-}
-
-impl NativeHarnessInstance {
-    fn new(harness: Box<dyn NativeHarness>) -> Self {
-        Self {
-            harness: RefCell::new(harness),
-        }
-    }
-}
-
-impl HarnessInstance for NativeHarnessInstance {
     fn loaded_scripts(&self) -> Vec<String> {
         Vec::new()
     }
@@ -119,7 +57,7 @@ impl HarnessInstance for NativeHarnessInstance {
         Vec::new()
     }
     fn runtime_signal_topics(&self) -> Vec<String> {
-        self.harness.borrow().runtime_signal_topics()
+        Vec::new()
     }
     fn ui_intents(&self) -> Vec<UiIntentMessage> {
         Vec::new()
@@ -131,21 +69,15 @@ impl HarnessInstance for NativeHarnessInstance {
         Ok(Vec::new())
     }
     fn load_script_str(&mut self, _script: &str) -> Result<()> {
-        anyhow::bail!("native harnesses do not load Lua source")
+        anyhow::bail!("this harness adapter does not support source loading")
     }
-    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
-        self.harness.borrow_mut().on_hook(hook)
-    }
-    fn has_hook(&self, hook_name: &str) -> bool {
-        hook_name == "on_turn_prepare"
-    }
+    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict>;
+    fn has_hook(&self, hook_name: &str) -> bool;
     fn prepare_turn(
         &self,
         request: &mut HarnessTurnRequest,
-        _services: HarnessTurnServices<'_>,
-    ) -> Result<Verdict> {
-        self.harness.borrow_mut().on_turn_prepare(request)
-    }
+        services: HarnessTurnServices<'_>,
+    ) -> Result<Verdict>;
     fn bind_execution_context(&self, _binding: HarnessExecutionBinding) {}
     fn unbind_execution_context(&self) {}
     fn set_active_queue(&self, _queue: Option<SessionQueue>) {}
@@ -157,12 +89,8 @@ impl HarnessInstance for NativeHarnessInstance {
     fn take_pending_session_branch_checkout(&self) -> Option<String> {
         None
     }
-    fn invoke_action(
-        &self,
-        request: HarnessActionRequest<'_>,
-    ) -> Result<Option<serde_json::Value>> {
-        self.harness.borrow_mut().on_action(request)
-    }
+    fn invoke_action(&self, request: HarnessActionRequest<'_>)
+    -> Result<Option<serde_json::Value>>;
     fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
         Ok(Vec::new())
     }
@@ -182,140 +110,12 @@ impl HarnessInstance for NativeHarnessInstance {
         _payload: serde_json::Value,
         _default_is_error: bool,
     ) -> Result<VirtualToolResultResolution> {
-        anyhow::bail!("native harness has no virtual result handler '{key}'")
+        anyhow::bail!("harness has no virtual result handler '{key}'")
     }
     fn discard_virtual_tool_result_handler(&self, _key: &str) -> Result<()> {
         Ok(())
     }
-    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize> {
-        self.harness.borrow_mut().on_signal(signal)?;
-        Ok(1)
-    }
-}
-
-#[cfg(feature = "lua")]
-impl LuaHarnessInstance {
-    fn new(engine: HarnessEngine) -> Self {
-        Self { engine }
-    }
-}
-
-#[cfg(feature = "lua")]
-impl HarnessInstance for LuaHarnessInstance {
-    fn loaded_scripts(&self) -> Vec<String> {
-        self.engine.loaded_scripts()
-    }
-
-    fn explicit_watch_roots(&self) -> Vec<PathBuf> {
-        self.engine.explicit_watch_roots()
-    }
-
-    fn runtime_signal_topics(&self) -> Vec<String> {
-        self.engine.runtime_signal_topics().unwrap_or_default()
-    }
-
-    fn ui_intents(&self) -> Vec<UiIntentMessage> {
-        self.engine.ui_intents().unwrap_or_default()
-    }
-
-    fn ui_intent_count(&self) -> Result<usize> {
-        self.engine.ui_intent_count()
-    }
-
-    fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>> {
-        self.engine.ui_intents_from(start_index)
-    }
-
-    fn load_script_str(&mut self, script: &str) -> Result<()> {
-        self.engine.load_script_str(script)
-    }
-
-    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
-        self.engine.evaluate(hook.name(), hook.lua_payload())
-    }
-
-    fn has_hook(&self, hook_name: &str) -> bool {
-        self.engine.has_hook(hook_name)
-    }
-
-    fn prepare_turn(
-        &self,
-        request: &mut HarnessTurnRequest,
-        services: HarnessTurnServices<'_>,
-    ) -> Result<Verdict> {
-        let context =
-            crate::harness::context::ContextWrapper::from_harness_request(request, services);
-        let verdict = self
-            .engine
-            .evaluate_userdata("on_turn_prepare", context.clone());
-        context.apply_to_harness_request(request);
-        verdict
-    }
-
-    fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
-        self.engine.bind_execution_context(binding);
-    }
-
-    fn unbind_execution_context(&self) {
-        self.engine.unbind_execution_context();
-    }
-
-    fn set_active_queue(&self, queue: Option<SessionQueue>) {
-        self.engine.set_active_queue(queue);
-    }
-
-    fn set_active_capability_delegation(
-        &self,
-        capabilities: Option<std::collections::BTreeMap<String, bool>>,
-    ) {
-        self.engine.set_active_capability_delegation(capabilities);
-    }
-
-    fn take_pending_session_branch_checkout(&self) -> Option<String> {
-        self.engine.take_pending_session_branch_checkout()
-    }
-
-    fn invoke_action(
-        &self,
-        request: HarnessActionRequest<'_>,
-    ) -> Result<Option<serde_json::Value>> {
-        self.engine
-            .invoke_declared_action_for_agent(request.agent_id, request.name, request.params)
-    }
-
-    fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
-        self.engine.declared_virtual_tools()
-    }
-
-    fn invoke_virtual_tool(
-        &self,
-        name: &str,
-        args: serde_json::Value,
-    ) -> Result<Option<VirtualToolResultResolution>> {
-        self.engine.invoke_virtual_tool(name, args)
-    }
-
-    fn virtual_tool_follow_up(&self, name: &str) -> Result<Option<VirtualToolFollowUp>> {
-        self.engine.virtual_tool_follow_up(name)
-    }
-
-    fn invoke_virtual_tool_result_handler(
-        &self,
-        key: &str,
-        payload: serde_json::Value,
-        default_is_error: bool,
-    ) -> Result<VirtualToolResultResolution> {
-        self.engine
-            .invoke_virtual_tool_result_handler(key, payload, default_is_error)
-    }
-
-    fn discard_virtual_tool_result_handler(&self, key: &str) -> Result<()> {
-        self.engine.discard_virtual_tool_result_handler(key)
-    }
-
-    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize> {
-        self.engine.dispatch_runtime_signal(signal)
-    }
+    fn dispatch_runtime_signal(&self, signal: HarnessSignal<'_>) -> Result<usize>;
 }
 
 #[derive(Clone, Default)]
@@ -520,7 +320,7 @@ impl HarnessRuntime {
     ) -> Result<usize> {
         #[cfg(feature = "lua")]
         {
-            let instance = self.build_instance_with_overlay(ctx, Some(Arc::new(source_overlay)))?;
+            let instance = lua_adapter::build_instance(self, ctx, Some(Arc::new(source_overlay)))?;
             Ok(instance.loaded_scripts().len())
         }
         #[cfg(not(feature = "lua"))]
@@ -537,40 +337,13 @@ impl HarnessRuntime {
         self.build_instance(ctx)
     }
 
-    #[cfg(feature = "lua")]
-    fn build_app_data(
-        &self,
-        ctx: HarnessRuntimeInitContext,
-        source_overlay: Option<Arc<HarnessSourceOverlay>>,
-    ) -> HarnessAppData {
-        HarnessAppData {
-            fs_root: self.fs_root.clone(),
-            workspace_root: self.workspace_root.clone(),
-            harness_directory: self.directory.clone(),
-            store_manager: ctx.store_manager,
-            agent_manager: ctx.agent_manager,
-            policy_manager: ctx.policy_manager,
-            governance_manager: ctx.governance_manager,
-            scheduler: ctx.scheduler,
-            execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
-            clients: ctx.clients,
-            embedding_provider: ctx.embedding_provider,
-            config: ctx.config,
-            spawn_depth: self.spawn_depth,
-            active_modules: Arc::new(std::sync::Mutex::new(Vec::new())),
-            watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
-            loading_phase: Arc::new(std::sync::Mutex::new(true)),
-            source_overlay,
-        }
-    }
-
     fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<Box<dyn HarnessInstance>> {
         if let Some(factory) = &self.native_factory {
-            return Ok(Box::new(NativeHarnessInstance::new(factory.create()?)));
+            return native_adapter::build_instance(factory);
         }
         #[cfg(feature = "lua")]
         {
-            self.build_instance_with_overlay(ctx, None)
+            lua_adapter::build_instance(self, ctx, None)
         }
         #[cfg(not(feature = "lua"))]
         {
@@ -579,24 +352,6 @@ impl HarnessRuntime {
                 "No native harness factory was configured and Turin was built without Lua"
             )
         }
-    }
-
-    #[cfg(feature = "lua")]
-    fn build_instance_with_overlay(
-        &self,
-        ctx: HarnessRuntimeInitContext,
-        source_overlay: Option<Arc<HarnessSourceOverlay>>,
-    ) -> Result<Box<dyn HarnessInstance>> {
-        let mut engine = HarnessEngine::new(self.build_app_data(ctx, source_overlay))
-            .context("Failed to create harness engine")?;
-        engine.load_dir(&self.directory).with_context(|| {
-            format!(
-                "Failed to load harness scripts from '{}'",
-                self.directory.display()
-            )
-        })?;
-        engine.set_loading_phase(false);
-        Ok(Box::new(LuaHarnessInstance::new(engine)))
     }
 }
 

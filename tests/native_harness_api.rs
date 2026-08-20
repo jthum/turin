@@ -1,8 +1,19 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use turin::kernel::config::InferenceOverrideConfig;
+use async_trait::async_trait;
+use futures::future::BoxFuture;
+use tempfile::tempdir;
+use turin::inference::provider::{
+    InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
+    RequestOptions, SdkError,
+};
+use turin::kernel::Kernel;
+use turin::kernel::config::{
+    AgentConfig, EmbeddingConfig, InferenceOverrideConfig, PersistenceConfig, ProviderConfig,
+    TurinConfig,
+};
 use turin::kernel::harness_contract::{
     HarnessActionRequest, HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
 };
@@ -10,6 +21,41 @@ use turin::kernel::native_harness::{NativeHarness, NativeHarnessFactory, Verdict
 
 struct FixedHarness {
     received_signals: Arc<Mutex<Vec<String>>>,
+}
+
+struct CaptureProvider {
+    request: Arc<Mutex<Option<InferenceRequest>>>,
+}
+
+#[async_trait]
+impl InferenceProvider for CaptureProvider {
+    fn stream<'a>(
+        &'a self,
+        request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        *self.request.lock().expect("request mutex poisoned") = Some(request);
+        Box::pin(async move {
+            let stream = futures::stream::iter(vec![
+                Ok(InferenceEvent::MessageStart {
+                    role: "assistant".to_string(),
+                    model: "capture-model".to_string(),
+                    provider_id: "capture".to_string(),
+                }),
+                Ok(InferenceEvent::MessageDelta {
+                    content: "CAPTURED".to_string(),
+                }),
+                Ok(InferenceEvent::MessageEnd {
+                    input_tokens: 2,
+                    output_tokens: 1,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                    stop_reason: None,
+                }),
+            ]);
+            Ok(Box::pin(stream) as InferenceStream)
+        })
+    }
 }
 
 impl NativeHarness for FixedHarness {
@@ -102,6 +148,73 @@ fn public_native_harness_contract_mutates_requests_without_lua_types() -> Result
             params: serde_json::json!({ "state": "passed" }),
         })?,
         Some(serde_json::json!({ "state": "passed" }))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = TurinConfig::default();
+    config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().into_owned(),
+    );
+    config.embeddings = Some(EmbeddingConfig::noop());
+    config.agent = AgentConfig {
+        id: "default".to_string(),
+        model: "capture-model".to_string(),
+        provider: "capture".to_string(),
+        system_prompt: "Base instructions.".to_string(),
+        ..AgentConfig::default()
+    };
+    config.providers = HashMap::from([(
+        "capture".to_string(),
+        ProviderConfig {
+            kind: "capture".to_string(),
+            ..ProviderConfig::default()
+        },
+    )]);
+
+    let signals = Arc::new(Mutex::new(Vec::new()));
+    let factory_signals = Arc::clone(&signals);
+    let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
+        Ok(Box::new(FixedHarness {
+            received_signals: Arc::clone(&factory_signals),
+        }) as Box<dyn NativeHarness>)
+    });
+    let captured = Arc::new(Mutex::new(None));
+    let mut kernel = Kernel::builder(config)
+        .with_native_harness_factory(factory)
+        .build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "capture".to_string(),
+        ProviderClient::new(
+            "capture",
+            Arc::new(CaptureProvider {
+                request: Arc::clone(&captured),
+            }),
+        ),
+    );
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(
+            &mut session,
+            Some("Exercise the native harness.".to_string()),
+        )
+        .await?;
+
+    let request = captured
+        .lock()
+        .expect("request mutex poisoned")
+        .clone()
+        .expect("provider received an inference request");
+    assert_eq!(
+        request.system.as_deref(),
+        Some("Base instructions.\nUse concise answers.")
     );
     Ok(())
 }
