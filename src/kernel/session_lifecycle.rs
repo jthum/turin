@@ -20,7 +20,7 @@ use crate::kernel::session_lifecycle::materialization::{
 };
 pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::{
-    session_channel_id_from_metadata, session_default_store_selector_from_metadata,
+    session_default_store_selector_from_metadata, session_origin_id_from_metadata,
 };
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
@@ -139,14 +139,14 @@ impl ExecutionHost {
         agent_id: &str,
         state_selector: Option<StoreSelector>,
         default_store_selector: Option<StoreSelector>,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
     ) -> SessionState {
         self.create_session_for_agent_with_context_and_link(
             agent_id,
             state_selector,
             default_store_selector,
-            channel_id,
+            origin_id,
             inference,
             None,
         )
@@ -158,7 +158,7 @@ impl ExecutionHost {
         agent_id: &str,
         state_selector: StoreSelector,
         default_store_selector: Option<StoreSelector>,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
         link: LinkedSessionCreate,
     ) -> Result<SessionState> {
@@ -167,7 +167,7 @@ impl ExecutionHost {
                 agent_id,
                 Some(state_selector),
                 default_store_selector,
-                channel_id,
+                origin_id,
                 inference,
                 Some(link),
             )
@@ -184,13 +184,13 @@ impl ExecutionHost {
         agent_id: &str,
         state_selector: Option<StoreSelector>,
         default_store_selector: Option<StoreSelector>,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
         link: Option<LinkedSessionCreate>,
     ) -> SessionState {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
-        session.identity.set_channel_id(channel_id);
+        session.identity.set_origin_id(origin_id);
         session.store_selector =
             state_selector.unwrap_or_else(|| self.resolve_agent_state_selector(agent_id));
         session.default_store_selector =
@@ -224,7 +224,7 @@ impl ExecutionHost {
         &self,
         agent_id: &str,
         session_id: &str,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
     ) -> Result<SessionState> {
         let session_ref = parse_session_reference(session_id)?;
@@ -269,8 +269,8 @@ impl ExecutionHost {
 
         let mut session = SessionState::new();
         session.identity = RuntimeIdentity::new(session_ref.public_id, agent_id);
-        session.identity.set_channel_id(
-            channel_id.or_else(|| session_channel_id_from_metadata(row.metadata.as_deref())),
+        session.identity.set_origin_id(
+            origin_id.or_else(|| session_origin_id_from_metadata(row.metadata.as_deref())),
         );
         session.internal_id = Some(row.id);
         session.store_selector = store_selector;
@@ -327,7 +327,7 @@ impl ExecutionHost {
             session_default_store_selector_from_metadata(row.metadata.as_deref());
         session
             .identity
-            .set_channel_id(session_channel_id_from_metadata(row.metadata.as_deref()));
+            .set_origin_id(session_origin_id_from_metadata(row.metadata.as_deref()));
         session.context_checkpoint = materialized.context_checkpoint;
         session
             .history

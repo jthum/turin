@@ -48,8 +48,9 @@ Create session:
 
 1. Build a fresh `SessionState`.
 2. Resolve agent state/default store selectors.
-3. Persist a session row when possible.
-4. Attach the background persistence lane.
+3. Record an optional opaque origin as creation provenance without treating it as ownership or configuration.
+4. Persist a session row when possible.
+5. Attach the background persistence lane.
 
 Create linked peer session:
 
@@ -173,6 +174,7 @@ Delete persisted session:
 - Runtime resume completion must compare session references semantically; a bare id and the
   canonical store-qualified reference for that id identify the same resumed session.
 - Refresh/materialization requires an internal persistence id.
+- Persisted origin identifies where a session was created, not which client owns it or which store and inference configuration it uses.
 - Local target switches must not run while tasks are queued.
 - Branch-head targets preserve the active branch when no branch id is explicitly selected.
 - External references must be normalized with an explicit store selector before being stored in the execution target.

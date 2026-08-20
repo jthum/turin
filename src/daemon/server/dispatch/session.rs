@@ -108,7 +108,7 @@ pub(super) async fn open(
         .open_session(
             &params.agent_id,
             params.slot_id.as_deref(),
-            params.channel_id.as_deref(),
+            params.origin_id.as_deref(),
         )
         .await
     {

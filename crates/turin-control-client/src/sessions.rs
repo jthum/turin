@@ -352,7 +352,7 @@ impl ControlClient {
             DaemonRequest::SessionOpen(OpenSessionParams {
                 agent_id: agent_id.to_string(),
                 slot_id,
-                channel_id: None,
+                origin_id: None,
             }),
         )
         .await

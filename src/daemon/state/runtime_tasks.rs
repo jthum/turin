@@ -9,20 +9,16 @@ use crate::daemon::protocol::{
     PromoteTaskParams, SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams,
     SubmitTaskParams,
 };
-use crate::daemon::registry::DiscoveredChannel;
 use crate::kernel::agent_manager::{
     AgentStatusSnapshot, PromotedTaskBranch, TaskStatusFingerprint, TaskStatusSnapshot,
 };
-use crate::kernel::config::InferenceOverrideConfig;
 use crate::kernel::event::{KernelEvent, TaskBranchOutcome};
 use crate::kernel::prepare_persisted_session_sidestep;
 use crate::kernel::session::{
     ExecutionConflictPolicy, ExecutionContextTarget, PreparedSidestepExecution, QueuedTask,
     SidestepMode, TaskExecutionOverrides,
 };
-use crate::kernel::session_metadata::session_channel_id_from_metadata;
 use crate::kernel::session_refs::session_reference_matches_public_id;
-use crate::persistence::manager::StoreSelector;
 use turin_types::{TaskInputContent, ToolsConfig};
 
 struct TaskSubmissionRequest<'a> {
@@ -290,21 +286,18 @@ impl DaemonState {
         &self,
         agent_id: &str,
         slot_id: Option<&str>,
-        channel_id: Option<&str>,
+        origin_id: Option<&str>,
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
         self.ensure_enabled_agent(agent_id)?;
-        let initial_state_selector = self.resolve_channel_state_selector(channel_id)?;
-        let initial_default_store_selector =
-            self.resolve_channel_default_store_selector(channel_id)?;
         self.kernel
             .agent_manager()
             .open_session(
                 agent_id,
                 slot_id,
-                initial_state_selector,
-                initial_default_store_selector,
-                channel_id.map(str::to_string),
-                self.resolve_channel_inference_override(channel_id),
+                None,
+                None,
+                origin_id.map(str::to_string),
+                Default::default(),
             )
             .await
     }
@@ -314,15 +307,9 @@ impl DaemonState {
         session_id: &str,
         slot_id: Option<&str>,
     ) -> Result<crate::kernel::agent_manager::LiveSessionSnapshot> {
-        let channel_id = self.resolve_session_channel_id(session_id).await?;
         self.kernel
             .agent_manager()
-            .resume_session(
-                session_id,
-                slot_id,
-                channel_id.clone(),
-                self.resolve_channel_inference_override(channel_id.as_deref()),
-            )
+            .resume_session(session_id, slot_id, None, Default::default())
             .await
     }
 
@@ -432,66 +419,6 @@ impl DaemonState {
                 })
             })
             .collect()
-    }
-
-    fn resolve_channel_state_selector(
-        &self,
-        channel_id: Option<&str>,
-    ) -> Result<Option<StoreSelector>> {
-        let Some(channel) = self.discovered_channel(channel_id) else {
-            return Ok(None);
-        };
-        channel
-            .persistence
-            .state
-            .as_ref()
-            .map(|_| {
-                self.bootstrap_config
-                    .persistence
-                    .resolve_context_state_selector(Some(&channel.persistence))
-            })
-            .transpose()
-    }
-
-    fn resolve_channel_default_store_selector(
-        &self,
-        channel_id: Option<&str>,
-    ) -> Result<Option<StoreSelector>> {
-        let Some(channel) = self.discovered_channel(channel_id) else {
-            return Ok(None);
-        };
-        if channel.persistence.store.is_none() && channel.persistence.state.is_none() {
-            return Ok(None);
-        }
-        self.bootstrap_config
-            .persistence
-            .resolve_context_store_selector(Some(&channel.persistence))
-            .map(Some)
-    }
-
-    fn resolve_channel_inference_override(
-        &self,
-        channel_id: Option<&str>,
-    ) -> InferenceOverrideConfig {
-        self.discovered_channel(channel_id)
-            .map(|channel| channel.inference.clone())
-            .unwrap_or_default()
-    }
-
-    fn discovered_channel(&self, channel_id: Option<&str>) -> Option<&DiscoveredChannel> {
-        let channel_id = channel_id?;
-        self.registry_load
-            .channels
-            .iter()
-            .find(|channel| channel.id == channel_id)
-    }
-
-    async fn resolve_session_channel_id(&self, session_id: &str) -> Result<Option<String>> {
-        let Some((_, _, row)) = self.resolve_persisted_session(session_id).await? else {
-            return Ok(None);
-        };
-
-        Ok(session_channel_id_from_metadata(row.metadata.as_deref()))
     }
 
     pub(super) async fn live_session_snapshots(

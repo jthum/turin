@@ -420,7 +420,7 @@ fn runtime_control_publishes_coherent_snapshots() {
         Some("session-1".to_string()),
         Some(event_tx),
         SessionContextOverrides {
-            channel_id: Some("channel-1".to_string()),
+            origin_id: Some("client-1".to_string()),
             inference: Default::default(),
         },
         Some(execution.clone()),
@@ -439,8 +439,8 @@ fn runtime_control_publishes_coherent_snapshots() {
     let snapshot = control.snapshot();
     assert_eq!(snapshot.session_id.as_deref(), Some("session-1"));
     assert_eq!(
-        snapshot.session_context.channel_id.as_deref(),
-        Some("channel-1")
+        snapshot.session_context.origin_id.as_deref(),
+        Some("client-1")
     );
     assert_eq!(snapshot.execution, Some(execution));
     assert_eq!(snapshot.conflict_policy, ExecutionConflictPolicy::Detached);

@@ -3,7 +3,7 @@ use crate::persistence::manager::StoreSelector;
 
 pub(crate) fn create_session_metadata(
     default_store_selector: Option<&StoreSelector>,
-    channel_id: Option<&str>,
+    origin_id: Option<&str>,
 ) -> Option<String> {
     let mut turin_meta = serde_json::Map::new();
     if let Some(default_store) = default_store_selector.and_then(store_target_from_selector) {
@@ -12,8 +12,8 @@ pub(crate) fn create_session_metadata(
             serde_json::json!(default_store),
         );
     }
-    if let Some(channel_id) = channel_id {
-        turin_meta.insert("channel_id".to_string(), serde_json::json!(channel_id));
+    if let Some(origin_id) = origin_id {
+        turin_meta.insert("origin_id".to_string(), serde_json::json!(origin_id));
     }
     if turin_meta.is_empty() {
         return None;
@@ -36,9 +36,9 @@ pub(crate) fn session_default_store_selector_from_metadata(
     target.and_then(store_selector_from_target)
 }
 
-pub(crate) fn session_channel_id_from_metadata(metadata: Option<&str>) -> Option<String> {
+pub(crate) fn session_origin_id_from_metadata(metadata: Option<&str>) -> Option<String> {
     turin_metadata(metadata)
-        .and_then(|value| value.get("channel_id").cloned())
+        .and_then(|value| value.get("origin_id").cloned())
         .and_then(|value| value.as_str().map(ToString::to_string))
 }
 

@@ -13,7 +13,7 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/daemon/state/runtime_tasks.rs`
-  - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, channel persistence/inference lookup, and live-session filtering.
+  - Task submit/wait/cancel/promote, sidestep tasks, live session open/resume/cancel/kill, generic origin provenance, and live-session filtering.
 - `src/daemon/state/runtime_sessions.rs`
   - Persisted session detail/title, durable deletion, persisted-session target
     resolution, and live mutation guards.
@@ -63,10 +63,11 @@ Task submission:
 
 Live session open/resume:
 
-1. The daemon layer validates the target agent or resolves the persisted session channel id.
-2. Channel-specific state/default-store selectors and inference overrides are resolved from registry data.
-3. Agent-manager methods open or resume the runtime slot.
-4. The caller receives the agent-manager `LiveSessionSnapshot`.
+1. The daemon layer validates the target agent.
+2. A caller may attach an opaque `origin_id` as creation provenance; it does not select persistence, inference, or ownership.
+3. Agent-manager methods open or resume the runtime slot using agent/runtime configuration.
+4. Resume restores persisted origin provenance from the session row.
+5. The caller receives the agent-manager `LiveSessionSnapshot`.
 
 Harness action execution:
 
@@ -181,7 +182,7 @@ Persisted session deletion:
 - A projected message's `turn_id` is durable identity; `turn_index` remains a
   path-relative presentation depth and must not be used for exact branch writes.
 - `slot_id` is invalid for task submission unless a `session_id` is also supplied.
-- Channel-bound session open/resume should reuse channel persistence and inference overrides.
+- Session origin is opaque provenance. It must not select storage, inference, authorization, or the client currently viewing the session.
 - Sidestep slots are temporary and should be killed after the task path completes or fails.
 - Explicit harness action targets must run in the named harness runtime; agent identity must not silently redirect them to another harness.
 - Harness source paths must not be absolute, traverse above the harness root, escape through symlinks, or target non-Lua files.

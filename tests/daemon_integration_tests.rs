@@ -413,7 +413,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("chat-thread-1".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -543,7 +543,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("restart-thread".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -647,7 +647,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -785,7 +785,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -976,7 +976,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -1353,7 +1353,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("filter-session".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -1376,7 +1376,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
             turin::daemon::protocol::OpenSessionParams {
                 agent_id: "default".to_string(),
                 slot_id: Some("other-session".to_string()),
-                channel_id: None,
+                origin_id: None,
             },
         ))
         .await?;
@@ -1406,7 +1406,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("stream-session".to_string()),
-                    channel_id: None,
+                    origin_id: None,
                 },
             ))
             .await?,
@@ -1914,7 +1914,7 @@ async fn daemon_fs_channel_runtime_processes_inbox_and_reports_runtime_status() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_session_open_uses_channel_owned_state_path() -> Result<()> {
+async fn daemon_session_open_persists_opaque_origin_in_primary_state() -> Result<()> {
     let tempdir = std::sync::Arc::new(tempfile::tempdir()?);
     let workspace_root = tempdir.path().join("workspace");
     let channel_dir = workspace_root.join(".turin/runtime/channels/fs-isolated");
@@ -1943,7 +1943,7 @@ poll_interval_ms = 25
                 turin::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("isolated-slot".to_string()),
-                    channel_id: Some("fs-isolated".to_string()),
+                    origin_id: Some("relay:fs-isolated".to_string()),
                 },
             ))
             .await?,
@@ -1952,22 +1952,20 @@ poll_interval_ms = 25
         .as_str()
         .context("session.open should return session_id")?
         .to_string();
-    assert!(
-        session_id.contains("@.turin/runtime/channels/fs-isolated/state.db"),
-        "session id should be qualified with the channel-owned store path: {session_id}"
-    );
-
     let session_ref = parse_session_reference(&session_id)?;
     let public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
 
     let default_store = StateStore::open(&workspace_root.join("test.db").to_string_lossy()).await?;
-    assert!(
-        default_store
-            .get_session_row_by_public_id(public_id)
-            .await?
-            .is_none(),
-        "channel-owned session should not be persisted in the default state db"
-    );
+    let row = default_store
+        .get_session_row_by_public_id(public_id)
+        .await?
+        .context("origin-tagged session should use the primary state db")?;
+    let metadata: serde_json::Value = serde_json::from_str(
+        row.metadata
+            .as_deref()
+            .context("origin-tagged session should have metadata")?,
+    )?;
+    assert_eq!(metadata["_turin"]["origin_id"], "relay:fs-isolated");
 
     let channel_store = StateStore::open(
         &workspace_root
@@ -1979,8 +1977,7 @@ poll_interval_ms = 25
         channel_store
             .get_session_row_by_public_id(public_id)
             .await?
-            .is_some(),
-        "channel-owned session should be persisted in the channel-local state db"
+            .is_none()
     );
 
     daemon.stop().await

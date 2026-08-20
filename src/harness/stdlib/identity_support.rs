@@ -30,9 +30,9 @@ pub(crate) fn identity_to_lua_table(lua: &Lua, identity: &RuntimeIdentity) -> Lu
         Some(v) => tbl.set("user_id", v)?,
         None => tbl.set("user_id", Value::Nil)?,
     }
-    match identity.channel_id() {
-        Some(v) => tbl.set("channel_id", v)?,
-        None => tbl.set("channel_id", Value::Nil)?,
+    match identity.origin_id() {
+        Some(v) => tbl.set("origin_id", v)?,
+        None => tbl.set("origin_id", Value::Nil)?,
     }
     match identity.tenant_id() {
         Some(v) => tbl.set("tenant_id", v)?,

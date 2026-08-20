@@ -67,7 +67,7 @@ impl PeerRuntime {
             host.resume_session_for_agent_with_context(
                 agent_id,
                 session_id,
-                bootstrap.context.channel_id.clone(),
+                bootstrap.context.origin_id.clone(),
                 bootstrap.context.inference.clone(),
             )
             .await?
@@ -78,7 +78,7 @@ impl PeerRuntime {
                     .initial_state_selector
                     .ok_or_else(|| anyhow::anyhow!("Linked peer session requires a state store"))?,
                 bootstrap.initial_default_store_selector,
-                bootstrap.context.channel_id.clone(),
+                bootstrap.context.origin_id.clone(),
                 bootstrap.context.inference.clone(),
                 link,
             )
@@ -88,7 +88,7 @@ impl PeerRuntime {
                 agent_id,
                 bootstrap.initial_state_selector,
                 bootstrap.initial_default_store_selector,
-                bootstrap.context.channel_id.clone(),
+                bootstrap.context.origin_id.clone(),
                 bootstrap.context.inference.clone(),
             )
             .await
@@ -255,7 +255,7 @@ impl PeerRuntime {
                 &self.agent_id,
                 target.state_selector,
                 target.default_store_selector,
-                target.context.channel_id,
+                target.context.origin_id,
                 target.context.inference,
                 target.link,
             )
@@ -625,7 +625,7 @@ impl PeerRuntime {
                 &self.agent_id,
                 Some(self.session.store_selector.clone()),
                 self.session.default_store_selector.clone(),
-                context.channel_id.clone(),
+                context.origin_id.clone(),
                 context.inference.clone(),
             )
             .await;
@@ -643,7 +643,7 @@ impl PeerRuntime {
             .resume_session_for_agent_with_context(
                 &self.agent_id,
                 session_id,
-                context.channel_id.clone(),
+                context.origin_id.clone(),
                 context.inference.clone(),
             )
             .await?;
@@ -700,7 +700,7 @@ fn session_context_from_session(
     session: &crate::kernel::session::SessionState,
 ) -> SessionContextOverrides {
     SessionContextOverrides {
-        channel_id: session.identity.channel_id().map(ToOwned::to_owned),
+        origin_id: session.identity.origin_id().map(ToOwned::to_owned),
         inference: session.inference.clone(),
     }
 }
@@ -710,9 +710,9 @@ fn effective_session_context(
     requested: SessionContextOverrides,
 ) -> SessionContextOverrides {
     SessionContextOverrides {
-        channel_id: requested
-            .channel_id
-            .or_else(|| session.identity.channel_id().map(ToOwned::to_owned)),
+        origin_id: requested
+            .origin_id
+            .or_else(|| session.identity.origin_id().map(ToOwned::to_owned)),
         inference: if requested.inference.is_empty() {
             session.inference.clone()
         } else {

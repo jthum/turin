@@ -372,7 +372,7 @@ impl Default for RuntimeControl {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SessionContextOverrides {
-    pub(crate) channel_id: Option<String>,
+    pub(crate) origin_id: Option<String>,
     pub(crate) inference: InferenceOverrideConfig,
 }
 

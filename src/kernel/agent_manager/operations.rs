@@ -136,7 +136,7 @@ impl AgentManager {
         slot_id: Option<&str>,
         initial_state_selector: Option<StoreSelector>,
         initial_default_store_selector: Option<StoreSelector>,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         initial_inference: InferenceOverrideConfig,
     ) -> Result<LiveSessionSnapshot> {
         let runtime_key = RuntimeSlotKey {
@@ -151,7 +151,7 @@ impl AgentManager {
                 initial_state_selector,
                 initial_default_store_selector,
                 super::SessionContextOverrides {
-                    channel_id,
+                    origin_id,
                     inference: initial_inference,
                 },
             )
@@ -177,7 +177,7 @@ impl AgentManager {
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
-        channel_id: Option<String>,
+        origin_id: Option<String>,
         initial_inference: InferenceOverrideConfig,
     ) -> Result<LiveSessionSnapshot> {
         let live_matches = self.find_runtimes_by_session(session_id).await;
@@ -250,7 +250,7 @@ impl AgentManager {
                 handle.control.request_session_resume(
                     session_id.to_string(),
                     super::SessionContextOverrides {
-                        channel_id,
+                        origin_id,
                         inference: initial_inference,
                     },
                 );
@@ -261,7 +261,7 @@ impl AgentManager {
                     runtime_key.clone(),
                     session_id.to_string(),
                     super::SessionContextOverrides {
-                        channel_id,
+                        origin_id,
                         inference: initial_inference,
                     },
                 )
@@ -272,7 +272,7 @@ impl AgentManager {
                 runtime_key.clone(),
                 session_id.to_string(),
                 super::SessionContextOverrides {
-                    channel_id,
+                    origin_id,
                     inference: initial_inference,
                 },
             )

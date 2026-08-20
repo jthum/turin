@@ -185,7 +185,7 @@ impl ChannelRunner {
                         turin_daemon_protocol::DaemonRequest::SessionOpen(OpenSessionParams {
                             agent_id: agent_id.to_string(),
                             slot_id: Some(slot_id),
-                            channel_id: Some(self.channel_id.clone()),
+                            origin_id: Some(self.channel_id.clone()),
                         }),
                     )
                     .await?

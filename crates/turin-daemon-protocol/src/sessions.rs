@@ -6,7 +6,7 @@ pub struct OpenSessionParams {
     #[serde(default)]
     pub slot_id: Option<String>,
     #[serde(default)]
-    pub channel_id: Option<String>,
+    pub origin_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

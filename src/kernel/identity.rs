@@ -10,7 +10,7 @@ pub struct RuntimeIdentity {
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]
-    channel_id: Option<String>,
+    origin_id: Option<String>,
     #[serde(default)]
     tenant_id: Option<String>,
     #[serde(default)]
@@ -24,7 +24,7 @@ pub enum IdentityKey {
     SessionId,
     AgentId,
     UserId,
-    ChannelId,
+    OriginId,
     TenantId,
     RunId,
     Custom(String),
@@ -36,7 +36,7 @@ impl RuntimeIdentity {
             session_id: session_id.into(),
             agent_id: agent_id.into(),
             user_id: None,
-            channel_id: None,
+            origin_id: None,
             tenant_id: None,
             run_id: None,
             extra: BTreeMap::new(),
@@ -55,8 +55,8 @@ impl RuntimeIdentity {
         self.user_id.as_deref()
     }
 
-    pub fn channel_id(&self) -> Option<&str> {
-        self.channel_id.as_deref()
+    pub fn origin_id(&self) -> Option<&str> {
+        self.origin_id.as_deref()
     }
 
     pub fn tenant_id(&self) -> Option<&str> {
@@ -83,8 +83,8 @@ impl RuntimeIdentity {
         self.user_id = user_id;
     }
 
-    pub fn set_channel_id(&mut self, channel_id: Option<String>) {
-        self.channel_id = channel_id;
+    pub fn set_origin_id(&mut self, origin_id: Option<String>) {
+        self.origin_id = origin_id;
     }
 
     pub fn set_tenant_id(&mut self, tenant_id: Option<String>) {
@@ -108,7 +108,7 @@ impl RuntimeIdentity {
             IdentityKey::SessionId => Some(self.session_id()),
             IdentityKey::AgentId => Some(self.agent_id()),
             IdentityKey::UserId => self.user_id(),
-            IdentityKey::ChannelId => self.channel_id(),
+            IdentityKey::OriginId => self.origin_id(),
             IdentityKey::TenantId => self.tenant_id(),
             IdentityKey::RunId => self.run_id(),
             IdentityKey::Custom(k) => self.extra.get(k).map(String::as_str),
@@ -135,7 +135,7 @@ impl RuntimeIdentity {
                 self.agent_id = v;
             }
             IdentityKey::UserId => self.user_id = value,
-            IdentityKey::ChannelId => self.channel_id = value,
+            IdentityKey::OriginId => self.origin_id = value,
             IdentityKey::TenantId => self.tenant_id = value,
             IdentityKey::RunId => self.run_id = value,
             IdentityKey::Custom(k) => {
@@ -160,8 +160,8 @@ impl RuntimeIdentity {
             "user" => {
                 self.require(&IdentityKey::UserId)?;
             }
-            "channel" => {
-                self.require(&IdentityKey::ChannelId)?;
+            "origin" => {
+                self.require(&IdentityKey::OriginId)?;
             }
             "tenant" => {
                 self.require(&IdentityKey::TenantId)?;
@@ -195,7 +195,7 @@ impl IdentityKey {
             IdentityKey::SessionId => "session_id",
             IdentityKey::AgentId => "agent_id",
             IdentityKey::UserId => "user_id",
-            IdentityKey::ChannelId => "channel_id",
+            IdentityKey::OriginId => "origin_id",
             IdentityKey::TenantId => "tenant_id",
             IdentityKey::RunId => "run_id",
             IdentityKey::Custom(k) => k.as_str(),
@@ -242,7 +242,7 @@ mod tests {
             Some("p1")
         );
         assert!(id.has(&IdentityKey::AgentId));
-        assert!(!id.has(&IdentityKey::ChannelId));
+        assert!(!id.has(&IdentityKey::OriginId));
     }
 
     #[test]
