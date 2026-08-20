@@ -90,6 +90,8 @@ Nested peer delegation:
 - Empty JSON max-capability maps mean no ceiling.
 - Enforcement-disabled mode must still produce accurate observability decisions.
 - Temporary grants are bound to the issuing agent/session context when those fields are present.
+- Temporary grants are deliberately process-local. Restart invalidates every active grant;
+  persisted grant audit events are evidence, not authority that can be reconstructed.
 - Delegated grants cannot widen parent grant capabilities.
 - Nested peer delegation is monotonic: omitting or restating capabilities cannot
   widen the active ceiling inherited from an ancestor task.

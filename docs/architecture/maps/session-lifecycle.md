@@ -101,6 +101,24 @@ Kernel shutdown:
 5. Stop the kernel watcher and close root MCP clients within their own bounded grace period.
 6. Daemon shutdown broadcasts shutdown to background services, drains the kernel, and then removes its endpoint. Independent channels have their own lifecycle.
 
+Unclean process restart:
+
+1. Committed session, branch, turn, message, tool, event, linked-session, worklist,
+   and scheduled-job rows remain the durable source of truth.
+2. A partially written turn remains durable evidence. Resume advances from the durable
+   branch-head depth and restores whatever transcript boundary committed successfully;
+   it does not delete, complete, or replay that turn automatically.
+3. Runtime queues, task result waiters, cancellation tokens, resident harness state, and
+   temporary governance grants are process-local and disappear with the process.
+4. Turin does not automatically replay interrupted inference or tool work. The runtime
+   cannot prove whether an external side effect completed before the crash, so automatic
+   replay would violate the safe at-most-once recovery default.
+5. A linked session is recoverable once its session row is materialized. A queued child
+   reservation that had not created that row is process-local work and is not recovered.
+6. Lifecycle and audit events use the ordered background durability lane. A successful
+   task barrier or clean shutdown flushes them; an abrupt process loss may omit the newest
+   unacknowledged telemetry even when directly committed transcript rows survived.
+
 Local context selection:
 
 1. Validate the branch, turn, or external session reference.
@@ -195,6 +213,11 @@ Delete persisted session:
 - A durability barrier must report event-writer failures that occurred before it, then allow a recreated writer to serve later tasks.
 - Resident history must not advance past a transcript write that failed.
 - Resume must advance beyond the durable branch-head depth even when its newest turn has no messages.
+- Resume must preserve a committed user-only or otherwise partial turn and continue at the
+  next durable branch depth without replaying the interrupted work.
+- Unclean restart must fail closed for process-local authority and coordination state. In
+  particular, temporary grants and queued/runtime tasks must not silently reappear.
+- Recovery must never infer that an interrupted external tool call is safe to execute again.
 - Cancellation must not append assistant output or tool results that did not complete before cancellation won.
 - Runtime error classification must prefer cancellation over a concurrent provider failure.
 - Provider timeout failures must remain distinguishable from cancellation and generic runtime errors.

@@ -278,6 +278,48 @@ fn temporary_grants_apply_ceiling_and_consume_max_uses() {
 }
 
 #[test]
+fn temporary_grants_do_not_survive_manager_reconstruction() {
+    let config = GovernanceConfig {
+        grants: GovernanceGrantsConfig {
+            enabled: true,
+            max_ttl_ms: Some(60_000),
+            require_audit_reason: false,
+        },
+        ..GovernanceConfig::default()
+    };
+    let subject = GovernanceSubject {
+        agent_id: Some("default".to_string()),
+        session_reference: Some("session-a".to_string()),
+        ..GovernanceSubject::default()
+    };
+    let manager = GovernanceManager::new(config.clone());
+    let grant = manager
+        .issue_grant_for_subject(
+            &subject,
+            BTreeMap::from([("runtime.db.query".to_string(), true)]),
+            Some(30_000),
+            None,
+            None,
+        )
+        .expect("grant should be issued");
+    assert!(
+        manager
+            .grant_snapshot_for_subject(&subject, &grant.grant_id)
+            .expect("grant lookup")
+            .is_some()
+    );
+
+    let reconstructed = GovernanceManager::new(config);
+    assert!(
+        reconstructed
+            .grant_snapshot_for_subject(&subject, &grant.grant_id)
+            .expect("grant lookup after restart")
+            .is_none(),
+        "temporary authority must fail closed across process reconstruction"
+    );
+}
+
+#[test]
 fn delegated_grants_record_parent_and_invalidate_when_parent_is_revoked() {
     let mgr = GovernanceManager::new(GovernanceConfig {
         grants: GovernanceGrantsConfig {

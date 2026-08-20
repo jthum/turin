@@ -1366,6 +1366,61 @@ async fn test_resume_advances_past_allocated_turn_without_messages() -> Result<(
 }
 
 #[tokio::test]
+async fn test_resume_preserves_user_only_partial_turn_without_replay() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let session = kernel.create_session().await;
+    let session_id = session.identity.session_id().to_string();
+    let internal_id = session.internal_id.expect("persisted session");
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    store
+        .insert_message(
+            internal_id,
+            TurnWriteTarget::active_branch(0),
+            "user",
+            &serde_json::json!([{"type": "text", "text": "Committed before crash"}]),
+            None,
+        )
+        .await?;
+
+    let mut resumed = kernel
+        .resume_session_for_agent("default", &session_id)
+        .await?;
+    assert_eq!(resumed.turn_index, 1);
+    assert_eq!(resumed.history.len(), 1);
+    assert!(resumed.history.iter().any(|message| {
+        message.content.iter().any(|content| {
+            matches!(
+                content,
+                turin::inference::provider::InferenceContent::Text { text }
+                if text == "Committed before crash"
+            )
+        })
+    }));
+
+    kernel
+        .run(&mut resumed, Some("Continue after crash".to_string()))
+        .await?;
+    assert_eq!(resumed.turn_index, 2);
+    let messages = store
+        .get_messages(internal_id, &SessionReadTarget::ActiveBranch)
+        .await?;
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.turn_index == 0 && message.role == "user")
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.turn_index == 1 && message.role == "user")
+    );
+
+    kernel.end_session(&mut resumed).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harnesses");

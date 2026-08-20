@@ -210,6 +210,9 @@ Persisted session deletion:
   retire only idle slots and reject while that agent has active, queued, or awaiting work.
 - Bootstrap config changes and explicit runtime reloads retain full-kernel replacement
   and therefore require all runtime work to be idle.
+- Daemon restart does not durably replay task submissions. Completed transcript state can
+  be resumed after an unclean exit, while queued or in-flight request ids and waiters are
+  intentionally lost to avoid duplicating unknown provider or tool side effects.
 - Session deletion must be transactional and must not delete durable work
   items merely because the session claimed them.
 

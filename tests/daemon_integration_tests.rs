@@ -129,6 +129,17 @@ bind = "127.0.0.1:0"
         Self::start_in(tempdir).await
     }
 
+    async fn restart_unclean(self) -> Result<Self> {
+        let tempdir = std::sync::Arc::clone(&self.tempdir);
+        let endpoint = self.endpoint.clone();
+        self.join.abort();
+        let _ = self.join.await;
+        if endpoint.exists() {
+            std::fs::remove_file(endpoint)?;
+        }
+        Self::start_in(tempdir).await
+    }
+
     async fn request(&self, request: DaemonRequest) -> Result<ResponseEnvelope> {
         let stream = connect_local_ipc(&self.endpoint).await.with_context(|| {
             format!(
@@ -551,6 +562,103 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     assert_eq!(waited["status"], "success");
 
     wait_for_persisted_user_messages(&daemon, &session_id, 2).await?;
+
+    daemon.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> Result<()> {
+    let daemon = DaemonHarness::start().await?;
+
+    let opened = result_value(
+        daemon
+            .request(DaemonRequest::SessionOpen(
+                turin::daemon::protocol::OpenSessionParams {
+                    agent_id: "default".to_string(),
+                    slot_id: Some("crash-thread".to_string()),
+                    origin_id: None,
+                },
+            ))
+            .await?,
+    );
+    let session_id = opened["session_id"]
+        .as_str()
+        .context("session.open should return session_id")?
+        .to_string();
+    let submitted = result_value(
+        daemon
+            .request(DaemonRequest::TaskSubmit(
+                turin::daemon::protocol::SubmitTaskParams {
+                    agent_id: None,
+                    session_id: Some(session_id.clone()),
+                    slot_id: None,
+                    prompt: "commit before unclean restart".to_string(),
+                    inference_context: None,
+                    content: None,
+                    tools: Default::default(),
+                    conflict_policy: None,
+                },
+            ))
+            .await?,
+    );
+    let request_id = submitted["request_id"]
+        .as_str()
+        .context("task.submit should return request_id")?
+        .to_string();
+    let waited = result_value(
+        daemon
+            .request(DaemonRequest::TaskWait(
+                turin::daemon::protocol::WaitTaskParams {
+                    request_id: request_id.clone(),
+                    timeout_ms: Some(5_000),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(waited["status"], "success");
+
+    let daemon = daemon.restart_unclean().await?;
+    let old_request = daemon
+        .request(DaemonRequest::TaskGet(
+            turin::daemon::protocol::TaskIdParams { request_id },
+        ))
+        .await?;
+    assert!(
+        !old_request.ok,
+        "request handles are process-local and must not be reconstructed"
+    );
+
+    let resumed = result_value(
+        daemon
+            .request(DaemonRequest::SessionResume(
+                turin::daemon::protocol::ResumeSessionParams {
+                    session_id: session_id.clone(),
+                    slot_id: Some("crash-thread".to_string()),
+                },
+            ))
+            .await?,
+    );
+    assert_eq!(resumed["session_id"], session_id);
+
+    let detail = result_value(
+        daemon
+            .request(DaemonRequest::SessionGet(SessionGetParams {
+                session_id,
+                target_turn_id: None,
+                message_limit: None,
+                message_offset: None,
+                include_events: None,
+                include_efficiency: None,
+            }))
+            .await?,
+    );
+    assert!(
+        detail["messages"]
+            .as_array()
+            .expect("messages array")
+            .iter()
+            .any(|message| message["role"] == "assistant")
+    );
 
     daemon.stop().await
 }
