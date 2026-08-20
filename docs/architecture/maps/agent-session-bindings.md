@@ -36,6 +36,8 @@ This surface sits between harness code and core runtime state. It should stay bo
   - `runtime_registry.rs` owns runtime-slot reuse, resume, creation, and registry publication.
   - `runtime_worker.rs` owns background worker startup, polling, idle policy, and shutdown.
   - `lane_scheduler.rs` owns fair cross-session selection while preserving per-session FIFO.
+  - `task_results.rs` owns result waiting, task inspection, terminal bookkeeping, and
+    completed-result promotion.
 - `src/kernel/session.rs`
   - Queued task, execution context target, conflict policy, and branch outcome types.
 - `src/kernel/task_promotion.rs`

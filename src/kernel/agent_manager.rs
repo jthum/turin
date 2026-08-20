@@ -10,6 +10,7 @@ mod records;
 mod runtime_control;
 mod runtime_registry;
 mod runtime_worker;
+mod task_results;
 mod task_status;
 mod tasks;
 #[cfg(test)]
