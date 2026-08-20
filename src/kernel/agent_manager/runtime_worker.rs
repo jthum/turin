@@ -103,9 +103,23 @@ impl AgentManager {
                 if shutdown_bg.is_cancelled() {
                     break;
                 }
-                let envelope = {
-                    let mut queue = queue_bg.lock().expect("agent runtime queue mutex poisoned");
-                    pop_fair_task(&mut queue, &mut last_scheduled)
+                let envelope = if queued_tasks_bg.load(Ordering::Relaxed) == 0 {
+                    None
+                } else {
+                    let mut pending = manager.pending_task_states.write().await;
+                    let envelope = {
+                        let mut queue =
+                            queue_bg.lock().expect("agent runtime queue mutex poisoned");
+                        pop_fair_task(&mut queue, &mut last_scheduled)
+                    };
+                    if let Some(request_id) = envelope
+                        .as_ref()
+                        .and_then(|envelope| envelope.request_id.as_deref())
+                        && let Some(record) = pending.get_mut(request_id)
+                    {
+                        record.state = super::PendingTaskState::Running;
+                    }
+                    envelope
                 };
                 let Some(envelope) = envelope else {
                     match runtime.reset_session_if_requested().await {

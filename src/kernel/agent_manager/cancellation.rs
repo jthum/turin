@@ -198,25 +198,56 @@ impl AgentManager {
     }
 
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
-        if let Some(result) = self.completed_result(request_id).await {
-            anyhow::bail!(
-                "Task '{}' is already terminal ({:?})",
-                request_id,
-                result.status
-            );
-        }
-
-        let pending = self
-            .pending_task_states
-            .read()
+        self.cancel_task_with_reason(request_id, "Task cancelled before execution")
             .await
-            .get(request_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", request_id))?;
+    }
 
-        if pending.state == PendingTaskState::Running
-            || pending.state == PendingTaskState::Cancelling
-        {
+    async fn cancel_task_with_reason(
+        &self,
+        request_id: &str,
+        queued_reason: &str,
+    ) -> Result<TaskStatusSnapshot> {
+        loop {
+            if let Some(result) = self.completed_result(request_id).await {
+                anyhow::bail!(
+                    "Task '{}' is already terminal ({:?})",
+                    request_id,
+                    result.status
+                );
+            }
+
+            let pending = self
+                .pending_task_states
+                .read()
+                .await
+                .get(request_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", request_id))?;
+
+            if pending.state == PendingTaskState::Queued {
+                match self
+                    .complete_queued_task(request_id, TaskTerminalStatus::Cancelled, queued_reason)
+                    .await
+                {
+                    Ok(snapshot) => return Ok(snapshot),
+                    Err(error) => {
+                        let state = self
+                            .pending_task_states
+                            .read()
+                            .await
+                            .get(request_id)
+                            .map(|pending| pending.state);
+                        if matches!(
+                            state,
+                            Some(PendingTaskState::Running | PendingTaskState::Cancelling)
+                        ) {
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                }
+            }
+
             let handle = {
                 let runtimes = self.runtimes.read().await;
                 runtimes.get(&pending.runtime_key).cloned().ok_or_else(|| {
@@ -228,32 +259,16 @@ impl AgentManager {
                 })?
             };
 
-            let current_request_id = handle.control.current_request_id();
-            if current_request_id.as_deref() != Some(request_id) {
-                anyhow::bail!("Task '{}' is no longer the active running task", request_id);
-            }
-            if !handle.control.request_task_cancel() {
-                anyhow::bail!(
-                    "Task '{}' is running without a cancellable execution token",
-                    request_id
-                );
-            }
             if let Some(pending) = self.pending_task_states.write().await.get_mut(request_id) {
                 pending.state = PendingTaskState::Cancelling;
             }
-            let snapshot = self.get_task(request_id).await.ok_or_else(|| {
+            if handle.control.current_request_id().as_deref() == Some(request_id) {
+                handle.control.request_task_cancel();
+            }
+            return self.get_task(request_id).await.ok_or_else(|| {
                 anyhow::anyhow!("Task '{}' disappeared after cancellation", request_id)
-            })?;
-            return Ok(snapshot);
+            });
         }
-
-        self.complete_queued_task(
-            request_id,
-            pending,
-            TaskTerminalStatus::Cancelled,
-            "Task cancelled before execution",
-        )
-        .await
     }
 
     pub async fn cancel_session(
@@ -264,18 +279,9 @@ impl AgentManager {
         let (runtime_key, handle, matching_pending) = self
             .logical_session_runtime_target(session_id, slot_id)
             .await?;
-        for (request_id, pending) in matching_pending {
-            if pending.state == PendingTaskState::Queued {
-                self.complete_queued_task(
-                    &request_id,
-                    pending,
-                    TaskTerminalStatus::Cancelled,
-                    "Session cancelled before execution",
-                )
+        for (request_id, _) in matching_pending {
+            self.cancel_task_with_reason(&request_id, "Session cancelled before execution")
                 .await?;
-            } else {
-                self.cancel_task(&request_id).await?;
-            }
         }
 
         if !runtime_key.is_linked() {
@@ -318,7 +324,6 @@ impl AgentManager {
                 }
                 self.complete_queued_task(
                     &request_id,
-                    pending,
                     TaskTerminalStatus::Killed,
                     "Session killed before execution",
                 )
@@ -500,24 +505,36 @@ impl AgentManager {
     async fn complete_queued_task(
         &self,
         request_id: &str,
-        pending: PendingTaskRecord,
         status: TaskTerminalStatus,
         reason: &str,
     ) -> Result<TaskStatusSnapshot> {
+        let pending_snapshot = self
+            .pending_task_states
+            .read()
+            .await
+            .get(request_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", request_id))?;
         let handle = self
             .runtimes
             .read()
             .await
-            .get(&pending.runtime_key)
+            .get(&pending_snapshot.runtime_key)
             .cloned()
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Agent runtime '{}' [{}] is not available",
-                    pending.runtime_key.agent_id,
-                    pending.runtime_key.slot_id
+                    pending_snapshot.runtime_key.agent_id,
+                    pending_snapshot.runtime_key.slot_id
                 )
             })?;
-        let envelope = {
+        let (pending, envelope) = {
+            let pending = self.pending_task_states.write().await;
+            let current = pending
+                .get(request_id)
+                .filter(|pending| pending.state == PendingTaskState::Queued)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Task '{}' is no longer queued", request_id))?;
             let mut queue = handle
                 .queue
                 .lock()
@@ -526,9 +543,10 @@ impl AgentManager {
                 .iter()
                 .position(|envelope| envelope.request_id.as_deref() == Some(request_id))
                 .ok_or_else(|| anyhow::anyhow!("Task '{}' is no longer queued", request_id))?;
-            queue
+            let envelope = queue
                 .remove(index)
-                .expect("queued task index should remain valid while queue is locked")
+                .expect("queued task index should remain valid while queue is locked");
+            (current, envelope)
         };
         handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
 

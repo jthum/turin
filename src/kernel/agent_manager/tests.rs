@@ -777,6 +777,75 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn cancellation_during_task_activation_is_applied_when_token_becomes_available()
+-> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+
+    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let manager = kernel.agent_manager();
+    let request_id = "req_activating".to_string();
+    let runtime_key = RuntimeSlotKey::default_for("default");
+    let control = Arc::new(RuntimeControl::default());
+
+    manager.pending_task_states.write().await.insert(
+        request_id.clone(),
+        PendingTaskRecord {
+            runtime_key: runtime_key.clone(),
+            session_target: TaskSessionTarget::default(),
+            trace_id: "tr_activating".to_string(),
+            title: None,
+            prompt_preview: "activating".to_string(),
+            state: PendingTaskState::Running,
+            runtime_task_id: None,
+            execution: test_execution_snapshot(),
+        },
+    );
+    manager.runtimes.write().await.insert(
+        runtime_key,
+        Arc::new(AgentRuntimeHandle {
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            notify: Arc::new(Notify::new()),
+            control: Arc::clone(&control),
+            shutdown_token: CancellationToken::new(),
+            task: None,
+            queued_tasks: Arc::new(AtomicUsize::new(0)),
+            active_tasks: Arc::new(AtomicUsize::new(1)),
+        }),
+    );
+
+    let snapshot = manager.cancel_task(&request_id).await?;
+    assert_eq!(snapshot.state, "cancelling");
+
+    let cancel_token = CancellationToken::new();
+    control.activate_task(
+        Some(request_id.clone()),
+        "t_activating".to_string(),
+        cancel_token.clone(),
+    );
+    let cancellation_requested = manager
+        .mark_task_running(&request_id, "t_activating".to_string(), None)
+        .await;
+    if cancellation_requested {
+        control.request_task_cancel();
+    }
+
+    assert!(cancellation_requested);
+    assert!(cancel_token.is_cancelled());
+    assert_eq!(
+        manager
+            .pending_task_states
+            .read()
+            .await
+            .get(&request_id)
+            .map(|pending| pending.state),
+        Some(PendingTaskState::Cancelling)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");

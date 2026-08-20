@@ -327,6 +327,7 @@ impl AgentManager {
         let request_id = uuid::Uuid::now_v7().simple().to_string();
         let (tx_result, rx_result) = oneshot::channel();
         {
+            let mut pending_results = self.pending_results.write().await;
             let mut pending = self.pending_task_states.write().await;
             if let Some(admission) = submission.delegation_admission {
                 let same_parent = |record: &&PendingTaskRecord| {
@@ -364,27 +365,19 @@ impl AgentManager {
                     );
                 }
             }
-            pending.insert(
-                request_id.clone(),
-                PendingTaskRecord {
-                    runtime_key: runtime_key.clone(),
-                    session_target: submission.session_target.clone(),
-                    trace_id,
-                    title,
-                    prompt_preview,
-                    state: PendingTaskState::Queued,
-                    runtime_task_id: None,
-                    execution: intended_task_execution_snapshot(&handle, &task)?,
-                },
-            );
-        }
-        self.pending_results
-            .write()
-            .await
-            .insert(request_id.clone(), rx_result);
-
-        if let Err(e) = self
-            .enqueue_runtime_task(
+            let pending_record = PendingTaskRecord {
+                runtime_key: runtime_key.clone(),
+                session_target: submission.session_target.clone(),
+                trace_id,
+                title,
+                prompt_preview,
+                state: PendingTaskState::Queued,
+                runtime_task_id: None,
+                execution: intended_task_execution_snapshot(&handle, &task)?,
+            };
+            pending_results.insert(request_id.clone(), rx_result);
+            pending.insert(request_id.clone(), pending_record);
+            if let Err(error) = self.enqueue_runtime_task(
                 &handle,
                 PeerAgentTaskEnvelope {
                     task,
@@ -395,11 +388,11 @@ impl AgentManager {
                     linked_session: submission.linked_session,
                     session_target: submission.session_target,
                 },
-            )
-            .await
-        {
-            self.remove_pending_request(&request_id).await;
-            return Err(e);
+            ) {
+                pending.remove(&request_id);
+                pending_results.remove(&request_id);
+                return Err(error);
+            }
         }
 
         Ok(request_id)
@@ -443,7 +436,7 @@ impl AgentManager {
         matching_tasks.len() + live_without_task
     }
 
-    async fn enqueue_runtime_task(
+    fn enqueue_runtime_task(
         &self,
         handle: &Arc<AgentRuntimeHandle>,
         envelope: PeerAgentTaskEnvelope,

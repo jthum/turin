@@ -59,20 +59,24 @@ impl PeerRuntime {
                     candidate.source_session_id = self.control.current_session_id();
                 }
                 let runtime_task_id = self.allocate_runtime_task_id(&mut envelope.task);
+                self.prepare_task_execution(
+                    request_id.clone(),
+                    runtime_task_id.clone(),
+                    envelope.task.delegation_budget.as_deref(),
+                );
                 if let Some(request_id) = request_id.as_deref() {
-                    self.manager
+                    let cancellation_requested = self
+                        .manager
                         .mark_task_running(
                             request_id,
                             runtime_task_id.clone(),
                             self.control.current_session_id(),
                         )
                         .await;
+                    if cancellation_requested {
+                        self.control.request_task_cancel();
+                    }
                 }
-                self.prepare_task_execution(
-                    request_id.clone(),
-                    runtime_task_id,
-                    envelope.task.delegation_budget.as_deref(),
-                );
                 self.run_queued_task(
                     envelope.task,
                     envelope.delegated_capabilities,

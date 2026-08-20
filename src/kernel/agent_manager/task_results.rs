@@ -41,16 +41,36 @@ impl AgentManager {
                         request_id
                     ))
                 }
-                Err(_) => {
-                    self.pending_results
-                        .write()
-                        .await
-                        .insert(request_id.to_string(), rx);
-                    Err(anyhow::anyhow!(
-                        "Timed out waiting for peer task '{}'",
-                        request_id
-                    ))
-                }
+                Err(_) => match rx.try_recv() {
+                    Ok(result) => Ok(result),
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                        self.record_lost_task_result(request_id, "Peer task result channel closed")
+                            .await;
+                        Err(anyhow::anyhow!(
+                            "Peer task '{}' result channel closed",
+                            request_id
+                        ))
+                    }
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                        let completed = {
+                            let mut pending_results = self.pending_results.write().await;
+                            let completed = self
+                                .completed_results
+                                .read()
+                                .await
+                                .results
+                                .get(request_id)
+                                .cloned();
+                            if completed.is_none() {
+                                pending_results.insert(request_id.to_string(), rx);
+                            }
+                            completed
+                        };
+                        completed.ok_or_else(|| {
+                            anyhow::anyhow!("Timed out waiting for peer task '{}'", request_id)
+                        })
+                    }
+                },
             }
         } else {
             match rx.await {
@@ -112,11 +132,6 @@ impl AgentManager {
             .results
             .get(request_id)
             .map(completed_task_snapshot)
-    }
-
-    pub(super) async fn remove_pending_request(&self, request_id: &str) {
-        self.pending_results.write().await.remove(request_id);
-        self.pending_task_states.write().await.remove(request_id);
     }
 
     async fn record_lost_task_result(&self, request_id: &str, reason: &str) {
@@ -206,11 +221,17 @@ impl AgentManager {
         request_id: &str,
         runtime_task_id: String,
         session_id: Option<String>,
-    ) {
+    ) -> bool {
         if let Some(pending) = self.pending_task_states.write().await.get_mut(request_id) {
-            pending.state = PendingTaskState::Running;
+            let cancellation_requested = pending.state == PendingTaskState::Cancelling;
+            if !cancellation_requested {
+                pending.state = PendingTaskState::Running;
+            }
             pending.runtime_task_id = Some(runtime_task_id);
             pending.session_target.session_id = session_id;
+            cancellation_requested
+        } else {
+            false
         }
     }
 }

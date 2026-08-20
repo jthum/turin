@@ -136,6 +136,12 @@ Linked runtime residency:
   runtime-control state, queue records, and bounded caches retain focused internal owners.
 - Non-executed terminal task results are constructed from their owning pending record or
   queued envelope so cancellation, shutdown, and lost-result paths retain one result shape.
+- Task admission publishes the result receiver, pending record, and queue envelope under
+  the `pending_results -> pending_task_states -> runtime queue` lock order. Cancellation
+  must never observe a queued record whose envelope has not been published.
+- Worker dequeue changes a pending record from queued to running while holding the pending
+  lock across queue removal. Cancellation requested during session activation remains
+  recorded and is applied when the execution cancellation token becomes available.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.
