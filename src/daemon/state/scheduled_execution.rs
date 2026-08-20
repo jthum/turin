@@ -376,11 +376,12 @@ impl DaemonState {
             .map_err(|err| {
                 ScheduledJobFailure::new("schedule_action_harness_load_failed", err.to_string())
             })?;
-        let result = instance.invoke_declared_action_for_agent(
-            agent_id,
-            &action.name,
-            action.params.clone().unwrap_or(serde_json::Value::Null),
-        );
+        let result =
+            instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
+                agent_id,
+                name: &action.name,
+                params: action.params.clone().unwrap_or(serde_json::Value::Null),
+            });
         let result = result.map_err(|err| {
             ScheduledJobFailure::new("schedule_action_handler_failed", err.to_string())
         })?;

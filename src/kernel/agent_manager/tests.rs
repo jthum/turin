@@ -1914,14 +1914,14 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
     let instance = kernel
         .runtime_for_agent("default")
         .create_instance(kernel.harness_init_context())?;
-    let result = instance.invoke_declared_action_for_agent(
-        "default",
-        "signals.publish",
-        json!({
+    let result = instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
+        agent_id: "default",
+        name: "signals.publish",
+        params: json!({
             "topic": "code.ready",
             "payload": { "branch": "feature-x" }
         }),
-    )?;
+    })?;
 
     assert_eq!(
         result.as_ref().and_then(|value| value.get("delivered")),
@@ -2040,8 +2040,11 @@ async fn runtime_signals_hydrate_reference_payloads_in_subscribed_agent() -> any
     let instance = kernel
         .runtime_for_agent("default")
         .create_instance(kernel.harness_init_context())?;
-    let result =
-        instance.invoke_declared_action_for_agent("default", "signals.publish_ref", json!({}))?;
+    let result = instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
+        agent_id: "default",
+        name: "signals.publish_ref",
+        params: json!({}),
+    })?;
 
     assert_eq!(
         result.as_ref().and_then(|value| value.get("delivered")),

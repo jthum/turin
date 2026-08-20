@@ -30,7 +30,11 @@ impl DaemonState {
         let instance = runtime.create_instance(self.kernel.harness_init_context())?;
         let ui_start = instance.ui_intent_count()?;
         let result =
-            instance.invoke_declared_action_for_agent(&agent_id, &action, params.params)?;
+            instance.invoke_action(crate::kernel::harness_contract::HarnessActionRequest {
+                agent_id: &agent_id,
+                name: &action,
+                params: params.params,
+            })?;
         let Some(result) = result else {
             bail!("Harness action '{}' is not declared", action);
         };

@@ -111,12 +111,13 @@ mod tests {
 
     use super::*;
     use crate::harness::verdict::Verdict;
-    use crate::kernel::harness_contract::{HarnessHook, HarnessSignal};
+    use crate::kernel::harness_contract::{HarnessActionRequest, HarnessHook, HarnessSignal};
     use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 
     struct RecordingHarness {
         calls: Arc<AtomicUsize>,
         signals: Arc<AtomicUsize>,
+        actions: Arc<AtomicUsize>,
     }
 
     impl NativeHarness for RecordingHarness {
@@ -134,18 +135,29 @@ mod tests {
             self.signals.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
+
+        fn on_action(
+            &mut self,
+            request: HarnessActionRequest<'_>,
+        ) -> Result<Option<serde_json::Value>> {
+            self.actions.fetch_add(1, Ordering::Relaxed);
+            Ok((request.name == "build.status").then_some(request.params))
+        }
     }
 
     #[test]
     fn native_factory_creates_isolated_session_harnesses_without_watch_roots() -> Result<()> {
         let calls = Arc::new(AtomicUsize::new(0));
         let signals = Arc::new(AtomicUsize::new(0));
+        let actions = Arc::new(AtomicUsize::new(0));
         let factory_calls = Arc::clone(&calls);
         let factory_signals = Arc::clone(&signals);
+        let factory_actions = Arc::clone(&actions);
         let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
             Ok(Box::new(RecordingHarness {
                 calls: Arc::clone(&factory_calls),
                 signals: Arc::clone(&factory_signals),
+                actions: Arc::clone(&factory_actions),
             }) as Box<dyn NativeHarness>)
         });
         let kernel = RuntimeBuilder::new(TurinConfig::default())
@@ -186,6 +198,15 @@ mod tests {
             1
         );
         assert_eq!(signals.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            first.invoke_action(HarnessActionRequest {
+                agent_id: "default",
+                name: "build.status",
+                params: serde_json::json!({ "state": "passed" }),
+            })?,
+            Some(serde_json::json!({ "state": "passed" }))
+        );
+        assert_eq!(actions.load(Ordering::Relaxed), 1);
         Ok(())
     }
 }

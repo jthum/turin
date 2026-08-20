@@ -1,6 +1,8 @@
 use anyhow::Result;
 
-use super::harness_contract::{HarnessHook, HarnessSignal, HarnessTurnRequest};
+use super::harness_contract::{
+    HarnessActionRequest, HarnessHook, HarnessSignal, HarnessTurnRequest,
+};
 pub use crate::harness::verdict::Verdict;
 
 /// A compiled, session-local harness implementation.
@@ -23,6 +25,14 @@ pub trait NativeHarness: Send {
 
     fn on_signal(&mut self, _signal: HarnessSignal<'_>) -> Result<()> {
         Ok(())
+    }
+
+    /// Handles a named action, returning `None` when this harness does not define it.
+    fn on_action(
+        &mut self,
+        _request: HarnessActionRequest<'_>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
     }
 }
 

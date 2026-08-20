@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use turin::kernel::config::InferenceOverrideConfig;
 use turin::kernel::harness_contract::{
-    HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
+    HarnessActionRequest, HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
 };
 use turin::kernel::native_harness::{NativeHarness, NativeHarnessFactory, Verdict};
 
@@ -31,6 +31,13 @@ impl NativeHarness for FixedHarness {
             .expect("signal recording mutex poisoned")
             .push(format!("{}:{}", signal.topic, signal.payload));
         Ok(())
+    }
+
+    fn on_action(
+        &mut self,
+        request: HarnessActionRequest<'_>,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok((request.name == "build.status").then_some(request.params))
     }
 }
 
@@ -87,6 +94,14 @@ fn public_native_harness_contract_mutates_requests_without_lua_types() -> Result
             .lock()
             .expect("signal recording mutex poisoned"),
         [r#"build.complete:{"status":"passed"}"#]
+    );
+    assert_eq!(
+        harness.on_action(HarnessActionRequest {
+            agent_id: "default",
+            name: "build.status",
+            params: serde_json::json!({ "state": "passed" }),
+        })?,
+        Some(serde_json::json!({ "state": "passed" }))
     );
     Ok(())
 }

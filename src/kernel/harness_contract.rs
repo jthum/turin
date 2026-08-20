@@ -149,6 +149,13 @@ pub struct HarnessSignal<'a> {
     pub created_at: &'a str,
 }
 
+/// A named harness action invoked by a client, schedule, or runtime facility.
+pub struct HarnessActionRequest<'a> {
+    pub agent_id: &'a str,
+    pub name: &'a str,
+    pub params: Value,
+}
+
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub(crate) struct HarnessTurnServices<'a> {
     pub(crate) clients: &'a HashMap<String, ProviderClient>,

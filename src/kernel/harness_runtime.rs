@@ -26,8 +26,8 @@ use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_contract::{
-    HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest, HarnessTurnServices,
-    SessionQueue,
+    HarnessActionRequest, HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest,
+    HarnessTurnServices, SessionQueue,
 };
 use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 use crate::kernel::policy::RuntimePolicyManager;
@@ -75,12 +75,8 @@ pub(crate) trait HarnessInstance: Send {
         capabilities: Option<std::collections::BTreeMap<String, bool>>,
     );
     fn take_pending_session_branch_checkout(&self) -> Option<String>;
-    fn invoke_declared_action_for_agent(
-        &self,
-        agent_id: &str,
-        name: &str,
-        params: serde_json::Value,
-    ) -> Result<Option<serde_json::Value>>;
+    fn invoke_action(&self, request: HarnessActionRequest<'_>)
+    -> Result<Option<serde_json::Value>>;
     fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>>;
     fn invoke_virtual_tool(
         &self,
@@ -161,13 +157,11 @@ impl HarnessInstance for NativeHarnessInstance {
     fn take_pending_session_branch_checkout(&self) -> Option<String> {
         None
     }
-    fn invoke_declared_action_for_agent(
+    fn invoke_action(
         &self,
-        _agent_id: &str,
-        _name: &str,
-        _params: serde_json::Value,
+        request: HarnessActionRequest<'_>,
     ) -> Result<Option<serde_json::Value>> {
-        Ok(None)
+        self.harness.borrow_mut().on_action(request)
     }
     fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
         Ok(Vec::new())
@@ -281,14 +275,12 @@ impl HarnessInstance for LuaHarnessInstance {
         self.engine.take_pending_session_branch_checkout()
     }
 
-    fn invoke_declared_action_for_agent(
+    fn invoke_action(
         &self,
-        agent_id: &str,
-        name: &str,
-        params: serde_json::Value,
+        request: HarnessActionRequest<'_>,
     ) -> Result<Option<serde_json::Value>> {
         self.engine
-            .invoke_declared_action_for_agent(agent_id, name, params)
+            .invoke_declared_action_for_agent(request.agent_id, request.name, request.params)
     }
 
     fn declared_virtual_tools(&self) -> Result<Vec<DeclaredVirtualTool>> {
