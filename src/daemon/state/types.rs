@@ -1,5 +1,4 @@
 use serde::Serialize;
-use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_protocol::{SessionSearchHitKind, UiIntentMessage};
 
 use crate::kernel::event::InferenceRequestMetrics;
@@ -26,18 +25,6 @@ pub struct HarnessDetail {
     pub loaded_scripts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ui_intents: Vec<UiIntentMessage>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChannelDetail {
-    pub id: String,
-    pub directory: String,
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
-    pub idle_timeout_seconds: Option<u64>,
-    pub settings: serde_json::Value,
-    pub adapter: Option<ChannelAdapterManifest>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -17,7 +17,6 @@ mod access;
 mod bindings;
 mod config;
 mod driver_loop;
-mod presence;
 mod sidecar;
 mod stream;
 mod task_payloads;
@@ -28,7 +27,6 @@ pub use access::{
 };
 pub use bindings::FileBindingStore;
 pub use config::{RunnerConfig, task_timeout_ms_from_settings, tools_config_from_settings};
-pub use presence::{RunnerPresence, announce_runner_presence, spawn_runner_heartbeat};
 pub use sidecar::{
     ChannelSidecarRun, ChannelSidecarRunArgs, init_channel_tracing, parse_auth_flow_poll_request,
     parse_auth_flow_start_request, parse_channel_settings_json, prepare_channel_sidecar_run,

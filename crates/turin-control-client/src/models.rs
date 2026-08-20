@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use turin_channel_core::ChannelAdapterManifest;
 use turin_daemon_protocol::{SessionSearchHitKind, UiIntentMessage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,8 +14,6 @@ pub struct DaemonStatus {
     pub agent_runtimes: Vec<AgentRuntime>,
     #[serde(default)]
     pub live_sessions: Vec<LiveSession>,
-    #[serde(default)]
-    pub channel_runtimes: Vec<ChannelRuntime>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,8 +22,6 @@ pub struct RegistrySnapshot {
     pub agents: Vec<AgentSummary>,
     #[serde(default)]
     pub shared_harnesses: Vec<SharedHarnessSummary>,
-    #[serde(default)]
-    pub channels: Vec<ChannelSummary>,
     #[serde(default)]
     pub issues: Vec<Issue>,
 }
@@ -43,14 +38,6 @@ pub struct AgentSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedHarnessSummary {
     pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelSummary {
-    pub id: String,
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,81 +131,6 @@ pub struct AgentDetail {
     pub harness: Option<String>,
     pub idle_timeout_seconds: Option<u64>,
     pub has_local_harness: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelDetail {
-    pub id: String,
-    pub directory: String,
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
-    pub idle_timeout_seconds: Option<u64>,
-    pub settings: Value,
-    #[serde(default)]
-    pub adapter: Option<ChannelAdapterManifest>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelRunnerHandshake {
-    pub display_name: String,
-    pub protocol_version: u32,
-    pub runner_binary: Option<String>,
-    pub runner_version: Option<String>,
-    pub pid: Option<u32>,
-    pub last_handshake_unix_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelRuntime {
-    pub id: String,
-    pub kind: String,
-    pub agent_id: String,
-    pub directory: String,
-    pub state: String,
-    pub last_error: Option<String>,
-    pub last_error_code: Option<String>,
-    pub start_count: u64,
-    pub restart_count: u64,
-    pub failure_count: u64,
-    pub last_transition_unix_ms: u64,
-    pub last_started_unix_ms: Option<u64>,
-    pub last_stopped_unix_ms: Option<u64>,
-    #[serde(default)]
-    pub handshake: Option<ChannelRunnerHandshake>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelAccessRoom {
-    pub channel: String,
-    pub workspace_id: String,
-    pub room_id: Option<String>,
-    pub thread_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovedChannelRoom {
-    pub room: ChannelAccessRoom,
-    pub approved_at_unix_seconds: u64,
-    pub approved_by_user_id: Option<String>,
-    pub approved_by_username: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingChannelRoom {
-    pub room: ChannelAccessRoom,
-    pub first_seen_unix_seconds: u64,
-    pub last_seen_unix_seconds: u64,
-    pub sample_user_id: Option<String>,
-    pub sample_username: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ChannelAccessState {
-    #[serde(default)]
-    pub approved_rooms: Vec<ApprovedChannelRoom>,
-    #[serde(default)]
-    pub pending_rooms: Vec<PendingChannelRoom>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

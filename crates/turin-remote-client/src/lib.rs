@@ -404,7 +404,6 @@ mod tests {
                 scoped_event_snapshots: true,
                 lag_resnapshot: true,
                 watcher_rescan_failed_events: true,
-                channels: true,
             },
         };
         let err =

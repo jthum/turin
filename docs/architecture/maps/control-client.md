@@ -30,8 +30,6 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   - Worklist and work-item convenience methods.
 - `crates/turin-control-client/src/memories.rs`
   - Bounded memory inspection convenience method.
-- `crates/turin-control-client/src/channels.rs`
-  - Agent/channel detail, channel runtime status, settings update, and access-room convenience methods.
 - `crates/turin-control-client/tests/connectivity.rs`
   - Local/remote connectivity and workflow coverage, including the Release
     Operator harness UI fixture and dynamic UI side effects from actions.
@@ -73,6 +71,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - `ControlHealth::agent_count` counts effective configured runtime agents, including
   the bootstrap agent; the filesystem registry alone is not a complete inventory.
+- Messaging relays use this generic client facade. Relay configuration, access
+  policy, bindings, and process health must not become control-client domains.
 - UI/manager presentation formatting does not belong in this crate.
 - Daemon wire-shape changes should be made in `turin-daemon-protocol` first, then reflected here.
 

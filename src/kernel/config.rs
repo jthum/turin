@@ -260,8 +260,6 @@ pub struct DaemonConfig {
     pub agents_dir: String,
     #[serde(default = "default_daemon_harnesses_dir")]
     pub harnesses_dir: String,
-    #[serde(default = "default_daemon_channels_dir")]
-    pub channels_dir: String,
     #[serde(default = "default_daemon_runtime_db")]
     pub runtime_db: String,
     #[serde(default = "default_daemon_endpoint")]
@@ -273,7 +271,6 @@ impl Default for DaemonConfig {
         Self {
             agents_dir: default_daemon_agents_dir(),
             harnesses_dir: default_daemon_harnesses_dir(),
-            channels_dir: default_daemon_channels_dir(),
             runtime_db: default_daemon_runtime_db(),
             endpoint: default_daemon_endpoint(),
         }
@@ -551,17 +548,6 @@ impl TurinConfig {
         )
     }
 
-    pub fn resolve_daemon_channels_dir(&self, base: &Path) -> PathBuf {
-        let layout = self.resolved_layout(base);
-        resolve_runtime_path(
-            base,
-            &self.kernel.workspace_root,
-            &self.daemon.channels_dir,
-            default_daemon_channels_dir().as_str(),
-            &layout.channels_dir,
-        )
-    }
-
     pub fn resolve_daemon_runtime_db(&self, base: &Path) -> PathBuf {
         let layout = self.resolved_layout(base);
         resolve_runtime_path(
@@ -596,7 +582,6 @@ impl TurinConfig {
         self.layout.stores_dir = layout.stores_dir.display().to_string();
         self.layout.harnesses_dir = layout.harnesses_dir.display().to_string();
         self.layout.agents_dir = layout.agents_dir.display().to_string();
-        self.layout.channels_dir = layout.channels_dir.display().to_string();
         self.layout.scopes_dir = layout.scopes_dir.display().to_string();
         self.layout.env_file = layout.env_file.display().to_string();
         self.layout.daemon_socket = layout.daemon_socket.display().to_string();
@@ -626,12 +611,6 @@ impl TurinConfig {
             &mut self.daemon.harnesses_dir,
             default_daemon_harnesses_dir().as_str(),
             &layout.harnesses_dir,
-            &workspace_root,
-        );
-        normalize_workspace_runtime_path(
-            &mut self.daemon.channels_dir,
-            default_daemon_channels_dir().as_str(),
-            &layout.channels_dir,
             &workspace_root,
         );
         normalize_workspace_runtime_path(

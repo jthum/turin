@@ -10,10 +10,9 @@ pub(in crate::commands::daemon) fn print_daemon_status(status: DaemonStatusView)
     println!("Workspace: {}", status.workspace_root);
     println!("Endpoint:  {}", status.endpoint);
     println!(
-        "Agents:    {} daemon-managed, {} shared harnesses, {} channels, {} issues",
+        "Agents:    {} daemon-managed, {} shared harnesses, {} issues",
         status.registry.agents.len(),
         status.registry.shared_harnesses.len(),
-        status.registry.channels.len(),
         status.registry.issues.len()
     );
 

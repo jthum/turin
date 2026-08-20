@@ -34,6 +34,9 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - Plain daemon filesystem paths share one normalization helper; the daemon endpoint stays separate because local IPC endpoint resolution has different semantics.
 - `runtime.linked_runtime_lanes` is a positive startup-stable global default; an
   agent's positive `linked_runtime_lanes` overrides it for that profile.
+- External client and messaging-relay configuration is not part of
+  `TurinConfig`. Turin config owns runtime behavior, not client credentials,
+  bindings, access policy, or process lifecycle.
 
 ## Common Changes
 

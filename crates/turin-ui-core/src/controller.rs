@@ -10,10 +10,7 @@ use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
-use turin_control_client::{
-    ChannelAccessState, ChannelDetail, ConnectionSpec, ControlClient, SessionDetail,
-    SessionSearchHit,
-};
+use turin_control_client::{ConnectionSpec, ControlClient, SessionDetail, SessionSearchHit};
 use turin_daemon_protocol::{
     EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
     SessionSearchScope, WorkItemList, WorklistItemsParams, WorklistListParams,
@@ -49,14 +46,6 @@ pub struct UiController {
 pub enum UiUpdate {
     Snapshot(Box<DashboardSnapshot>),
     SessionDetail(Box<SessionDetail>),
-    ChannelDetail {
-        channel_id: String,
-        detail: Box<ChannelDetail>,
-    },
-    ChannelAccess {
-        channel_id: String,
-        access: Box<ChannelAccessState>,
-    },
     SearchResults {
         query: String,
         scope: SessionSearchScope,
@@ -103,12 +92,6 @@ pub enum OperatorCommand {
         session_id: String,
         message_limit: Option<usize>,
     },
-    LoadChannelAccess {
-        channel_id: String,
-    },
-    LoadChannelDetail {
-        channel_id: String,
-    },
     SearchSessions {
         query: String,
         scope: SessionSearchScope,
@@ -153,28 +136,6 @@ pub enum OperatorCommand {
     },
     KillSession {
         session_id: String,
-    },
-    ApproveChannelRoom {
-        channel_id: String,
-        workspace_id: String,
-        room_id: Option<String>,
-        thread_id: String,
-    },
-    RejectChannelRoom {
-        channel_id: String,
-        workspace_id: String,
-        room_id: Option<String>,
-        thread_id: String,
-    },
-    RevokeChannelRoom {
-        channel_id: String,
-        workspace_id: String,
-        room_id: Option<String>,
-        thread_id: String,
-    },
-    UpdateChannelSettings {
-        channel_id: String,
-        settings: serde_json::Value,
     },
     CancelTask {
         request_id: String,
@@ -286,7 +247,6 @@ pub struct ConnectionPreflightReport {
     pub wire_format: Option<String>,
     pub issue_count: Option<usize>,
     pub agent_count: Option<usize>,
-    pub channel_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1001,7 +961,6 @@ pub fn preflight_connection_blocking(options: &ConnectionOptions) -> ConnectionP
                 .map(|health| health.wire_format.clone());
             let issue_count = dashboard.health.as_ref().map(|health| health.issue_count);
             let agent_count = dashboard.health.as_ref().map(|health| health.agent_count);
-            let channel_count = dashboard.health.as_ref().map(|health| health.channel_count);
             ConnectionPreflightReport {
                 outcome: if ready {
                     ConnectionPreflightOutcome::Ready
@@ -1023,7 +982,6 @@ pub fn preflight_connection_blocking(options: &ConnectionOptions) -> ConnectionP
                 wire_format,
                 issue_count,
                 agent_count,
-                channel_count,
             }
         }
         Err(err) => ConnectionPreflightReport {
@@ -1039,7 +997,6 @@ pub fn preflight_connection_blocking(options: &ConnectionOptions) -> ConnectionP
             wire_format: None,
             issue_count: None,
             agent_count: None,
-            channel_count: None,
         },
     }
 }
@@ -1099,7 +1056,6 @@ fn invalid_preflight_report(
         wire_format: None,
         issue_count: None,
         agent_count: None,
-        channel_count: None,
     }
 }
 
@@ -1732,50 +1688,6 @@ fn spawn_command_task(
                 continue;
             }
 
-            if let OperatorCommand::LoadChannelAccess { channel_id } = &command {
-                match client.channel_access(channel_id.as_str()).await {
-                    Ok(access) => {
-                        if tx
-                            .send(UiUpdate::ChannelAccess {
-                                channel_id: channel_id.clone(),
-                                access: Box::new(access),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let OperatorCommand::LoadChannelDetail { channel_id } = &command {
-                match client.get_channel(channel_id.as_str()).await {
-                    Ok(detail) => {
-                        if tx
-                            .send(UiUpdate::ChannelDetail {
-                                channel_id: channel_id.clone(),
-                                detail: Box::new(detail),
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
             if let OperatorCommand::SearchSessions {
                 query,
                 scope,
@@ -1886,170 +1798,6 @@ fn spawn_command_task(
                 continue;
             }
 
-            if let OperatorCommand::ApproveChannelRoom {
-                channel_id,
-                workspace_id,
-                room_id,
-                thread_id,
-            } = &command
-            {
-                match client
-                    .approve_channel_room(
-                        channel_id.as_str(),
-                        workspace_id.as_str(),
-                        room_id.as_deref(),
-                        thread_id.as_str(),
-                    )
-                    .await
-                {
-                    Ok(access) => {
-                        if tx
-                            .send(UiUpdate::ChannelAccess {
-                                channel_id: channel_id.clone(),
-                                access: Box::new(access),
-                            })
-                            .is_err()
-                            || tx
-                                .send(UiUpdate::Info(format!(
-                                    "Approved room {} for channel {}",
-                                    room_id.as_deref().unwrap_or(thread_id.as_str()),
-                                    channel_id
-                                )))
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let OperatorCommand::RejectChannelRoom {
-                channel_id,
-                workspace_id,
-                room_id,
-                thread_id,
-            } = &command
-            {
-                match client
-                    .reject_channel_room(
-                        channel_id.as_str(),
-                        workspace_id.as_str(),
-                        room_id.as_deref(),
-                        thread_id.as_str(),
-                    )
-                    .await
-                {
-                    Ok(access) => {
-                        if tx
-                            .send(UiUpdate::ChannelAccess {
-                                channel_id: channel_id.clone(),
-                                access: Box::new(access),
-                            })
-                            .is_err()
-                            || tx
-                                .send(UiUpdate::Info(format!(
-                                    "Rejected pending room {} for channel {}",
-                                    room_id.as_deref().unwrap_or(thread_id.as_str()),
-                                    channel_id
-                                )))
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let OperatorCommand::RevokeChannelRoom {
-                channel_id,
-                workspace_id,
-                room_id,
-                thread_id,
-            } = &command
-            {
-                match client
-                    .revoke_channel_room(
-                        channel_id.as_str(),
-                        workspace_id.as_str(),
-                        room_id.as_deref(),
-                        thread_id.as_str(),
-                    )
-                    .await
-                {
-                    Ok(access) => {
-                        if tx
-                            .send(UiUpdate::ChannelAccess {
-                                channel_id: channel_id.clone(),
-                                access: Box::new(access),
-                            })
-                            .is_err()
-                            || tx
-                                .send(UiUpdate::Info(format!(
-                                    "Revoked room {} for channel {}",
-                                    room_id.as_deref().unwrap_or(thread_id.as_str()),
-                                    channel_id
-                                )))
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if let OperatorCommand::UpdateChannelSettings {
-                channel_id,
-                settings,
-            } = &command
-            {
-                match client
-                    .update_channel_settings(channel_id.as_str(), settings.clone())
-                    .await
-                {
-                    Ok(detail) => {
-                        if tx
-                            .send(UiUpdate::ChannelDetail {
-                                channel_id: channel_id.clone(),
-                                detail: Box::new(detail),
-                            })
-                            .is_err()
-                            || tx
-                                .send(UiUpdate::Info(format!(
-                                    "Updated settings for channel {}",
-                                    channel_id
-                                )))
-                                .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        if tx.send(UiUpdate::Error(err.to_string())).is_err() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
             match execute_operator_command(&client, command).await {
                 Ok(message) => {
                     if tx.send(UiUpdate::Info(message)).is_err() {
@@ -2153,8 +1901,6 @@ pub async fn execute_operator_command(
             Ok("Updated focused session stream".to_string())
         }
         OperatorCommand::LoadSessionDetail { .. } => Ok("Loaded session detail".to_string()),
-        OperatorCommand::LoadChannelAccess { .. } => Ok("Loaded channel access".to_string()),
-        OperatorCommand::LoadChannelDetail { .. } => Ok("Loaded channel detail".to_string()),
         OperatorCommand::SearchSessions { .. } => {
             Ok("Loaded persisted session search results".to_string())
         }
@@ -2248,57 +1994,6 @@ pub async fn execute_operator_command(
                 "Killed session {} ({})",
                 result.session_id, result.agent_id
             ))
-        }
-        OperatorCommand::ApproveChannelRoom {
-            channel_id,
-            workspace_id,
-            room_id,
-            thread_id,
-        } => {
-            let access = client
-                .approve_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
-                .await?;
-            Ok(format!(
-                "Approved room {} for channel {} ({} approved total)",
-                room_id.unwrap_or_else(|| thread_id.clone()),
-                channel_id,
-                access.approved_rooms.len()
-            ))
-        }
-        OperatorCommand::RejectChannelRoom {
-            channel_id,
-            workspace_id,
-            room_id,
-            thread_id,
-        } => {
-            let access = client
-                .reject_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
-                .await?;
-            Ok(format!(
-                "Rejected pending room {} for channel {} ({} pending remain)",
-                room_id.unwrap_or_else(|| thread_id.clone()),
-                channel_id,
-                access.pending_rooms.len()
-            ))
-        }
-        OperatorCommand::RevokeChannelRoom {
-            channel_id,
-            workspace_id,
-            room_id,
-            thread_id,
-        } => {
-            let access = client
-                .revoke_channel_room(&channel_id, &workspace_id, room_id.as_deref(), &thread_id)
-                .await?;
-            Ok(format!(
-                "Revoked room {} for channel {} ({} approved remain)",
-                room_id.unwrap_or_else(|| thread_id.clone()),
-                channel_id,
-                access.approved_rooms.len()
-            ))
-        }
-        OperatorCommand::UpdateChannelSettings { channel_id, .. } => {
-            Ok(format!("Updated settings for channel {}", channel_id))
         }
         OperatorCommand::CancelTask { request_id } => {
             let task = client.cancel_task(&request_id).await?;

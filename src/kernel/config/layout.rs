@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use turin_types::layout::{
-    DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET,
-    DEFAULT_LAYOUT_DATA_DIR, DEFAULT_LAYOUT_ENV_FILE, DEFAULT_LAYOUT_HARNESSES_DIR,
-    DEFAULT_LAYOUT_SCOPES_DIR, DEFAULT_LAYOUT_STATES_DIR, DEFAULT_LAYOUT_STORES_DIR, config_dir,
-    config_workspace_anchor, resolve_relative_to,
+    DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET, DEFAULT_LAYOUT_DATA_DIR,
+    DEFAULT_LAYOUT_ENV_FILE, DEFAULT_LAYOUT_HARNESSES_DIR, DEFAULT_LAYOUT_SCOPES_DIR,
+    DEFAULT_LAYOUT_STATES_DIR, DEFAULT_LAYOUT_STORES_DIR, config_dir, config_workspace_anchor,
+    resolve_relative_to,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -22,8 +22,6 @@ pub struct LayoutConfig {
     pub harnesses_dir: String,
     #[serde(default = "default_layout_agents_dir")]
     pub agents_dir: String,
-    #[serde(default = "default_layout_channels_dir")]
-    pub channels_dir: String,
     #[serde(default = "default_layout_scopes_dir")]
     pub scopes_dir: String,
     #[serde(default = "default_layout_env_file")]
@@ -41,7 +39,6 @@ impl Default for LayoutConfig {
             stores_dir: default_layout_stores_dir(),
             harnesses_dir: default_layout_harnesses_dir(),
             agents_dir: default_layout_agents_dir(),
-            channels_dir: default_layout_channels_dir(),
             scopes_dir: default_layout_scopes_dir(),
             env_file: default_layout_env_file(),
             daemon_socket: default_layout_daemon_socket(),
@@ -61,7 +58,6 @@ pub struct ResolvedLayout {
     pub default_state_db: PathBuf,
     pub harnesses_dir: PathBuf,
     pub agents_dir: PathBuf,
-    pub channels_dir: PathBuf,
     pub scopes_dir: PathBuf,
     pub env_file: PathBuf,
     pub daemon_socket: PathBuf,
@@ -91,7 +87,6 @@ impl LayoutConfig {
         let stores_dir = resolve_relative_to(&data_dir, Path::new(&self.stores_dir));
         let harnesses_dir = resolve_relative_to(&root, Path::new(&self.harnesses_dir));
         let agents_dir = resolve_relative_to(&root, Path::new(&self.agents_dir));
-        let channels_dir = resolve_relative_to(&root, Path::new(&self.channels_dir));
         let scopes_dir = resolve_relative_to(&root, Path::new(&self.scopes_dir));
         let env_file = resolve_relative_to(&root, Path::new(&self.env_file));
         let daemon_socket = resolve_relative_to(&root, Path::new(&self.daemon_socket));
@@ -107,7 +102,6 @@ impl LayoutConfig {
             default_state_db: data_dir.join("state.db"),
             harnesses_dir,
             agents_dir,
-            channels_dir,
             scopes_dir,
             env_file,
             daemon_socket,
@@ -133,10 +127,6 @@ pub fn default_layout_harnesses_dir() -> String {
 
 pub fn default_layout_agents_dir() -> String {
     DEFAULT_LAYOUT_AGENTS_DIR.to_string()
-}
-
-pub fn default_layout_channels_dir() -> String {
-    DEFAULT_LAYOUT_CHANNELS_DIR.to_string()
 }
 
 pub fn default_layout_scopes_dir() -> String {

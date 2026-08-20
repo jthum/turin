@@ -19,7 +19,7 @@ This subsystem should preserve three guarantees:
 - `src/dispatch.rs`
   - Top-level command routing: run/repl/script/init/quickstart/check/harness/daemon.
 - `src/dispatch/daemon.rs`
-  - Daemon command routing for control, agents, tasks, harnesses, channels, sessions, and CLI channel-setting parsing.
+  - Daemon command routing for control, agents, tasks, harnesses, and sessions.
 - `src/commands/*`
   - Actual command behavior, IO, daemon client calls, rendering, and runtime interactions.
 
@@ -35,7 +35,6 @@ This subsystem should preserve three guarantees:
 - Keep root dispatch and daemon dispatch separate.
 - Do not put daemon protocol or state logic in dispatch.
 - CLI-only JSON payload construction should be small and visible near the subcommand it supports.
-- Channel `--setting KEY=VALUE` parsing accepts JSON values when possible and strings otherwise.
 
 ## Common Changes
 

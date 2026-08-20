@@ -1,12 +1,9 @@
-use super::{
-    AgentSummary, ChannelSummary, HarnessKind, RegistryLoad, RegistrySnapshot, SharedHarnessSummary,
-};
+use super::{AgentSummary, HarnessKind, RegistryLoad, RegistrySnapshot, SharedHarnessSummary};
 
 pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
     RegistrySnapshot {
         agents_dir: load.agents_dir.display().to_string(),
         harnesses_dir: load.harnesses_dir.display().to_string(),
-        channels_dir: load.channels_dir.display().to_string(),
         agents: load
             .agents
             .iter()
@@ -30,18 +27,6 @@ pub fn snapshot(load: &RegistryLoad) -> RegistrySnapshot {
             .map(|harness| SharedHarnessSummary {
                 id: harness.id.clone(),
                 directory: harness.directory.display().to_string(),
-            })
-            .collect(),
-        channels: load
-            .channels
-            .iter()
-            .map(|channel| ChannelSummary {
-                id: channel.id.clone(),
-                directory: channel.directory.display().to_string(),
-                enabled: channel.enabled,
-                kind: channel.kind.clone(),
-                agent_id: channel.agent_id.clone(),
-                idle_timeout_seconds: channel.idle_timeout_seconds,
             })
             .collect(),
         issues: load.issues.clone(),

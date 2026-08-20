@@ -164,7 +164,7 @@ session state, invent renderer-specific harness APIs, or bypass
   provider URLs or unvalidated model overrides. Harness turn policy remains able
   to replace that requested route.
 - Opening the Assistant starts from a browser-local fresh-conversation draft. Persisted or live
-  sessions are selected explicitly rather than adopting an unrelated channel runtime by default.
+  sessions are selected explicitly rather than adopting an unrelated live runtime by default.
 - Browser matching between persisted summaries and live sessions must compare bare and
   store-qualified session references by session identity.
 - A browser-held live-session snapshot is advisory. Follow-up sends must re-establish

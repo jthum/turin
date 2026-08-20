@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 use crate::cli::{
-    DaemonAgentCommands, DaemonChannelCommands, DaemonCommands, DaemonHarnessCommands,
-    DaemonSessionCommands, DaemonTaskCommands,
+    DaemonAgentCommands, DaemonCommands, DaemonHarnessCommands, DaemonSessionCommands,
+    DaemonTaskCommands,
 };
 use crate::commands;
 
@@ -80,7 +80,6 @@ pub(super) async fn handle_daemon_command(
         DaemonCommands::Agent { command } => handle_daemon_agent_command(command).await,
         DaemonCommands::Task { command } => handle_daemon_task_command(command).await,
         DaemonCommands::Harness { command } => handle_daemon_harness_command(command).await,
-        DaemonCommands::Channel { command } => handle_daemon_channel_command(command).await,
         DaemonCommands::Session { command } => handle_daemon_session_command(command).await,
     }
 }
@@ -266,126 +265,6 @@ async fn handle_daemon_harness_command(command: DaemonHarnessCommands) -> Result
     }
 }
 
-async fn handle_daemon_channel_command(command: DaemonChannelCommands) -> Result<()> {
-    match command {
-        DaemonChannelCommands::List { args } => {
-            commands::daemon::run_channel_list(&args.config.config, args.json).await
-        }
-        DaemonChannelCommands::Create {
-            id,
-            kind,
-            agent,
-            idle_timeout_seconds,
-            disabled,
-            settings,
-            args,
-        } => {
-            commands::daemon::run_channel_create(
-                &args.config.config,
-                serde_json::json!({
-                    "id": id,
-                    "kind": kind,
-                    "agent_id": agent,
-                    "idle_timeout_seconds": idle_timeout_seconds,
-                    "enabled": !disabled,
-                    "settings": parse_cli_settings(&settings)?,
-                }),
-                args.json,
-            )
-            .await
-        }
-        DaemonChannelCommands::Get { id, args } => {
-            commands::daemon::run_channel_get(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Status { id, args } => {
-            commands::daemon::run_channel_status(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Issues { id, args } => {
-            commands::daemon::run_channel_issues(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Enable { id, args } => {
-            commands::daemon::run_channel_enable(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Disable { id, args } => {
-            commands::daemon::run_channel_disable(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Update {
-            id,
-            kind,
-            agent,
-            idle_timeout_seconds,
-            settings,
-            args,
-        } => {
-            let settings = if settings.is_empty() {
-                None
-            } else {
-                Some(parse_cli_settings(&settings)?)
-            };
-            commands::daemon::run_channel_update(
-                &args.config.config,
-                serde_json::json!({
-                    "id": id,
-                    "kind": kind,
-                    "agent_id": agent,
-                    "idle_timeout_seconds": idle_timeout_seconds,
-                    "settings": settings,
-                }),
-                args.json,
-            )
-            .await
-        }
-        DaemonChannelCommands::Access { id, args } => {
-            commands::daemon::run_channel_access(&args.config.config, &id, args.json).await
-        }
-        DaemonChannelCommands::Approve {
-            id,
-            workspace_id,
-            room_id,
-            thread_id,
-            args,
-        } => {
-            commands::daemon::run_channel_approve(
-                &args.config.config,
-                channel_access_room_payload(id, workspace_id, room_id, thread_id),
-                args.json,
-            )
-            .await
-        }
-        DaemonChannelCommands::Reject {
-            id,
-            workspace_id,
-            room_id,
-            thread_id,
-            args,
-        } => {
-            commands::daemon::run_channel_reject(
-                &args.config.config,
-                channel_access_room_payload(id, workspace_id, room_id, thread_id),
-                args.json,
-            )
-            .await
-        }
-        DaemonChannelCommands::Revoke {
-            id,
-            workspace_id,
-            room_id,
-            thread_id,
-            args,
-        } => {
-            commands::daemon::run_channel_revoke(
-                &args.config.config,
-                channel_access_room_payload(id, workspace_id, room_id, thread_id),
-                args.json,
-            )
-            .await
-        }
-        DaemonChannelCommands::Delete { id, args } => {
-            commands::daemon::run_channel_delete(&args.config.config, &id, args.json).await
-        }
-    }
-}
-
 async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result<()> {
     match command {
         DaemonSessionCommands::List {
@@ -500,66 +379,5 @@ async fn handle_daemon_session_command(command: DaemonSessionCommands) -> Result
             )
             .await
         }
-    }
-}
-
-fn channel_access_room_payload(
-    id: String,
-    workspace_id: String,
-    room_id: Option<String>,
-    thread_id: String,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "workspace_id": workspace_id,
-        "room_id": room_id,
-        "thread_id": thread_id,
-    })
-}
-
-fn parse_cli_settings(entries: &[String]) -> Result<serde_json::Value> {
-    let mut settings = serde_json::Map::new();
-    for entry in entries {
-        let (key, raw_value) = entry
-            .split_once('=')
-            .ok_or_else(|| anyhow::anyhow!("Invalid setting '{}'; expected key=value", entry))?;
-        if key.trim().is_empty() {
-            anyhow::bail!("Invalid setting '{}'; key cannot be empty", entry);
-        }
-        let value = serde_json::from_str(raw_value)
-            .unwrap_or_else(|_| serde_json::Value::String(raw_value.to_string()));
-        settings.insert(key.to_string(), value);
-    }
-    Ok(serde_json::Value::Object(settings))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_cli_settings;
-    use serde_json::json;
-
-    #[test]
-    fn parse_cli_settings_parses_json_and_strings() {
-        let value = parse_cli_settings(&[
-            "chat_id=123".to_string(),
-            "token_env=TELEGRAM_BOT_TOKEN".to_string(),
-            "enabled=true".to_string(),
-        ])
-        .expect("settings should parse");
-
-        assert_eq!(
-            value,
-            json!({
-                "chat_id": 123,
-                "token_env": "TELEGRAM_BOT_TOKEN",
-                "enabled": true,
-            })
-        );
-    }
-
-    #[test]
-    fn parse_cli_settings_rejects_missing_separator() {
-        let err = parse_cli_settings(&["broken".to_string()]).expect_err("should reject");
-        assert!(err.to_string().contains("expected key=value"));
     }
 }

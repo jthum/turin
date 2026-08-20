@@ -15,7 +15,6 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
         config_path: PathBuf::from("/tmp/turin/.turin/config.toml"),
         agents_dir: PathBuf::from("/tmp/turin/.turin/agents"),
         harnesses_dir: PathBuf::from("/tmp/turin/.turin/harnesses"),
-        channels_dir: PathBuf::from("/tmp/turin/.turin/channels"),
     };
 
     assert!(should_rescan_daemon(
@@ -38,14 +37,14 @@ fn rescan_filter_ignores_harness_script_edits_but_tracks_registry_changes() {
         &watch_paths,
         &[PathBuf::from("/tmp/turin/.turin/harnesses/reviewer")]
     ));
-    assert!(should_rescan_daemon(
+    assert!(!should_rescan_daemon(
         &watch_paths,
-        &[PathBuf::from("/tmp/turin/.turin/channels/discord")]
+        &[PathBuf::from("/tmp/turin/.turin/relays/discord")]
     ));
-    assert!(should_rescan_daemon(
+    assert!(!should_rescan_daemon(
         &watch_paths,
         &[PathBuf::from(
-            "/tmp/turin/.turin/channels/discord/config.toml"
+            "/tmp/turin/.turin/relays/discord/config.toml"
         )]
     ));
 
@@ -72,10 +71,8 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         registry: RegistrySnapshot {
             agents_dir: "/tmp/work/.turin/agents".to_string(),
             harnesses_dir: "/tmp/work/.turin/harnesses".to_string(),
-            channels_dir: "/tmp/work/.turin/channels".to_string(),
             agents: Vec::new(),
             shared_harnesses: Vec::new(),
-            channels: Vec::new(),
             issues: Vec::new(),
         },
         harnesses: Vec::new(),
@@ -91,8 +88,8 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
         path: "/tmp/work/.turin/harnesses/reviewer/main.lua".to_string(),
         message: "bad lua".to_string(),
     };
-    let channel_issue = RegistryIssue {
-        path: "/tmp/work/.turin/channels/discord/config.toml".to_string(),
+    let relay_issue = RegistryIssue {
+        path: "/tmp/work/.turin/relays/discord/config.toml".to_string(),
         message: "bad toml".to_string(),
     };
 
@@ -106,10 +103,7 @@ fn classify_registry_issue_recognizes_agent_and_harness_paths() {
     assert_eq!(harness_event, "harness.load_failed");
     assert_eq!(harness_data["harness_id"], "reviewer");
 
-    let (channel_event, channel_data) =
-        classify_registry_issue(&status, &channel_issue).expect("channel issue classified");
-    assert_eq!(channel_event, "channel.load_failed");
-    assert_eq!(channel_data["channel_id"], "discord");
+    assert!(classify_registry_issue(&status, &relay_issue).is_none());
 }
 
 #[test]

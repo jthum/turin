@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Result;
-use turin_control_client::{ChannelRuntime, ConnectionSpec, ControlClient};
-
 use crate::files::{ConfiguredChannel, load_configured_channels};
 use crate::runner::{describe_external_runner, discover_external_runner_kinds};
+use anyhow::Result;
 
 use super::super::{ChannelsListArgs, ChannelsStatusArgs};
 
@@ -74,69 +72,30 @@ pub(crate) async fn run_channels_status(args: ChannelsStatusArgs) -> Result<()> 
         return Ok(());
     }
 
-    let mut runtimes_by_id = BTreeMap::new();
-    let daemon_note = match ControlClient::connect(&ConnectionSpec::LocalConfig {
-        config_path: args.config.clone(),
-    })
-    .await
-    {
-        Ok(client) => match client.status().await {
-            Ok(status) => {
-                for runtime in status.channel_runtimes {
-                    runtimes_by_id.insert(runtime.id.clone(), runtime);
-                }
-                None
-            }
-            Err(err) => Some(format!("Daemon status unavailable: {err}")),
-        },
-        Err(err) => Some(format!("Daemon not reachable: {err}")),
-    };
-
-    if let Some(note) = &daemon_note {
-        println!("{note}");
-        println!(
-            "Showing configured channels only. Start Turin with `turin daemon start --config {}` for runtime state.",
-            args.config.display()
-        );
-        println!();
-    }
-
     let mut rows = Vec::new();
     rows.push(vec![
         "CHANNEL".to_string(),
         "KIND".to_string(),
         "ENABLED".to_string(),
         "AGENT".to_string(),
-        "STATE".to_string(),
-        "ERROR".to_string(),
+        "CONFIG".to_string(),
     ]);
 
     for channel in configured_channels {
-        let runtime = runtimes_by_id.get(&channel.id);
-        rows.push(channel_status_row(channel, runtime));
+        rows.push(channel_status_row(channel));
     }
 
     print_table(&rows);
     Ok(())
 }
 
-fn channel_status_row(channel: ConfiguredChannel, runtime: Option<&ChannelRuntime>) -> Vec<String> {
+fn channel_status_row(channel: ConfiguredChannel) -> Vec<String> {
     vec![
         channel.id,
         channel.kind,
         yes_no(channel.enabled),
         channel.agent_id.unwrap_or_else(|| "-".to_string()),
-        runtime
-            .map(|runtime| runtime.state.clone())
-            .unwrap_or_else(|| "unknown".to_string()),
-        runtime
-            .and_then(|runtime| {
-                runtime
-                    .last_error_code
-                    .clone()
-                    .or_else(|| runtime.last_error.clone())
-            })
-            .unwrap_or_else(|| "-".to_string()),
+        "configured".to_string(),
     ]
 }
 
@@ -230,32 +189,14 @@ mod tests {
     }
 
     #[test]
-    fn channel_status_row_prefers_error_code() {
+    fn channel_status_row_reports_configuration() {
         let channel = ConfiguredChannel {
             id: "telegram-main".to_string(),
             kind: "telegram".to_string(),
             enabled: true,
             agent_id: Some("default".to_string()),
         };
-        let runtime = ChannelRuntime {
-            id: "telegram-main".to_string(),
-            kind: "telegram".to_string(),
-            agent_id: "default".to_string(),
-            directory: "/tmp/channel".to_string(),
-            state: "failed".to_string(),
-            last_error: Some("boom".to_string()),
-            last_error_code: Some("channel_failed".to_string()),
-            start_count: 1,
-            restart_count: 0,
-            failure_count: 1,
-            last_transition_unix_ms: 10,
-            last_started_unix_ms: Some(5),
-            last_stopped_unix_ms: None,
-            handshake: None,
-        };
-
-        let row = channel_status_row(channel, Some(&runtime));
-        assert_eq!(row[4], "failed");
-        assert_eq!(row[5], "channel_failed");
+        let row = channel_status_row(channel);
+        assert_eq!(row[4], "configured");
     }
 }

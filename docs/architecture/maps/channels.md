@@ -1,234 +1,113 @@
-# Channels Map
+# Messaging Relays Map
 
 ## Purpose
 
-The channel subsystem connects external chat platforms to Turin daemon sessions. It owns sidecar process orchestration, adapter manifests, settings validation, inbound event normalization, access/pairing policy, conversation-to-session bindings, task submission, streaming progress, and outbound rendering.
+Messaging relays connect external services to Turin through the same daemon
+protocol used by any other client. Turin core does not discover, configure,
+launch, supervise, or expose messaging channels. It sees an opaque request
+origin plus ordinary sessions, tasks, events, and governance context.
 
-This subsystem should preserve three guarantees:
+The relay subsystem owns platform credentials, normalized inbound and outbound
+messages, access and pairing policy, durable conversation bindings, retries,
+streaming previews, and adapter process lifecycle.
 
-- adapters convert platform events into a common `InboundEvent` shape before daemon submission
-- access and pairing decisions are enforced by the shared runner, not separately per adapter
-- sidecar setup and run-loop behavior stays consistent across adapters
+## Boundary
+
+- A relay is an independently launched Turin client, not a daemon plugin.
+- Relay configuration lives under `.turin/relays` by manager convention and is
+  not part of `TurinConfig` or daemon registry state.
+- Conversation bindings and access state are durable relay-owned files.
+- The daemon accepts generic client requests and persists opaque `origin_id`
+  provenance; it has no channel ids, channel protocol operations, heartbeat,
+  or runtime snapshots.
+- Multiple platform adapters may run independently. A future combined relay
+  host may supervise several adapters without changing Turin core.
 
 ## Files
 
-Shared protocol and runner crates:
+Shared relay implementation:
 
-- `crates/turin-channel-core/src/lib.rs`
-  - Crate-root facade that re-exports common channel protocol, manifest, settings, auth-flow, and routing types.
-- `crates/turin-channel-core/src/messages.rs`
-  - Channel kind/conversation keys, users, attachments, inbound events, outbound messages, text bounds, prompt labels, and shared plain-text rendering/splitting helpers.
-- `crates/turin-channel-core/src/manifest.rs`
-  - Adapter/runtime/setup manifest shapes, setup-field helper constructors, adapter manifest validation, and protocol-version defaults.
-- `crates/turin-channel-core/src/settings.rs`
-  - Reusable JSON settings parsers for required/optional strings, booleans, numeric limits, session scopes, and string enums.
-- `crates/turin-channel-core/src/auth.rs`
-  - Auth-flow request/response/display DTOs shared by adapters, host, runner, and manager setup.
-- `crates/turin-channel-core/src/routing.rs`
-  - Conversation binding rows, TTL/reset-aware routing decisions, and binding timestamp helpers.
-- `crates/turin-channel-runner/src/lib.rs`
-  - Public runner API and `ChannelDriver` trait.
-- `crates/turin-channel-runner/src/sidecar.rs`
-  - Shared sidecar runtime setup: settings JSON parsing, auth-flow request parsing, tracing setup, shutdown watch, runner construction, presence announcement, heartbeat, and driver run handoff.
-- `crates/turin-channel-runner/src/access.rs`
-  - Pairing, allowed/banned user policy, approved/pending room state, access snapshots.
-- `crates/turin-channel-runner/src/bindings.rs`
-  - Durable conversation-to-session binding file storage.
-- `crates/turin-channel-runner/src/driver_loop.rs`
-  - Inbound event authorization, per-conversation queueing, worker spawning, streaming progress, completion delivery.
-- `crates/turin-channel-runner/src/task_payloads.rs`
-  - `InboundEvent` to task payload conversion and task snapshot to `OutboundMessage` conversion.
-- `crates/turin-channel-runner/src/stream.rs`
-  - Channel streaming modes and progress-preview policy.
-- `crates/turin-channel-runner/src/presence.rs`
-  - Runner hello and heartbeat helpers.
-- `crates/turin-channel-host/src/lib.rs`
-  - Host-side sidecar discovery and process invocation used by the daemon and `turin-manager`: binary/env names, workspace fallback, manifest description, settings validation, auth-flow commands, and runner-kind discovery.
+- `crates/turin-channel-core/src/*`
+  - Existing package name for normalized messaging types, manifests, settings,
+    auth-flow DTOs, and conversation routing decisions.
+- `crates/turin-channel-runner/src/*`
+  - Access policy, durable bindings, inbound queues, task submission, progress
+    streaming, completion delivery, and shared adapter startup.
+- `crates/turin-channel-host/src/*`
+  - Optional adapter discovery and invocation used by setup tooling. It is not
+    a Turin daemon dependency.
+- `crates/turin-manager/src/setup/channels/*`
+  - Messaging relay discovery and configuration tooling.
 
-Daemon-side runtime:
-
-- `src/daemon/channels.rs`
-  - Channel runtime manager, desired-state sync, heartbeat supervision, restart/backoff decisions, and runtime event emission.
-- `src/daemon/channels/runtime_state.rs`
-  - Runtime snapshot structs and named runtime-state transitions.
-- `src/daemon/channels/runner_process.rs`
-  - Built-in fs runner task startup and external sidecar process execution/shutdown/stderr handling.
-- `src/daemon/channel_runners.rs`
-  - Daemon-facing wrapper around host-side sidecar discovery plus the built-in `fs` manifest.
-- `src/daemon/state/channel_validation.rs`
-  - Channel config validation against adapter manifests and runtime state.
-- `src/daemon/server/dispatch/channel.rs`
-  - Daemon protocol dispatch for channel operations.
-
-Adapter crates:
+Adapters:
 
 - `crates/turin-channel-telegram/src/*`
-  - Telegram settings, polling/API, inbound normalization, media handling, delivery, outbound rendering.
-  - `outbound/html.rs` owns Telegram HTML/Markdown segment rendering; `outbound.rs` owns Telegram payload metadata, attachment preview, media naming, stream previews, and message batch construction.
 - `crates/turin-channel-rocketchat/src/*`
-  - Rocket.Chat settings, REST/realtime transport, inbound normalization, outbound rendering.
 - `crates/turin-channel-discord/src/*`
-  - Discord settings, REST/gateway transport, inbound normalization, outbound rendering.
 - `crates/turin-channel-whatsapp/src/*`
-  - WhatsApp settings, auth flow, bot runtime, inbound normalization, outbound rendering.
+- `crates/turin-channel-fs/src/*`
+  - Standalone filesystem relay and inexpensive integration-test adapter.
+
+The `turin-channel-*` package names are retained as messaging-domain names.
+They do not imply daemon ownership. A physical rename to `turin-relay-*` would
+be a separate repository/package migration with no architectural effect.
 
 ## Data Flow
 
-Sidecar startup:
-
-1. The daemon launches `turin-channel-<kind> run` with channel id, agent id, daemon endpoint, binding paths, access state path, idle timeout, and settings JSON.
-2. The adapter binary parses CLI args and calls `prepare_channel_sidecar_run`.
-3. Shared setup parses common settings, builds `ChannelAccessPolicy`, prepares the daemon client, runner, shutdown watch, heartbeat watch, runtime directory, common tools config, and task timeout.
-4. The adapter constructs its platform-specific `ChannelDriver`.
-5. The sidecar announces presence, starts heartbeat, and calls `run_driver`.
-
-Inbound event:
-
-1. The adapter receives a platform event and normalizes it into `InboundEvent`.
-2. `driver_loop.rs` authorizes the event through shared access/pairing policy.
-3. The runner serializes the conversation key and either reuses or opens a daemon session.
-4. `task_payloads.rs` maps event text and attachments into task prompt/content.
-5. The daemon task is submitted, optionally streamed, then waited on.
-6. The task result is converted to `OutboundMessage`.
-7. The adapter renders and sends the platform-specific outbound message.
-
-Pairing:
-
-1. When pairing is off, user allow/ban policy applies directly.
-2. When pairing is pending or auto, access state is keyed by room/conversation.
-3. Auto pairing approves eligible rooms immediately.
-4. Pending pairing stores a pending room and sends the pending-approval message once per room.
-5. Approved rooms still honor `allowed_users` and `banned_users`.
-
-Conversation bindings:
-
-1. A `ChannelConversationKey` is serialized as the binding key.
-2. Existing bindings are routed through `decide_routing`.
-3. Expired or reset bindings open fresh sessions.
-4. Reused bindings resume existing sessions.
-5. Bindings are saved after the session is established.
+1. An operator or process launches an adapter with its relay configuration and
+   Turin connection details.
+2. The adapter normalizes a platform event into `InboundEvent`.
+3. The shared runner enforces access policy and resolves the durable platform
+   conversation binding.
+4. The runner opens/resumes a Turin session and submits an ordinary task with
+   opaque origin provenance.
+5. It follows task events, renders progress/completion for the platform, and
+   updates its own binding state.
 
 ## Invariants
 
-- Platform adapters should own platform normalization and rendering only.
-- Shared access policy belongs in `turin-channel-runner`, not individual adapters.
-- Common sidecar startup behavior belongs in `sidecar.rs`.
-- Host-side sidecar process discovery/invocation belongs in `turin-channel-host`, not separately in the daemon and manager.
-- Optional string-enum settings should use shared settings helpers from `turin-channel-core` when the adapter only needs local allowed-value mapping.
-- Plain text/code-block rendering and line-aware message splitting should use shared helpers from `turin-channel-core` when the adapter has no platform-specific formatting rule for that step.
-- Runtime snapshot state changes should use transition helpers from `src/daemon/channels/runtime_state.rs`; avoid open-coded edits to state, error fields, transition times, counters, and handshake timestamps.
-- Each adapter must validate platform-specific settings without requiring live external credentials.
-- Auth-flow request parsing should use shared runner helpers so setup commands report consistent parse errors.
-- `ChannelDriver::user_matches_selector` remains adapter-specific because platform identity formats differ.
-- Conversation binding keys must be stable JSON representations of `ChannelConversationKey`.
-- Pending approval notifications should be sent once per unapproved room until the pending room is seen again.
-- Banned users override approved rooms and allowed users.
-- Sidecar heartbeats should stop when the shared shutdown watch is set.
-- Adapter `main.rs` files should stay thin: CLI dispatch, adapter construction, adapter-specific validation, and auth-flow calls.
+- No crate in Turin core, daemon protocol, control client, or shared UI may
+  depend on messaging channel DTOs or relay process state.
+- Access checks happen before task submission and remain relay-owned.
+- Binding keys are stable serialized `ChannelConversationKey` values.
+- Adapters normalize inbound events before the runner handles them.
+- Shared policy belongs in `turin-channel-runner`; platform formatting and
+  identity rules remain adapter-owned.
+- Adapter failure must not affect daemon readiness or unrelated clients.
+- Relay presence and health are observed by the relay's process manager, not
+  announced to Turin daemon.
 
 ## Common Changes
 
-Add a new channel adapter:
+Change access or binding behavior:
 
-1. Implement adapter settings parsing and `ChannelDriver`.
-2. Keep sidecar `main.rs` thin and use `prepare_channel_sidecar_run`.
-3. Implement `adapter_manifest`, `validate_settings`, and auth-flow functions if needed.
-4. Add adapter tests for settings, inbound normalization, and outbound rendering.
-5. Run the shared runner tests and the new adapter tests.
+1. Update `turin-channel-runner/src/access.rs`, `bindings.rs`, or
+   `driver_loop.rs`.
+2. Update runner tests.
+3. Check at least one concrete adapter.
 
-Change access or pairing behavior:
+Add an adapter:
 
-1. Change `crates/turin-channel-runner/src/access.rs` or `driver_loop.rs`.
-2. Update runner tests in `crates/turin-channel-runner/src/tests.rs`.
-3. Run `cargo test -p turin-channel-runner`.
-4. Run daemon channel tests if runtime snapshots or supervisor behavior change.
+1. Implement `ChannelDriver` and adapter settings.
+2. Use the shared sidecar preparation/run path.
+3. Add manifest, normalization, rendering, and delivery tests.
+4. Do not add daemon registry or protocol operations.
 
-Change task payload mapping:
+Change manager setup:
 
-1. Change `crates/turin-channel-runner/src/task_payloads.rs`.
-2. Check attachment, structured outbound, and assistant-content tests.
-3. Run `cargo test -p turin-channel-runner`.
-
-Change sidecar startup:
-
-1. Change `crates/turin-channel-runner/src/sidecar.rs`.
-2. Keep adapter `main.rs` files consistent and thin.
-3. Run all adapter package tests, not only runner tests.
-
-Change daemon channel supervision:
-
-1. Change `src/daemon/channels.rs` or `src/daemon/channel_runners.rs`.
-2. Keep runtime state changes behind the snapshot transition helpers.
-3. Run daemon channel tests.
-4. Check runtime snapshot and heartbeat/restart behavior.
-
-Change sidecar process execution:
-
-1. Change `src/daemon/channels/runner_process.rs`.
-2. Preserve command-line shape expected by channel sidecars.
-3. Run daemon channel tests, including external runner supervision tests.
+1. Update `turin-manager` and `turin-channel-host`.
+2. Preserve relay-owned `.turin/relays` storage.
+3. Do not add fields to `TurinConfig` for adapter credentials or lifecycle.
 
 ## Tests
 
-Focused shared runner tests:
-
 ```sh
-cargo test -p turin-channel-runner
-```
-
-Adapter tests:
-
-```sh
+cargo test -p turin-channel-runner -p turin-channel-fs
 cargo test -p turin-channel-telegram
 cargo test -p turin-channel-rocketchat
 cargo test -p turin-channel-discord
 cargo test -p turin-channel-whatsapp
-```
-
-Daemon channel tests:
-
-```sh
-cargo test -p turin daemon::channels::tests
-cargo test -p turin channel --lib
-```
-
-Compile and formatting checks:
-
-```sh
-cargo check -p turin-channel-runner
-cargo check -p turin-channel-telegram -p turin-channel-rocketchat -p turin-channel-discord -p turin-channel-whatsapp
+cargo check --workspace --all-targets
 cargo fmt --all -- --check
 git diff --check
 ```
-
-## Current Shape
-
-The runner crate now owns common sidecar runtime setup. This removed repeated setup code from Telegram, Rocket.Chat, Discord, and WhatsApp sidecar binaries while keeping adapter-specific driver construction in each adapter.
-
-The host crate owns external sidecar discovery and subprocess command helpers. This keeps the daemon and `turin-manager` aligned on env overrides, workspace `cargo run -p` fallback, manifest decoding, settings validation, and auth-flow command behavior.
-
-Shared channel settings helpers cover common optional string-enum parsing. Telegram, Rocket.Chat, and runner access policy use the shared shape while keeping each allowed-value table and error text local.
-
-Shared outbound text helpers cover plain text/code-block rendering and line-aware content splitting. Telegram, Discord, and Rocket.Chat use those helpers where their behavior is identical; Telegram HTML rendering, Rocket.Chat table wrapping/reply quoting, Discord embeds/components/files, and WhatsApp plain rendering stay adapter-owned.
-
-Daemon channel supervision keeps runtime-state mutation behind named transition helpers in `runtime_state.rs`. This is meant to prevent drift between start, restart, stale-heartbeat, clean-stop, shutdown, and failure paths.
-
-The current module split is deliberate:
-
-- `turin-channel-core` answers "what common channel protocol shapes exist?" while keeping its public crate-root API stable through re-exports.
-- `turin-channel-core/src/messages.rs` answers "what is a normalized channel event or outbound message?"
-- `turin-channel-core/src/manifest.rs` answers "what does an adapter expose to manager/daemon setup?"
-- `turin-channel-core/src/settings.rs` answers "how do adapters parse shared JSON setting shapes?"
-- `turin-channel-core/src/auth.rs` answers "how do setup auth-flow commands communicate?"
-- `turin-channel-core/src/routing.rs` answers "should this conversation reuse or start a session?"
-- `turin-channel-runner` answers "how does a channel event become a daemon task and response?"
-- `turin-channel-runner/src/sidecar.rs` answers "how does a sidecar process start consistently?"
-- `turin-channel-host` answers "how does a Turin host process find and invoke sidecar binaries?"
-- adapter crates answer "how does this platform map to and from Turin channel shapes?"
-- daemon channel modules answer "how are sidecars configured, supervised, state-tracked, and surfaced?"
-
-Likely future cleanup areas:
-
-- compare adapter settings parsing for remaining duplicated range/string handling
-- consider shared outbound rendering helpers only where platform formatting rules genuinely overlap
-- use perf tests to measure sidecar memory and daemon memory over long channel sessions

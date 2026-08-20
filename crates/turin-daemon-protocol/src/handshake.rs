@@ -11,7 +11,6 @@ pub struct DaemonCapabilities {
     pub scoped_event_snapshots: bool,
     pub lag_resnapshot: bool,
     pub watcher_rescan_failed_events: bool,
-    pub channels: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

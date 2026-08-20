@@ -1643,7 +1643,6 @@ impl TuiApp {
                 self.dashboard.live_sessions.len().to_string(),
             ),
             kv_line("Tasks", self.dashboard.tasks.len().to_string()),
-            kv_line("Channels", self.dashboard.channels().len().to_string()),
             kv_line(
                 "Issues",
                 health
@@ -2521,7 +2520,6 @@ fn default_harness_inspector_lines(dashboard: &DashboardState) -> Vec<Line<'stat
         Line::from(Span::styled("Runtime", theme::title())),
         kv_line("Agents", summary.agents.to_string()),
         kv_line("Harnesses", summary.harnesses.to_string()),
-        kv_line("Channels", summary.channels.to_string()),
         Line::from(""),
         Line::from(Span::styled("Work", theme::title())),
         kv_line("Live Sessions", summary.live_sessions.to_string()),
@@ -2778,7 +2776,6 @@ mod tests {
                 "Runtime",
                 "Agents 0",
                 "Harnesses 0",
-                "Channels 0",
                 "Work",
                 "Live Sessions 0",
                 "Stored 0",

@@ -125,14 +125,12 @@ mod tests {
     #[test]
     fn parse_path_qualified_reference() {
         let parsed =
-            parse_session_reference("018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@.turin/channels/telegram.db")
+            parse_session_reference("018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f@.turin/stores/archive.db")
                 .expect("session ref parses");
         assert_eq!(parsed.public_id, "018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f");
         assert_eq!(
             parsed.store_selector,
-            Some(StoreSelector::Path(
-                ".turin/channels/telegram.db".to_string()
-            ))
+            Some(StoreSelector::Path(".turin/stores/archive.db".to_string()))
         );
     }
 
@@ -140,7 +138,7 @@ mod tests {
     fn session_reference_matching_accepts_qualified_same_public_id() {
         let public_id = "018f1f4f1f4f4f4f8f8f8f8f8f8f8f8f";
         assert!(session_reference_matches_public_id(
-            &format!("{public_id}@.turin/channels/telegram.db"),
+            &format!("{public_id}@.turin/stores/archive.db"),
             public_id
         ));
         assert!(session_references_match(

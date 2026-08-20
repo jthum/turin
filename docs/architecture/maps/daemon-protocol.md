@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`turin-daemon-protocol` owns the typed JSON request, response, event, and handshake DTOs used between clients, manager, channels, and the daemon.
+`turin-daemon-protocol` owns the typed JSON request, response, event, and handshake DTOs used between clients and the daemon.
 
 This crate is wire-shape sensitive. Internal organization can change, but serialized operation names, parameter names, enum casing, and crate-root public exports should remain stable unless a deliberate protocol change is being made.
 
@@ -18,8 +18,6 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
   - Agent create/update and harness binding request DTOs.
 - `crates/turin-daemon-protocol/src/harnesses.rs`
   - Harness action invocation DTOs.
-- `crates/turin-daemon-protocol/src/channels.rs`
-  - Channel config, access, runner hello, and runner heartbeat DTOs.
 - `crates/turin-daemon-protocol/src/tasks.rs`
   - Task submit, sidestep, wait, and promote DTOs.
 - `crates/turin-daemon-protocol/src/schedule.rs`
@@ -46,6 +44,9 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
 - Response error codes serialize as snake_case.
 - Default values must stay explicit where they affect wire behavior.
 - Domain DTO modules should not depend on daemon server, manager, or control-client code.
+- Messaging relays use generic session/task/event operations; the daemon
+  protocol must not grow relay configuration, access, binding, presence, or
+  lifecycle operations.
 
 ## Common Changes
 
@@ -60,7 +61,7 @@ Change an existing DTO:
 
 1. Treat it as a protocol change unless the serialized shape is provably unchanged.
 2. Add or update a wire-shape test.
-3. Check manager/control-client/channel sidecar call sites.
+3. Check manager, control-client, and independent relay call sites.
 
 ## Tests
 

@@ -14,8 +14,6 @@
   - Local re-exports of daemon CLI view DTOs so child render modules do not reach through nested parent paths.
 - `src/commands/daemon/render/agents.rs`
   - Daemon status, agents, agent runtime status, harness list/detail, and issue summary rendering.
-- `src/commands/daemon/render/channels.rs`
-  - Channel list/detail/runtime rendering.
 - `src/commands/daemon/render/tasks.rs`
   - Task status/list and live-session rendering.
 - `src/commands/daemon/render/sessions.rs`

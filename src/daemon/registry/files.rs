@@ -4,22 +4,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use super::{AgentFileConfig, ChannelFileConfig};
+use super::AgentFileConfig;
 
 pub(crate) fn read_agent_file(agent_dir: &Path) -> Result<Option<AgentFileConfig>> {
     read_toml_file(&agent_dir.join("config.toml"))
 }
 
-pub(crate) fn read_channel_file(channel_dir: &Path) -> Result<Option<ChannelFileConfig>> {
-    read_toml_file(&channel_dir.join("config.toml"))
-}
-
 pub(crate) fn write_agent_file(agent_dir: &Path, config: &AgentFileConfig) -> Result<()> {
     write_config_file(agent_dir, config, "agent")
-}
-
-pub(crate) fn write_channel_file(channel_dir: &Path, config: &ChannelFileConfig) -> Result<()> {
-    write_config_file(channel_dir, config, "channel")
 }
 
 fn read_toml_file<T>(path: &Path) -> Result<Option<T>>

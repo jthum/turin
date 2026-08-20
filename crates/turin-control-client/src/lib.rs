@@ -1,4 +1,3 @@
-mod channels;
 mod client;
 mod harnesses;
 mod health;

@@ -1,15 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BindHarnessParams, ChannelAccessParams, ChannelAccessRoomParams, ChannelRunnerHeartbeatParams,
-    ChannelRunnerHelloParams, CreateAgentParams, CreateChannelParams, EntityIdParams,
-    HarnessActionRunParams, HarnessSourceGetParams, HarnessSourceSaveParams,
-    HarnessSourceValidateParams, LiveSessionTargetParams, MemoryListParams, NoParams,
-    OpenSessionParams, PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams,
-    ScheduleRunsParams, ScheduleUpdateParams, SessionBranchCheckoutParams,
-    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionGetParams, SessionIdParams,
-    SessionListParams, SessionSearchParams, SessionTitleParams, SidestepTaskParams,
-    SubmitTaskParams, TaskIdParams, UpdateAgentParams, UpdateChannelParams, WaitTaskParams,
+    BindHarnessParams, CreateAgentParams, EntityIdParams, HarnessActionRunParams,
+    HarnessSourceGetParams, HarnessSourceSaveParams, HarnessSourceValidateParams,
+    LiveSessionTargetParams, MemoryListParams, NoParams, OpenSessionParams, PromoteTaskParams,
+    ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams, ScheduleUpdateParams,
+    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
+    SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
+    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateAgentParams, WaitTaskParams,
     WorkItemTargetParams, WorklistItemsParams, WorklistListParams, WorklistTargetParams,
 };
 
@@ -152,36 +150,6 @@ pub enum DaemonRequest {
     HarnessActionRun(HarnessActionRunParams),
     #[serde(rename = "harness.delete")]
     HarnessDelete(EntityIdParams),
-    #[serde(rename = "channel.list")]
-    ChannelList(NoParams),
-    #[serde(rename = "channel.create")]
-    ChannelCreate(CreateChannelParams),
-    #[serde(rename = "channel.get")]
-    ChannelGet(EntityIdParams),
-    #[serde(rename = "channel.status")]
-    ChannelStatus(EntityIdParams),
-    #[serde(rename = "channel.issues")]
-    ChannelIssues(EntityIdParams),
-    #[serde(rename = "channel.enable")]
-    ChannelEnable(EntityIdParams),
-    #[serde(rename = "channel.disable")]
-    ChannelDisable(EntityIdParams),
-    #[serde(rename = "channel.update")]
-    ChannelUpdate(UpdateChannelParams),
-    #[serde(rename = "channel.access.get")]
-    ChannelAccessGet(ChannelAccessParams),
-    #[serde(rename = "channel.access.approve")]
-    ChannelAccessApprove(ChannelAccessRoomParams),
-    #[serde(rename = "channel.access.reject")]
-    ChannelAccessReject(ChannelAccessRoomParams),
-    #[serde(rename = "channel.access.revoke")]
-    ChannelAccessRevoke(ChannelAccessRoomParams),
-    #[serde(rename = "channel.runner.hello")]
-    ChannelRunnerHello(ChannelRunnerHelloParams),
-    #[serde(rename = "channel.runner.heartbeat")]
-    ChannelRunnerHeartbeat(ChannelRunnerHeartbeatParams),
-    #[serde(rename = "channel.delete")]
-    ChannelDelete(EntityIdParams),
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

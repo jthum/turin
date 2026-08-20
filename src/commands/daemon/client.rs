@@ -219,13 +219,10 @@ impl DaemonHealthReport {
             issue_count: health.issue_count,
             agent_count: health.agent_count,
             harness_count: health.harness_count,
-            channel_count: health.channel_count,
             running_agent_count: health.running_agent_count,
             active_task_count: health.active_task_count,
             queued_task_count: health.queued_task_count,
             awaiting_result_count: health.awaiting_result_count,
-            channel_runtime_count: health.channel_runtime_count,
-            failed_channel_count: health.failed_channel_count,
         }
     }
 
@@ -242,13 +239,10 @@ impl DaemonHealthReport {
             issue_count: 0,
             agent_count: 0,
             harness_count: 0,
-            channel_count: 0,
             running_agent_count: 0,
             active_task_count: 0,
             queued_task_count: 0,
             awaiting_result_count: 0,
-            channel_runtime_count: 0,
-            failed_channel_count: 0,
         }
     }
 }

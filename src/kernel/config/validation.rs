@@ -77,7 +77,6 @@ impl TurinConfig {
         require_non_empty(&self.layout.stores_dir, "layout.stores_dir")?;
         require_non_empty(&self.layout.harnesses_dir, "layout.harnesses_dir")?;
         require_non_empty(&self.layout.agents_dir, "layout.agents_dir")?;
-        require_non_empty(&self.layout.channels_dir, "layout.channels_dir")?;
         require_non_empty(&self.layout.scopes_dir, "layout.scopes_dir")?;
         require_non_empty(&self.layout.env_file, "layout.env_file")?;
         require_non_empty(&self.layout.daemon_socket, "layout.daemon_socket")?;
@@ -86,7 +85,6 @@ impl TurinConfig {
         require_positive(self.harness.memory_limit_mb, "harness.memory_limit_mb")?;
         require_non_empty(&self.daemon.agents_dir, "daemon.agents_dir")?;
         require_non_empty(&self.daemon.harnesses_dir, "daemon.harnesses_dir")?;
-        require_non_empty(&self.daemon.channels_dir, "daemon.channels_dir")?;
         require_non_empty(&self.daemon.runtime_db, "daemon.runtime_db")?;
         require_non_empty(&self.daemon.endpoint, "daemon.endpoint")?;
         require_non_empty(&self.remote.bind, "remote.bind")?;

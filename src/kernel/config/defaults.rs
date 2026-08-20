@@ -1,7 +1,7 @@
 use super::StoreTargetConfig;
 use turin_types::layout::{
-    DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET,
-    DEFAULT_LAYOUT_DATA_DIR, DEFAULT_LAYOUT_HARNESSES_DIR,
+    DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET, DEFAULT_LAYOUT_DATA_DIR,
+    DEFAULT_LAYOUT_HARNESSES_DIR,
 };
 
 pub(super) fn default_system_prompt() -> String {
@@ -62,10 +62,6 @@ pub(super) fn default_daemon_agents_dir() -> String {
 
 pub(super) fn default_daemon_harnesses_dir() -> String {
     DEFAULT_LAYOUT_HARNESSES_DIR.to_string()
-}
-
-pub(super) fn default_daemon_channels_dir() -> String {
-    DEFAULT_LAYOUT_CHANNELS_DIR.to_string()
 }
 
 pub(super) fn default_daemon_endpoint() -> String {

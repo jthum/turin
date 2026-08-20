@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use turin_control_client::{
-    AgentSummary, ChannelSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus,
-    LiveSession, SessionDetail, SessionSummary, TaskStatus,
+    AgentSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus, LiveSession,
+    SessionDetail, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiIntentMessage};
 
@@ -75,13 +75,10 @@ pub struct DashboardHealth {
     pub issue_count: usize,
     pub agent_count: usize,
     pub harness_count: usize,
-    pub channel_count: usize,
     pub running_agent_count: usize,
     pub active_task_count: usize,
     pub queued_task_count: usize,
     pub awaiting_result_count: usize,
-    pub channel_runtime_count: usize,
-    pub failed_channel_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +109,6 @@ pub struct DefaultOperatorConsoleSummary {
     pub freshness: String,
     pub agents: usize,
     pub harnesses: usize,
-    pub channels: usize,
     pub live_sessions: usize,
     pub stored_sessions: usize,
     pub tasks: usize,
@@ -137,7 +133,6 @@ impl DefaultOperatorConsoleSummary {
                         .map(|status| status.harnesses.len())
                 })
                 .unwrap_or_default(),
-            channels: dashboard.channels().len(),
             live_sessions: dashboard.live_sessions.len(),
             stored_sessions: dashboard.sessions.len(),
             tasks: dashboard.tasks.len(),
@@ -232,8 +227,6 @@ impl DashboardState {
         match update {
             UiUpdate::Snapshot(snapshot) => self.apply_snapshot(*snapshot),
             UiUpdate::SessionDetail(detail) => self.record_session_detail(*detail),
-            UiUpdate::ChannelDetail { .. } => {}
-            UiUpdate::ChannelAccess { .. } => {}
             UiUpdate::SearchResults { .. } => {}
             UiUpdate::UiListLoaded { .. } => {}
             UiUpdate::UiListFailed { message, .. } => self.record_error(message),
@@ -336,13 +329,6 @@ impl DashboardState {
         self.status
             .as_ref()
             .map(|status| status.registry.agents.as_slice())
-            .unwrap_or(&[])
-    }
-
-    pub fn channels(&self) -> &[ChannelSummary] {
-        self.status
-            .as_ref()
-            .map(|status| status.registry.channels.as_slice())
             .unwrap_or(&[])
     }
 
@@ -450,13 +436,10 @@ impl From<ControlHealth> for DashboardHealth {
             issue_count: value.issue_count,
             agent_count: value.agent_count,
             harness_count: value.harness_count,
-            channel_count: value.channel_count,
             running_agent_count: value.running_agent_count,
             active_task_count: value.active_task_count,
             queued_task_count: value.queued_task_count,
             awaiting_result_count: value.awaiting_result_count,
-            channel_runtime_count: value.channel_runtime_count,
-            failed_channel_count: value.failed_channel_count,
         }
     }
 }
@@ -616,7 +599,6 @@ mod tests {
         assert_eq!(summary.freshness, "stale");
         assert_eq!(summary.agents, 0);
         assert_eq!(summary.harnesses, 0);
-        assert_eq!(summary.channels, 0);
         assert_eq!(summary.live_sessions, 0);
         assert_eq!(summary.stored_sessions, 0);
         assert_eq!(summary.tasks, 0);

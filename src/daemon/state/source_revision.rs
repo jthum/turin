@@ -14,11 +14,7 @@ pub(super) fn calculate_source_revision(
 ) -> Result<SourceRevision> {
     let mut hasher = Sha256::new();
     hash_file(&mut hasher, config_path, config_path)?;
-    for root in [
-        &watch_paths.agents_dir,
-        &watch_paths.harnesses_dir,
-        &watch_paths.channels_dir,
-    ] {
+    for root in [&watch_paths.agents_dir, &watch_paths.harnesses_dir] {
         hash_tree(&mut hasher, root, root)?;
     }
     Ok(hasher.finalize().into())
@@ -89,7 +85,6 @@ mod tests {
             config_path: root.join("config.toml"),
             agents_dir: root.join("agents"),
             harnesses_dir: root.join("harnesses"),
-            channels_dir: root.join("channels"),
         }
     }
 

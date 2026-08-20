@@ -58,7 +58,7 @@ Scheduled action job:
 
 1. `scheduler_tick` loads the due action job.
 2. `execute_scheduled_action` parses the scheduled action payload.
-3. Built-in agent/channel actions run through `execute_leaf_scheduled_action`.
+3. Built-in agent actions run through `execute_leaf_scheduled_action`.
 4. Worklist actions delegate to `scheduled_worklist_actions.rs`.
 5. Harness-defined actions fall through to the target harness runtime.
 

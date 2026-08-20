@@ -1,4 +1,3 @@
-mod channel_validation;
 mod harness_actions;
 mod harness_sources;
 mod helpers;
@@ -23,7 +22,6 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use turin_types::ToolsConfig;
 
-use crate::daemon::channels::ChannelRuntimeSnapshot;
 use crate::daemon::registry::{
     RegistryLoad, RegistrySnapshot, build_effective_config, scan_registry, snapshot,
 };
@@ -40,8 +38,8 @@ pub(crate) use scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
 };
 pub use types::{
-    AgentDetail, ChannelDetail, HarnessDetail, SessionBranchDetail, SessionCompactionDetail,
-    SessionDetail, SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
+    AgentDetail, HarnessDetail, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
+    SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
     SessionExecutionDetail, SessionFamilyDetail, SessionFamilyMember, SessionGraphDetail,
     SessionGraphTurnDetail, SessionMessageDetail, SessionMessageWindow, SessionPlanExecutionDetail,
     SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionTaskExecutionDetail,
@@ -54,7 +52,6 @@ pub struct DaemonWatchPaths {
     pub config_path: PathBuf,
     pub agents_dir: PathBuf,
     pub harnesses_dir: PathBuf,
-    pub channels_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,7 +74,6 @@ pub struct DaemonRuntimeSnapshot {
     pub harnesses: Vec<crate::kernel::HarnessRuntimeSnapshot>,
     pub agent_runtimes: Vec<crate::kernel::agent_manager::AgentStatusSnapshot>,
     pub live_sessions: Vec<crate::kernel::agent_manager::LiveSessionSnapshot>,
-    pub channel_runtimes: Vec<ChannelRuntimeSnapshot>,
 }
 
 pub struct DaemonState {
@@ -113,24 +109,6 @@ pub struct UpdateAgentInput {
     pub thinking: Option<ThinkingConfig>,
     pub idle_timeout_seconds: Option<u64>,
     pub tools: Option<ToolsConfig>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CreateChannelInput {
-    pub id: String,
-    pub kind: String,
-    pub agent_id: String,
-    pub idle_timeout_seconds: Option<u64>,
-    pub enabled: bool,
-    pub settings: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct UpdateChannelInput {
-    pub kind: Option<String>,
-    pub agent_id: Option<String>,
-    pub idle_timeout_seconds: Option<u64>,
-    pub settings: Option<serde_json::Value>,
 }
 
 impl DaemonState {
@@ -169,7 +147,6 @@ impl DaemonState {
             config_path: config_path.clone(),
             agents_dir: registry_load.agents_dir.clone(),
             harnesses_dir: registry_load.harnesses_dir.clone(),
-            channels_dir: registry_load.channels_dir.clone(),
         };
         let source_revision = calculate_source_revision(&config_path, &watch_paths)?;
 
@@ -211,9 +188,6 @@ impl DaemonState {
             harnesses_dir: self
                 .bootstrap_config
                 .resolve_daemon_harnesses_dir(&self.config_base),
-            channels_dir: self
-                .bootstrap_config
-                .resolve_daemon_channels_dir(&self.config_base),
         }
     }
 
@@ -252,7 +226,6 @@ impl DaemonState {
             config_path: self.config_path.clone(),
             agents_dir: registry_load.agents_dir.clone(),
             harnesses_dir: registry_load.harnesses_dir.clone(),
-            channels_dir: registry_load.channels_dir.clone(),
         };
         let source_revision = calculate_source_revision(&self.config_path, &watch_paths)?;
 
@@ -296,8 +269,8 @@ impl DaemonState {
     }
 }
 
-impl DaemonRuntimeSnapshot {
-    pub fn from_parts(status: DaemonStatus, channel_runtimes: Vec<ChannelRuntimeSnapshot>) -> Self {
+impl From<DaemonStatus> for DaemonRuntimeSnapshot {
+    fn from(status: DaemonStatus) -> Self {
         Self {
             config_path: status.config_path,
             workspace_root: status.workspace_root,
@@ -306,7 +279,6 @@ impl DaemonRuntimeSnapshot {
             harnesses: status.harnesses,
             agent_runtimes: status.agent_runtimes,
             live_sessions: status.live_sessions,
-            channel_runtimes,
         }
     }
 }

@@ -4,13 +4,13 @@ mod scan;
 mod snapshot;
 mod types;
 
-pub(crate) use files::{read_agent_file, read_channel_file, write_agent_file, write_channel_file};
+pub(crate) use files::{read_agent_file, write_agent_file};
 pub use scan::scan_registry;
 pub use snapshot::snapshot;
-pub(crate) use types::{AgentFileConfig, ChannelFileConfig};
+pub(crate) use types::AgentFileConfig;
 pub use types::{
-    AgentSummary, ChannelSummary, DiscoveredAgent, DiscoveredChannel, HarnessKind, RegistryIssue,
-    RegistryLoad, RegistrySnapshot, SharedHarness, SharedHarnessSummary,
+    AgentSummary, DiscoveredAgent, HarnessKind, RegistryIssue, RegistryLoad, RegistrySnapshot,
+    SharedHarness, SharedHarnessSummary,
 };
 
 pub use effective::build_effective_config;

@@ -39,7 +39,6 @@ fn compatible_handshake_is_accepted() {
             scoped_event_snapshots: true,
             lag_resnapshot: true,
             watcher_rescan_failed_events: true,
-            channels: true,
         },
     };
     ensure_compatible_handshake(&handshake).expect("handshake accepted");
@@ -58,7 +57,6 @@ fn incompatible_protocol_version_is_rejected() {
             scoped_event_snapshots: true,
             lag_resnapshot: true,
             watcher_rescan_failed_events: true,
-            channels: true,
         },
     };
     let err = ensure_compatible_handshake(&handshake).expect_err("version mismatch rejected");

@@ -20,16 +20,6 @@ pub struct SharedHarnessSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ChannelSummary {
-    pub id: String,
-    pub directory: String,
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
-    pub idle_timeout_seconds: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct AgentSummary {
     pub id: String,
     pub directory: String,
@@ -45,10 +35,8 @@ pub struct AgentSummary {
 pub struct RegistrySnapshot {
     pub agents_dir: String,
     pub harnesses_dir: String,
-    pub channels_dir: String,
     pub agents: Vec<AgentSummary>,
     pub shared_harnesses: Vec<SharedHarnessSummary>,
-    pub channels: Vec<ChannelSummary>,
     pub issues: Vec<RegistryIssue>,
 }
 
@@ -76,26 +64,11 @@ pub struct SharedHarness {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscoveredChannel {
-    pub id: String,
-    pub directory: PathBuf,
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
-    pub idle_timeout_seconds: Option<u64>,
-    pub persistence: ContextPersistenceConfig,
-    pub inference: InferenceOverrideConfig,
-    pub extra: toml::Table,
-}
-
-#[derive(Debug, Clone)]
 pub struct RegistryLoad {
     pub agents_dir: PathBuf,
     pub harnesses_dir: PathBuf,
-    pub channels_dir: PathBuf,
     pub agents: Vec<DiscoveredAgent>,
     pub shared_harnesses: Vec<SharedHarness>,
-    pub channels: Vec<DiscoveredChannel>,
     pub issues: Vec<RegistryIssue>,
 }
 
@@ -123,24 +96,6 @@ pub(crate) struct AgentFileConfig {
     pub inference: InferenceOverrideConfig,
     #[serde(default)]
     pub persistence: ContextPersistenceConfig,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(crate) struct ChannelFileConfig {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    pub kind: String,
-    pub agent_id: String,
-    #[serde(default)]
-    pub idle_timeout_seconds: Option<u64>,
-    #[serde(default)]
-    pub persistence: ContextPersistenceConfig,
-    #[serde(default)]
-    pub inference: InferenceOverrideConfig,
-    #[serde(flatten)]
-    pub extra: toml::Table,
 }
 
 fn default_enabled() -> bool {

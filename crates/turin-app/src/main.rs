@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use turin_control_client::{
-    AgentRuntime, ChannelRuntime, ChannelSummary, ConnectionKind, LiveSession, SessionBranchDetail,
-    SessionDetail, SessionMessageWindow, SessionSummary, TaskStatus,
+    AgentRuntime, ConnectionKind, LiveSession, SessionBranchDetail, SessionDetail,
+    SessionMessageWindow, SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{
     EventEnvelope, HarnessActionRunResult, UiIntent, UiMenuItem, UiNoticeLevel, UiShowIntent,
@@ -62,19 +62,17 @@ enum TabKind {
     LiveSessions,
     Sessions,
     Tasks,
-    Channels,
     Events,
 }
 
 impl TabKind {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 7] = [
         Self::Connections,
         Self::UiApps,
         Self::Agents,
         Self::LiveSessions,
         Self::Sessions,
         Self::Tasks,
-        Self::Channels,
         Self::Events,
     ];
 
@@ -86,7 +84,6 @@ impl TabKind {
             Self::LiveSessions => "Live Sessions",
             Self::Sessions => "Sessions",
             Self::Tasks => "Tasks",
-            Self::Channels => "Channels",
             Self::Events => "Events",
         }
     }
@@ -211,7 +208,6 @@ struct TurinDesktopApp {
     live_session_index: usize,
     session_index: usize,
     task_index: usize,
-    channel_index: usize,
     event_index: usize,
     profile_name_input: String,
     profile_draft: ConnectionProfileDraft,
@@ -230,7 +226,6 @@ struct TurinDesktopApp {
     requested_session_detail: Option<String>,
     conversation_message_limits: BTreeMap<String, usize>,
     task_filter: String,
-    channel_filter: String,
     event_filter: String,
     events_paused: bool,
     events_follow_latest: bool,
@@ -361,7 +356,6 @@ impl TurinDesktopApp {
             live_session_index: 0,
             session_index: 0,
             task_index: 0,
-            channel_index: 0,
             event_index: 0,
             profile_name_input: String::new(),
             draft_baseline: profile_draft.clone(),
@@ -380,7 +374,6 @@ impl TurinDesktopApp {
             requested_session_detail: None,
             conversation_message_limits: BTreeMap::new(),
             task_filter: String::new(),
-            channel_filter: String::new(),
             event_filter: String::new(),
             events_paused: false,
             events_follow_latest: true,
@@ -496,7 +489,6 @@ impl TurinDesktopApp {
             clamp_index(self.live_session_index, self.dashboard.live_sessions.len());
         self.session_index = clamp_index(self.session_index, self.dashboard.sessions.len());
         self.task_index = clamp_index(self.task_index, self.filtered_tasks().len());
-        self.channel_index = clamp_index(self.channel_index, self.filtered_channels().len());
         self.event_index = clamp_index(self.event_index, self.filtered_events().len());
     }
 
@@ -1517,16 +1509,6 @@ impl TurinDesktopApp {
         self.dashboard.sessions.get(self.session_index).cloned()
     }
 
-    fn selected_channel_runtime(&self, channel_id: &str) -> Option<ChannelRuntime> {
-        self.dashboard
-            .status
-            .as_ref()?
-            .channel_runtimes
-            .iter()
-            .find(|runtime| runtime.id == channel_id)
-            .cloned()
-    }
-
     fn filtered_tasks(&self) -> Vec<TaskStatus> {
         let filter = self.task_filter.trim().to_ascii_lowercase();
         self.dashboard
@@ -1537,21 +1519,6 @@ impl TurinDesktopApp {
                     || task.request_id.to_ascii_lowercase().contains(&filter)
                     || task.agent_id.to_ascii_lowercase().contains(&filter)
                     || task.state.to_ascii_lowercase().contains(&filter)
-            })
-            .cloned()
-            .collect()
-    }
-
-    fn filtered_channels(&self) -> Vec<ChannelSummary> {
-        let filter = self.channel_filter.trim().to_ascii_lowercase();
-        self.dashboard
-            .channels()
-            .iter()
-            .filter(|channel| {
-                filter.is_empty()
-                    || channel.id.to_ascii_lowercase().contains(&filter)
-                    || channel.kind.to_ascii_lowercase().contains(&filter)
-                    || channel.agent_id.to_ascii_lowercase().contains(&filter)
             })
             .cloned()
             .collect()
@@ -3001,7 +2968,6 @@ impl TurinDesktopApp {
             TabKind::LiveSessions => self.render_live_sessions_tab(ui),
             TabKind::Sessions => self.render_sessions_tab(ui),
             TabKind::Tasks => self.render_tasks_tab(ui),
-            TabKind::Channels => self.render_channels_tab(ui),
             TabKind::Events => self.render_events_tab(ui),
         }
     }
@@ -4494,114 +4460,6 @@ impl TurinDesktopApp {
                     }
                 } else {
                     ui.label("No tasks are currently tracked.");
-                }
-            });
-        });
-    }
-
-    fn render_channels_tab(&mut self, ui: &mut egui::Ui) {
-        let channels = self.filtered_channels();
-        self.channel_index = clamp_index(self.channel_index, channels.len());
-        let selected = channels.get(self.channel_index).cloned();
-        let selected_runtime = selected
-            .as_ref()
-            .and_then(|channel| self.selected_channel_runtime(&channel.id));
-
-        ui.columns(2, |columns| {
-            cast::Panel::new().show(&mut columns[0], |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.heading("Channels");
-                    ui.add_space(8.0);
-                    ui.add(cast::Badge::new(format!("{} visible", channels.len())));
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        cast::SearchInput::new(&mut self.channel_filter)
-                            .hint_text("channel id, kind, or agent")
-                            .size(cast::Size::Small),
-                    );
-                    if ui
-                        .add(
-                            cast::Button::new("Clear")
-                                .size(cast::Size::Small)
-                                .variant(cast::Variant::Ghost),
-                        )
-                        .clicked()
-                    {
-                        self.channel_filter.clear();
-                    }
-                });
-                ui.add_space(8.0);
-                ScrollArea::vertical().show(ui, |ui| {
-                    let labels = channels
-                        .iter()
-                        .map(|channel| {
-                            format!("{} · {} -> {}", channel.id, channel.kind, channel.agent_id)
-                        })
-                        .collect::<Vec<_>>();
-                    ui.add(
-                        cast::NavList::new(&mut self.channel_index, labels).size(cast::Size::Small),
-                    );
-                });
-            });
-
-            cast::Panel::new().show(&mut columns[1], |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.heading("Channel Detail");
-                    if let Some(channel) = &selected {
-                        ui.add(
-                            cast::Badge::new(if channel.enabled {
-                                "Enabled"
-                            } else {
-                                "Disabled"
-                            })
-                            .intent(if channel.enabled {
-                                cast::Intent::Success
-                            } else {
-                                cast::Intent::Warning
-                            })
-                            .status_dot(),
-                        );
-                    }
-                });
-                ui.add_space(8.0);
-                if let Some(channel) = selected {
-                    detail_kv(ui, "Channel", &channel.id);
-                    detail_kv(ui, "Kind", &channel.kind);
-                    detail_kv(ui, "Agent", &channel.agent_id);
-                    detail_kv(ui, "Enabled", yes_no(channel.enabled));
-
-                    if let Some(runtime) = selected_runtime {
-                        ui.add_space(8.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new("Runtime").strong());
-                            ui.add(
-                                cast::Badge::new(runtime.state.clone())
-                                    .intent(status_intent(&runtime.state))
-                                    .status_dot(),
-                            );
-                        });
-                        detail_kv(ui, "State", &runtime.state);
-                        detail_kv(ui, "Start Count", runtime.start_count.to_string());
-                        detail_kv(ui, "Restart Count", runtime.restart_count.to_string());
-                        detail_kv(ui, "Failure Count", runtime.failure_count.to_string());
-                        detail_kv(
-                            ui,
-                            "Last Error Code",
-                            runtime
-                                .last_error_code
-                                .clone()
-                                .unwrap_or_else(|| "None".to_string()),
-                        );
-                        detail_kv(
-                            ui,
-                            "Last Error",
-                            runtime.last_error.unwrap_or_else(|| "None".to_string()),
-                        );
-                    }
-                } else {
-                    ui.label("No channels are configured.");
                 }
             });
         });

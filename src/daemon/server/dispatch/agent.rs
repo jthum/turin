@@ -8,7 +8,7 @@ use crate::daemon::state::{CreateAgentInput, UpdateAgentInput};
 use super::{
     DispatchContext, build_runtime_snapshot, emit_event, emit_registry_issue_events,
     internal_error, not_found_error, serialize_response, serialize_response_with_event,
-    serialize_value, sync_channel_runtimes, validation_error,
+    serialize_value, validation_error,
 };
 use crate::daemon::protocol::ErrorCode;
 
@@ -104,11 +104,6 @@ pub(super) async fn create(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -150,11 +145,6 @@ async fn set_enabled(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -188,11 +178,6 @@ pub(super) async fn update(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -213,11 +198,6 @@ pub(super) async fn reload(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -246,11 +226,6 @@ pub(super) async fn bind_harness(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -276,11 +251,6 @@ pub(super) async fn use_local_harness(
         Err(err) => validation_error(id, err),
     };
     drop(guard);
-    if response.ok
-        && let Err(err) = sync_channel_runtimes(ctx).await
-    {
-        return internal_error(response.id, err);
-    }
     response
 }
 
@@ -296,11 +266,7 @@ pub(super) async fn delete(
     };
     drop(guard);
 
-    if let Err(err) = sync_channel_runtimes(ctx).await {
-        return internal_error(id, err);
-    }
-
-    let runtime_snapshot = build_runtime_snapshot(&ctx.state, &ctx.channel_runtimes).await;
+    let runtime_snapshot = build_runtime_snapshot(&ctx.state).await;
     match serialize_value(&id, runtime_snapshot, "delete status") {
         Ok(value) => {
             emit_event(&ctx.event_tx, "agent.deleted", json!({ "id": params.id }));

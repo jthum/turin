@@ -106,16 +106,6 @@ async fn run(args: RunArgs) -> Result<()> {
         )
     })?;
 
-    sidecar
-        .announce_presence(
-            turin_channel_whatsapp::adapter_manifest(),
-            Some(env!("CARGO_BIN_NAME").to_string()),
-            Some(env!("CARGO_PKG_VERSION").to_string()),
-        )
-        .await?;
-
-    let _heartbeat_task = sidecar.spawn_heartbeat();
-
     sidecar.run_driver(&args.agent_id, &mut driver).await
 }
 

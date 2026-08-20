@@ -10,9 +10,11 @@ use turin::kernel::config::{
     PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin_types::layout::{
-    DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_CHANNELS_DIR,
-    DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace,
+    DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_HARNESSES_DIR,
+    default_layout_root_for_workspace,
 };
+
+const TEST_RELAY_RUNTIME_DIR: &str = "runtime/relays";
 
 pub fn repo_path(relative: impl AsRef<Path>) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -74,7 +76,7 @@ pub fn workspace_runtime_agents_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub fn workspace_runtime_channels_dir(workspace_root: &Path) -> PathBuf {
-    workspace_turin_root(workspace_root).join(DEFAULT_LAYOUT_CHANNELS_DIR)
+    workspace_turin_root(workspace_root).join(TEST_RELAY_RUNTIME_DIR)
 }
 
 pub fn workspace_daemon_socket(workspace_root: &Path) -> PathBuf {

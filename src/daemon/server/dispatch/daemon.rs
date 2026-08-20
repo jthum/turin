@@ -24,7 +24,6 @@ pub(super) async fn ping(
             scoped_event_snapshots: true,
             lag_resnapshot: true,
             watcher_rescan_failed_events: true,
-            channels: true,
         },
     };
     ResponseEnvelope::ok(
@@ -38,7 +37,7 @@ pub(super) async fn status(
     _params: NoParams,
     ctx: &DispatchContext,
 ) -> ResponseEnvelope {
-    let status = build_runtime_snapshot(&ctx.state, &ctx.channel_runtimes).await;
+    let status = build_runtime_snapshot(&ctx.state).await;
     ResponseEnvelope::ok(
         id,
         serde_json::to_value(status).expect("runtime snapshot serializes"),

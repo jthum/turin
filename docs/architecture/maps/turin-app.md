@@ -222,7 +222,7 @@ conversation workspace built from Cast. It provides agent selection when
 needed, active and recent conversation navigation, durable-session resume,
 structured message and tool-call presentation, a persistent composer, and a
 first-prompt flow that opens and titles a session before dispatching the
-prompt. Connection details, sessions, tasks, channels, events, and custom-app
+prompt. Connection details, sessions, tasks, events, and custom-app
 inspection remain available through Runtime Tools without competing with the
 primary workflow. The shell keeps its own selection and pending-command state
 and uses focused session events to refresh bounded session detail; it does not

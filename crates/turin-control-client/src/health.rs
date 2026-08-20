@@ -16,13 +16,10 @@ pub struct ControlHealth {
     pub issue_count: usize,
     pub agent_count: usize,
     pub harness_count: usize,
-    pub channel_count: usize,
     pub running_agent_count: usize,
     pub active_task_count: usize,
     pub queued_task_count: usize,
     pub awaiting_result_count: usize,
-    pub channel_runtime_count: usize,
-    pub failed_channel_count: usize,
 }
 
 pub(crate) fn build_health(
@@ -51,19 +48,13 @@ pub(crate) fn build_health(
         .iter()
         .map(|runtime| runtime.awaiting_results)
         .sum();
-    let failed_channel_count = status
-        .channel_runtimes
-        .iter()
-        .filter(|runtime| runtime.state == "failed")
-        .count();
-
     ControlHealth {
         connection_kind,
         target: match connection_kind {
             ConnectionKind::Local => status.endpoint.clone(),
             ConnectionKind::Remote => target,
         },
-        ready: status.registry.issues.is_empty() && failed_channel_count == 0,
+        ready: status.registry.issues.is_empty(),
         version: handshake.version,
         protocol_version: handshake.protocol_version,
         transport: handshake.transport,
@@ -71,12 +62,9 @@ pub(crate) fn build_health(
         issue_count: status.registry.issues.len(),
         agent_count: status.agent_runtimes.len(),
         harness_count: status.registry.shared_harnesses.len(),
-        channel_count: status.registry.channels.len(),
         running_agent_count,
         active_task_count,
         queued_task_count,
         awaiting_result_count,
-        channel_runtime_count: status.channel_runtimes.len(),
-        failed_channel_count,
     }
 }

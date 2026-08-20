@@ -70,7 +70,7 @@ Change structured inference:
 
 1. Keep route resolution and provider fallback behavior aligned with normal inference.
 2. Preserve native response-format and fallback validation test coverage.
-3. Avoid moving channel/tool rendering concerns into this module.
+3. Avoid moving client/tool rendering concerns into this module.
 
 ## Tests
 

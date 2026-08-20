@@ -82,39 +82,6 @@ pub(crate) async fn run_doctor(args: DoctorArgs) -> Result<()> {
         Ok(client) => match client.status().await {
             Ok(status) => {
                 println!("[ok] daemon: reachable at {}", status.endpoint);
-                let runtimes: BTreeMap<_, _> = status
-                    .channel_runtimes
-                    .into_iter()
-                    .map(|runtime| (runtime.id.clone(), runtime))
-                    .collect();
-                for channel in &configured_channels {
-                    match runtimes.get(&channel.id) {
-                        Some(runtime) if runtime.state == "running" => {
-                            println!("[ok] runtime: channel '{}' is running", channel.id);
-                        }
-                        Some(runtime) => {
-                            println!(
-                                "[warn] runtime: channel '{}' is {}{}",
-                                channel.id,
-                                runtime.state,
-                                runtime
-                                    .last_error
-                                    .as_deref()
-                                    .map(|error| format!(" ({error})"))
-                                    .unwrap_or_default()
-                            );
-                            if runtime.state == "failed" {
-                                issues += 1;
-                            }
-                        }
-                        None => {
-                            println!(
-                                "[warn] runtime: channel '{}' has no active runtime snapshot",
-                                channel.id
-                            );
-                        }
-                    }
-                }
             }
             Err(err) => {
                 println!("[warn] daemon: status unavailable: {err}");

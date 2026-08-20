@@ -95,7 +95,7 @@ runtime-owned UI session store, or a second daemon implementation.
 - Event streams are invalidation and feedback channels, not live-query result
   caches.
 - `DashboardState` is a bounded client snapshot/cache. Durable runtime state
-  still lives behind daemon primitives such as sessions, tasks, channels,
+  still lives behind daemon primitives such as sessions, tasks,
   worklists, events, memory, and KV.
 - Keep local and remote transport behavior symmetric by going through
   `turin-control-client`.

@@ -420,7 +420,6 @@ fn handshake_round_trips_typed_shape() {
             scoped_event_snapshots: true,
             lag_resnapshot: true,
             watcher_rescan_failed_events: true,
-            channels: true,
         },
     };
 
@@ -430,7 +429,6 @@ fn handshake_round_trips_typed_shape() {
 
     let decoded: DaemonHandshake = serde_json::from_value(value).expect("deserialize handshake");
     assert!(decoded.capabilities.runtime_snapshot_v1);
-    assert!(decoded.capabilities.channels);
 }
 
 #[test]

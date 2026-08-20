@@ -361,24 +361,6 @@ impl DaemonState {
                 })?;
                 Ok("completed: agent disabled".to_string())
             }
-            "channel.enable" => {
-                let id = required_action_id(action).map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-                })?;
-                self.set_channel_enabled(&id, true).await.map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-                })?;
-                Ok("completed: channel enabled".to_string())
-            }
-            "channel.disable" => {
-                let id = required_action_id(action).map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_invalid_params", err.to_string())
-                })?;
-                self.set_channel_enabled(&id, false).await.map_err(|err| {
-                    ScheduledJobFailure::new("schedule_action_builtin_failed", err.to_string())
-                })?;
-                Ok("completed: channel disabled".to_string())
-            }
             _ => self.execute_harness_scheduled_action(agent_id, action),
         }
     }

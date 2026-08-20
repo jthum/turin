@@ -5,14 +5,12 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::{RwLock, broadcast, watch};
 
-use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{
     DaemonRequest, ErrorCode, EventEnvelope, RequestEnvelope, ResponseEnvelope,
 };
 use crate::daemon::state::{DaemonRuntimeSnapshot, DaemonState, DaemonStatus};
 
 mod agent;
-mod channel;
 mod daemon;
 mod harness;
 mod memory;
@@ -27,7 +25,6 @@ pub(super) struct DispatchContext {
     pub(super) watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     pub(super) daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     pub(super) event_tx: broadcast::Sender<EventEnvelope>,
-    pub(super) channel_runtimes: Arc<ChannelRuntimeManager>,
     pub(super) shutdown_tx: watch::Sender<bool>,
 }
 
@@ -37,7 +34,6 @@ pub(super) async fn dispatch(
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     event_tx: broadcast::Sender<EventEnvelope>,
-    channel_runtimes: Arc<ChannelRuntimeManager>,
     shutdown_tx: watch::Sender<bool>,
 ) -> ResponseEnvelope {
     let RequestEnvelope { id, request } = request;
@@ -46,7 +42,6 @@ pub(super) async fn dispatch(
         watcher_slot,
         daemon_watcher_tx,
         event_tx,
-        channel_runtimes,
         shutdown_tx,
     };
 
@@ -140,31 +135,6 @@ pub(super) async fn dispatch(
         }
         DaemonRequest::HarnessActionRun(params) => harness::action_run(id, params, &context).await,
         DaemonRequest::HarnessDelete(params) => harness::delete(id, params, &context).await,
-        DaemonRequest::ChannelList(params) => channel::list(id, params, &context).await,
-        DaemonRequest::ChannelCreate(params) => channel::create(id, params, &context).await,
-        DaemonRequest::ChannelGet(params) => channel::get(id, params, &context).await,
-        DaemonRequest::ChannelStatus(params) => channel::status(id, params, &context).await,
-        DaemonRequest::ChannelIssues(params) => channel::issues(id, params, &context).await,
-        DaemonRequest::ChannelEnable(params) => channel::enable(id, params, &context).await,
-        DaemonRequest::ChannelDisable(params) => channel::disable(id, params, &context).await,
-        DaemonRequest::ChannelUpdate(params) => channel::update(id, params, &context).await,
-        DaemonRequest::ChannelAccessGet(params) => channel::access_get(id, params, &context).await,
-        DaemonRequest::ChannelAccessApprove(params) => {
-            channel::access_approve(id, params, &context).await
-        }
-        DaemonRequest::ChannelAccessReject(params) => {
-            channel::access_reject(id, params, &context).await
-        }
-        DaemonRequest::ChannelAccessRevoke(params) => {
-            channel::access_revoke(id, params, &context).await
-        }
-        DaemonRequest::ChannelRunnerHello(params) => {
-            channel::runner_hello(id, params, &context).await
-        }
-        DaemonRequest::ChannelRunnerHeartbeat(params) => {
-            channel::runner_heartbeat(id, params, &context).await
-        }
-        DaemonRequest::ChannelDelete(params) => channel::delete(id, params, &context).await,
     }
 }
 
@@ -290,25 +260,12 @@ pub(super) fn emit_registry_issue_events(
 
 pub(super) async fn build_runtime_snapshot(
     state: &Arc<RwLock<DaemonState>>,
-    channel_runtimes: &ChannelRuntimeManager,
 ) -> DaemonRuntimeSnapshot {
     let status = {
         let guard = state.read().await;
         guard.status().await
     };
-    let channel_runtimes = channel_runtimes.list().await;
-    DaemonRuntimeSnapshot::from_parts(status, channel_runtimes)
-}
-
-pub(super) async fn sync_channel_runtimes(ctx: &DispatchContext) -> Result<(), anyhow::Error> {
-    let (workspace_root, channels) = {
-        let guard = ctx.state.read().await;
-        (
-            PathBuf::from(&guard.bootstrap_config.kernel.workspace_root),
-            guard.registry_load.channels.clone(),
-        )
-    };
-    ctx.channel_runtimes.sync(workspace_root, channels).await
+    status.into()
 }
 
 pub(super) fn classify_registry_issue(
@@ -338,20 +295,6 @@ pub(super) fn classify_registry_issue(
             "harness.load_failed",
             json!({
                 "harness_id": harness_id.as_os_str().to_string_lossy(),
-                "path": issue.path,
-                "message": issue.message,
-            }),
-        ));
-    }
-
-    let channels_dir = Path::new(&status.registry.channels_dir);
-    if let Ok(relative) = issue_path.strip_prefix(channels_dir)
-        && let Some(channel_id) = relative.components().next()
-    {
-        return Some((
-            "channel.load_failed",
-            json!({
-                "channel_id": channel_id.as_os_str().to_string_lossy(),
                 "path": issue.path,
                 "message": issue.message,
             }),

@@ -11,7 +11,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{RwLock, broadcast, watch};
 use turin_local_ipc::LocalIpcWriteHalf;
 
-use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::{DaemonState, DaemonStatus};
 use crate::kernel::agent_manager::SessionEventReceiver;
@@ -26,7 +25,6 @@ type ScopedSessionEventStream = (String, String, String, SessionEventReceiver);
 pub(super) async fn stream_events(
     request: RequestEnvelope,
     state: Arc<RwLock<DaemonState>>,
-    channel_runtimes: Arc<ChannelRuntimeManager>,
     mut event_rx: broadcast::Receiver<EventEnvelope>,
     mut shutdown_rx: watch::Receiver<bool>,
     writer: &mut LocalIpcWriteHalf,
@@ -49,15 +47,7 @@ pub(super) async fn stream_events(
         .await?;
     writer.write_all(b"\n").await?;
 
-    write_runtime_snapshot_event(
-        "runtime.snapshot",
-        &state,
-        &channel_runtimes,
-        &filter,
-        false,
-        writer,
-    )
-    .await?;
+    write_runtime_snapshot_event("runtime.snapshot", &state, &filter, false, writer).await?;
 
     let status: DaemonStatus = {
         let guard = state.read().await;
@@ -89,7 +79,6 @@ pub(super) async fn stream_events(
                             write_runtime_snapshot_event(
                                 "runtime.rescanned",
                                 &state,
-                                &channel_runtimes,
                                 &filter,
                                 true,
                                 writer,
@@ -105,7 +94,6 @@ pub(super) async fn stream_events(
                         write_runtime_snapshot_event(
                             "runtime.snapshot",
                             &state,
-                            &channel_runtimes,
                             &filter,
                             false,
                             writer,
@@ -140,12 +128,11 @@ pub(super) async fn stream_events(
 async fn write_runtime_snapshot_event(
     event_name: &str,
     state: &Arc<RwLock<DaemonState>>,
-    channel_runtimes: &Arc<ChannelRuntimeManager>,
     filter: &EventFilter,
     skip_empty_scoped: bool,
     writer: &mut LocalIpcWriteHalf,
 ) -> Result<()> {
-    let snapshot = build_runtime_snapshot(state, channel_runtimes).await;
+    let snapshot = build_runtime_snapshot(state).await;
     let scoped = scope_runtime_snapshot(snapshot, filter);
     if skip_empty_scoped && filter.has_scope() && scoped_snapshot_is_empty(&scoped) {
         return Ok(());

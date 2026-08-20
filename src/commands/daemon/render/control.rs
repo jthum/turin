@@ -29,15 +29,12 @@ pub(in crate::commands::daemon) fn print_health_report(
         println!("Transport: {}", transport);
     }
     println!(
-        "Counts:    {} agents, {} shared harnesses, {} channels, {} issues",
-        report.agent_count, report.harness_count, report.channel_count, report.issue_count
+        "Counts:    {} agents, {} shared harnesses, {} issues",
+        report.agent_count, report.harness_count, report.issue_count
     );
     println!(
-        "Load:      {} running agents, {} active tasks, {} queued tasks, {} failed channels",
-        report.running_agent_count,
-        report.active_task_count,
-        report.queued_task_count,
-        report.failed_channel_count
+        "Load:      {} running agents, {} active tasks, {} queued tasks",
+        report.running_agent_count, report.active_task_count, report.queued_task_count
     );
     Ok(())
 }

@@ -41,7 +41,7 @@ fn child_cannot_expand_beyond_parent() {
 }
 
 #[test]
-fn channel_override_can_subset_agent_tools() {
+fn request_override_can_subset_agent_tools() {
     let config = config_with_tools(
         ToolSelectionConfig {
             allow: Some(vec!["group:web".into(), "read_file".into()]),
@@ -62,7 +62,7 @@ fn channel_override_can_subset_agent_tools() {
 }
 
 #[test]
-fn effective_tools_merge_root_agent_and_channel_behavior() {
+fn effective_tools_merge_root_agent_and_request_behavior() {
     let mut config = config_with_tools(
         ToolSelectionConfig::default(),
         ToolSelectionConfig::default(),
@@ -72,10 +72,10 @@ fn effective_tools_merge_root_agent_and_channel_behavior() {
     config.agent.tools.web_fetch.user_agent = Some("agent-agent".into());
     config.agent.tools.web_search.providers = Some(vec!["brave".into()]);
 
-    let mut channel = ToolsConfig::default();
-    channel.web_fetch.accept_language = Some("fr-FR,fr;q=0.9".into());
+    let mut request = ToolsConfig::default();
+    request.web_fetch.accept_language = Some("fr-FR,fr;q=0.9".into());
 
-    let resolved = resolve_effective_tools_config(&config, "default", Some(&channel)).unwrap();
+    let resolved = resolve_effective_tools_config(&config, "default", Some(&request)).unwrap();
     assert_eq!(
         resolved.web_fetch.user_agent.as_deref(),
         Some("agent-agent")

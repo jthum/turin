@@ -7,7 +7,6 @@ pub const DEFAULT_LAYOUT_STATES_DIR: &str = "states";
 pub const DEFAULT_LAYOUT_STORES_DIR: &str = "stores";
 pub const DEFAULT_LAYOUT_HARNESSES_DIR: &str = "harnesses";
 pub const DEFAULT_LAYOUT_AGENTS_DIR: &str = "runtime/agents";
-pub const DEFAULT_LAYOUT_CHANNELS_DIR: &str = "runtime/channels";
 pub const DEFAULT_LAYOUT_SCOPES_DIR: &str = "scopes";
 pub const DEFAULT_LAYOUT_ENV_FILE: &str = ".env";
 pub const DEFAULT_LAYOUT_DAEMON_SOCKET: &str = "daemon.sock";

@@ -7,12 +7,11 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 use turin_daemon_protocol::{
-    ChannelRunnerHeartbeatParams, ChannelRunnerHelloParams, DAEMON_PROTOCOL_VERSION,
-    DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope, NoParams, RequestEnvelope,
-    ResponseEnvelope, RuntimeEventsSubscribeParams, ScheduleCreateParams, ScheduleJobDetail,
-    ScheduleJobList, ScheduleJobRunList, ScheduleRunsParams, ScheduleUpdateParams, WorkItemDetail,
-    WorkItemList, WorkItemTargetParams, WorklistDetail, WorklistItemsParams, WorklistList,
-    WorklistListParams, WorklistTargetParams,
+    DAEMON_PROTOCOL_VERSION, DaemonHandshake, DaemonRequest, EntityIdParams, EventEnvelope,
+    NoParams, RequestEnvelope, ResponseEnvelope, RuntimeEventsSubscribeParams,
+    ScheduleCreateParams, ScheduleJobDetail, ScheduleJobList, ScheduleJobRunList,
+    ScheduleRunsParams, ScheduleUpdateParams, WorkItemDetail, WorkItemList, WorkItemTargetParams,
+    WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
 };
 use turin_local_ipc::{
     LocalIpcReadHalf, connect as connect_local_ipc, current_transport_name,
@@ -46,13 +45,10 @@ pub struct DaemonHealth {
     pub issue_count: usize,
     pub agent_count: usize,
     pub harness_count: usize,
-    pub channel_count: usize,
     pub running_agent_count: usize,
     pub active_task_count: usize,
     pub queued_task_count: usize,
     pub awaiting_result_count: usize,
-    pub channel_runtime_count: usize,
-    pub failed_channel_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,8 +56,6 @@ struct DaemonStatusSnapshot {
     endpoint: String,
     registry: RegistrySnapshot,
     agent_runtimes: Vec<AgentRuntimeSnapshot>,
-    #[serde(default)]
-    channel_runtimes: Vec<ChannelRuntimeSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,8 +64,6 @@ struct RegistrySnapshot {
     agents: Vec<Value>,
     #[serde(default)]
     shared_harnesses: Vec<Value>,
-    #[serde(default)]
-    channels: Vec<Value>,
     #[serde(default)]
     issues: Vec<Value>,
 }
@@ -82,11 +74,6 @@ struct AgentRuntimeSnapshot {
     active_tasks: usize,
     queued_tasks: usize,
     awaiting_results: usize,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelRuntimeSnapshot {
-    state: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -200,23 +187,6 @@ impl DaemonClient {
         Ok(handshake)
     }
 
-    pub async fn channel_runner_hello(&self, params: ChannelRunnerHelloParams) -> Result<()> {
-        let _: Value = self
-            .request_ok(None, DaemonRequest::ChannelRunnerHello(params))
-            .await?;
-        Ok(())
-    }
-
-    pub async fn channel_runner_heartbeat(
-        &self,
-        params: ChannelRunnerHeartbeatParams,
-    ) -> Result<()> {
-        let _: Value = self
-            .request_ok(None, DaemonRequest::ChannelRunnerHeartbeat(params))
-            .await?;
-        Ok(())
-    }
-
     pub async fn health(&self) -> Result<DaemonHealth> {
         let handshake = self.handshake().await?;
         let status: DaemonStatusSnapshot = self
@@ -243,12 +213,7 @@ impl DaemonClient {
             .iter()
             .map(|runtime| runtime.awaiting_results)
             .sum();
-        let failed_channel_count = status
-            .channel_runtimes
-            .iter()
-            .filter(|runtime| runtime.state == "failed")
-            .count();
-        let state = if status.registry.issues.is_empty() && failed_channel_count == 0 {
+        let state = if status.registry.issues.is_empty() {
             DaemonHealthState::Ready
         } else {
             DaemonHealthState::Degraded
@@ -264,13 +229,10 @@ impl DaemonClient {
             issue_count: status.registry.issues.len(),
             agent_count: status.registry.agents.len(),
             harness_count: status.registry.shared_harnesses.len(),
-            channel_count: status.registry.channels.len(),
             running_agent_count,
             active_task_count,
             queued_task_count,
             awaiting_result_count,
-            channel_runtime_count: status.channel_runtimes.len(),
-            failed_channel_count,
             state,
         })
     }

@@ -1,5 +1,4 @@
 mod agents;
-mod channels;
 mod client;
 mod control;
 mod harnesses;
@@ -8,7 +7,6 @@ mod sessions;
 mod tasks;
 
 pub use self::agents::*;
-pub use self::channels::*;
 use self::client::*;
 pub use self::control::*;
 pub use self::harnesses::*;
@@ -22,7 +20,6 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use turin_channel_core::ChannelAdapterManifest;
 use turin_local_ipc::{connect as connect_local_ipc, split as split_local_ipc};
 
 use turin::daemon::protocol::{
@@ -44,7 +41,6 @@ struct DaemonStatusView {
 struct RegistrySnapshotView {
     agents: Vec<AgentSummaryView>,
     shared_harnesses: Vec<SharedHarnessView>,
-    channels: Vec<ChannelSummaryView>,
     issues: Vec<IssueView>,
 }
 
@@ -60,14 +56,6 @@ struct AgentSummaryView {
 #[derive(Debug, Deserialize)]
 struct SharedHarnessView {
     id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelSummaryView {
-    id: String,
-    enabled: bool,
-    kind: String,
-    agent_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,78 +108,6 @@ struct HarnessDetailView {
     bound_agents: Vec<String>,
     watched_roots: Vec<String>,
     loaded_scripts: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelDetailView {
-    id: String,
-    directory: String,
-    enabled: bool,
-    kind: String,
-    agent_id: String,
-    idle_timeout_seconds: Option<u64>,
-    settings: Value,
-    #[serde(default)]
-    adapter: Option<ChannelAdapterManifest>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelRunnerHandshakeView {
-    display_name: String,
-    protocol_version: u32,
-    runner_binary: Option<String>,
-    runner_version: Option<String>,
-    pid: Option<u32>,
-    last_handshake_unix_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelRuntimeView {
-    id: String,
-    kind: String,
-    agent_id: String,
-    directory: String,
-    state: String,
-    last_error: Option<String>,
-    last_error_code: Option<String>,
-    start_count: u64,
-    restart_count: u64,
-    failure_count: u64,
-    last_transition_unix_ms: u64,
-    last_started_unix_ms: Option<u64>,
-    last_stopped_unix_ms: Option<u64>,
-    handshake: Option<ChannelRunnerHandshakeView>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelAccessRoomView {
-    channel: String,
-    workspace_id: String,
-    room_id: Option<String>,
-    thread_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ApprovedRoomView {
-    room: ChannelAccessRoomView,
-    approved_at_unix_seconds: u64,
-    approved_by_user_id: Option<String>,
-    approved_by_username: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PendingRoomView {
-    room: ChannelAccessRoomView,
-    first_seen_unix_seconds: u64,
-    last_seen_unix_seconds: u64,
-    sample_user_id: Option<String>,
-    sample_username: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelAccessView {
-    approved_rooms: Vec<ApprovedRoomView>,
-    pending_rooms: Vec<PendingRoomView>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,13 +241,10 @@ struct DaemonHealthReport {
     issue_count: usize,
     agent_count: usize,
     harness_count: usize,
-    channel_count: usize,
     running_agent_count: usize,
     active_task_count: usize,
     queued_task_count: usize,
     awaiting_result_count: usize,
-    channel_runtime_count: usize,
-    failed_channel_count: usize,
 }
 
 #[derive(Debug, Serialize)]

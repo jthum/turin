@@ -103,7 +103,7 @@ fn agent_config<'a>(config: &'a TurinConfig, agent_id: &str) -> Result<&'a Agent
 pub fn resolve_effective_native_tools(
     config: &TurinConfig,
     agent_id: &str,
-    channel_override: Option<&ToolSelectionConfig>,
+    request_override: Option<&ToolSelectionConfig>,
 ) -> Result<BTreeSet<String>> {
     let root = resolve_root_tool_selection(&config.tools.selection)?;
     let agent = agent_config(config, agent_id)?;
@@ -112,9 +112,9 @@ pub fn resolve_effective_native_tools(
         &agent.tools.selection,
         &format!("agent '{agent_id}'"),
     )?;
-    match channel_override {
+    match request_override {
         Some(selection) if !selection.is_empty() => {
-            resolve_child_tool_selection(&agent_tools, selection, "channel/tool override")
+            resolve_child_tool_selection(&agent_tools, selection, "request tool override")
         }
         _ => Ok(agent_tools),
     }
@@ -203,7 +203,7 @@ pub fn merge_tools_config(parent: &ToolsConfig, child: &ToolsConfig) -> ToolsCon
 pub fn resolve_effective_tools_config(
     config: &TurinConfig,
     agent_id: &str,
-    channel_override: Option<&ToolsConfig>,
+    request_override: Option<&ToolsConfig>,
 ) -> Result<ToolsConfig> {
     let root = resolve_root_tool_selection(&config.tools.selection)?;
     let agent = agent_config(config, agent_id)?;
@@ -212,18 +212,18 @@ pub fn resolve_effective_tools_config(
         &agent.tools.selection,
         &format!("agent '{agent_id}'"),
     )?;
-    let resolved = match channel_override {
+    let resolved = match request_override {
         Some(selection) if !selection.selection.is_empty() => resolve_child_tool_selection(
             &agent_tools,
             &selection.selection,
-            "channel/tool override",
+            "request tool override",
         )?,
         _ => agent_tools,
     };
 
     let mut effective = merge_tools_config(&config.tools, &agent.tools);
-    if let Some(channel_override) = channel_override {
-        effective = merge_tools_config(&effective, channel_override);
+    if let Some(request_override) = request_override {
+        effective = merge_tools_config(&effective, request_override);
     }
     effective.selection = ToolSelectionConfig {
         allow: Some(resolved.iter().cloned().collect()),

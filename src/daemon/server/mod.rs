@@ -17,7 +17,6 @@ use turin_local_ipc::{
     split as split_local_ipc,
 };
 
-use crate::daemon::channels::ChannelRuntimeManager;
 use crate::daemon::protocol::{DaemonRequest, ErrorCode, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::DaemonState;
 
@@ -27,7 +26,6 @@ struct ClientContext {
     watcher_slot: Arc<std::sync::Mutex<Option<notify::RecommendedWatcher>>>,
     daemon_watcher_tx: tokio::sync::mpsc::Sender<Vec<PathBuf>>,
     event_tx: broadcast::Sender<crate::daemon::protocol::EventEnvelope>,
-    channel_runtimes: Arc<ChannelRuntimeManager>,
     shutdown_tx: watch_channel::Sender<bool>,
     shutdown_rx: watch_channel::Receiver<bool>,
 }
@@ -62,21 +60,9 @@ pub async fn serve(config_path: &Path) -> Result<()> {
     #[cfg(feature = "perf-diagnostics")]
     crate::perf_diagnostics::install_event_sink(event_tx.clone());
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
-    let channel_runtimes = Arc::new(ChannelRuntimeManager::new(
-        endpoint.clone(),
-        event_tx.clone(),
-    ));
-    let channel_supervisor = channel_runtimes.clone().start_supervisor();
-    {
-        let guard = state.read().await;
-        let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);
-        let channels = guard.registry_load.channels.clone();
-        channel_runtimes.sync(workspace_root, channels).await?;
-    }
     let daemon_watcher_tx = watch::start_daemon_watcher(
         Arc::clone(&state),
         Arc::clone(&watcher_slot),
-        Arc::clone(&channel_runtimes),
         event_tx.clone(),
     )
     .await?;
@@ -87,7 +73,6 @@ pub async fn serve(config_path: &Path) -> Result<()> {
         watcher_slot: Arc::clone(&watcher_slot),
         daemon_watcher_tx: daemon_watcher_tx.clone(),
         event_tx: event_tx.clone(),
-        channel_runtimes: Arc::clone(&channel_runtimes),
         shutdown_tx: shutdown_tx.clone(),
         shutdown_rx: shutdown_rx.clone(),
     };
@@ -133,8 +118,6 @@ pub async fn serve(config_path: &Path) -> Result<()> {
             .expect("daemon watcher mutex poisoned during shutdown");
         *slot = None;
     }
-    channel_runtimes.shutdown().await;
-    channel_supervisor.abort();
     state.write().await.shutdown().await;
     remove_endpoint(&endpoint).await.ok();
     Ok(())
@@ -170,7 +153,6 @@ async fn handle_client(stream: BoxedLocalIpcStream, ctx: ClientContext) -> Resul
             events::stream_events(
                 request,
                 Arc::clone(&ctx.state),
-                Arc::clone(&ctx.channel_runtimes),
                 ctx.event_tx.subscribe(),
                 ctx.shutdown_rx.clone(),
                 &mut writer,
@@ -185,7 +167,6 @@ async fn handle_client(stream: BoxedLocalIpcStream, ctx: ClientContext) -> Resul
             Arc::clone(&ctx.watcher_slot),
             ctx.daemon_watcher_tx.clone(),
             ctx.event_tx.clone(),
-            Arc::clone(&ctx.channel_runtimes),
             ctx.shutdown_tx.clone(),
         )
         .await;

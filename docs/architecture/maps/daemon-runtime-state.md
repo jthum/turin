@@ -252,7 +252,7 @@ git diff --check
 
 ## Current Shape
 
-The current pass centralizes channel lookup, persisted session target resolution, and live-branch busy checks. It intentionally keeps daemon task and session files separate because task submission and persisted session inspection have different contracts even though both touch live runtime state.
+The current shape centralizes persisted session target resolution and live-branch busy checks. It intentionally keeps daemon task and session files separate because task submission and persisted session inspection have different contracts even though both touch live runtime state.
 
 Runtime event streaming is split so the async subscription loop stays in `events.rs`, while filter matching and scoped snapshot projection live in focused child modules.
 
@@ -272,4 +272,4 @@ and counters without their own `/proc` reads. There is no diagnostics sidecar
 or separate HTTP service. Normal builds compile the collector and call-site
 macros away.
 
-For low-memory deployments on Linux/glibc, allocator environment settings such as `MALLOC_TRIM_THRESHOLD_=0` and `MALLOC_ARENA_MAX=1` can materially reduce retained PSS after long channel/task runs. They are not enabled by Turin itself because they trade retained memory for allocator/syscall overhead and may reduce throughput under some concurrent workloads.
+For low-memory deployments on Linux/glibc, allocator environment settings such as `MALLOC_TRIM_THRESHOLD_=0` and `MALLOC_ARENA_MAX=1` can materially reduce retained PSS after long task runs. They are not enabled by Turin itself because they trade retained memory for allocator/syscall overhead and may reduce throughput under some concurrent workloads.

@@ -6,8 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::{
-    DiscoveredAgent, DiscoveredChannel, HarnessKind, RegistryIssue, RegistryLoad, SharedHarness,
-    read_agent_file, read_channel_file,
+    DiscoveredAgent, HarnessKind, RegistryIssue, RegistryLoad, SharedHarness, read_agent_file,
 };
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, TurinConfig};
@@ -19,7 +18,6 @@ use crate::persistence::manager::StoreManager;
 pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<RegistryLoad> {
     let agents_dir = config.resolve_daemon_agents_dir(config_base);
     let harnesses_dir = config.resolve_daemon_harnesses_dir(config_base);
-    let channels_dir = config.resolve_daemon_channels_dir(config_base);
 
     let mut issues = Vec::new();
     let mut shared_harness_map = scan_shared_harnesses(&harnesses_dir)?;
@@ -41,20 +39,16 @@ pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<Registr
         .into_iter()
         .map(|(id, directory)| SharedHarness { id, directory })
         .collect();
-    let mut channels = scan_channels(config, &channels_dir, &agents, &mut issues)?;
 
     shared_harnesses.sort_by(|a, b| a.id.cmp(&b.id));
     agents.sort_by(|a, b| a.id.cmp(&b.id));
-    channels.sort_by(|a, b| a.id.cmp(&b.id));
     issues.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(RegistryLoad {
         agents_dir,
         harnesses_dir,
-        channels_dir,
         agents,
         shared_harnesses,
-        channels,
         issues,
     })
 }
@@ -101,50 +95,6 @@ fn scan_agents(
     }
 
     Ok(agents)
-}
-
-fn scan_channels(
-    bootstrap: &TurinConfig,
-    channels_dir: &Path,
-    agents: &[DiscoveredAgent],
-    issues: &mut Vec<RegistryIssue>,
-) -> Result<Vec<DiscoveredChannel>> {
-    let mut channels = Vec::new();
-
-    if !channels_dir.exists() {
-        return Ok(channels);
-    }
-
-    for entry in fs::read_dir(channels_dir)
-        .with_context(|| format!("Failed to read channels dir '{}'", channels_dir.display()))?
-    {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(err) => {
-                issues.push(RegistryIssue {
-                    path: channels_dir.display().to_string(),
-                    message: format!("Failed to read channel directory entry: {}", err),
-                });
-                continue;
-            }
-        };
-
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        match scan_channel_dir(bootstrap, &path, agents) {
-            Ok(Some(channel)) => channels.push(channel),
-            Ok(None) => {}
-            Err(err) => issues.push(RegistryIssue {
-                path: path.display().to_string(),
-                message: err.to_string(),
-            }),
-        }
-    }
-
-    Ok(channels)
 }
 
 fn scan_shared_harnesses(harnesses_dir: &Path) -> Result<HashMap<String, PathBuf>> {
@@ -270,124 +220,6 @@ fn scan_agent_dir(
         harness_kind,
         harness_dir,
     }))
-}
-
-fn scan_channel_dir(
-    bootstrap: &TurinConfig,
-    channel_dir: &Path,
-    agents: &[DiscoveredAgent],
-) -> Result<Option<DiscoveredChannel>> {
-    let channel_id = directory_name(channel_dir, "Channel")?;
-
-    let Some(parsed) = read_channel_file(channel_dir)? else {
-        return Ok(None);
-    };
-
-    if let Some(explicit_id) = &parsed.id
-        && explicit_id != &channel_id
-    {
-        anyhow::bail!(
-            "channel config id '{}' does not match directory name '{}'",
-            explicit_id,
-            channel_id
-        );
-    }
-
-    anyhow::ensure!(
-        !parsed.kind.trim().is_empty(),
-        "channel kind must not be empty"
-    );
-
-    validate_channel_agent(bootstrap, &parsed.agent_id, agents)?;
-    parsed.inference.validate_shallow(
-        &bootstrap.providers,
-        &format!("channel '{}'.inference", channel_id),
-    )?;
-    validate_channel_persistence(bootstrap, &parsed.persistence)?;
-    validate_channel_effective_inference(
-        bootstrap,
-        &channel_id,
-        &parsed.agent_id,
-        agents,
-        &parsed.inference,
-    )?;
-
-    Ok(Some(DiscoveredChannel {
-        id: channel_id,
-        directory: channel_dir.to_path_buf(),
-        enabled: parsed.enabled,
-        kind: parsed.kind,
-        agent_id: parsed.agent_id,
-        idle_timeout_seconds: parsed.idle_timeout_seconds,
-        persistence: parsed.persistence,
-        inference: parsed.inference,
-        extra: parsed.extra,
-    }))
-}
-
-fn validate_channel_agent(
-    bootstrap: &TurinConfig,
-    agent_id: &str,
-    agents: &[DiscoveredAgent],
-) -> Result<()> {
-    let known_agent =
-        agent_id == bootstrap.agent.id || agents.iter().any(|agent| agent.id == agent_id);
-    anyhow::ensure!(
-        known_agent,
-        "channel references unknown agent '{}'",
-        agent_id
-    );
-    Ok(())
-}
-
-fn validate_channel_persistence(
-    bootstrap: &TurinConfig,
-    persistence: &crate::kernel::config::ContextPersistenceConfig,
-) -> Result<()> {
-    if persistence.state.is_some() {
-        bootstrap
-            .persistence
-            .resolve_context_state_selector(Some(persistence))
-            .context("invalid channel persistence.state")?;
-    }
-    if persistence.store.is_some() {
-        bootstrap
-            .persistence
-            .resolve_context_store_selector(Some(persistence))
-            .context("invalid channel persistence.store")?;
-    }
-    Ok(())
-}
-
-fn validate_channel_effective_inference(
-    bootstrap: &TurinConfig,
-    channel_id: &str,
-    agent_id: &str,
-    agents: &[DiscoveredAgent],
-    inference: &crate::kernel::config::InferenceOverrideConfig,
-) -> Result<()> {
-    if inference.is_empty() {
-        return Ok(());
-    }
-
-    let agent_inference = if agent_id == bootstrap.agent.id {
-        &bootstrap.agent.inference
-    } else {
-        &agents
-            .iter()
-            .find(|agent| agent.id == agent_id)
-            .expect("known agent already checked")
-            .agent_config
-            .inference
-    };
-    let effective = bootstrap
-        .inference
-        .merged_with(agent_inference)
-        .merged_with(inference);
-    effective.validate_complete(
-        &bootstrap.providers,
-        &format!("channel '{}'.inference", channel_id),
-    )
 }
 
 fn validate_harness_dir(

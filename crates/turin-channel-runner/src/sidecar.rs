@@ -5,14 +5,11 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
-use turin_channel_core::{
-    ChannelAdapterManifest, ChannelAuthFlowPollRequest, ChannelAuthFlowStartRequest,
-};
+use turin_channel_core::{ChannelAuthFlowPollRequest, ChannelAuthFlowStartRequest};
 use turin_daemon_client::DaemonClient;
 
 use crate::{
-    ChannelAccessPolicy, ChannelDriver, ChannelRunner, RunnerConfig, RunnerPresence,
-    announce_runner_presence, spawn_runner_heartbeat, task_timeout_ms_from_settings,
+    ChannelAccessPolicy, ChannelDriver, ChannelRunner, RunnerConfig, task_timeout_ms_from_settings,
     tools_config_from_settings,
 };
 
@@ -27,49 +24,14 @@ pub struct ChannelSidecarRunArgs {
 
 pub struct ChannelSidecarRun {
     pub channel_id: String,
-    pub daemon: DaemonClient,
     pub runner: ChannelRunner,
     pub task_timeout_ms: Option<u64>,
     pub shutdown_rx: watch::Receiver<bool>,
     pub allow_unconfigured_inbound: bool,
     pub runtime_dir: PathBuf,
-    heartbeat_shutdown_rx: watch::Receiver<bool>,
 }
 
 impl ChannelSidecarRun {
-    pub async fn announce_presence(
-        &self,
-        manifest: ChannelAdapterManifest,
-        runner_binary: Option<String>,
-        runner_version: Option<String>,
-    ) -> Result<()> {
-        announce_runner_presence(
-            &self.daemon,
-            &self.channel_id,
-            RunnerPresence {
-                manifest,
-                runner_binary,
-                runner_version,
-                pid: Some(std::process::id()),
-            },
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to send runner hello for channel '{}'",
-                self.channel_id
-            )
-        })
-    }
-
-    pub fn spawn_heartbeat(&self) -> tokio::task::JoinHandle<()> {
-        spawn_runner_heartbeat(
-            self.daemon.clone(),
-            self.channel_id.clone(),
-            self.heartbeat_shutdown_rx.clone(),
-        )
-    }
-
     pub async fn run_driver<D: ChannelDriver + Send>(
         &self,
         agent_id: &str,
@@ -97,7 +59,6 @@ pub fn prepare_channel_sidecar_run(
         .unwrap_or_else(|| PathBuf::from("."));
 
     let shutdown_rx = spawn_shutdown_signal();
-    let heartbeat_shutdown_rx = shutdown_rx.clone();
     let daemon = DaemonClient::new(args.daemon_endpoint);
     let runner = ChannelRunner::new(
         daemon.clone(),
@@ -113,13 +74,11 @@ pub fn prepare_channel_sidecar_run(
 
     Ok(ChannelSidecarRun {
         channel_id: args.channel_id,
-        daemon,
         runner,
         task_timeout_ms,
         shutdown_rx,
         allow_unconfigured_inbound,
         runtime_dir,
-        heartbeat_shutdown_rx,
     })
 }
 
