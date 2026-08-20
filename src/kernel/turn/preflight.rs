@@ -328,7 +328,7 @@ impl ExecutionHost {
             harness
                 .lock()
                 .expect("session harness mutex poisoned")
-                .has_hook("on_turn_prepare")
+                .prepares_turn()
         });
         if has_prepare_hook && let Some(harness) = self.session_harness_engine(session) {
             let available_tool_names = available_tools

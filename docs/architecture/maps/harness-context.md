@@ -19,10 +19,15 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
-  - Owns the object-safe session-harness capability contract and `HarnessDefinition`
-    lifecycle. Each definition stores one private `HarnessAdapterFactory`; live sessions
-    receive fresh `HarnessInstance` values. Kernel and daemon code must not select engines
-    or reach through an adapter into its implementation.
+  - Composes the runtime adapter modules and owns default adapter selection.
+- `src/kernel/harness_runtime/contract.rs`
+  - Owns the object-safe adapter-factory and session-instance contracts plus the
+    adapter initialization context. Kernel and daemon code must not select engines or
+    reach through an adapter into its implementation.
+- `src/kernel/harness_runtime/definition.rs`
+  - Owns `HarnessDefinition`, loaded metadata, generation tracking, source watches,
+    source validation delegation, and session-instance creation. Each definition stores
+    one private `HarnessAdapterFactory`; live sessions receive fresh instances.
 - `src/kernel/harness_runtime/resolver.rs`
   - Owns construction-time adapter registration validation and implementation selection.
     `HarnessManager` consumes resolved adapters without knowing whether they came from
@@ -116,6 +121,8 @@ Structured inference:
 - Adapter selection happens once during harness catalog construction. Runtime methods
   must delegate through `HarnessAdapterFactory`, not branch on Lua, Rust, or future
   scripting-engine variants.
+- Engine-neutral call sites ask whether an instance `prepares_turn`; string hook names
+  remain an implementation detail of scripting adapters.
 - A build without the `lua` feature must fail clearly if no Rust factory is installed;
   it must not silently run with an empty harness. Scheduler, native tools, persistence,
   inference, governance, memory, and session graph support remain available.

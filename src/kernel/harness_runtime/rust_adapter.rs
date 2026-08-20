@@ -3,13 +3,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::{
-    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
-    HarnessTurnServices,
-};
+use super::{HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext};
 use crate::kernel::harness::{Harness, HarnessFactory, Verdict};
 use crate::kernel::harness_contract::{
-    HarnessActionRequest, HarnessHook, HarnessSignal, HarnessTurnRequest,
+    HarnessActionRequest, HarnessHook, HarnessSignal, HarnessTurnRequest, HarnessTurnServices,
 };
 
 struct RustHarnessAdapterFactory {
@@ -45,8 +42,8 @@ impl HarnessInstance for RustHarnessInstance {
         self.harness.borrow_mut().on_hook(hook)
     }
 
-    fn has_hook(&self, hook_name: &str) -> bool {
-        hook_name == "on_turn_prepare"
+    fn prepares_turn(&self) -> bool {
+        true
     }
 
     fn prepare_turn(

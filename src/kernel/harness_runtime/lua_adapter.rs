@@ -4,10 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use turin_daemon_protocol::UiIntentMessage;
 
-use super::{
-    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
-    HarnessTurnServices,
-};
+use super::{HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext};
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::source::HarnessSourceOverlay;
@@ -17,7 +14,7 @@ use crate::harness::virtual_tools::{
 use crate::kernel::harness::Verdict;
 use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest,
-    SessionQueue,
+    HarnessTurnServices, SessionQueue,
 };
 
 struct LuaHarnessAdapterFactory;
@@ -95,8 +92,8 @@ impl HarnessInstance for LuaHarnessInstance {
         self.engine.evaluate(hook.name(), hook.lua_payload())
     }
 
-    fn has_hook(&self, hook_name: &str) -> bool {
-        self.engine.has_hook(hook_name)
+    fn prepares_turn(&self) -> bool {
+        self.engine.has_hook("on_turn_prepare")
     }
 
     fn prepare_turn(
@@ -187,7 +184,7 @@ fn build_engine(
     let app_data = HarnessAppData {
         fs_root: definition.fs_root.clone(),
         workspace_root: definition.workspace_root.clone(),
-        harness_directory: definition.directory.clone(),
+        harness_directory: definition.directory().to_path_buf(),
         store_manager: ctx.store_manager,
         agent_manager: ctx.agent_manager,
         policy_manager: ctx.policy_manager,
@@ -204,10 +201,10 @@ fn build_engine(
         source_overlay,
     };
     let mut engine = HarnessEngine::new(app_data).context("Failed to create harness engine")?;
-    engine.load_dir(&definition.directory).with_context(|| {
+    engine.load_dir(definition.directory()).with_context(|| {
         format!(
             "Failed to load harness scripts from '{}'",
-            definition.directory.display()
+            definition.directory().display()
         )
     })?;
     engine.set_loading_phase(false);
