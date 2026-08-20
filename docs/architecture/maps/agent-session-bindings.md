@@ -123,6 +123,8 @@ Linked runtime residency:
   configuration replacement without blocking submissions to unrelated agents.
 - AgentManager's root module composes orchestration and public snapshots; mutable
   runtime-control state, queue records, and bounded caches retain focused internal owners.
+- Non-executed terminal task results are constructed from their owning pending record or
+  queued envelope so cancellation, shutdown, and lost-result paths retain one result shape.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.

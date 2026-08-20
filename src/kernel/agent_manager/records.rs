@@ -7,6 +7,7 @@ use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::LinkedSessionCreate;
@@ -81,6 +82,36 @@ pub(super) struct PendingTaskRecord {
     pub(super) execution: ExecutionStatusSnapshot,
 }
 
+impl PendingTaskRecord {
+    pub(super) fn into_terminal_result(
+        self,
+        request_id: String,
+        status: TaskTerminalStatus,
+        reason: &str,
+    ) -> PeerAgentTaskResult {
+        PeerAgentTaskResult {
+            request_id,
+            agent_id: self.runtime_key.agent_id,
+            slot_id: self.runtime_key.slot_id,
+            session_id: self.session_target.session_id,
+            trace_id: self.trace_id,
+            title: self.title,
+            prompt_preview: self.prompt_preview,
+            runtime_task_id: self.runtime_task_id.unwrap_or_default(),
+            execution: self.execution,
+            status,
+            task_turn_count: 0,
+            branch_outcome: None,
+            promotion_candidate: None,
+            promoted_branch: None,
+            output: None,
+            assistant_content: None,
+            promotion_input_content: None,
+            error: Some(reason.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct TaskSessionTarget {
     pub(super) session_id: Option<String>,
@@ -135,6 +166,44 @@ pub(super) struct PeerAgentTaskEnvelope {
     pub(super) promotion_candidate: Option<TaskPromotionCandidate>,
     pub(super) linked_session: Option<LinkedSessionTarget>,
     pub(super) session_target: TaskSessionTarget,
+}
+
+impl PeerAgentTaskEnvelope {
+    pub(super) fn into_terminal_result(
+        self,
+        runtime_key: &RuntimeSlotKey,
+        execution: ExecutionStatusSnapshot,
+        status: TaskTerminalStatus,
+        reason: &str,
+    ) -> (
+        Option<oneshot::Sender<PeerAgentTaskResult>>,
+        PeerAgentTaskResult,
+    ) {
+        let request_id = self
+            .request_id
+            .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
+        let result = PeerAgentTaskResult {
+            request_id,
+            agent_id: runtime_key.agent_id.clone(),
+            slot_id: runtime_key.slot_id.clone(),
+            session_id: self.session_target.session_id,
+            trace_id: self.task.trace_id,
+            title: self.task.title,
+            prompt_preview: task_prompt_preview(&self.task.prompt),
+            runtime_task_id: String::new(),
+            execution,
+            status,
+            task_turn_count: 0,
+            branch_outcome: None,
+            promotion_candidate: None,
+            promoted_branch: None,
+            output: None,
+            assistant_content: None,
+            promotion_input_content: None,
+            error: Some(reason.to_string()),
+        };
+        (self.result_tx, result)
+    }
 }
 
 pub(super) struct PeerTaskSubmission {

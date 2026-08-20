@@ -588,26 +588,11 @@ impl AgentManager {
         else {
             return;
         };
-        self.record_completed_result(PeerAgentTaskResult {
-            request_id: request_id.to_string(),
-            agent_id: pending.runtime_key.agent_id,
-            slot_id: pending.runtime_key.slot_id,
-            session_id: pending.session_target.session_id,
-            trace_id: pending.trace_id,
-            title: pending.title,
-            prompt_preview: pending.prompt_preview,
-            runtime_task_id: pending.runtime_task_id.unwrap_or_default(),
-            execution: pending.execution,
-            status: crate::kernel::event::TaskTerminalStatus::Error,
-            task_turn_count: 0,
-            branch_outcome: None,
-            promotion_candidate: None,
-            promoted_branch: None,
-            output: None,
-            assistant_content: None,
-            promotion_input_content: None,
-            error: Some(reason.to_string()),
-        })
+        self.record_completed_result(pending.into_terminal_result(
+            request_id.to_string(),
+            crate::kernel::event::TaskTerminalStatus::Error,
+            reason,
+        ))
         .await;
     }
 

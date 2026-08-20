@@ -10,9 +10,10 @@ use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, ExecutionWritePolicy};
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 
+use super::task_status::completed_task_snapshot;
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskResult, PendingTaskRecord, PendingTaskState,
-    RuntimeSlotKey, TaskStatusSnapshot, task_prompt_preview,
+    RuntimeSlotKey, TaskStatusSnapshot,
 };
 use crate::kernel::config::TurinConfig;
 use crate::kernel::harness_manager::HarnessManager;
@@ -531,51 +532,13 @@ impl AgentManager {
         };
         handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
 
-        let completed = PeerAgentTaskResult {
-            request_id: request_id.to_string(),
-            agent_id: pending.runtime_key.agent_id.clone(),
-            slot_id: pending.runtime_key.slot_id.clone(),
-            session_id: pending.session_target.session_id.clone(),
-            trace_id: pending.trace_id.clone(),
-            title: pending.title.clone(),
-            prompt_preview: pending.prompt_preview.clone(),
-            runtime_task_id: String::new(),
-            execution: pending.execution,
-            status,
-            task_turn_count: 0,
-            branch_outcome: None,
-            promotion_candidate: None,
-            promoted_branch: None,
-            output: None,
-            assistant_content: None,
-            promotion_input_content: None,
-            error: Some(reason.to_string()),
-        };
+        let completed = pending.into_terminal_result(request_id.to_string(), status, reason);
         if let Some(tx_result) = envelope.result_tx {
             let _ = tx_result.send(completed.clone());
         }
         self.record_completed_result(completed.clone()).await;
 
-        Ok(TaskStatusSnapshot {
-            request_id: completed.request_id,
-            agent_id: completed.agent_id,
-            slot_id: completed.slot_id,
-            session_id: completed.session_id,
-            trace_id: completed.trace_id,
-            title: completed.title,
-            prompt_preview: completed.prompt_preview,
-            state: "completed".to_string(),
-            runtime_task_id: Some(completed.runtime_task_id),
-            execution: completed.execution,
-            status: Some(completed.status),
-            task_turn_count: Some(completed.task_turn_count),
-            branch_outcome: completed.branch_outcome,
-            promotion_candidate: completed.promotion_candidate,
-            promoted_branch: completed.promoted_branch,
-            output: completed.output,
-            assistant_content: completed.assistant_content,
-            error: completed.error,
-        })
+        Ok(completed_task_snapshot(&completed))
     }
 
     pub(super) async fn cancel_queued_requests_for_runtime(
@@ -600,33 +563,16 @@ impl AgentManager {
         handle.queued_tasks.store(0, Ordering::Relaxed);
 
         for envelope in drained {
-            let request_id = envelope
-                .request_id
-                .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
-            let completed = PeerAgentTaskResult {
-                request_id: request_id.clone(),
-                agent_id: runtime_key.agent_id.clone(),
-                slot_id: runtime_key.slot_id.clone(),
-                session_id: envelope.session_target.session_id.clone(),
-                trace_id: envelope.task.trace_id.clone(),
-                title: envelope.task.title.clone(),
-                prompt_preview: task_prompt_preview(&envelope.task.prompt),
-                runtime_task_id: String::new(),
-                execution: handle
+            let (tx_result, completed) = envelope.into_terminal_result(
+                runtime_key,
+                handle
                     .control
                     .current_execution()
                     .unwrap_or_else(default_execution_snapshot),
-                status: TaskTerminalStatus::Cancelled,
-                task_turn_count: 0,
-                branch_outcome: None,
-                promotion_candidate: None,
-                promoted_branch: None,
-                output: None,
-                assistant_content: None,
-                promotion_input_content: None,
-                error: Some(reason.to_string()),
-            };
-            if let Some(tx_result) = envelope.result_tx {
+                TaskTerminalStatus::Cancelled,
+                reason,
+            );
+            if let Some(tx_result) = tx_result {
                 let _ = tx_result.send(completed.clone());
             }
             self.record_completed_result(completed).await;
@@ -649,33 +595,16 @@ impl AgentManager {
         handle.queued_tasks.store(0, Ordering::Relaxed);
 
         for envelope in drained {
-            let request_id = envelope
-                .request_id
-                .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
-            let completed = PeerAgentTaskResult {
-                request_id: request_id.clone(),
-                agent_id: runtime_key.agent_id.clone(),
-                slot_id: runtime_key.slot_id.clone(),
-                session_id: envelope.session_target.session_id.clone(),
-                trace_id: envelope.task.trace_id.clone(),
-                title: envelope.task.title.clone(),
-                prompt_preview: task_prompt_preview(&envelope.task.prompt),
-                runtime_task_id: String::new(),
-                execution: handle
+            let (tx_result, completed) = envelope.into_terminal_result(
+                runtime_key,
+                handle
                     .control
                     .current_execution()
                     .unwrap_or_else(default_execution_snapshot),
-                status: TaskTerminalStatus::Killed,
-                task_turn_count: 0,
-                branch_outcome: None,
-                promotion_candidate: None,
-                promoted_branch: None,
-                output: None,
-                assistant_content: None,
-                promotion_input_content: None,
-                error: Some(reason.to_string()),
-            };
-            if let Some(tx_result) = envelope.result_tx {
+                TaskTerminalStatus::Killed,
+                reason,
+            );
+            if let Some(tx_result) = tx_result {
                 let _ = tx_result.send(completed.clone());
             }
             self.record_completed_result(completed).await;
