@@ -29,6 +29,8 @@ This surface sits between harness code and core runtime state. It should stay bo
   - `runtime_control.rs` owns each resident runtime's coherent session, execution,
     cancellation, and reset snapshot.
   - `caches.rs` owns bounded completed-result and trace delegation-budget retention.
+  - `catalog_lifecycle.rs` owns hot-reload admission, affected-agent retirement, and
+    coherent runtime catalog replacement.
   - `peer_runtime.rs` owns peer task execution against the currently resident session.
   - `peer_session.rs` owns peer session bootstrap, linked-session activation, switching,
     and shutdown.

@@ -1,6 +1,7 @@
 mod allocator;
 mod caches;
 mod cancellation;
+mod catalog_lifecycle;
 mod lane_scheduler;
 mod operations;
 mod peer_runtime;
