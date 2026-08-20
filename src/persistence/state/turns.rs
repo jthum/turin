@@ -159,7 +159,7 @@ impl StateStore {
                 };
                 if branch.head_turn_id != Some(expected_head_turn_id) {
                     return Err(TurnWriteError::BranchHeadChanged {
-                        expected_head_turn_id,
+                        expected_head_turn_id: Some(expected_head_turn_id),
                         found_head_turn_id: branch.head_turn_id,
                     }
                     .into());
@@ -514,12 +514,42 @@ impl StateStore {
         .await
         .context("Failed to create turn row")?;
         let turn_id = tx.last_insert_rowid();
-        tx.execute(
-            "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2",
-            turso::params![turn_id, branch_id],
-        )
-        .await
-        .context("Failed to advance active branch head")?;
+        let changed = match parent_turn_id {
+            Some(parent_turn_id) => {
+                tx.execute(
+                    "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2 AND session_id = ?3 AND head_turn_id = ?4",
+                    turso::params![turn_id, branch_id, session_id, parent_turn_id],
+                )
+                .await
+            }
+            None => {
+                tx.execute(
+                    "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2 AND session_id = ?3 AND head_turn_id IS NULL",
+                    turso::params![turn_id, branch_id, session_id],
+                )
+                .await
+            }
+        };
+        let changed = changed.context("Failed to advance active branch head")?;
+        if changed != 1 {
+            let mut rows = tx
+                .query(
+                    "SELECT head_turn_id FROM branch_heads WHERE id = ?1 AND session_id = ?2",
+                    turso::params![branch_id, session_id],
+                )
+                .await?;
+            let found_head_turn_id = rows
+                .next()
+                .await?
+                .map(|row| row.get::<Option<i64>>(0))
+                .transpose()?
+                .flatten();
+            return Err(TurnWriteError::BranchHeadChanged {
+                expected_head_turn_id: parent_turn_id,
+                found_head_turn_id,
+            }
+            .into());
+        }
 
         let mut rows = tx
             .query(

@@ -29,18 +29,40 @@ impl StateStore {
         metadata: Option<&str>,
     ) -> Result<i64> {
         validate_session_metadata("new session", metadata)?;
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start session creation transaction")?;
         let public_id_bytes = public_id.into_bytes().to_vec();
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO sessions (public_id, agent_id, origin_id, metadata) VALUES (?1, ?2, ?3, ?4)",
             turso::params![public_id_bytes, agent_id, origin_id, metadata],
         )
         .await
         .context("Failed to insert into sessions table")?;
 
-        let session_id = conn.last_insert_rowid();
-        self.initialize_main_branch(session_id).await?;
+        let session_id = tx.last_insert_rowid();
+        let branch_public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
+        tx.execute(
+            "INSERT INTO branch_heads (public_id, session_id, name, origin_kind) VALUES (?1, ?2, 'main', 'main')",
+            turso::params![branch_public_id, session_id],
+        )
+        .await
+        .context("Failed to insert initial main branch head")?;
+        let branch_id = tx.last_insert_rowid();
+        let changed = tx
+            .execute(
+                "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
+                turso::params![branch_id, session_id],
+            )
+            .await
+            .context("Failed to activate main branch head")?;
+        anyhow::ensure!(changed == 1, "New session disappeared before activation");
+        tx.commit()
+            .await
+            .context("Failed to commit session creation transaction")?;
         Ok(session_id)
     }
 
@@ -83,9 +105,13 @@ impl StateStore {
         }
 
         let root_session_id = parent.root_session_id.unwrap_or(parent.id);
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start linked session creation transaction")?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        conn.execute(
+        tx.execute(
             r#"
             INSERT INTO sessions (
                 public_id, agent_id, origin_id, metadata, parent_session_id, root_session_id,
@@ -108,8 +134,29 @@ impl StateStore {
         .await
         .context("Failed to insert linked session")?;
 
-        let session_id = conn.last_insert_rowid();
-        self.initialize_main_branch(session_id).await?;
+        let session_id = tx.last_insert_rowid();
+        let branch_public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
+        tx.execute(
+            "INSERT INTO branch_heads (public_id, session_id, name, origin_kind) VALUES (?1, ?2, 'main', 'main')",
+            turso::params![branch_public_id, session_id],
+        )
+        .await
+        .context("Failed to insert initial main branch head")?;
+        let branch_id = tx.last_insert_rowid();
+        let changed = tx
+            .execute(
+                "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
+                turso::params![branch_id, session_id],
+            )
+            .await
+            .context("Failed to activate main branch head")?;
+        anyhow::ensure!(
+            changed == 1,
+            "New linked session disappeared before activation"
+        );
+        tx.commit()
+            .await
+            .context("Failed to commit linked session creation transaction")?;
         Ok(session_id)
     }
 

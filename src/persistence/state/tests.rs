@@ -577,6 +577,92 @@ async fn test_scheduled_job_run_bookkeeping_tracks_parallel_active_runs() {
 }
 
 #[tokio::test]
+async fn scheduled_run_transitions_roll_back_when_job_summary_update_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let job_id = store
+        .create_scheduled_job(ScheduledJobInsert {
+            public_id: uuid::Uuid::now_v7(),
+            agent_id: "default",
+            job_kind: "prompt",
+            prompt: Some("Run maintenance"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            state_target: None,
+            store_target: None,
+            next_run_unix_ms: 1_700_000_000_000,
+            interval_seconds: Some(60),
+            recurring_pattern: None,
+            overlap_policy: "parallel",
+            work_key: Some("maintenance"),
+            max_concurrency: Some(2),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_scheduled_job_summary
+        BEFORE UPDATE ON scheduled_jobs
+        BEGIN
+            SELECT RAISE(FAIL, 'injected scheduled job summary failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .mark_scheduled_job_started(job_id, "task-a", 200, true, 100)
+        .await
+        .expect_err("summary failure must abort run creation");
+    assert_eq!(
+        store.count_active_scheduled_job_runs(job_id).await.unwrap(),
+        0,
+        "the run insert must roll back with its job summary"
+    );
+
+    conn.execute_batch("DROP TRIGGER fail_scheduled_job_summary")
+        .await
+        .unwrap();
+    store
+        .mark_scheduled_job_started(job_id, "task-a", 200, true, 100)
+        .await
+        .unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_scheduled_job_summary
+        BEFORE UPDATE ON scheduled_jobs
+        BEGIN
+            SELECT RAISE(FAIL, 'injected scheduled job summary failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .finish_scheduled_job_run(job_id, "task-a", 300, Some("completed"))
+        .await
+        .expect_err("summary failure must abort run completion");
+    assert_eq!(
+        store.count_active_scheduled_job_runs(job_id).await.unwrap(),
+        1,
+        "the run completion must roll back with its job summary"
+    );
+    let job = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job");
+    assert_eq!(job.active_run_count, 1);
+    assert_eq!(job.running_task_id.as_deref(), Some("task-a"));
+}
+
+#[tokio::test]
 async fn test_work_item_claim_pause_and_complete_lifecycle() {
     let store = StateStore::open_memory().await.unwrap();
     let worklist = store
@@ -1752,6 +1838,39 @@ async fn test_create_session_initializes_main_branch() {
 }
 
 #[tokio::test]
+async fn session_creation_rolls_back_when_main_branch_initialization_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_initial_main_branch
+        BEFORE INSERT ON branch_heads
+        WHEN NEW.origin_kind = 'main'
+        BEGIN
+            SELECT RAISE(FAIL, 'injected main branch failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    let public_id = uuid::Uuid::now_v7();
+    let error = store
+        .create_session(public_id, "default", None)
+        .await
+        .expect_err("main branch failure must abort session creation");
+    assert!(error.to_string().contains("initial main branch"));
+    assert!(
+        store
+            .get_session_row_by_public_id(public_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "a session without its initial branch must not be committed"
+    );
+}
+
+#[tokio::test]
 async fn test_get_messages_follows_active_branch_path() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
@@ -1840,6 +1959,50 @@ async fn test_get_messages_follows_active_branch_path() {
     assert_eq!(total_main, 2);
     assert_eq!(recent_main.len(), 1);
     assert!(recent_main[0].content.contains("main"));
+}
+
+#[tokio::test]
+async fn activated_branch_creation_rolls_back_when_checkout_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_branch_checkout
+        BEFORE UPDATE OF active_branch_head_id ON sessions
+        BEGIN
+            SELECT RAISE(FAIL, 'injected branch checkout failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .create_branch_head_from_turn_index(session, "must-roll-back", Some(0), true)
+        .await
+        .expect_err("checkout failure must abort branch creation");
+    assert!(
+        store
+            .get_branch_head_by_name(session, "must-roll-back")
+            .await
+            .unwrap()
+            .is_none(),
+        "a failed create-and-checkout operation must not retain the new branch"
+    );
 }
 
 #[tokio::test]

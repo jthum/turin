@@ -130,31 +130,6 @@ impl StateStore {
             .ok_or_else(|| anyhow!("Promoted branch '{}' was not readable", name))
     }
 
-    pub async fn initialize_main_branch(&self, session_id: i64) -> Result<BranchHeadRow> {
-        let conn = self.connect().await?;
-        let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
-
-        let provenance = BranchProvenance::main();
-        conn.execute(
-            "INSERT INTO branch_heads (public_id, session_id, name, origin_kind) VALUES (?1, ?2, 'main', ?3)",
-            turso::params![public_id, session_id, provenance.origin_kind],
-        )
-        .await
-        .context("Failed to insert initial main branch head")?;
-
-        let branch_id = conn.last_insert_rowid();
-        conn.execute(
-            "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
-            turso::params![branch_id, session_id],
-        )
-        .await
-        .context("Failed to activate main branch head")?;
-
-        self.get_active_branch_head(session_id)
-            .await?
-            .ok_or_else(|| anyhow!("Initial main branch head was not readable after creation"))
-    }
-
     pub async fn get_active_branch_head(&self, session_id: i64) -> Result<Option<BranchHeadRow>> {
         let conn = self.connect().await?;
         self.get_active_branch_head_with_conn(&conn, session_id)
@@ -264,11 +239,15 @@ impl StateStore {
         activate: bool,
         provenance: BranchProvenance,
     ) -> Result<BranchHeadRow> {
-        let conn = self.connect().await?;
-        let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
         let source_turn_id = self
             .resolve_branch_source_turn(session_id, from_turn_index)
             .await?;
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start branch creation transaction")?;
+        let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
 
         let BranchProvenance {
             origin_kind,
@@ -276,7 +255,7 @@ impl StateStore {
             origin_execution_id,
             origin_metadata,
         } = provenance;
-        conn.execute(
+        tx.execute(
             r#"
             INSERT INTO branch_heads (
                 public_id,
@@ -305,17 +284,21 @@ impl StateStore {
         .await
         .with_context(|| format!("Failed to create branch head '{}'", name))?;
 
-        let branch_id = conn.last_insert_rowid();
+        let branch_id = tx.last_insert_rowid();
         if activate {
-            conn.execute(
-                "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
-                turso::params![branch_id, session_id],
-            )
-            .await
-            .with_context(|| format!("Failed to activate branch head '{}'", name))?;
+            let changed = tx
+                .execute(
+                    "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
+                    turso::params![branch_id, session_id],
+                )
+                .await
+                .with_context(|| format!("Failed to activate branch head '{}'", name))?;
+            anyhow::ensure!(changed == 1, "Session '{}' not found", session_id);
         }
-
-        self.get_branch_head_with_conn(&conn, session_id, branch_id)
+        tx.commit()
+            .await
+            .context("Failed to commit branch creation transaction")?;
+        self.get_branch_head(session_id, branch_id)
             .await?
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
@@ -357,7 +340,11 @@ impl StateStore {
             );
         }
 
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start branch creation transaction")?;
         let public_id = uuid::Uuid::now_v7().into_bytes().to_vec();
 
         let BranchProvenance {
@@ -366,7 +353,7 @@ impl StateStore {
             origin_execution_id,
             origin_metadata,
         } = provenance;
-        conn.execute(
+        tx.execute(
             r#"
             INSERT INTO branch_heads (
                 public_id,
@@ -395,17 +382,21 @@ impl StateStore {
         .await
         .with_context(|| format!("Failed to create branch head '{}' from turn", name))?;
 
-        let branch_id = conn.last_insert_rowid();
+        let branch_id = tx.last_insert_rowid();
         if activate {
-            conn.execute(
-                "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
-                turso::params![branch_id, session_id],
-            )
-            .await
-            .with_context(|| format!("Failed to activate branch head '{}'", name))?;
+            let changed = tx
+                .execute(
+                    "UPDATE sessions SET active_branch_head_id = ?1 WHERE id = ?2",
+                    turso::params![branch_id, session_id],
+                )
+                .await
+                .with_context(|| format!("Failed to activate branch head '{}'", name))?;
+            anyhow::ensure!(changed == 1, "Session '{}' not found", session_id);
         }
-
-        self.get_branch_head_with_conn(&conn, session_id, branch_id)
+        tx.commit()
+            .await
+            .context("Failed to commit branch creation transaction")?;
+        self.get_branch_head(session_id, branch_id)
             .await?
             .ok_or_else(|| anyhow!("Created branch head '{}' was not readable", name))
     }
@@ -510,19 +501,6 @@ impl StateStore {
                 .find(|turn| turn.branch_depth == branch_depth)
                 .map(|turn| turn.id)),
         }
-    }
-
-    async fn get_branch_head_with_conn(
-        &self,
-        conn: &turso::Connection,
-        session_id: i64,
-        branch_id: i64,
-    ) -> Result<Option<BranchHeadRow>> {
-        let sql = format!("{BRANCH_HEAD_SELECT} WHERE bh.session_id = ?1 AND bh.id = ?2");
-        let mut rows = conn
-            .query(&sql, turso::params![session_id, branch_id])
-            .await?;
-        next_branch_head_row(&mut rows).await
     }
 }
 

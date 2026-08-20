@@ -76,7 +76,8 @@ Resume or refresh:
 
 Durable turn writes:
 
-1. Allocate a turn and advance its branch head in one transaction.
+1. Allocate a turn and advance its branch head in one transaction using the head turn
+   that was observed while preparing the write as an optimistic precondition.
 2. Persist the user message before adding it to resident history or invoking inference.
 3. Stream events through the ordered background durability lane.
 4. Persist the complete assistant message before emitting `TurnEnd` and adding it to resident history.
@@ -206,6 +207,10 @@ Delete persisted session:
 - Persisted sessions must name an active branch head before transcript or inference-context
   materialization. Missing branch rows, missing head turns, and invalid ancestry depths fail
   deterministically as persistence-integrity errors.
+- Session-row creation, initial main-branch creation, and initial branch activation commit as
+  one transaction. Turin must never expose a newly created session without its main branch.
+- Creating a branch and optionally making it active commit as one transaction. Failed activation
+  must not leave behind a branch that the caller was told could not be created.
 - Context-compaction events are derived optimization records rather than transcript structure.
   Materialization skips malformed records with a warning and pages backward to the newest valid
   checkpoint instead of making an otherwise readable session unavailable.
@@ -216,7 +221,8 @@ Delete persisted session:
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
-- Turn insertion and branch-head advancement must commit or roll back together.
+- Turn insertion and branch-head advancement must commit or roll back together. The head update
+  must fail as a turn-write conflict if the branch moved after its parent was selected.
 - Durable transcript and tool-record write failures must stop the active task; they must not be reduced to warnings.
 - Task execution overrides, delegation budgets, and active-task state must be restored even when task hooks, execution, checkout, or durability finalization fails.
 - A durability barrier must report event-writer failures that occurred before it, then allow a recreated writer to serve later tasks.

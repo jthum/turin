@@ -471,19 +471,26 @@ impl StateStore {
     }
 
     pub async fn delete_scheduled_job(&self, id: i64) -> Result<()> {
-        let conn = self.connect().await?;
-        conn.execute(
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start scheduled job deletion transaction")?;
+        tx.execute(
             "DELETE FROM scheduled_job_runs WHERE scheduled_job_id = ?1",
             turso::params![id],
         )
         .await
         .context("Failed to delete scheduled job runs")?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM scheduled_jobs WHERE id = ?1",
             turso::params![id],
         )
         .await
         .context("Failed to delete scheduled job")?;
+        tx.commit()
+            .await
+            .context("Failed to commit scheduled job deletion")?;
         Ok(())
     }
 }

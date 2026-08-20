@@ -77,8 +77,12 @@ impl StateStore {
         enabled: bool,
         last_run_unix_ms: i64,
     ) -> Result<()> {
-        let conn = self.connect().await?;
-        conn.execute(
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start scheduled job run transaction")?;
+        tx.execute(
             r#"
             INSERT INTO scheduled_job_runs (
                 scheduled_job_id, task_id, started_unix_ms, updated_at
@@ -88,8 +92,9 @@ impl StateStore {
         )
         .await
         .context("Failed to insert scheduled job run")?;
-        conn.execute(
-            r#"
+        let changed = tx
+            .execute(
+                r#"
             UPDATE scheduled_jobs
             SET running_task_id = (
                     SELECT task_id
@@ -109,15 +114,19 @@ impl StateStore {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![
-                id,
-                next_run_unix_ms,
-                if enabled { 1 } else { 0 },
-                last_run_unix_ms
-            ],
-        )
-        .await
-        .context("Failed to mark scheduled job started")?;
+                turso::params![
+                    id,
+                    next_run_unix_ms,
+                    if enabled { 1 } else { 0 },
+                    last_run_unix_ms
+                ],
+            )
+            .await
+            .context("Failed to mark scheduled job started")?;
+        anyhow::ensure!(changed == 1, "Scheduled job '{}' not found", id);
+        tx.commit()
+            .await
+            .context("Failed to commit scheduled job run start")?;
         Ok(())
     }
 
@@ -128,9 +137,14 @@ impl StateStore {
         finished_unix_ms: i64,
         last_status: Option<&str>,
     ) -> Result<()> {
-        let conn = self.connect().await?;
-        conn.execute(
-            r#"
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start scheduled job completion transaction")?;
+        let finished = tx
+            .execute(
+                r#"
             UPDATE scheduled_job_runs
             SET finished_unix_ms = ?3,
                 last_status = ?4,
@@ -139,13 +153,20 @@ impl StateStore {
               AND task_id = ?2
               AND finished_unix_ms IS NULL
             "#,
-            turso::params![scheduled_job_id, task_id, finished_unix_ms, last_status],
-        )
-        .await
-        .context("Failed to finish scheduled job run")?;
+                turso::params![scheduled_job_id, task_id, finished_unix_ms, last_status],
+            )
+            .await
+            .context("Failed to finish scheduled job run")?;
+        anyhow::ensure!(
+            finished == 1,
+            "Active scheduled job run '{}' for job '{}' not found",
+            task_id,
+            scheduled_job_id
+        );
 
-        conn.execute(
-            r#"
+        let changed = tx
+            .execute(
+                r#"
             UPDATE scheduled_jobs
             SET running_task_id = (
                     SELECT task_id
@@ -163,10 +184,19 @@ impl StateStore {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![scheduled_job_id, last_status],
-        )
-        .await
-        .context("Failed to refresh scheduled job after run completion")?;
+                turso::params![scheduled_job_id, last_status],
+            )
+            .await
+            .context("Failed to refresh scheduled job after run completion")?;
+        anyhow::ensure!(
+            changed == 1,
+            "Scheduled job '{}' not found while completing run '{}'",
+            scheduled_job_id,
+            task_id
+        );
+        tx.commit()
+            .await
+            .context("Failed to commit scheduled job run completion")?;
         Ok(())
     }
 }

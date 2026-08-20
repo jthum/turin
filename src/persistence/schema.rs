@@ -557,10 +557,6 @@ impl BranchProvenance {
         Self::new("manual")
     }
 
-    pub fn main() -> Self {
-        Self::new("main")
-    }
-
     pub fn sidestep() -> Self {
         Self::new("sidestep")
     }

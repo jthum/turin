@@ -51,7 +51,7 @@ pub enum TurnWriteError {
         "Branch head changed while preparing turn write target: expected {expected_head_turn_id:?}, found {found_head_turn_id:?}"
     )]
     BranchHeadChanged {
-        expected_head_turn_id: i64,
+        expected_head_turn_id: Option<i64>,
         found_head_turn_id: Option<i64>,
     },
 }

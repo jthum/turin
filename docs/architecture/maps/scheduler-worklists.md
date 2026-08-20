@@ -88,6 +88,8 @@ Runtime schedule API:
 - A scheduled job must define exactly one payload kind: prompt or action.
 - A scheduled job cannot define both `interval_seconds` and `recurring_pattern`.
 - Active prompt runs are tracked through scheduled job run rows.
+- Starting or finishing a scheduled run and refreshing the scheduled job's active-run summary
+  commit as one transaction. A run row and `active_run_count`/`running_task_id` must not diverge.
 - `skip` overlap advances the next recurring due time without setting `pending_rerun`.
 - `queue` overlap advances recurrence and sets `pending_rerun` so the job runs again after the active run finishes.
 - `parallel` overlap may start another active run if work-key capacity allows it.
