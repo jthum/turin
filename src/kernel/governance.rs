@@ -1,3 +1,4 @@
+#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 mod capabilities;
 mod grants;
 
@@ -11,9 +12,9 @@ use crate::kernel::config::{
     GovernanceAuditMode, GovernanceConfig, GovernanceImportMode, GovernanceUnmatchedCapability,
 };
 
-pub(crate) use capabilities::{
-    capability_allowed_by_bool_rules, intersect_capability_bool_rules, tool_capability_name,
-};
+pub(crate) use capabilities::tool_capability_name;
+#[cfg(feature = "lua")]
+pub(crate) use capabilities::{capability_allowed_by_bool_rules, intersect_capability_bool_rules};
 use capabilities::{
     capability_ceiling_denial_reason_bool_map, capability_ceiling_denial_reason_json_map,
     match_capability_rule,

@@ -4,11 +4,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result};
+#[cfg(feature = "lua")]
+use anyhow::Context;
+use anyhow::Result;
 use tracing::{debug, info, warn};
 use turin_daemon_protocol::UiIntentMessage;
 
+#[cfg(feature = "lua")]
 use crate::harness::engine::HarnessEngine;
+#[cfg(feature = "lua")]
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::source::HarnessSourceOverlay;
@@ -35,6 +39,7 @@ pub(crate) struct HarnessWatchRoot {
 }
 
 #[derive(Clone)]
+#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) config: Arc<TurinConfig>,
     pub(crate) clients: HashMap<String, ProviderClient>,
@@ -95,6 +100,7 @@ pub(crate) trait HarnessInstance: Send {
     ) -> Result<usize>;
 }
 
+#[cfg(feature = "lua")]
 struct LuaHarnessInstance {
     engine: HarnessEngine,
 }
@@ -197,12 +203,14 @@ impl HarnessInstance for NativeHarnessInstance {
     }
 }
 
+#[cfg(feature = "lua")]
 impl LuaHarnessInstance {
     fn new(engine: HarnessEngine) -> Self {
         Self { engine }
     }
 }
 
+#[cfg(feature = "lua")]
 impl HarnessInstance for LuaHarnessInstance {
     fn loaded_scripts(&self) -> Vec<String> {
         self.engine.loaded_scripts()
@@ -338,8 +346,11 @@ struct HarnessLoadedState {
 pub(crate) struct HarnessRuntime {
     harness_id: String,
     directory: PathBuf,
+    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     fs_root: PathBuf,
+    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     workspace_root: PathBuf,
+    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     spawn_depth: u32,
     loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,
@@ -522,8 +533,16 @@ impl HarnessRuntime {
         ctx: HarnessRuntimeInitContext,
         source_overlay: HarnessSourceOverlay,
     ) -> Result<usize> {
-        let instance = self.build_instance_with_overlay(ctx, Some(Arc::new(source_overlay)))?;
-        Ok(instance.loaded_scripts().len())
+        #[cfg(feature = "lua")]
+        {
+            let instance = self.build_instance_with_overlay(ctx, Some(Arc::new(source_overlay)))?;
+            Ok(instance.loaded_scripts().len())
+        }
+        #[cfg(not(feature = "lua"))]
+        {
+            let _ = (ctx, source_overlay);
+            anyhow::bail!("Lua harness validation requires the 'lua' feature")
+        }
     }
 
     pub(crate) fn create_instance(
@@ -533,6 +552,7 @@ impl HarnessRuntime {
         self.build_instance(ctx)
     }
 
+    #[cfg(feature = "lua")]
     fn build_app_data(
         &self,
         ctx: HarnessRuntimeInitContext,
@@ -563,9 +583,20 @@ impl HarnessRuntime {
         if let Some(factory) = &self.native_factory {
             return Ok(Box::new(NativeHarnessInstance::new(factory.create()?)));
         }
-        self.build_instance_with_overlay(ctx, None)
+        #[cfg(feature = "lua")]
+        {
+            self.build_instance_with_overlay(ctx, None)
+        }
+        #[cfg(not(feature = "lua"))]
+        {
+            let _ = ctx;
+            anyhow::bail!(
+                "No native harness factory was configured and Turin was built without Lua"
+            )
+        }
     }
 
+    #[cfg(feature = "lua")]
     fn build_instance_with_overlay(
         &self,
         ctx: HarnessRuntimeInitContext,

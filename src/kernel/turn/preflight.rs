@@ -6,7 +6,6 @@ use futures::Stream;
 use tracing::{debug, error, warn};
 
 use crate::display;
-use crate::harness::context::{RequestOptionsOverride, build_merged_request_options};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute};
@@ -19,7 +18,10 @@ use crate::kernel::turn::context_window::{
 use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
 use super::TurnContext;
-use crate::kernel::harness_contract::{HarnessHook, HarnessTurnRequest, HarnessTurnServices};
+use crate::kernel::harness_contract::{
+    HarnessHook, HarnessTurnRequest, HarnessTurnServices, RequestOptionsOverride, ToolExposure,
+    build_merged_request_options,
+};
 use crate::kernel::turn::context_window::estimate_request_token_breakdown;
 
 mod compaction;
@@ -45,7 +47,7 @@ pub(super) struct TurnRequestState {
     messages: Vec<provider::InferenceMessage>,
     thinking_budget: u32,
     request_options_override: RequestOptionsOverride,
-    tool_exposure: crate::harness::context::ToolExposure,
+    tool_exposure: ToolExposure,
 }
 
 fn requested_context_label(route: &ResolvedInferenceRoute) -> &str {
@@ -209,7 +211,7 @@ impl ExecutionHost {
                 .and_then(|t| if t.enabled { t.budget_tokens } else { None })
                 .unwrap_or(0),
             request_options_override: RequestOptionsOverride::default(),
-            tool_exposure: crate::harness::context::ToolExposure::default(),
+            tool_exposure: ToolExposure::default(),
         })
     }
 

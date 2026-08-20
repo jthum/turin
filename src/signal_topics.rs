@@ -1,3 +1,4 @@
+#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub(crate) fn validate_signal_topic_pattern(topic: &str) -> Result<(), String> {
     if topic.trim().is_empty() {
         return Err("signal topic must not be empty".to_string());

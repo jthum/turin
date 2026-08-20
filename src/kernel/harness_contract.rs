@@ -1,4 +1,6 @@
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(feature = "lua")]
+use serde_json::json;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -78,26 +80,26 @@ pub struct HarnessEventContext {
 
 #[derive(Clone)]
 pub struct HarnessExecutionMetadata {
-    pub(crate) execution_id: String,
-    pub(crate) context_target: ExecutionContextTarget,
-    pub(crate) visibility: ExecutionVisibility,
-    pub(crate) durability: ExecutionDurability,
-    pub(crate) write_policy: ExecutionWritePolicy,
-    pub(crate) conflict_policy: ExecutionConflictPolicy,
+    pub execution_id: String,
+    pub context_target: ExecutionContextTarget,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+    pub conflict_policy: ExecutionConflictPolicy,
 }
 
 #[derive(Clone)]
 pub struct HarnessExecutionBinding {
-    pub(crate) agent_id: String,
-    pub(crate) session_id: String,
-    pub(crate) store_selector: StoreSelector,
-    pub(crate) default_store_selector: Option<StoreSelector>,
-    pub(crate) execution: HarnessExecutionMetadata,
-    pub(crate) runtime_slot_id: Option<String>,
-    pub(crate) trace_id: String,
-    pub(crate) completed_task_results: CompletedLocalTaskResultsHandle,
-    pub(crate) event_context: HarnessEventContext,
-    pub(crate) cancel_token: CancellationToken,
+    pub agent_id: String,
+    pub session_id: String,
+    pub store_selector: StoreSelector,
+    pub default_store_selector: Option<StoreSelector>,
+    pub execution: HarnessExecutionMetadata,
+    pub runtime_slot_id: Option<String>,
+    pub trace_id: String,
+    pub completed_task_results: CompletedLocalTaskResultsHandle,
+    pub event_context: HarnessEventContext,
+    pub cancel_token: CancellationToken,
 }
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
@@ -130,6 +132,7 @@ pub struct HarnessTurnRequest {
     pub tool_exposure: ToolExposure,
 }
 
+#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub(crate) struct HarnessTurnServices<'a> {
     pub(crate) clients: &'a HashMap<String, ProviderClient>,
     pub(crate) config: &'a Arc<TurinConfig>,
@@ -251,6 +254,7 @@ pub enum HarnessHook<'a> {
 }
 
 impl HarnessHook<'_> {
+    #[cfg(feature = "lua")]
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::SessionStart { .. } => "on_session_start",
@@ -270,6 +274,7 @@ impl HarnessHook<'_> {
         }
     }
 
+    #[cfg(feature = "lua")]
     pub(crate) fn lua_payload(&self) -> Value {
         match self {
             Self::SessionStart {

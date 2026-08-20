@@ -32,6 +32,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/builder.rs`
   - `with_native_harness_factory` replaces the default Lua harness binding with a
     compiled Rust factory while preserving named Lua harness definitions.
+- `Cargo.toml`
+  - The default `lua` feature includes `mlua`. Native-only embedders can use
+    `default-features = false` and must install a native harness factory.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -81,6 +84,9 @@ Structured inference:
   must not leak through a globally shared harness object.
 - Native default harnesses do not watch the configured Lua harness directory. Named
   Lua harnesses retain their normal loading and hot-reload behavior.
+- A build without the `lua` feature must fail clearly if no native factory is installed;
+  it must not silently run with an empty harness. Scheduler, native tools, persistence,
+  inference, governance, memory, and session graph support remain available.
 
 ## Common Changes
 
@@ -135,4 +141,6 @@ ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adap
 detail. Execution bindings and session queues are kernel-owned DTOs rather than Lua
 globals, while registration and virtual-tool capabilities remain to be generalized.
 `RuntimeBuilder::with_native_harness_factory` now provides the first compiled-harness
-entry point for typed lifecycle hooks and request preparation. Lua remains the default.
+entry point for typed lifecycle hooks and request preparation. Lua remains the default
+Cargo feature, while `--no-default-features` excludes `mlua` and all Lua VM, context,
+DX, globals, and standard-library binding modules.
