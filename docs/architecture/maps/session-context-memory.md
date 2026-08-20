@@ -113,6 +113,9 @@ Bounded persistence selection:
   read/write counters.
 - Harness `on_turn_prepare` sees the provider-budgeted request projection and may replace it; its changes must remain request-local.
 - A checkpoint boundary must resolve to a complete persisted turn. It must never depend on the current resident-window length.
+- Restored checkpoints are target-specific: the covered turn must be an ancestor of the
+  selected branch/turn target, or explicitly present in a selected path. A session-wide
+  newest checkpoint from a sibling branch must not compact another execution path.
 - When no checkpoint exists, Turin must not summarize a bounded window that omits older ancestry as though it covered that ancestry.
 - Debug hot-history profile can opt out of bounds; default profile should remain memory-safe.
 - Feature-gated live diagnostics must not change materialization semantics or

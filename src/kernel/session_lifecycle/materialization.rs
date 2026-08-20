@@ -7,7 +7,7 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::{ContextCompactionCheckpoint, ExecutionContextTarget, HistoryOrigin};
 use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{MessageRow, SessionRow};
+use crate::persistence::schema::{MessageRow, SessionRow, TurnRow};
 use crate::persistence::state::TokenBoundedMessages;
 use crate::persistence::state::{SessionReadTarget, StateStore};
 
@@ -59,18 +59,21 @@ pub(super) async fn materialize_execution_target(
             let (messages, has_prior_history) = store
                 .get_bounded_context_messages(row.id, &target, max_turns, max_messages)
                 .await?;
+            let branch_head_turn = match branch_head_turn_id {
+                Some(turn_id) => store.get_turn_row(turn_id).await?,
+                None => None,
+            };
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
+                context_checkpoint: latest_compatible_context_checkpoint(
+                    store,
+                    row.id,
+                    branch_head_turn.as_ref(),
+                )
+                .await?,
                 branch_head_turn_id,
-                branch_head_turn_index: match branch_head_turn_id {
-                    Some(turn_id) => store
-                        .get_turn_row(turn_id)
-                        .await?
-                        .map(|turn| turn.branch_depth),
-                    None => None,
-                },
+                branch_head_turn_index: branch_head_turn.map(|turn| turn.branch_depth),
             })
         }
         ExecutionContextTarget::TurnId { turn_id } => {
@@ -78,10 +81,16 @@ pub(super) async fn materialize_execution_target(
             let (messages, has_prior_history) = store
                 .get_bounded_context_messages(row.id, &target, max_turns, max_messages)
                 .await?;
+            let target_turn = store.get_turn_row(*turn_id).await?;
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
+                context_checkpoint: latest_compatible_context_checkpoint(
+                    store,
+                    row.id,
+                    target_turn.as_ref(),
+                )
+                .await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -94,7 +103,9 @@ pub(super) async fn materialize_execution_target(
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
+                context_checkpoint: latest_context_checkpoint(store, row.id)
+                    .await?
+                    .filter(|checkpoint| turn_ids.contains(&checkpoint.covered_through_turn_id)),
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -104,10 +115,16 @@ pub(super) async fn materialize_execution_target(
             let (messages, has_prior_history) = store
                 .get_bounded_context_messages(row.id, &target, max_turns, max_messages)
                 .await?;
+            let target_turn = store.get_turn_row(*source_turn_id).await?;
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                context_checkpoint: latest_context_checkpoint(store, row.id).await?,
+                context_checkpoint: latest_compatible_context_checkpoint(
+                    store,
+                    row.id,
+                    target_turn.as_ref(),
+                )
+                .await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
@@ -134,16 +151,62 @@ pub(super) async fn materialize_execution_target(
             let (messages, has_prior_history) = target_store
                 .get_bounded_context_messages(referenced_row.id, &target, max_turns, max_messages)
                 .await?;
+            let target_turn = match referenced_row.active_branch_head_id {
+                Some(branch_head_id) => target_store
+                    .get_branch_head(referenced_row.id, branch_head_id)
+                    .await?
+                    .and_then(|branch| branch.head_turn_id),
+                None => target_store
+                    .get_active_branch_head(referenced_row.id)
+                    .await?
+                    .and_then(|branch| branch.head_turn_id),
+            };
+            let target_turn = match target_turn {
+                Some(turn_id) => target_store.get_turn_row(turn_id).await?,
+                None => None,
+            };
             Ok(MaterializedExecutionTarget {
                 messages,
                 has_prior_history,
-                context_checkpoint: latest_context_checkpoint(&target_store, referenced_row.id)
-                    .await?,
+                context_checkpoint: latest_compatible_context_checkpoint(
+                    &target_store,
+                    referenced_row.id,
+                    target_turn.as_ref(),
+                )
+                .await?,
                 branch_head_turn_id: None,
                 branch_head_turn_index: None,
             })
         }
     }
+}
+
+async fn latest_compatible_context_checkpoint(
+    store: &StateStore,
+    session_id: i64,
+    target_turn: Option<&TurnRow>,
+) -> Result<Option<ContextCompactionCheckpoint>> {
+    let Some(checkpoint) = latest_context_checkpoint(store, session_id).await? else {
+        return Ok(None);
+    };
+    let Some(target_turn) = target_turn else {
+        return Ok(None);
+    };
+    if checkpoint.covered_through_turn_index > target_turn.branch_depth {
+        return Ok(None);
+    }
+
+    let depth_span = target_turn
+        .branch_depth
+        .saturating_sub(checkpoint.covered_through_turn_index)
+        .saturating_add(1) as usize;
+    let (path, _) = store
+        .recent_turn_path_to_turn_id(session_id, target_turn.id, depth_span)
+        .await?;
+    Ok(path
+        .iter()
+        .any(|turn| turn.id == checkpoint.covered_through_turn_id)
+        .then_some(checkpoint))
 }
 
 async fn latest_context_checkpoint(

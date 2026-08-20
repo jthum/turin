@@ -969,6 +969,74 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
 }
 
 #[tokio::test]
+async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Shared root".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let session_id = session.internal_id.expect("session internal id");
+    let alt_head = store
+        .create_branch_head_from_turn_index(session_id, "alt", Some(0), false)
+        .await?;
+
+    kernel
+        .run(&mut session, Some("Main path only".to_string()))
+        .await?;
+    let main_head = store
+        .get_active_branch_head(session_id)
+        .await?
+        .and_then(|branch| branch.head_turn_id)
+        .expect("main head turn");
+    let checkpoint = turin::kernel::session::ContextCompactionCheckpoint {
+        summary: "MAIN PATH SUMMARY".to_string(),
+        covered_through_turn_id: main_head,
+        covered_through_turn_index: 1,
+        generated_at_turn_index: session.turn_index,
+        provider_name: "mock".to_string(),
+        model: "mock-model".to_string(),
+    };
+    let event = turin::kernel::event::KernelEvent::Audit(
+        turin::kernel::event::AuditEvent::ContextCompaction { checkpoint },
+    );
+    store
+        .insert_event(
+            session_id,
+            None,
+            "context_compaction",
+            &serde_json::to_value(event)?,
+        )
+        .await?;
+
+    store
+        .insert_message(
+            session_id,
+            TurnWriteTarget::branch_head(Some(alt_head.id), 1),
+            "assistant",
+            &serde_json::json!([{"type": "text", "text": "ALT PATH ONLY"}]),
+            None,
+        )
+        .await?;
+
+    assert!(
+        kernel
+            .select_session_branch_by_name_local(&mut session, "alt")
+            .await?
+    );
+    assert!(
+        session.context_checkpoint.is_none(),
+        "a sibling-path checkpoint must not compact the selected branch"
+    );
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_local_turn_selection_materializes_prefix_without_new_execution() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
