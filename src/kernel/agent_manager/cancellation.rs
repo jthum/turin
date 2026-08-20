@@ -546,9 +546,9 @@ impl AgentManager {
             let envelope = queue
                 .remove(index)
                 .expect("queued task index should remain valid while queue is locked");
+            handle.queued_tasks.store(queue.len(), Ordering::Relaxed);
             (current, envelope)
         };
-        handle.queued_tasks.fetch_sub(1, Ordering::Relaxed);
 
         let completed = pending.into_terminal_result(request_id.to_string(), status, reason);
         if let Some(tx_result) = envelope.result_tx {
@@ -573,13 +573,13 @@ impl AgentManager {
                 .queue
                 .lock()
                 .expect("agent runtime queue mutex poisoned");
-            queue.drain(..).collect()
+            let drained = queue.drain(..).collect();
+            handle.queued_tasks.store(queue.len(), Ordering::Relaxed);
+            drained
         };
         if drained.is_empty() {
             return;
         }
-        handle.queued_tasks.store(0, Ordering::Relaxed);
-
         for envelope in drained {
             let (tx_result, completed) = envelope.into_terminal_result(
                 runtime_key,
@@ -608,9 +608,10 @@ impl AgentManager {
                 .queue
                 .lock()
                 .expect("agent runtime queue mutex poisoned");
-            queue.drain(..).collect()
+            let drained = queue.drain(..).collect();
+            handle.queued_tasks.store(queue.len(), Ordering::Relaxed);
+            drained
         };
-        handle.queued_tasks.store(0, Ordering::Relaxed);
 
         for envelope in drained {
             let (tx_result, completed) = envelope.into_terminal_result(

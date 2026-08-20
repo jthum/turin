@@ -453,8 +453,8 @@ impl AgentManager {
                 anyhow::bail!("Agent runtime stopped before task submission");
             }
             queue.push_back(envelope);
+            handle.queued_tasks.store(queue.len(), Ordering::Relaxed);
         }
-        handle.queued_tasks.fetch_add(1, Ordering::Relaxed);
         handle.notify.notify_one();
         Ok(())
     }

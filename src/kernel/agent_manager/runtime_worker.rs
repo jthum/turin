@@ -110,7 +110,9 @@ impl AgentManager {
                     let envelope = {
                         let mut queue =
                             queue_bg.lock().expect("agent runtime queue mutex poisoned");
-                        pop_fair_task(&mut queue, &mut last_scheduled)
+                        let envelope = pop_fair_task(&mut queue, &mut last_scheduled);
+                        queued_tasks_bg.store(queue.len(), Ordering::Relaxed);
+                        envelope
                     };
                     if let Some(request_id) = envelope
                         .as_ref()
@@ -187,7 +189,6 @@ impl AgentManager {
                     }
                     continue;
                 };
-                queued_tasks_bg.fetch_sub(1, Ordering::Relaxed);
                 active_tasks_bg.fetch_add(1, Ordering::Relaxed);
                 runtime.handle_envelope(envelope).await;
                 processed_task = true;

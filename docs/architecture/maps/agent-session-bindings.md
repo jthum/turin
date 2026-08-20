@@ -142,6 +142,9 @@ Linked runtime residency:
 - Worker dequeue changes a pending record from queued to running while holding the pending
   lock across queue removal. Cancellation requested during session activation remains
   recorded and is applied when the execution cancellation token becomes available.
+- Every runtime queue mutation publishes the resulting queue length while still holding
+  the queue mutex. The atomic queued-task count is an observational fast path and must
+  never be updated outside the mutation critical section.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.
