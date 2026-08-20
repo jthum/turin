@@ -1,36 +1,77 @@
-# Channel Sidecars
+# Channel Runners
 
-This document defines Turin's current sidecar protocol for external channel adapters.
+Channel runners are independent Turin clients that adapt external messaging
+services into ordinary session, task, and event operations. Turin core does
+not load, supervise, or configure them.
 
-## Protocol Version
+The filename is retained as a stable documentation link; **channel runner** is
+the current domain term.
 
-Current sidecar manifest protocol version:
+## Process Contract
 
-- `2`
+Every runner exposes:
 
-Turin validates sidecar manifests against this version when:
-
-- the daemon probes a runner with `describe`
-- `turin-manager` discovers/configures a runner
-- a runner sends its live startup handshake to the daemon
-
-## Required Commands
-
-An external channel sidecar is expected to expose these CLI commands:
-
+- `run --config <channel-config> [--turin-config <turin-config>]`
 - `describe`
 - `validate-settings --settings-json <json>`
-- `run --channel-id <id> --agent-id <id> --daemon-endpoint <path> --bindings-path <path> --access-state-path <path> --settings-json <json> [--idle-timeout-seconds <seconds>]`
-- `setup-auth-flow-start --request-json <json>`
-- `setup-auth-flow-poll --request-json <json>`
+- `setup-auth-flow-start --request-json <json>` when auth flows are supported
+- `setup-auth-flow-poll --request-json <json>` when auth flows are supported
 
-If a channel does not use manifest-declared auth flows yet, `setup-auth-flow-start` and `setup-auth-flow-poll` may return an explicit unsupported error.
+`--turin-config` defaults to `.turin/config.toml`.
 
-## Manifest Shape
+The shared run path:
 
-`describe` returns a `ChannelAdapterManifest`.
+1. Reads and validates the channel-owned TOML file.
+2. Rejects disabled channels and configs for a different adapter kind.
+3. Derives the channel instance id from the config's parent directory.
+4. Loads `.env` beside the Turin config without overriding exported values.
+5. Resolves and checks the local Turin daemon endpoint.
+6. Stores bindings, access state, and adapter runtime data under
+   `<channel-dir>/runtime`.
+7. Runs in the foreground until interrupted or terminated.
 
-Top-level sections:
+Example:
+
+```bash
+turin-channel-telegram run \
+  --config .turin/channels/telegram/config.toml \
+  --turin-config .turin/config.toml
+```
+
+During workspace development, Turin Manager prints the equivalent
+`cargo run -p turin-channel-<kind> -- ...` command.
+
+## Channel Config
+
+Channel configuration is stored by convention at:
+
+```text
+.turin/channels/<channel-id>/config.toml
+```
+
+Reserved top-level fields are:
+
+```toml
+enabled = true
+kind = "telegram"
+agent_id = "default"
+idle_timeout_seconds = 900 # optional
+```
+
+All other top-level values and tables are adapter or shared-runner settings.
+Common shared settings include access policy, task timeout, and downward-only
+tool selection. Credentials should normally be referenced through environment
+variables rather than stored directly in this file.
+
+The channel directory and its runtime files are owned by the channel client.
+The Turin daemon does not scan `.turin/channels` or expose channel status.
+
+## Manifest Protocol
+
+`describe` returns a `ChannelAdapterManifest`. The current manifest protocol
+version is `2`.
+
+Top-level manifest sections are:
 
 - `protocol_version`
 - `kind`
@@ -39,35 +80,16 @@ Top-level sections:
 - `setup`
 - `install`
 
-### Runtime
+`runtime` describes normalized capabilities and identity behavior. `setup`
+describes generic manager prompts, validation, required secrets, and auth
+flows. `install` identifies the runner binary.
 
-`runtime` describes properties the daemon/UI can reason about generically:
+Turin Manager validates manifests while discovering and configuring runners.
+The daemon does not consume this protocol.
 
-- `session_scopes`
-- `enum_settings`
-- `capabilities`
-- `identity_selectors`
+## Generic Setup
 
-### Setup
-
-`setup` describes what `turin-manager` can render generically:
-
-- `required_secrets`
-- `instructions`
-- `setup_url`
-- `validation_checks`
-- `config_fields`
-- `auth_flows`
-
-### Install
-
-`install` currently exposes:
-
-- `binary_name`
-
-## Generic Setup Field Types
-
-Current field types rendered by `turin-manager`:
+Manifest setup fields may use:
 
 - `text`
 - `secret`
@@ -77,89 +99,26 @@ Current field types rendered by `turin-manager`:
 - `multi_select`
 - `string_list`
 
-Field metadata can include:
+Setup results can target channel settings or environment variables. Additional
+target kinds remain reserved for broader setup workflows.
 
-- `label`
-- `prompt`
-- `help`
-- `hint`
-- `example`
-- `required`
-- `advanced`
-- `default`
-- `options`
-- `visible_if`
-- `target`
-- `validate`
+Manifest-declared auth flows let a runner request non-text setup without
+hard-coding an adapter into Turin Manager. Current generic flow kinds are
+`oauth_device_code` and `qr_pairing`.
 
-## Targets
+## Manager Workflow
 
-Setup results resolve to explicit targets:
+```bash
+turin-manager channels list
+turin-manager channels configure telegram
+turin-manager channels status
+turin-manager doctor
+```
 
-- `channel_setting`
-- `root_config`
-- `agent_config`
-- `env_var`
-- `local_secret_store`
+`configure` discovers the runner, renders prompts from its manifest, validates
+the assembled settings through the runner, stages channel config and optional
+`.env` diffs, then prints the exact foreground launch command.
 
-Current `turin-manager` support is strongest for:
-
-- `channel_setting`
-- `env_var`
-
-Other target kinds are reserved for broader Turin-wide configuration flows.
-
-## Auth Flows
-
-Manifest-declared auth flows let a sidecar request a non-text setup step without hardcoding the manager to a specific channel.
-
-Current generic flow kinds:
-
-- `oauth_device_code`
-- `qr_pairing`
-
-The manager starts a flow with `setup-auth-flow-start` and polls it with `setup-auth-flow-poll`.
-
-Current flow display payloads can include:
-
-- `message`
-- `verification_uri`
-- `verification_uri_complete`
-- `user_code`
-- `qr_text`
-- `pairing_code`
-- `expires_in_seconds`
-- `poll_interval_seconds`
-
-Flow completion returns resolved target/value pairs that the manager applies like any other setup result.
-
-## Live Startup Handshake
-
-`describe` remains the tooling and discovery path.
-
-At runtime, external sidecars now also send a live startup handshake to the daemon via:
-
-- `channel.runner.hello`
-
-The handshake includes:
-
-- `channel_id`
-- `manifest`
-- `runner_binary`
-- `runner_version`
-- `pid`
-
-The daemon keeps an external channel in `starting` until the sidecar sends this hello. Once received, the runtime moves to `running` and records handshake metadata in the channel runtime snapshot.
-
-## Manager Integration
-
-`turin-manager` consumes the sidecar protocol generically through:
-
-- `turin-manager channels list`
-- `turin-manager channels configure <kind>`
-- `turin-manager channels status`
-- `turin-manager doctor`
-
-`turin-manager channels configure <kind>` renders setup fields from the manifest, then calls the sidecar's `validate-settings` command on the assembled settings before it writes config files.
-
-That means a new official or community sidecar can integrate with the manager without channel-specific code in the manager, as long as it stays within the shared manifest and auth-flow protocol.
+`status` reports configuration readiness only. Runtime health belongs to the
+operator's process manager. A future multi-channel host may supervise several
+runners without changing Turin core or this client contract.

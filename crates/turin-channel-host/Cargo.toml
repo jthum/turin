@@ -2,7 +2,7 @@
 name = "turin-channel-host"
 version = "0.27.0"
 edition = "2024"
-description = "Host-side discovery and invocation helpers for Turin channel sidecars"
+description = "Discovery and invocation helpers for independent Turin channel runners"
 
 [dependencies]
 anyhow = "1.0"

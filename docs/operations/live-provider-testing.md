@@ -6,7 +6,7 @@ This document covers how to validate Turin against real providers manually, incl
 
 ## Discord Channel Runtime Live Validation (Manual / Opt-In)
 
-Turin also includes an opt-in live script for daemon-owned Discord runtime checks:
+Turin also includes an opt-in live script for independent Discord runner checks:
 
 ```bash
 scripts/live_discord_channel_smoke.sh \
@@ -18,11 +18,11 @@ scripts/live_discord_channel_smoke.sh \
 Notes:
 - Requires a real Discord bot token in the specified env var.
 - Requires a real Discord channel/thread ID.
-- Uses a temporary workspace and a minimal mock-provider harness to validate channel runtime lifecycle only.
+- Uses a temporary workspace and a minimal mock-provider harness to validate independent runner startup.
 
 ## Telegram Channel Runtime Live Validation (Manual / Opt-In)
 
-Turin also includes an opt-in live script for daemon-owned Telegram runtime checks:
+Turin also includes an opt-in live script for independent Telegram runner checks:
 
 ```bash
 scripts/live_telegram_channel_smoke.sh \

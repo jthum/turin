@@ -106,7 +106,7 @@ Simple things should be simple. Powerful things should be possible.
 ## Core Features
 
 - **Lean core runtime** (`turin`) with no required services beyond your configured provider and local SQLite/libSQL database
-- **Auto-managed channel sidecars** for network channels such as Telegram, Discord, and WhatsApp, so the daemon can support more adapters without bloating the core runtime binary
+- **Independent channel clients** for Telegram, Discord, Rocket.Chat, WhatsApp, and filesystem messaging without coupling adapters or credentials to the core runtime
 - **Optional indexing companion** (`turin-map`) for code-search indexing without bloating the runtime execution path
 - **Harness scripting in Luau** for governance, workflows, context engineering, memory policies, and orchestration
 - **Canonical stdlib API**:
@@ -166,7 +166,7 @@ cargo build --release -p turin-manager
 # Optional: build the code-indexing companion if you want runtime code search setup
 cargo build --release -p turin-map
 
-# Optional: build channel sidecars if you want daemon-managed Telegram, Discord, or WhatsApp
+# Optional: build independent channel runners for Telegram, Discord, or WhatsApp
 cargo build --release -p turin-channel-telegram -p turin-channel-discord -p turin-channel-whatsapp --bins
 ```
 
@@ -216,9 +216,9 @@ target/release/turin-manager channels status
 target/release/turin-manager doctor
 ```
 
-`turin-manager` stages diffs before writing, validates assembled channel settings through the sidecar before it writes files, and stores optional secrets in a `.env` file next to `.turin/config.toml`. Turin auto-loads that adjacent `.env` file at startup.
+`turin-manager` stages diffs before writing, validates assembled channel settings through the channel runner, stores optional secrets in a `.env` file next to `.turin/config.toml`, and prints the exact foreground launch command. The channel runner loads that environment file and connects to the independently running Turin daemon.
 
-External channel sidecars are described in [docs/reference/channel-sidecars.md](docs/reference/channel-sidecars.md).
+Independent channel runners are described in [docs/reference/channel-sidecars.md](docs/reference/channel-sidecars.md).
 
 Tool delegation notes:
 

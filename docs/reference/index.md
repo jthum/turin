@@ -10,5 +10,5 @@ This section holds stable reference material for Turin’s harness surface.
 - `docs/reference/dx-helpers.md` — promoted helper-first authoring layer and boundaries
 - `docs/reference/hooks.md` — hook lifecycle, verdicts, and payload contracts
 - `docs/reference/primitives.md` — canonical `runtime.*` surface plus aliases and DX helpers
-- `docs/reference/channel-sidecars.md` — sidecar protocol and manifest surface for channel adapters
+- `docs/reference/channel-sidecars.md` — independent channel runner and setup manifest contract
 - `docs/reference/schema.md` — conceptual reference for the current state-store schema

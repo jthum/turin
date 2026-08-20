@@ -16,8 +16,8 @@ use crate::files::{
     render_channel_file, resolve_channels_dir,
 };
 use crate::runner::{
-    describe_external_runner, poll_external_auth_flow, start_external_auth_flow,
-    validate_external_runner_settings,
+    describe_external_runner, external_runner_launch_command, poll_external_auth_flow,
+    start_external_auth_flow, validate_external_runner_settings,
 };
 
 use super::super::ConfigureChannelArgs;
@@ -33,7 +33,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
 
     let kind = ChannelKind::parse(&args.kind).map_err(anyhow::Error::msg)?;
     let manifest = describe_external_runner(kind.as_str())
-        .with_context(|| format!("Failed to inspect the '{}' sidecar manifest", kind.as_str()))?;
+        .with_context(|| format!("Failed to inspect the '{}' channel manifest", kind.as_str()))?;
     let setup = manifest.setup.clone().ok_or_else(|| {
         anyhow!(
             "{} does not expose setup metadata; cannot build a generic configuration flow",
@@ -134,7 +134,7 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
         &channel_settings,
     )?;
 
-    let mut plans = vec![PlannedWrite::new(channel_path, channel_body)];
+    let mut plans = vec![PlannedWrite::new(channel_path.clone(), channel_body)];
     let mut secrets_written = false;
     if !env_updates.is_empty()
         && Confirm::new()
@@ -158,13 +158,12 @@ pub(crate) async fn run_configure_channel(args: ConfigureChannelArgs) -> Result<
     );
     if !secrets_written {
         for key in env_updates.keys() {
-            println!("Remember to export {} before starting Turin.", key);
+            println!("Remember to export {} before starting the channel.", key);
         }
     }
-    println!(
-        "Next step: `turin daemon start --config {}`",
-        config_path.display()
-    );
+    let launch = external_runner_launch_command(kind.as_str(), &channel_path, &config_path)?;
+    println!("Start the Turin daemon, then launch this channel:");
+    println!("  {launch}");
 
     Ok(())
 }

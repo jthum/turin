@@ -25,7 +25,7 @@ Keep this crate as an operator-facing orchestration layer. It should not duplica
 - `crates/turin-manager/src/files.rs`
   - Config-path/layout resolution, channel config discovery/rendering, planned writes, TOML/env merge helpers, and redacted diffs.
 - `crates/turin-manager/src/runner.rs`
-  - Re-export boundary for `turin-channel-host` sidecar discovery, manifest, validation, and auth-flow helpers.
+  - Re-export boundary for `turin-channel-host` runner discovery, manifest, validation, auth-flow, and launch-command helpers.
 
 ## Data Flow
 
@@ -38,27 +38,28 @@ Init:
 
 Channel configure:
 
-1. Parse the requested channel kind and inspect the sidecar manifest.
+1. Parse the requested channel kind and inspect the channel runner manifest.
 2. Prompt for channel id and agent id.
 3. Walk manifest secrets, config fields, visibility rules, validation checks, and auth flows.
-4. Validate final settings through the sidecar.
+4. Validate final settings through the channel runner.
 5. Render the channel config and optional `.env` updates, then write after confirmation.
+6. Print the exact foreground runner command for the generated configuration.
 
 Doctor/status:
 
 1. Load configured channel files from the channel-owned `.turin/channels` directory.
-2. Check sidecar availability and required secrets.
+2. Check channel runner availability and required secrets.
 3. Check daemon reachability independently; the daemon does not expose channel runtime state.
 4. Print operator-facing diagnostics without mutating runtime state.
 
 ## Invariants
 
 - User-facing command names, prompts, and generated config shape are part of manager DX; change them deliberately.
-- Channel setup must remain manifest-driven so new sidecars can be configured without hard-coding adapter-specific prompts in manager.
+- Channel setup must remain manifest-driven so new runners can be configured without hard-coding adapter-specific prompts in manager.
 - Secret values may be written to disk only through the planned-write flow and redacted display contents.
 - Channel runtime status must not be inferred from daemon status. Process
   health belongs to the channel's launcher or a future channel host.
-- Sidecar discovery, settings validation, and auth-flow IPC should use `turin-channel-host` helpers via `runner.rs`.
+- Runner discovery, settings validation, auth-flow IPC, and launch command rendering should use `turin-channel-host` helpers via `runner.rs`.
 - `files.rs` owns channel config rendering and `.env` merge mechanics; setup modules should not hand-edit TOML/env strings.
 
 ## Common Changes
@@ -73,8 +74,8 @@ Add a manager command:
 Change channel setup behavior:
 
 1. Update `setup/channels/configure.rs` for interactive setup behavior.
-2. Keep adapter-specific behavior in manifests/sidecars unless the behavior is genuinely generic.
-3. Run manager tests and channel-host checks when sidecar discovery or auth-flow behavior changes.
+2. Keep adapter-specific behavior in manifests/runners unless the behavior is genuinely generic.
+3. Run manager tests and channel-host checks when runner discovery or auth-flow behavior changes.
 
 Change channel inventory/status behavior:
 
@@ -97,7 +98,7 @@ cargo test -p turin-manager
 cargo check -p turin-manager
 ```
 
-Related checks when touching sidecar discovery or control-client behavior:
+Related checks when touching runner discovery or control-client behavior:
 
 ```sh
 cargo test -p turin-channel-host

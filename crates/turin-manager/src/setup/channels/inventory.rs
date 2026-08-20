@@ -23,7 +23,7 @@ pub(crate) async fn run_channels_list(args: ChannelsListArgs) -> Result<()> {
     if all_kinds.is_empty() {
         println!("No channels discovered.");
         println!(
-            "Install or place a `turin-channel-<kind>` sidecar where Turin can resolve it, then run `turin-manager channels configure <kind>`."
+            "Install or place a `turin-channel-<kind>` runner where Turin Manager can resolve it, then run `turin-manager channels configure <kind>`."
         );
         return Ok(());
     }

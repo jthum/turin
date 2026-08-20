@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use turin_channel_discord::DiscordChannelDriver;
 use turin_channel_runner::{
-    ChannelSidecarRunArgs, init_channel_tracing, parse_auth_flow_poll_request,
-    parse_auth_flow_start_request, parse_channel_settings_json, prepare_channel_sidecar_run,
+    ChannelRunArgs, DEFAULT_TURIN_CONFIG_PATH, init_channel_tracing, parse_auth_flow_poll_request,
+    parse_auth_flow_start_request, parse_channel_settings_json, prepare_channel_run,
 };
 
 #[derive(Parser)]
@@ -27,19 +27,9 @@ enum Command {
 #[derive(Parser)]
 struct RunArgs {
     #[arg(long)]
-    channel_id: String,
-    #[arg(long)]
-    agent_id: String,
-    #[arg(long)]
-    daemon_endpoint: PathBuf,
-    #[arg(long)]
-    bindings_path: PathBuf,
-    #[arg(long)]
-    access_state_path: PathBuf,
-    #[arg(long)]
-    idle_timeout_seconds: Option<u64>,
-    #[arg(long)]
-    settings_json: String,
+    config: PathBuf,
+    #[arg(long, default_value = DEFAULT_TURIN_CONFIG_PATH)]
+    turin_config: PathBuf,
 }
 
 #[derive(Parser)]
@@ -68,32 +58,27 @@ async fn main() -> Result<()> {
 }
 
 async fn run(args: RunArgs) -> Result<()> {
-    let settings = parse_channel_settings_json(&args.settings_json)?;
-    let sidecar = prepare_channel_sidecar_run(
-        ChannelSidecarRunArgs {
-            channel_id: args.channel_id.clone(),
-            daemon_endpoint: args.daemon_endpoint,
-            bindings_path: args.bindings_path,
-            access_state_path: args.access_state_path,
-            idle_timeout_seconds: args.idle_timeout_seconds,
-        },
-        &settings,
-    )?;
+    let run = prepare_channel_run(ChannelRunArgs {
+        config_path: args.config,
+        turin_config_path: args.turin_config,
+        expected_kind: "discord".to_string(),
+    })
+    .await?;
 
     let mut driver = DiscordChannelDriver::from_settings(
-        &args.channel_id,
-        &settings,
-        sidecar.shutdown_rx.clone(),
+        &run.channel_id,
+        &run.settings,
+        run.shutdown_rx.clone(),
     )
     .await
     .with_context(|| {
         format!(
             "Failed to initialize discord channel driver '{}'",
-            args.channel_id
+            run.channel_id
         )
     })?;
 
-    sidecar.run_driver(&args.agent_id, &mut driver).await
+    run.run_driver(&mut driver).await
 }
 
 fn validate_settings(args: ValidateSettingsArgs) -> Result<()> {

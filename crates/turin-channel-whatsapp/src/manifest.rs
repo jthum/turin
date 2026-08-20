@@ -273,7 +273,7 @@ pub fn adapter_manifest() -> ChannelAdapterManifest {
                         .to_string(),
                 ),
                 help: Some(
-                    "The sidecar opens a temporary WhatsApp session, shows a QR code, and optionally generates a pairing code for headless servers.".to_string(),
+                    "The channel runner opens a temporary WhatsApp session, shows a QR code, and optionally generates a pairing code for headless servers.".to_string(),
                 ),
                 hint: Some(
                     "You can rerun this later if the linked-device session is revoked.".to_string(),

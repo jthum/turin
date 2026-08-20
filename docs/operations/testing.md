@@ -316,7 +316,7 @@ See `docs/operations/live-provider-testing.md` for environment setup and trouble
 
 ## Discord Channel Live Validation (Manual / Opt-In)
 
-When validating daemon-owned channel runtimes against real Discord:
+When validating the independent Discord channel runner against the real service:
 
 ```bash
 scripts/live_discord_channel_smoke.sh \
@@ -325,12 +325,12 @@ scripts/live_discord_channel_smoke.sh \
   --transport gateway
 ```
 
-This script provisions a temporary workspace, starts the daemon, creates a
-`kind=discord` channel, and verifies that runtime reaches `running`.
+This script provisions a temporary workspace, starts the daemon, launches the
+Discord runner with channel-owned config, and verifies that it remains active.
 
 ## Telegram Channel Live Validation (Manual / Opt-In)
 
-When validating daemon-owned channel runtimes against real Telegram:
+When validating the independent Telegram channel runner against the real service:
 
 ```bash
 scripts/live_telegram_channel_smoke.sh \
@@ -338,8 +338,8 @@ scripts/live_telegram_channel_smoke.sh \
   --token-env-name TELEGRAM_BOT_TOKEN
 ```
 
-This script provisions a temporary workspace, starts the daemon, creates a
-`kind=telegram` channel, and verifies that runtime reaches `running`.
+This script provisions a temporary workspace, starts the daemon, launches the
+Telegram runner with channel-owned config, and verifies that it remains active.
 
 Notes:
 

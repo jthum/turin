@@ -33,7 +33,7 @@ pub(crate) async fn run_doctor(args: DoctorArgs) -> Result<()> {
         match describe_external_runner(&channel.kind) {
             Ok(manifest) => {
                 println!(
-                    "[ok] sidecar: {} ({})",
+                    "[ok] channel runner: {} ({})",
                     manifest.display_name_or_kind(),
                     channel.kind
                 );
@@ -66,7 +66,7 @@ pub(crate) async fn run_doctor(args: DoctorArgs) -> Result<()> {
             }
             Err(err) => {
                 println!(
-                    "[fail] sidecar: kind '{}' for channel '{}' is not available: {}",
+                    "[fail] channel runner: kind '{}' for channel '{}' is not available: {}",
                     channel.kind, channel.id, err
                 );
                 issues += 1;

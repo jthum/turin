@@ -81,6 +81,36 @@ pub fn resolve_external_runner_command(kind: &str) -> Result<ExternalRunnerComma
     })
 }
 
+pub fn external_runner_launch_command(
+    kind: &str,
+    channel_config: &Path,
+    turin_config: &Path,
+) -> Result<String> {
+    let runner = resolve_external_runner_command(kind)?;
+    let mut command = shell_quote(&runner.program);
+    for arg in &runner.args_prefix {
+        command.push(' ');
+        command.push_str(&shell_quote(Path::new(arg)));
+    }
+    Ok(format!(
+        "{} run --config {} --turin-config {}",
+        command,
+        shell_quote(channel_config),
+        shell_quote(turin_config)
+    ))
+}
+
+fn shell_quote(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "_+-./".contains(character))
+    {
+        return value.into_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn describe_external_runner(kind: &str) -> Result<ChannelAdapterManifest> {
     let runner = resolve_external_runner_command(kind)?;
     let mut command = runner.command();
@@ -417,6 +447,18 @@ mod tests {
             Some("whatsapp".to_string())
         );
         assert_eq!(kind_from_binary_name("turin"), None);
+    }
+
+    #[test]
+    fn launch_paths_are_shell_quoted_when_needed() {
+        assert_eq!(
+            shell_quote(Path::new(".turin/config.toml")),
+            ".turin/config.toml"
+        );
+        assert_eq!(
+            shell_quote(Path::new("workspace with spaces/channel.toml")),
+            "'workspace with spaces/channel.toml'"
+        );
     }
 
     #[cfg(unix)]

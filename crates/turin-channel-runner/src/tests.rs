@@ -181,31 +181,6 @@ fn channel_settings_json_requires_object() {
     );
 }
 
-#[tokio::test]
-async fn prepare_channel_sidecar_run_reads_common_settings() {
-    let dir = tempdir().unwrap();
-    let run = prepare_channel_sidecar_run(
-        ChannelSidecarRunArgs {
-            channel_id: "chat".to_string(),
-            daemon_endpoint: dir.path().join("daemon.sock"),
-            bindings_path: dir.path().join("runtime/bindings.json"),
-            access_state_path: dir.path().join("runtime/access.json"),
-            idle_timeout_seconds: Some(30),
-        },
-        &serde_json::json!({
-            "pairing_mode": "pending",
-            "task_timeout_ms": 5000,
-            "tools": { "allow": ["read_file"] }
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(run.channel_id, "chat");
-    assert_eq!(run.task_timeout_ms, Some(5000));
-    assert!(run.allow_unconfigured_inbound);
-    assert_eq!(run.runtime_dir, dir.path().join("runtime"));
-}
-
 #[test]
 fn tools_settings_parse_string_lists() {
     let tools = tools_config_from_settings(&serde_json::json!({

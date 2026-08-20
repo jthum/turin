@@ -20,6 +20,10 @@ retries, rendering, and process lifecycle remain channel-owned.
   This directory is not part of `TurinConfig`, the daemon registry, or daemon
   filesystem watching.
 - Conversation bindings and access state are durable channel-owned files.
+- A runner accepts `run --config <channel-config> --turin-config <turin-config>`.
+  Shared startup derives the channel id from the config directory, loads the
+  adjacent Turin `.env`, resolves the local daemon endpoint, checks daemon
+  compatibility, and stores runtime files under `<channel-dir>/runtime`.
 - The daemon has no channel ids, channel operations, channel capabilities,
   presence heartbeat, or channel runtime snapshots.
 - Channel failure cannot affect daemon readiness or unrelated clients.

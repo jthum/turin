@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BIN="target/release/turin"
+CHANNEL_BIN="target/release/turin-channel-telegram"
 ENV_FILE=""
 TOKEN_ENV_NAME="${TELEGRAM_TOKEN_ENV_NAME:-TELEGRAM_BOT_TOKEN}"
 CHAT_ID="${TELEGRAM_CHAT_ID:-}"
@@ -14,6 +15,7 @@ Usage: scripts/live_telegram_channel_smoke.sh [options]
 
 Options:
   --bin PATH                 Turin binary path (default: target/release/turin)
+  --channel-bin PATH         Telegram runner path (default: target/release/turin-channel-telegram)
   --env-file PATH            Source environment variables before running
   --token-env-name NAME      Env var name holding Telegram bot token (default: TELEGRAM_BOT_TOKEN)
   --chat-id ID               Telegram numeric chat id (or set TELEGRAM_CHAT_ID)
@@ -26,7 +28,7 @@ Required:
   - Telegram numeric chat id must be provided.
 
 Notes:
-  - This validates daemon-owned long-polling runtime lifecycle only.
+  - This validates the independent Telegram runner startup path.
   - If the bot still has an active webhook, Telegram polling will fail until the webhook is removed.
 USAGE
 }
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin)
       BIN="$2"
+      shift 2
+      ;;
+    --channel-bin)
+      CHANNEL_BIN="$2"
       shift 2
       ;;
     --env-file)
@@ -94,6 +100,11 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$CHANNEL_BIN" ]]; then
+  echo "Telegram channel runner not found or not executable: $CHANNEL_BIN" >&2
+  exit 1
+fi
+
 if [[ -n "$WORKSPACE_ROOT" ]]; then
   ROOT="$WORKSPACE_ROOT"
   mkdir -p "$ROOT"
@@ -103,6 +114,10 @@ fi
 
 cleanup() {
   set +e
+  if [[ -n "${CHANNEL_PID:-}" ]]; then
+    kill "$CHANNEL_PID" >/dev/null 2>&1 || true
+    wait "$CHANNEL_PID" >/dev/null 2>&1 || true
+  fi
   "$BIN" daemon stop --config "$ROOT/turin.toml" >/dev/null 2>&1 || true
   if [[ $KEEP_TMP -eq 0 && -z "$WORKSPACE_ROOT" ]]; then
     rm -rf "$ROOT"
@@ -157,36 +172,31 @@ if ! "$BIN" daemon ping --config "$ROOT/turin.toml" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/4] Creating telegram channel runtime..."
-"$BIN" daemon channel create telegram-live \
-  --config "$ROOT/turin.toml" \
-  --kind telegram \
-  --agent default \
-  --setting token_env="$TOKEN_ENV_NAME" \
-  --setting chat_id="$CHAT_ID" \
-  --setting start_from_latest=true \
-  --setting poll_timeout_secs=10 \
-  --json >/dev/null
+CHANNEL_DIR="$ROOT/.turin/channels/telegram-live"
+mkdir -p "$CHANNEL_DIR"
+cat > "$CHANNEL_DIR/config.toml" <<EOF
+enabled = true
+kind = "telegram"
+agent_id = "default"
+token_env = "$TOKEN_ENV_NAME"
+chat_id = $CHAT_ID
+start_from_latest = true
+poll_timeout_seconds = 10
+EOF
 
-echo "[2/4] Waiting for runtime state..."
-STATE=""
-for _ in {1..120}; do
-  STATE=$("$BIN" daemon channel status telegram-live --config "$ROOT/turin.toml" --json | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
-  if [[ "$STATE" == "running" || "$STATE" == "failed" ]]; then
-    break
-  fi
-  sleep 0.25
-done
+echo "[1/3] Starting independent Telegram channel runner..."
+"$CHANNEL_BIN" run \
+  --config "$CHANNEL_DIR/config.toml" \
+  --turin-config "$ROOT/turin.toml" >"$ROOT/channel.log" 2>&1 &
+CHANNEL_PID=$!
 
-echo "[3/4] Runtime state: ${STATE:-unknown}"
-"$BIN" daemon channel status telegram-live --config "$ROOT/turin.toml"
-
-echo "[4/4] Recent daemon status snapshot:"
-"$BIN" daemon status --config "$ROOT/turin.toml" --json | sed -n '1,80p'
-
-if [[ "$STATE" != "running" ]]; then
-  echo "Telegram runtime did not reach running state. See $ROOT/daemon.log" >&2
+echo "[2/3] Checking runner stability..."
+sleep 3
+if ! kill -0 "$CHANNEL_PID" >/dev/null 2>&1; then
+  wait "$CHANNEL_PID" || true
+  echo "Telegram runner exited during startup. See $ROOT/channel.log" >&2
   exit 1
 fi
 
+echo "[3/3] Runner is active (pid $CHANNEL_PID)."
 echo "Telegram channel smoke succeeded."

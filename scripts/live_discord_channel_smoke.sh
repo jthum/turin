@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BIN="target/release/turin"
+CHANNEL_BIN="target/release/turin-channel-discord"
 ENV_FILE=""
 TRANSPORT="gateway"
 TOKEN_ENV_NAME="${DISCORD_TOKEN_ENV_NAME:-DISCORD_BOT_TOKEN}"
@@ -15,6 +16,7 @@ Usage: scripts/live_discord_channel_smoke.sh [options]
 
 Options:
   --bin PATH                 Turin binary path (default: target/release/turin)
+  --channel-bin PATH         Discord runner path (default: target/release/turin-channel-discord)
   --env-file PATH            Source environment variables before running
   --token-env-name NAME      Env var name holding Discord bot token (default: DISCORD_BOT_TOKEN)
   --channel-id ID            Discord channel/thread id (or set DISCORD_CHANNEL_ID)
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --bin)
       BIN="$2"
+      shift 2
+      ;;
+    --channel-bin)
+      CHANNEL_BIN="$2"
       shift 2
       ;;
     --env-file)
@@ -96,6 +102,11 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$CHANNEL_BIN" ]]; then
+  echo "Discord channel runner not found or not executable: $CHANNEL_BIN" >&2
+  exit 1
+fi
+
 if [[ -n "$WORKSPACE_ROOT" ]]; then
   ROOT="$WORKSPACE_ROOT"
   mkdir -p "$ROOT"
@@ -105,6 +116,10 @@ fi
 
 cleanup() {
   set +e
+  if [[ -n "${CHANNEL_PID:-}" ]]; then
+    kill "$CHANNEL_PID" >/dev/null 2>&1 || true
+    wait "$CHANNEL_PID" >/dev/null 2>&1 || true
+  fi
   "$BIN" daemon stop --config "$ROOT/turin.toml" >/dev/null 2>&1 || true
   if [[ $KEEP_TMP -eq 0 && -z "$WORKSPACE_ROOT" ]]; then
     rm -rf "$ROOT"
@@ -159,36 +174,31 @@ if ! "$BIN" daemon ping --config "$ROOT/turin.toml" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/4] Creating discord channel runtime..."
-"$BIN" daemon channel create discord-live \
-  --config "$ROOT/turin.toml" \
-  --kind discord \
-  --agent default \
-  --setting token_env="$TOKEN_ENV_NAME" \
-  --setting channel_id="$CHANNEL_ID" \
-  --setting transport="$TRANSPORT" \
-  --setting start_from_latest=true \
-  --json >/dev/null
+CHANNEL_DIR="$ROOT/.turin/channels/discord-live"
+mkdir -p "$CHANNEL_DIR"
+cat > "$CHANNEL_DIR/config.toml" <<EOF
+enabled = true
+kind = "discord"
+agent_id = "default"
+token_env = "$TOKEN_ENV_NAME"
+channel_id = "$CHANNEL_ID"
+transport = "$TRANSPORT"
+start_from_latest = true
+EOF
 
-echo "[2/4] Waiting for runtime state..."
-STATE=""
-for _ in {1..120}; do
-  STATE=$("$BIN" daemon channel status discord-live --config "$ROOT/turin.toml" --json | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
-  if [[ "$STATE" == "running" || "$STATE" == "failed" ]]; then
-    break
-  fi
-  sleep 0.25
-done
+echo "[1/3] Starting independent Discord channel runner..."
+"$CHANNEL_BIN" run \
+  --config "$CHANNEL_DIR/config.toml" \
+  --turin-config "$ROOT/turin.toml" >"$ROOT/channel.log" 2>&1 &
+CHANNEL_PID=$!
 
-echo "[3/4] Runtime state: ${STATE:-unknown}"
-"$BIN" daemon channel status discord-live --config "$ROOT/turin.toml"
-
-echo "[4/4] Recent daemon status snapshot:"
-"$BIN" daemon status --config "$ROOT/turin.toml" --json | sed -n '1,80p'
-
-if [[ "$STATE" != "running" ]]; then
-  echo "Discord runtime did not reach running state. See $ROOT/daemon.log" >&2
+echo "[2/3] Checking runner stability..."
+sleep 3
+if ! kill -0 "$CHANNEL_PID" >/dev/null 2>&1; then
+  wait "$CHANNEL_PID" || true
+  echo "Discord runner exited during startup. See $ROOT/channel.log" >&2
   exit 1
 fi
 
+echo "[3/3] Runner is active (pid $CHANNEL_PID)."
 echo "Discord channel smoke succeeded."

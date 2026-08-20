@@ -60,15 +60,9 @@ endpoint = "daemon.sock"
 These values define where the daemon reads and watches filesystem-backed state.
 On Windows, Turin derives a stable named pipe endpoint from the configured endpoint seed.
 
-Channel-related bootstrap settings also live under `[daemon]`:
-
-```toml
-[daemon]
-channels_dir = "runtime/channels"
-```
-
-Each channel directory is authoritative the same way an agent directory is.
-If `.turin/runtime/channels/<id>/config.toml` exists and is valid, that channel exists.
+Channel configuration is deliberately outside daemon bootstrap. Independent
+channel runners conventionally use `.turin/channels`; the daemon does not scan
+or watch that directory.
 
 ## Context-Local Persistence Overrides
 
@@ -246,7 +240,9 @@ Current handshake values:
 - `wire_format = "ndjson"`
 - `protocol_version = 1`
 
-External channel sidecars also expose a separate manifest protocol through `describe`; see [channel-sidecars.md](../reference/channel-sidecars.md).
+Independent channel runners expose a separate setup manifest through
+`describe`; see [Channel Runners](../reference/channel-sidecars.md). The daemon
+does not consume that manifest.
 
 Daemon/control-plane surfaces now also include store-targeted worklist inspection:
 
@@ -306,16 +302,10 @@ Event stream example:
 Subscription semantics:
 
 - `runtime.events.subscribe` starts with a `runtime.snapshot` event
-- `runtime.snapshot` uses the same control-plane shape as `daemon.status`, including `channel_runtimes`
+- `runtime.snapshot` uses the same control-plane shape as `daemon.status`
 - when `agent_id` and/or `session_id` filters are supplied, the snapshot is scoped to that view instead of leaking unrelated runtime state
 - if the event stream lags, the daemon emits `runtime.events_lagged` and then immediately sends a fresh `runtime.snapshot`
 - if a watcher-triggered registry rescan fails, the daemon emits `runtime.rescan_failed` with the error message and changed paths
-
-External channel runtime semantics:
-
-- sidecar-backed channels start in `starting`
-- the daemon marks them `running` after the sidecar sends `channel.runner.hello`
-- `channel.status` now includes runner handshake metadata such as sidecar binary name, version, pid, and manifest protocol version when available
 
 For local GUI wrappers, prefer the managed client subscription in `turin-daemon-client`:
 
@@ -453,153 +443,14 @@ turin daemon harness delete <id>
 
 ### Channels
 
-```bash
-turin daemon channel list
-turin daemon channel create fs-local --kind fs --agent default --setting inbox_dir=inbox --setting outbox_dir=outbox
-turin daemon channel create discord-dev --kind discord --agent default --setting token_env=DISCORD_TOKEN --setting channel_id=1234567890
-turin daemon channel create telegram-ops --kind telegram --agent default --setting token_env=TELEGRAM_BOT_TOKEN --setting chat_id=-1001234567890
-turin daemon channel create whatsapp-agent --kind whatsapp --agent default --setting account_mode=personal --setting pairing_mode=pending --setting trigger_prefix=/turin
-turin daemon channel get fs-local
-turin daemon channel status fs-local
-turin daemon channel issues fs-local
-turin daemon channel enable fs-local
-turin daemon channel disable fs-local
-turin daemon channel update fs-local --idle-timeout-seconds 900 --setting poll_interval_ms=50
-turin daemon channel access telegram-ops
-turin daemon channel approve telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
-turin daemon channel reject telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
-turin daemon channel revoke telegram-ops --workspace-id telegram --room-id -1001234567890 --thread-id -1001234567890
-turin daemon channel delete fs-local
-```
+Channels are independent clients and are not configured, launched, watched, or
+reported by the Turin daemon. Use `turin-manager channels configure <kind>` to
+create channel-owned configuration, then launch the printed
+`turin-channel-<kind> run --config ... --turin-config ...` command separately.
 
-Channel settings are intentionally adapter-specific. The daemon accepts repeated
-`--setting key=value` entries and persists them into the channel `config.toml`. Values are
-parsed as JSON when possible, otherwise they are stored as strings.
-
-For known channel kinds (`fs`, `discord`, `telegram`, `whatsapp`), settings are validated on
-`channel.create` and `channel.update` before write/rescan.
-
-`channel.update --setting ...` performs a partial merge into existing settings
-rather than replacing the whole settings table.
-
-Channels can also use generic runner-level access control settings such as:
-
-- `pairing_mode = off | pending | auto`
-- `pairing_users = [...]`
-- `allowed_users = [...]`
-- `banned_users = [...]`
-- `[tools].allow = [...]`
-- `[tools].exclude = [...]`
-- `task_timeout_ms = 0 | <positive integer milliseconds>`
-
-Some channel adapters also support `session_scope`, for example:
-
-- Telegram: `user | thread | room`
-- Discord: `user | thread`
-- WhatsApp: `user | room`
-
-Those settings are enforced before a message is routed into a Turin session, which is why they live in the shared channel runner rather than in a harness script.
-
-Channel tool selection is downward-only: channel `[tools].allow` and
-`[tools].exclude` can only subset the native tool surface already granted by
-`.turin/config.toml` and the bound `.turin/runtime/agents/<id>/config.toml`.
-
-Channel tool behavior can also override inherited defaults through nested
-`[tools.<name>]` tables in the channel `config.toml`, for example `[tools.web_fetch]` or
-`[tools.web_search]`.
-
-Supported native tool groups are:
-
-- `group:all`
-- `group:fs`
-- `group:shell`
-- `group:web`
-- `group:memory`
-- `group:planning`
-- `group:integration`
-
-Example:
-
-```bash
-turin daemon channel update telegram-ops \
-  --setting tools='{"allow":["group:web","read_file"],"exclude":["web_search"]}'
-```
-
-`kind = "fs"` is currently available as a built-in adapter:
-
-- inbound messages are read from `<channel-dir>/inbox/*.json`
-- outbound messages are written to `<channel-dir>/outbox/*.json`
-- processed inbound files are moved to `<channel-dir>/processed/`
-- invalid inbound files are moved to `<channel-dir>/failed/`
-
-`kind = "discord"` is also available through a daemon-managed sidecar runner:
-
-- uses Discord Gateway (WebSocket) by default for low-latency inbound events
-- posts outbound responses back to Discord messages API
-- requires:
-  - `token_env` (environment variable containing a Discord bot token)
-  - `channel_id` (Discord channel/thread ID to poll and respond in)
-- optional settings:
-  - `transport` (`gateway` default, or `polling` fallback mode)
-  - `poll_interval_ms`
-  - `max_messages_per_poll`
-  - `workspace_id`
-  - `room_id`
-  - `start_from_latest`
-  - `ignore_bot_messages`
-  - `gateway_url`
-  - `gateway_intents`
-  - `base_url`
-
-`kind = "telegram"` is also available through a daemon-managed sidecar runner:
-
-- uses Telegram Bot API long polling (`getUpdates`) for inbound events
-- accepts inbound text messages and posts outbound replies with `sendMessage`
-- routes forum-topic messages to stable Turin slots using Telegram `message_thread_id` when present
-- requires:
-  - `token_env` (environment variable containing a Telegram bot token)
-  - `chat_id` (Telegram numeric chat id to listen on and reply to)
-- optional settings:
-  - `poll_timeout_seconds` (default `30`, maximum `50`)
-  - `poll_interval_ms` (default `250`)
-  - `max_updates_per_poll`
-  - `stream_mode` (`off`, `typing`, `draft`, `block`)
-  - `stream_thinking` (`true` / `false`)
-  - `persist_thinking` (`true` / `false`)
-  - `workspace_id`
-  - `start_from_latest`
-  - `ignore_bot_messages`
-  - `base_url`
-
-`kind = "whatsapp"` is also available through a daemon-managed sidecar runner:
-
-- uses a WhatsApp linked-device session for inbound and outbound traffic
-- supports QR pairing by default and pairing-code auth for headless servers
-- accepts inbound text and media messages and sends outbound text replies plus local file uploads
-- supports direct messages and group chats
-- common settings:
-  - `account_mode` (`personal` default, or `dedicated`)
-  - `pairing_mode` (`auto`, `pending`, `off`)
-  - `session_scope` (`user`, `room`)
-  - `workspace_id`
-  - `trigger_prefix`
-  - `allowed_chats`
-  - `banned_chats`
-  - `session_store_path`
-  - `pair_code_phone_number`
-  - `pair_code_custom_code`
-- current behavior notes:
-  - self-originated messages are ignored
-  - personal mode defaults `trigger_prefix` to `/turin` when unset
-  - dedicated mode does not force a prefix
-  - inbound media is downloaded into managed local storage and forwarded as attachment refs
-  - outbound media currently requires `local_path`; remote URLs are not uploaded directly
-  - streaming previews are not implemented yet
-
-When a channel is `enabled`, the daemon owns the runtime lifecycle:
-- `channel.status <id>` reports live runtime status (`starting`, `running`, `stopped`, `failed`, `unsupported`)
-- `daemon.status` includes a `channel_runtimes` snapshot for control-plane visibility
-- channel runtime state updates automatically after channel/agent/harness/runtime changes and watcher rescans
+The runner uses generic daemon session, task, and event operations. Channel access
+policy, credentials, conversation bindings, retries, and process health remain
+outside Turin core. See [Channel Runners](../reference/channel-sidecars.md).
 
 Live session/runtime observability now also exposes execution-scoped state.
 
@@ -644,84 +495,9 @@ Example `session.list_live` item:
 }
 ```
 
-For sidecar-backed kinds (`discord`, `telegram`, `whatsapp`), the daemon resolves and starts the runner automatically. Resolution order is:
-
-1. explicit env override
-   - `TURIN_CHANNEL_DISCORD_BIN`
-   - `TURIN_CHANNEL_TELEGRAM_BIN`
-   - `TURIN_CHANNEL_WHATSAPP_BIN`
-2. a sibling binary next to the running `turin` executable
-3. the binary name on `PATH`
-4. during source-checkout development, `cargo run -p <runner> -- ...` as a fallback
-
-Channel runtime events are also streamed via `runtime.events.subscribe`:
-- `channel.runtime.updated` for state transitions and error updates
-- `channel.runtime.removed` when a runtime disappears from the active set
-- `runtime.rescanned` for successful registry rescans, using the same snapshot shape as `daemon.status`
-- `runtime.rescan_failed` when filesystem-triggered rescans are rejected or fail
-
-`channel.status` and `daemon.status.channel_runtimes` now include lifecycle metrics:
-- `start_count`
-- `restart_count`
-- `failure_count`
-- `last_transition_unix_ms`
-- `last_started_unix_ms`
-- `last_stopped_unix_ms`
-- `last_error_code` (normalized runtime failure code)
-
-Discord runtime behavior notes:
-- Gateway reconnect now uses bounded exponential backoff.
-- Gateway session resume is attempted automatically when session/sequence state is available.
-- Duplicate inbound message IDs are suppressed across reconnect/replay windows.
-- Outbound responses support rich payloads (`content`, `embeds`, `components`, and local file attachments) with Discord-safe content chunking.
-
-Telegram runtime behavior notes:
-
-- The first pass is long-polling only; Turin does not auto-manage Telegram webhooks.
-- If the bot still has an active webhook, runtime startup fails with a polling/webhook error until the webhook is removed.
-- Transient Telegram polling/send failures now use bounded retry/backoff instead of immediately failing the runtime.
-- Telegram replies default to `reply_to_message_id=<inbound message id>` when the inbound event came from Telegram and no explicit override is set.
-- Outbound text is chunked to Telegram-safe message sizes.
-- Code blocks render with Telegram HTML `<pre>` formatting by default.
-- `stream_mode = typing` sends Telegram typing actions while a task is running.
-- `stream_mode = draft` streams partial previews and then sends the final formatted reply.
-- `stream_mode = block` streams less frequently than `draft`, using chunkier preview updates.
-- `stream_thinking = true` lets `draft`/`block` previews include streamed model thinking when the provider emits thinking deltas.
-- `persist_thinking = true` includes captured thinking in the final Telegram reply as a separate preformatted block.
-- inbound Telegram media is downloaded into managed local storage and forwarded as attachment refs
-- outbound image/document attachments are uploaded through `sendPhoto` / `sendDocument`
-
-Telegram outbound metadata keys:
-
-- `telegram_reply_to_message_id`: override or clear the reply target for a specific outbound message
-- `telegram_disable_web_page_preview`: defaults to `true`
-- `telegram_disable_notification`: defaults to `false`
-- `telegram_format`: `plain`/`text` to force plain text, or `html` to force Telegram HTML parse mode
-- `telegram_parse_mode`: currently supports `html`
-
-For a step-by-step operator walkthrough, see `docs/guides/channels/telegram.md`.
-For WhatsApp-specific setup and account-mode guidance, see `docs/guides/channels/whatsapp.md`.
-
-To emit rich outbound payloads from task output, return a JSON envelope with
-`_turin_channel_outbound = true`, for example:
-
-```json
-{
-  "_turin_channel_outbound": true,
-  "content": "Build summary",
-  "embeds": [{ "title": "CI", "description": "All checks passed" }],
-  "components": [{ "type": 1, "components": [] }],
-  "attachments": [
-    { "name": "report.txt", "local_path": "/abs/path/report.txt", "content_type": "text/plain" }
-  ]
-}
-```
-
-If no structured envelope is present, the channel runner also maps assistant content parts
-(`text`, `image`, `file`) into outbound channel payloads automatically on adapters that
-implement attachment delivery.
-
-For Phase 1 multimodal task input, attachment persistence, and the current provider/channel support matrix, see `docs/guides/multimodal.md`.
+Channel adapter behavior, structured outbound payloads, and multimodal support are
+documented with the independent runners in [Channel Runners](../reference/channel-sidecars.md)
+and the channel-specific guides.
 
 ### Sessions
 
@@ -749,8 +525,6 @@ The daemon now exposes:
 - per-agent live runtime status via `agent.status`
 - per-agent isolated registry/load issues via `agent.issues`
 - per-harness isolated registry/load issues via `harness.issues`
-- channel registry inspection and isolated issues via `channel.get` / `channel.issues`
-- channel live runtime inspection via `channel.status` and `daemon.status.channel_runtimes`
 - live session opening and listing for multi-threaded clients
 - persisted-session resume into a live runtime slot after daemon restart
 - persisted session inspection
