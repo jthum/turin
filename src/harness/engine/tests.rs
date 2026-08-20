@@ -669,8 +669,6 @@ fn test_ui_dynamic_intents_are_emitted_as_ephemeral_session_events() {
             json: false,
             internal_id: Some(42),
             turn_id: None,
-            branch_head_id: None,
-            execution_id: "exec-1".to_string(),
             event_tx,
             durability_tx: None,
         });

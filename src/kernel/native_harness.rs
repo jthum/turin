@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::harness_contract::{HarnessHook, HarnessTurnRequest};
-use crate::harness::verdict::Verdict;
+pub use crate::harness::verdict::Verdict;
 
 /// A compiled, session-local harness implementation.
 ///

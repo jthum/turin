@@ -28,7 +28,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Owns the neutral mutable turn-preparation request and execution-binding DTOs.
 - `src/kernel/native_harness.rs`
   - Public compiled-harness and per-session factory contracts. Default hook methods
-    allow fixed-purpose applications to implement only the policy they need.
+    allow fixed-purpose applications to implement only the policy they need. It also
+    re-exports `Verdict`, so native consumers do not depend on the Lua-oriented module
+    layout.
 - `src/kernel/builder.rs`
   - `with_native_harness_factory` replaces the default Lua harness binding with a
     compiled Rust factory while preserving named Lua harness definitions.
@@ -82,6 +84,9 @@ Structured inference:
 - A native factory creates one logical harness object per active session. Immutable
   application state should be shared explicitly with `Arc`; mutable session policy
   must not leak through a globally shared harness object.
+- Only types needed to implement the public native contract are public. Execution
+  binding DTOs remain kernel-private until a concrete native capability needs them;
+  do not expose Lua adapter plumbing as a speculative native service API.
 - Native default harnesses do not watch the configured Lua harness directory. Named
   Lua harnesses retain their normal loading and hot-reload behavior.
 - A build without the `lua` feature must fail clearly if no native factory is installed;
@@ -118,6 +123,7 @@ cargo test -p turin --test harness_tests test_harness_request_options_passthroug
 cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
+cargo test -p turin --test native_harness_api --no-default-features
 ```
 
 Basic checks:

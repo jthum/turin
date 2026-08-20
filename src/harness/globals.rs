@@ -54,7 +54,7 @@ pub struct HarnessExecutionContext {
     pub harness_root: Option<String>,
     pub import_capabilities: Option<BTreeMap<String, bool>>,
     pub governance_grant: Option<String>,
-    pub event_context: Option<HarnessEventContext>,
+    pub(crate) event_context: Option<HarnessEventContext>,
     pub completed_task_results: Option<CompletedLocalTaskResultsHandle>,
     pub cancel_token: Option<CancellationToken>,
 }

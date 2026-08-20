@@ -171,8 +171,6 @@ impl ExecutionHost {
                 json: self.json,
                 internal_id: session.internal_id,
                 turn_id: session.active_history_origin().map(|origin| origin.turn_id),
-                branch_head_id: session.selected_branch_head_id(),
-                execution_id: session.execution_id().to_string(),
                 event_tx: session.event_tx.clone(),
                 durability_tx: session.durability_tx.clone(),
             },
