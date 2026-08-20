@@ -8,11 +8,11 @@ use super::harness_contract::{
 };
 pub use crate::harness::verdict::Verdict;
 
-/// A compiled, session-local harness implementation.
+/// A compiled, session-local harness implementation using Turin's Rust API.
 ///
 /// Methods default to `ALLOW`, so fixed-purpose applications only implement the policy
 /// surfaces they need. Each active session receives its own instance from the factory.
-pub trait NativeHarness: Send {
+pub trait Harness: Send {
     /// Signal topic patterns subscribed by this harness definition.
     fn runtime_signal_topics(&self) -> Vec<String> {
         Vec::new()
@@ -39,18 +39,24 @@ pub trait NativeHarness: Send {
     }
 }
 
-/// Creates isolated native harness state for a runtime session.
-pub trait NativeHarnessFactory: Send + Sync {
-    fn create(&self) -> Result<Box<dyn NativeHarness>>;
+/// Creates isolated Rust harness state for a runtime session.
+pub trait HarnessFactory: Send + Sync {
+    fn create(&self) -> Result<Box<dyn Harness>>;
 }
 
-pub(crate) type NativeHarnessFactories = HashMap<String, Arc<dyn NativeHarnessFactory>>;
+pub(crate) type RustHarnessFactories = HashMap<String, Arc<dyn HarnessFactory>>;
 
-impl<F> NativeHarnessFactory for F
+impl<F> HarnessFactory for F
 where
-    F: Fn() -> Result<Box<dyn NativeHarness>> + Send + Sync,
+    F: Fn() -> Result<Box<dyn Harness>> + Send + Sync,
 {
-    fn create(&self) -> Result<Box<dyn NativeHarness>> {
+    fn create(&self) -> Result<Box<dyn Harness>> {
         self()
+    }
+}
+
+impl HarnessFactory for Arc<dyn HarnessFactory> {
+    fn create(&self) -> Result<Box<dyn Harness>> {
+        self.as_ref().create()
     }
 }

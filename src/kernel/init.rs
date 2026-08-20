@@ -215,17 +215,16 @@ impl Kernel {
             .ensure_agents_reconfigurable(affected_agents)
             .await?;
         let config = Arc::new(config);
-        let empty_native_harness_factories =
-            crate::kernel::native_harness::NativeHarnessFactories::new();
-        let native_harness_factories = self
+        let empty_rust_harness_factories = crate::kernel::harness::RustHarnessFactories::new();
+        let rust_harness_factories = self
             .host
-            .native_harness_factories
+            .rust_harness_factories
             .as_deref()
-            .unwrap_or(&empty_native_harness_factories);
+            .unwrap_or(&empty_rust_harness_factories);
         let harness_manager = Arc::new(
-            crate::kernel::harness_manager::HarnessManager::from_config_with_native(
+            crate::kernel::harness_manager::HarnessManager::from_config_with_harnesses(
                 config.as_ref(),
-                native_harness_factories,
+                rust_harness_factories,
             )?,
         );
         let mut init_context = self.harness_init_context();

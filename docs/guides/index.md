@@ -10,5 +10,5 @@ This section is for practical, task-oriented documentation.
 - `docs/guides/release-operator-console.md` — scenario guide for a release desk built from semantic harness UI
 - `docs/guides/inference-routing.md` — named inference profiles, context-window management, and compaction policy
 - `docs/guides/multimodal.md` — image and file task input, attachment storage, and current channel/provider support
-- `docs/guides/native-embedding.md` — embedding Turin with compiled Rust harnesses and optional Lua
+- `docs/guides/rust-embedding.md` — embedding Turin with Rust API harnesses and optional Lua
 - `docs/guides/channels/index.md` — end-to-end setup guides for channel adapters

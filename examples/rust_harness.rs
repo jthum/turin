@@ -1,15 +1,13 @@
-use std::path::Path;
-use std::sync::Arc;
-
 use anyhow::Result;
+use std::path::Path;
 use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
+use turin::kernel::harness::{Harness, Verdict};
 use turin::kernel::harness_contract::HarnessTurnRequest;
-use turin::kernel::native_harness::{NativeHarness, NativeHarnessFactory, Verdict};
 
 struct ConciseHarness;
 
-impl NativeHarness for ConciseHarness {
+impl Harness for ConciseHarness {
     fn on_turn_prepare(&mut self, request: &mut HarnessTurnRequest) -> Result<Verdict> {
         request
             .system_prompt
@@ -27,10 +25,8 @@ async fn main() -> Result<()> {
         .nth(2)
         .unwrap_or_else(|| "Describe the active runtime configuration.".to_string());
     let config = TurinConfig::from_file(Path::new(&config_path))?;
-    let factory: Arc<dyn NativeHarnessFactory> =
-        Arc::new(|| Ok(Box::new(ConciseHarness) as Box<dyn NativeHarness>));
     let mut kernel = Kernel::builder(config)
-        .with_native_harness_factory(factory)
+        .with_default_harness(|| Ok(Box::new(ConciseHarness) as Box<dyn Harness>))
         .build()?;
 
     kernel.init_state().await?;

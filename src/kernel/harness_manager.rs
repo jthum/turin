@@ -6,8 +6,10 @@ use anyhow::Result;
 use tracing::debug;
 
 use super::config::TurinConfig;
-use super::harness_runtime::HarnessRuntime;
-use super::native_harness::NativeHarnessFactories;
+use super::harness::RustHarnessFactories;
+use super::harness_runtime::{
+    HarnessRuntime, default_script_adapter_factory, rust_adapter_factory,
+};
 
 pub(crate) struct HarnessManager {
     agent_bindings: HashMap<String, String>,
@@ -18,19 +20,29 @@ pub(crate) struct HarnessManager {
 impl HarnessManager {
     #[cfg(test)]
     pub(crate) fn from_config(config: &TurinConfig) -> Result<Self> {
-        Self::from_config_with_native(config, &NativeHarnessFactories::new())
+        Self::from_config_with_harnesses(config, &RustHarnessFactories::new())
     }
 
-    pub(crate) fn from_config_with_native(
+    pub(crate) fn from_config_with_harnesses(
         config: &TurinConfig,
-        native_factories: &NativeHarnessFactories,
+        rust_harness_factories: &RustHarnessFactories,
     ) -> Result<Self> {
-        let default_harness_id = "default".to_string();
-        let mut default_runtime = HarnessRuntime::from_config(default_harness_id.clone(), config);
-        if let Some(factory) = native_factories.get(&default_harness_id) {
-            default_runtime = default_runtime.with_native_factory(Arc::clone(factory));
+        if let Some(unknown_id) = rust_harness_factories
+            .keys()
+            .find(|id| id.as_str() != "default" && !config.harnesses.contains_key(*id))
+        {
+            anyhow::bail!(
+                "Rust harness '{}' is not declared in config.harnesses",
+                unknown_id
+            );
         }
-        let default_runtime = Arc::new(default_runtime);
+
+        let default_harness_id = "default".to_string();
+        let default_runtime = Arc::new(HarnessRuntime::from_config(
+            default_harness_id.clone(),
+            config,
+            adapter_for(&default_harness_id, rust_harness_factories)?,
+        ));
 
         let fs_root = if config.harness.fs_root == "." {
             PathBuf::from(&config.kernel.workspace_root)
@@ -44,28 +56,15 @@ impl HarnessManager {
         runtimes.insert(default_harness_id.clone(), Arc::clone(&default_runtime));
 
         for (harness_id, harness_cfg) in &config.harnesses {
-            let mut runtime = HarnessRuntime::new(
+            let runtime = Arc::new(HarnessRuntime::new(
                 harness_id.clone(),
                 PathBuf::from(&harness_cfg.directory),
                 fs_root.clone(),
                 workspace_root.clone(),
                 spawn_depth,
-            );
-            if let Some(factory) = native_factories.get(harness_id) {
-                runtime = runtime.with_native_factory(Arc::clone(factory));
-            }
-            let runtime = Arc::new(runtime);
+                adapter_for(harness_id, rust_harness_factories)?,
+            ));
             runtimes.insert(harness_id.clone(), runtime);
-        }
-
-        if let Some(unknown_id) = native_factories
-            .keys()
-            .find(|id| id.as_str() != "default" && !config.harnesses.contains_key(*id))
-        {
-            anyhow::bail!(
-                "Native harness '{}' is not declared in config.harnesses",
-                unknown_id
-            );
         }
 
         let mut bindings = HashMap::new();
@@ -168,6 +167,21 @@ impl HarnessManager {
         out.dedup();
         out
     }
+}
+
+fn adapter_for(
+    harness_id: &str,
+    rust_harness_factories: &RustHarnessFactories,
+) -> Result<Arc<dyn super::harness_runtime::HarnessAdapterFactory>> {
+    if let Some(factory) = rust_harness_factories.get(harness_id) {
+        return Ok(rust_adapter_factory(Arc::clone(factory)));
+    }
+    default_script_adapter_factory().map_err(|_| {
+        anyhow::anyhow!(
+            "Harness '{}' has no Rust factory and no script adapter is enabled",
+            harness_id
+        )
+    })
 }
 
 #[cfg(test)]

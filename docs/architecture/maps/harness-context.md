@@ -20,30 +20,31 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
   - Owns the object-safe session-harness capability contract and shared runtime-definition
-    lifecycle. Kernel and daemon code must not reach through an adapter into its engine.
+    lifecycle. Each runtime stores one private `HarnessAdapterFactory`; kernel and daemon
+    code must not select engines or reach through an adapter into its implementation.
 - `src/kernel/harness_runtime/lua_adapter.rs`
   - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
     implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.
-- `src/kernel/harness_runtime/native_adapter.rs`
-  - Adapts a session-local `NativeHarness` to the internal contract. Unsupported optional
-    capabilities use contract defaults instead of fake native implementations.
+- `src/kernel/harness_runtime/rust_adapter.rs`
+  - Adapts a session-local Rust `Harness` to the internal contract. Unsupported optional
+    capabilities use contract defaults instead of fake Rust implementations.
 - `src/kernel/harness_contract.rs`
   - Typed borrowed lifecycle and policy hook inputs shared by kernel execution and
     harness implementations. Lua payload conversion belongs here as adapter behavior;
     generic JSON hook dispatch is not part of the session-harness contract.
   - Owns the neutral mutable turn-preparation request and execution-binding DTOs.
-- `src/kernel/native_harness.rs`
+- `src/kernel/harness.rs`
   - Public compiled-harness and per-session factory contracts. Default hook methods
     allow fixed-purpose applications to implement only the policy they need. It also
-    re-exports `Verdict`, so native consumers do not depend on the Lua-oriented module
-    layout. Native harnesses can declare durable signal topic subscriptions and receive
+    re-exports `Verdict`, so Rust consumers do not depend on the Lua-oriented module
+    layout. Rust harnesses can declare durable signal topic subscriptions and receive
     typed borrowed `HarnessSignal` deliveries without depending on persistence rows.
 - `src/kernel/builder.rs`
-  - Owns the construction-time native factory registry. `with_native_harness_factory`
-    registers `default`; `with_native_harness` registers a configured harness ID.
+  - Owns the construction-time Rust harness registry. `with_default_harness` registers
+    `default`; `with_harness` registers a configured harness ID.
 - `Cargo.toml`
-  - The default `lua` feature includes `mlua`. Native-only embedders can use
-    `default-features = false` and must install a native harness factory.
+  - The default `lua` feature includes `mlua`. Rust-only embedders can use
+    `default-features = false` and must install a Rust harness factory.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -83,29 +84,32 @@ Structured inference:
 - Lua engine operations used outside the harness subsystem must be represented by an
   explicit session-harness capability. Do not restore unrestricted `Deref` access to
   `HarnessEngine`; session state stores `Box<dyn HarnessInstance>`, not a concrete Lua
-  engine. This boundary is the migration seam for native harnesses and optional
+  engine. This boundary is the migration seam for Rust harnesses and optional
   scripting adapters.
 - Kernel hook call sites must construct `HarnessHook` variants from domain values.
   Do not reintroduce hook-name strings plus generic JSON payloads at the contract
   boundary. JSON remains appropriate inside dynamic fields such as tool arguments.
-- A native factory creates one logical harness object per active session. Immutable
+- A Rust factory creates one logical harness object per active session. Immutable
   application state should be shared explicitly with `Arc`; mutable session policy
   must not leak through a globally shared harness object.
-- Only types needed to implement the public native contract are public. Execution
-  binding DTOs remain kernel-private until a concrete native capability needs them;
-  do not expose Lua adapter plumbing as a speculative native service API.
+- Only types needed to implement the public Rust contract are public. Execution binding
+  DTOs remain kernel-private until a concrete Rust capability needs them; do not expose
+  scripting-adapter plumbing as a speculative service API.
 - Runtime signal delivery crosses the harness boundary as `HarnessSignal`, not
   `persistence::SignalRow`. Persistence retry metadata remains owned by the scheduler;
-  Lua and native harnesses receive the same semantic signal fields.
-- Native harness runtimes do not watch configured Lua harness directories. Lua harnesses
+  Lua and Rust harnesses receive the same semantic signal fields.
+- Rust harness runtimes do not watch configured script directories. Lua harnesses
   retain their normal loading and hot-reload behavior.
-- Config remains authoritative for agent-to-harness bindings. A named native factory
+- Config remains authoritative for agent-to-harness bindings. A named Rust factory
   must correspond to a declared `config.harnesses` ID; factory registration does not
   create a second binding system.
-- A build without the `lua` feature must fail clearly if no native factory is installed;
+- Adapter selection happens once during harness catalog construction. Runtime methods
+  must delegate through `HarnessAdapterFactory`, not branch on Lua, Rust, or future
+  scripting-engine variants.
+- A build without the `lua` feature must fail clearly if no Rust factory is installed;
   it must not silently run with an empty harness. Scheduler, native tools, persistence,
   inference, governance, memory, and session graph support remain available.
-- Native harness callbacks are policy boundaries, not process-wide service locators.
+- Rust harness callbacks are policy boundaries, not process-wide service locators.
   Agent-triggered async operations belong in governed native tools and kernel effects;
   do not pass internal manager collections through a generic native services object.
 
@@ -139,11 +143,11 @@ cargo test -p turin --test harness_tests test_harness_request_options_passthroug
 cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
 cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
-cargo test -p turin --test native_harness_api --no-default-features
-cargo check -p turin --example native_harness --no-default-features
+cargo test -p turin --test rust_harness_api --no-default-features
+cargo check -p turin --example rust_harness --no-default-features
 ```
 
-The native harness integration test must include a full kernel inference run so the
+The Rust harness integration test must include a full kernel inference run so the
 no-Lua build proves turn-preparation mutations reach the provider request.
 
 Basic checks:
@@ -160,7 +164,7 @@ The current shape keeps Lua property and message mutation in `context.rs`, engin
 request-option layering in `kernel/harness_contract/request_options.rs`, and structured inference in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
-contract sits between session execution and private native and Lua adapters.
+contract sits between session execution and private Rust and Lua adapters.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
 Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
 ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation

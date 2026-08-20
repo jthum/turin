@@ -11,7 +11,9 @@ use super::{
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, TurinConfig};
 use crate::kernel::governance::GovernanceManager;
-use crate::kernel::harness_runtime::{HarnessRuntime, HarnessRuntimeInitContext};
+use crate::kernel::harness_runtime::{
+    HarnessRuntime, HarnessRuntimeInitContext, default_script_adapter_factory,
+};
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
@@ -246,6 +248,7 @@ fn validate_harness_dir(
         fs_root,
         workspace_root,
         bootstrap.kernel.initial_spawn_depth,
+        default_script_adapter_factory()?,
     );
 
     runtime.validate(HarnessRuntimeInitContext {

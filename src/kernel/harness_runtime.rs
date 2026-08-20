@@ -18,17 +18,17 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
+use crate::kernel::harness::HarnessFactory;
 use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest,
     HarnessTurnServices, SessionQueue,
 };
-use crate::kernel::native_harness::NativeHarnessFactory;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
 #[cfg(feature = "lua")]
 mod lua_adapter;
-mod native_adapter;
+mod rust_adapter;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct HarnessWatchRoot {
@@ -47,6 +47,21 @@ pub(crate) struct HarnessRuntimeInitContext {
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) scheduler: Option<Arc<HarnessSchedulerAccess>>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+}
+
+pub(crate) trait HarnessAdapterFactory: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    fn watches_sources(&self) -> bool {
+        false
+    }
+
+    fn create(
+        &self,
+        runtime: &HarnessRuntime,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    ) -> Result<Box<dyn HarnessInstance>>;
 }
 
 pub(crate) trait HarnessInstance: Send {
@@ -139,7 +154,7 @@ pub(crate) struct HarnessRuntime {
     spawn_depth: u32,
     loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,
-    native_factory: Option<Arc<dyn NativeHarnessFactory>>,
+    adapter: Arc<dyn HarnessAdapterFactory>,
 }
 
 impl HarnessRuntime {
@@ -149,6 +164,7 @@ impl HarnessRuntime {
         fs_root: impl Into<PathBuf>,
         workspace_root: impl Into<PathBuf>,
         spawn_depth: u32,
+        adapter: Arc<dyn HarnessAdapterFactory>,
     ) -> Self {
         Self {
             harness_id: harness_id.into(),
@@ -158,11 +174,15 @@ impl HarnessRuntime {
             spawn_depth,
             loaded_state: std::sync::Mutex::new(HarnessLoadedState::default()),
             generation: AtomicU64::new(0),
-            native_factory: None,
+            adapter,
         }
     }
 
-    pub(crate) fn from_config(harness_id: impl Into<String>, config: &TurinConfig) -> Self {
+    pub(crate) fn from_config(
+        harness_id: impl Into<String>,
+        config: &TurinConfig,
+        adapter: Arc<dyn HarnessAdapterFactory>,
+    ) -> Self {
         let fs_root = if config.harness.fs_root == "." {
             PathBuf::from(&config.kernel.workspace_root)
         } else {
@@ -175,12 +195,8 @@ impl HarnessRuntime {
             fs_root,
             PathBuf::from(&config.kernel.workspace_root),
             config.kernel.initial_spawn_depth,
+            adapter,
         )
-    }
-
-    pub(crate) fn with_native_factory(mut self, factory: Arc<dyn NativeHarnessFactory>) -> Self {
-        self.native_factory = Some(factory);
-        self
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -204,7 +220,7 @@ impl HarnessRuntime {
     }
 
     pub(crate) fn watch_roots(&self) -> Vec<HarnessWatchRoot> {
-        if self.native_factory.is_some() {
+        if !self.adapter.watches_sources() {
             return Vec::new();
         }
         let mut roots = vec![HarnessWatchRoot {
@@ -267,11 +283,10 @@ impl HarnessRuntime {
         let runtime_signal_topics = instance.runtime_signal_topics();
         let ui_intents = instance.ui_intents();
         let script_count = loaded_scripts.len();
-        if self.native_factory.is_some() {
-            info!(harness_id = %self.harness_id, "Native harness initialized");
-        } else if script_count > 0 {
+        if script_count > 0 {
             info!(
                 harness_id = %self.harness_id,
+                adapter = self.adapter.name(),
                 count = script_count,
                 directory = %self.directory.display(),
                 "Harness scripts loaded"
@@ -279,11 +294,18 @@ impl HarnessRuntime {
             for name in &loaded_scripts {
                 debug!(harness_id = %self.harness_id, script = %name, "Loaded harness script");
             }
-        } else {
+        } else if self.adapter.watches_sources() {
             warn!(
                 harness_id = %self.harness_id,
+                adapter = self.adapter.name(),
                 directory = %self.directory.display(),
                 "No harness scripts found"
+            );
+        } else {
+            info!(
+                harness_id = %self.harness_id,
+                adapter = self.adapter.name(),
+                "Harness initialized"
             );
         }
 
@@ -313,42 +335,34 @@ impl HarnessRuntime {
         ctx: HarnessRuntimeInitContext,
         source_overlay: HarnessSourceOverlay,
     ) -> Result<usize> {
-        #[cfg(feature = "lua")]
-        {
-            let instance = lua_adapter::build_instance(self, ctx, Some(Arc::new(source_overlay)))?;
-            Ok(instance.loaded_scripts().len())
-        }
-        #[cfg(not(feature = "lua"))]
-        {
-            let _ = (ctx, source_overlay);
-            anyhow::bail!("Lua harness validation requires the 'lua' feature")
-        }
+        let instance = self
+            .adapter
+            .create(self, ctx, Some(Arc::new(source_overlay)))?;
+        Ok(instance.loaded_scripts().len())
     }
 
     pub(crate) fn create_instance(
         &self,
         ctx: HarnessRuntimeInitContext,
     ) -> Result<Box<dyn HarnessInstance>> {
-        self.build_instance(ctx)
+        self.adapter.create(self, ctx, None)
     }
+}
 
-    fn build_instance(&self, ctx: HarnessRuntimeInitContext) -> Result<Box<dyn HarnessInstance>> {
-        if let Some(factory) = &self.native_factory {
-            return native_adapter::build_instance(factory);
-        }
-        #[cfg(feature = "lua")]
-        {
-            lua_adapter::build_instance(self, ctx, None)
-        }
-        #[cfg(not(feature = "lua"))]
-        {
-            let _ = ctx;
-            anyhow::bail!(
-                "Harness '{}' has no native factory and Turin was built without Lua",
-                self.harness_id
-            )
-        }
-    }
+pub(crate) fn rust_adapter_factory(
+    factory: Arc<dyn HarnessFactory>,
+) -> Arc<dyn HarnessAdapterFactory> {
+    rust_adapter::factory(factory)
+}
+
+#[cfg(feature = "lua")]
+pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
+    Ok(lua_adapter::factory())
+}
+
+#[cfg(not(feature = "lua"))]
+pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
+    anyhow::bail!("No script harness adapter is enabled in this Turin build")
 }
 
 fn absolutize_path(path: &Path) -> PathBuf {

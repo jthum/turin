@@ -14,10 +14,10 @@ use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceOverrideConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
 };
+use turin::kernel::harness::{Harness, HarnessFactory, Verdict};
 use turin::kernel::harness_contract::{
     HarnessActionRequest, HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
 };
-use turin::kernel::native_harness::{NativeHarness, NativeHarnessFactory, Verdict};
 
 struct FixedHarness {
     received_signals: Arc<Mutex<Vec<String>>>,
@@ -63,14 +63,14 @@ impl InferenceProvider for CaptureProvider {
 
 struct PromptHarness(&'static str);
 
-impl NativeHarness for PromptHarness {
+impl Harness for PromptHarness {
     fn on_turn_prepare(&mut self, request: &mut HarnessTurnRequest) -> Result<Verdict> {
         request.system_prompt.push_str(self.0);
         Ok(Verdict::Allow)
     }
 }
 
-impl NativeHarness for FixedHarness {
+impl Harness for FixedHarness {
     fn runtime_signal_topics(&self) -> Vec<String> {
         vec!["build.*".to_string()]
     }
@@ -100,13 +100,13 @@ impl NativeHarness for FixedHarness {
 }
 
 #[test]
-fn public_native_harness_contract_mutates_requests_without_lua_types() -> Result<()> {
+fn public_rust_harness_contract_mutates_requests_without_lua_types() -> Result<()> {
     let received_signals = Arc::new(Mutex::new(Vec::new()));
     let factory_signals = Arc::clone(&received_signals);
-    let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
+    let factory: Arc<dyn HarnessFactory> = Arc::new(move || {
         Ok(Box::new(FixedHarness {
             received_signals: Arc::clone(&factory_signals),
-        }) as Box<dyn NativeHarness>)
+        }) as Box<dyn Harness>)
     });
     let mut harness = factory.create()?;
     let mut request = HarnessTurnRequest {
@@ -165,7 +165,7 @@ fn public_native_harness_contract_mutates_requests_without_lua_types() -> Result
 }
 
 #[tokio::test]
-async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
+async fn rust_harness_mutation_reaches_provider_without_lua() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = TurinConfig::default();
     config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
@@ -190,14 +190,14 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
 
     let signals = Arc::new(Mutex::new(Vec::new()));
     let factory_signals = Arc::clone(&signals);
-    let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
+    let factory: Arc<dyn HarnessFactory> = Arc::new(move || {
         Ok(Box::new(FixedHarness {
             received_signals: Arc::clone(&factory_signals),
-        }) as Box<dyn NativeHarness>)
+        }) as Box<dyn Harness>)
     });
     let captured = Arc::new(Mutex::new(Vec::new()));
     let mut kernel = Kernel::builder(config)
-        .with_native_harness_factory(factory)
+        .with_default_harness(factory)
         .build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
@@ -213,10 +213,7 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
 
     let mut session = kernel.create_session().await;
     kernel
-        .run(
-            &mut session,
-            Some("Exercise the native harness.".to_string()),
-        )
+        .run(&mut session, Some("Exercise the Rust harness.".to_string()))
         .await?;
 
     let request = captured
@@ -233,7 +230,7 @@ async fn native_harness_mutation_reaches_provider_without_lua() -> Result<()> {
 }
 
 #[tokio::test]
-async fn agents_can_bind_to_distinct_native_harnesses_without_lua() -> Result<()> {
+async fn agents_can_bind_to_distinct_rust_harnesses_without_lua() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = TurinConfig::default();
     config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
@@ -270,14 +267,14 @@ async fn agents_can_bind_to_distinct_native_harnesses_without_lua() -> Result<()
         },
     )]);
 
-    let default_factory: Arc<dyn NativeHarnessFactory> =
-        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn NativeHarness>));
-    let review_factory: Arc<dyn NativeHarnessFactory> =
-        Arc::new(|| Ok(Box::new(PromptHarness(" [review harness]")) as Box<dyn NativeHarness>));
+    let default_factory: Arc<dyn HarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn Harness>));
+    let review_factory: Arc<dyn HarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [review harness]")) as Box<dyn Harness>));
     let captured = Arc::new(Mutex::new(Vec::new()));
     let mut kernel = Kernel::builder(config)
-        .with_native_harness_factory(default_factory)
-        .with_native_harness("review", review_factory)
+        .with_default_harness(default_factory)
+        .with_harness("review", review_factory)
         .build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
@@ -314,8 +311,8 @@ async fn agents_can_bind_to_distinct_native_harnesses_without_lua() -> Result<()
 }
 
 #[cfg(not(feature = "lua"))]
-#[tokio::test]
-async fn named_harness_without_native_factory_fails_without_lua() -> Result<()> {
+#[test]
+fn named_harness_without_rust_factory_fails_without_lua() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = TurinConfig::default();
     config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
@@ -326,40 +323,38 @@ async fn named_harness_without_native_factory_fails_without_lua() -> Result<()> 
         .harnesses
         .insert("missing".to_string(), HarnessConfig::default());
 
-    let factory: Arc<dyn NativeHarnessFactory> =
-        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn NativeHarness>));
-    let mut kernel = Kernel::builder(config)
-        .with_native_harness_factory(factory)
-        .build()?;
-    kernel.init_state().await?;
-
-    let error = kernel
-        .init_harness()
-        .await
-        .expect_err("named harness without native factory must fail without Lua");
+    let factory: Arc<dyn HarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [default harness]")) as Box<dyn Harness>));
+    let result = Kernel::builder(config)
+        .with_default_harness(factory)
+        .build();
+    let error = match result {
+        Ok(_) => anyhow::bail!("missing Rust harness factory unexpectedly succeeded"),
+        Err(error) => error,
+    };
     assert!(
         error
             .to_string()
-            .contains("Harness 'missing' has no native factory")
+            .contains("Harness 'missing' has no Rust factory")
     );
     Ok(())
 }
 
 #[test]
-fn native_harness_registration_rejects_undeclared_id() -> Result<()> {
-    let factory: Arc<dyn NativeHarnessFactory> =
-        Arc::new(|| Ok(Box::new(PromptHarness(" [typo]")) as Box<dyn NativeHarness>));
+fn rust_harness_registration_rejects_undeclared_id() -> Result<()> {
+    let factory: Arc<dyn HarnessFactory> =
+        Arc::new(|| Ok(Box::new(PromptHarness(" [typo]")) as Box<dyn Harness>));
     let result = Kernel::builder(TurinConfig::default())
-        .with_native_harness("typo", factory)
+        .with_harness("typo", factory)
         .build();
 
     let error = match result {
-        Ok(_) => anyhow::bail!("undeclared native harness ID unexpectedly succeeded"),
+        Ok(_) => anyhow::bail!("undeclared Rust harness ID unexpectedly succeeded"),
         Err(error) => error,
     };
     assert_eq!(
         error.to_string(),
-        "Native harness 'typo' is not declared in config.harnesses"
+        "Rust harness 'typo' is not declared in config.harnesses"
     );
     Ok(())
 }

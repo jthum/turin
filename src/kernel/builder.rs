@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::governance::GovernanceManager;
-use crate::kernel::native_harness::NativeHarnessFactories;
+use crate::kernel::harness::RustHarnessFactories;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{
     Kernel, TurinConfig,
@@ -23,7 +23,7 @@ pub struct RuntimeBuilder {
     tool_registry: ToolRegistry,
 
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
-    native_harness_factories: NativeHarnessFactories,
+    rust_harness_factories: RustHarnessFactories,
 }
 
 impl RuntimeBuilder {
@@ -35,7 +35,7 @@ impl RuntimeBuilder {
             tool_registry: create_default_registry(),
 
             embedding_provider: None,
-            native_harness_factories: HashMap::new(),
+            rust_harness_factories: HashMap::new(),
         }
     }
 
@@ -51,22 +51,21 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Use a compiled Rust harness for the default harness binding.
-    pub fn with_native_harness_factory(
-        self,
-        factory: Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>,
-    ) -> Self {
-        self.with_native_harness("default", factory)
+    /// Use a Rust API harness for the default harness binding.
+    pub fn with_default_harness<F>(self, factory: F) -> Self
+    where
+        F: crate::kernel::harness::HarnessFactory + 'static,
+    {
+        self.with_harness("default", factory)
     }
 
-    /// Register a compiled Rust harness factory for a configured harness ID.
-    pub fn with_native_harness(
-        mut self,
-        harness_id: impl Into<String>,
-        factory: Arc<dyn crate::kernel::native_harness::NativeHarnessFactory>,
-    ) -> Self {
-        self.native_harness_factories
-            .insert(harness_id.into(), factory);
+    /// Register a Rust API harness factory for a configured harness ID.
+    pub fn with_harness<F>(mut self, harness_id: impl Into<String>, factory: F) -> Self
+    where
+        F: crate::kernel::harness::HarnessFactory + 'static,
+    {
+        self.rust_harness_factories
+            .insert(harness_id.into(), Arc::new(factory));
         self
     }
 
@@ -80,10 +79,10 @@ impl RuntimeBuilder {
         let agent_manager = Arc::new(AgentManager::new(config_arc.clone(), store_manager.clone()));
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
-        let native_harness_factories = Arc::new(self.native_harness_factories);
-        let harness_manager = Arc::new(HarnessManager::from_config_with_native(
+        let rust_harness_factories = Arc::new(self.rust_harness_factories);
+        let harness_manager = Arc::new(HarnessManager::from_config_with_harnesses(
             config_arc.as_ref(),
-            native_harness_factories.as_ref(),
+            rust_harness_factories.as_ref(),
         )?);
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
@@ -109,7 +108,7 @@ impl RuntimeBuilder {
                 persistence_locks,
                 clients: HashMap::new(),
                 embedding_provider: self.embedding_provider,
-                native_harness_factories: Some(native_harness_factories),
+                rust_harness_factories: Some(rust_harness_factories),
                 mcp_clients: Vec::new(),
             },
             check_watcher: Arc::new(std::sync::Mutex::new(None)),
@@ -123,8 +122,8 @@ mod tests {
 
     use super::*;
     use crate::harness::verdict::Verdict;
+    use crate::kernel::harness::{Harness, HarnessFactory};
     use crate::kernel::harness_contract::{HarnessActionRequest, HarnessHook, HarnessSignal};
-    use crate::kernel::native_harness::{NativeHarness, NativeHarnessFactory};
 
     struct RecordingHarness {
         calls: Arc<AtomicUsize>,
@@ -132,7 +131,7 @@ mod tests {
         actions: Arc<AtomicUsize>,
     }
 
-    impl NativeHarness for RecordingHarness {
+    impl Harness for RecordingHarness {
         fn runtime_signal_topics(&self) -> Vec<String> {
             vec!["build.*".to_string()]
         }
@@ -158,22 +157,22 @@ mod tests {
     }
 
     #[test]
-    fn native_factory_creates_isolated_session_harnesses_without_watch_roots() -> Result<()> {
+    fn rust_factory_creates_isolated_session_harnesses_without_watch_roots() -> Result<()> {
         let calls = Arc::new(AtomicUsize::new(0));
         let signals = Arc::new(AtomicUsize::new(0));
         let actions = Arc::new(AtomicUsize::new(0));
         let factory_calls = Arc::clone(&calls);
         let factory_signals = Arc::clone(&signals);
         let factory_actions = Arc::clone(&actions);
-        let factory: Arc<dyn NativeHarnessFactory> = Arc::new(move || {
+        let factory: Arc<dyn HarnessFactory> = Arc::new(move || {
             Ok(Box::new(RecordingHarness {
                 calls: Arc::clone(&factory_calls),
                 signals: Arc::clone(&factory_signals),
                 actions: Arc::clone(&factory_actions),
-            }) as Box<dyn NativeHarness>)
+            }) as Box<dyn Harness>)
         });
         let kernel = RuntimeBuilder::new(TurinConfig::default())
-            .with_native_harness_factory(factory)
+            .with_default_harness(factory)
             .build()?;
         let runtime = kernel.host.runtime_for_agent("default");
 

@@ -108,7 +108,7 @@ use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 /// Mutable provider request and turn metadata presented to `on_turn_prepare`.
 ///
 /// Ownership moves into this value before the hook and back into the provider request
-/// afterward. Native harnesses mutate it directly; scripting adapters may temporarily
+/// afterward. Rust harnesses mutate it directly; scripting adapters may temporarily
 /// wrap it without making JSON the canonical representation.
 pub struct HarnessTurnRequest {
     pub inference: Option<String>,
@@ -164,7 +164,7 @@ pub(crate) struct HarnessTurnServices<'a> {
 
 /// Typed lifecycle and policy input presented to a session harness.
 ///
-/// Scripting adapters own conversion from this contract into language values. Native
+/// Scripting adapters own conversion from this contract into language values. Rust
 /// harnesses can inspect the borrowed domain values directly.
 pub enum HarnessHook<'a> {
     SessionStart {

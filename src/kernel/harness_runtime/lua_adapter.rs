@@ -4,18 +4,42 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use turin_daemon_protocol::UiIntentMessage;
 
-use super::{HarnessInstance, HarnessRuntime, HarnessRuntimeInitContext, HarnessTurnServices};
+use super::{
+    HarnessAdapterFactory, HarnessInstance, HarnessRuntime, HarnessRuntimeInitContext,
+    HarnessTurnServices,
+};
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
 };
+use crate::kernel::harness::Verdict;
 use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessExecutionBinding, HarnessHook, HarnessSignal, HarnessTurnRequest,
     SessionQueue,
 };
-use crate::kernel::native_harness::Verdict;
+
+struct LuaHarnessAdapterFactory;
+
+impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
+    fn name(&self) -> &'static str {
+        "lua"
+    }
+
+    fn watches_sources(&self) -> bool {
+        true
+    }
+
+    fn create(
+        &self,
+        runtime: &HarnessRuntime,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    ) -> Result<Box<dyn HarnessInstance>> {
+        build_instance(runtime, ctx, source_overlay)
+    }
+}
 
 struct LuaHarnessInstance {
     engine: HarnessEngine,
@@ -171,4 +195,8 @@ pub(super) fn build_instance(
     })?;
     engine.set_loading_phase(false);
     Ok(Box::new(LuaHarnessInstance { engine }))
+}
+
+pub(super) fn factory() -> Arc<dyn HarnessAdapterFactory> {
+    Arc::new(LuaHarnessAdapterFactory)
 }

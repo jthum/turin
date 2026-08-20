@@ -22,9 +22,9 @@ Keep this subsystem small and explicit: action bindings should translate Lua val
   - Harness-facing scheduler access used by action resume scheduling.
 - `src/kernel/harness_contract.rs`
   - Engine-neutral `HarnessActionRequest` used by daemon, schedule, Lua adapter, and
-    compiled native harnesses.
-- `src/kernel/native_harness.rs`
-  - Optional native `on_action` callback. `None` means the action is not defined.
+    compiled Rust harnesses.
+- `src/kernel/harness.rs`
+  - Optional Rust `on_action` callback. `None` means the action is not defined.
 - `src/daemon/state/scheduled_worklist_actions.rs`
   - Daemon execution path for scheduled worklist actions.
 - `src/harness/stdlib/object_refs.rs`
@@ -59,7 +59,7 @@ Worklist actions:
 - Action names must be unique inside the declared action registry.
 - Action params and results cross the Lua/Rust boundary as JSON-compatible values.
 - Kernel action dispatch uses `HarnessActionRequest`; scripting adapters own language
-  conversion and native harnesses receive the same agent/name/params semantics.
+  conversion and Rust harnesses receive the same agent/name/params semantics.
 - Work-item metadata patches must merge with existing metadata instead of replacing unrelated keys.
 - `ctx:complete` stores an `output` metadata patch.
 - `ctx:fail` stores a `failure` metadata patch and extracts a reason when possible.

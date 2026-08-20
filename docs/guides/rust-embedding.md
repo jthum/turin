@@ -1,4 +1,4 @@
-# Native Embedding
+# Rust Embedding
 
 Turin can be embedded as a Rust library with a compiled harness instead of loading Lua
 scripts. This is intended for fixed-purpose applications that want Turin's inference,
@@ -18,34 +18,30 @@ Keeping default features enabled allows compiled and Lua harnesses to coexist.
 
 ## Default Harness
 
-Implement `NativeHarness` for synchronous lifecycle and request policy. A factory
+Implement `Harness` for synchronous lifecycle and request policy. A factory
 creates isolated mutable harness state for each active session:
 
 ```rust
-use std::sync::Arc;
-
 use anyhow::Result;
 use turin::kernel::Kernel;
 use turin::kernel::harness_contract::HarnessTurnRequest;
-use turin::kernel::native_harness::{NativeHarness, NativeHarnessFactory, Verdict};
+use turin::kernel::harness::{Harness, Verdict};
 
 struct AppHarness;
 
-impl NativeHarness for AppHarness {
+impl Harness for AppHarness {
     fn on_turn_prepare(&mut self, request: &mut HarnessTurnRequest) -> Result<Verdict> {
         request.system_prompt.push_str("\nPrefer concise answers.");
         Ok(Verdict::Allow)
     }
 }
 
-let factory: Arc<dyn NativeHarnessFactory> =
-    Arc::new(|| Ok(Box::new(AppHarness) as Box<dyn NativeHarness>));
 let kernel = Kernel::builder(config)
-    .with_native_harness_factory(factory)
+    .with_default_harness(|| Ok(Box::new(AppHarness) as Box<dyn Harness>))
     .build()?;
 ```
 
-`with_native_harness_factory` is shorthand for registering the `default` harness ID.
+`with_default_harness` is shorthand for registering the `default` harness ID.
 
 ## Multiple Harnesses
 
@@ -57,14 +53,14 @@ config.harnesses.insert("review".into(), Default::default());
 config.agents.get_mut("reviewer").unwrap().harness = Some("review".into());
 
 let kernel = Kernel::builder(config)
-    .with_native_harness_factory(default_factory)
-    .with_native_harness("review", review_factory)
+    .with_default_harness(default_factory)
+    .with_harness("review", review_factory)
     .build()?;
 ```
 
 The harness declaration preserves the same stable ID and agent-binding model used by
 Lua harnesses. In a build without Lua, every initialized harness definition must have a
-native factory. A missing factory fails explicitly instead of running an empty harness.
+Rust factory. A missing factory fails explicitly instead of running an empty harness.
 
 Factory registration is construction-time work. The selected factory is stored on the
 harness runtime definition, and each session creates its harness directly from that
@@ -72,18 +68,18 @@ factory; provider turns do not perform registry lookups.
 
 ## Operations And Tools
 
-Use native harness callbacks for policy, request preparation, runtime signals, and named
-actions. Implement agent-triggered I/O and asynchronous operations as native `Tool`
+Use Rust harness callbacks for policy, request preparation, runtime signals, and named
+actions. Implement agent-triggered I/O and asynchronous operations as Rust `Tool`
 values and install them with `RuntimeBuilder::with_tool_registry`. This keeps governance,
 tool exposure, persistence, and effect application inside the kernel rather than giving
 harness callbacks unrestricted access to process-wide managers.
 
 ## Runnable Example
 
-The repository includes `examples/native_harness.rs`:
+The repository includes `examples/rust_harness.rs`:
 
 ```sh
-cargo run --no-default-features --example native_harness -- \
+cargo run --no-default-features --example rust_harness -- \
   .turin/config.toml "Summarize this runtime"
 ```
 
