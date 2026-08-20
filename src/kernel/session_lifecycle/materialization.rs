@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use tracing::warn;
 
 use crate::inference::content::decode_content_json;
 use crate::inference::provider::{InferenceMessage, InferenceRole};
@@ -225,25 +226,43 @@ async fn latest_context_checkpoint(
     store: &StateStore,
     session_id: i64,
 ) -> Result<Option<ContextCompactionCheckpoint>> {
-    let Some(event) = store
-        .get_latest_session_event_by_type(session_id, "context_compaction")
-        .await?
-    else {
-        return Ok(None);
-    };
-    let decoded = serde_json::from_str::<KernelEvent>(&event.payload).map_err(|error| {
-        persistence_integrity_error(
-            format!("context compaction event {}", event.id),
-            format!("malformed payload: {error}"),
-        )
-    })?;
-    let KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint }) = decoded else {
-        return Err(persistence_integrity_error(
-            format!("context compaction event {}", event.id),
-            "payload does not contain a context compaction event",
-        ));
-    };
-    Ok(Some(checkpoint))
+    const PAGE_SIZE: usize = 32;
+    let mut offset = 0;
+    loop {
+        let events = store
+            .get_recent_session_events_by_type_page(
+                session_id,
+                "context_compaction",
+                PAGE_SIZE,
+                offset,
+            )
+            .await?;
+        let event_count = events.len();
+        for event in events.into_iter().rev() {
+            match serde_json::from_str::<KernelEvent>(&event.payload) {
+                Ok(KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint })) => {
+                    return Ok(Some(checkpoint));
+                }
+                Ok(_) => {
+                    warn!(
+                        event_id = event.id,
+                        "Ignoring context compaction record with an incompatible payload"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        event_id = event.id,
+                        %error,
+                        "Ignoring malformed context compaction record"
+                    );
+                }
+            }
+        }
+        if event_count < PAGE_SIZE {
+            return Ok(None);
+        }
+        offset = offset.saturating_add(event_count);
+    }
 }
 
 pub(super) async fn materialize_token_bounded_messages(

@@ -566,7 +566,6 @@ scope_kind = 'session' AND (
 pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
     let id = row.get::<i64>(0)?;
     let metadata = row.get::<Option<String>>(4)?;
-    validate_session_metadata(&format!("session {id}"), metadata.as_deref())?;
     Ok(SessionRow {
         id,
         public_id: row.get::<Vec<u8>>(1)?,

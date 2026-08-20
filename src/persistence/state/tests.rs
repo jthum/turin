@@ -892,6 +892,12 @@ async fn test_title_update_rejects_malformed_metadata_without_replacing_it() {
         .await
         .expect_err("malformed metadata must fail closed");
     assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
+    let readable = store
+        .get_session_row_by_public_id(public_id)
+        .await
+        .unwrap()
+        .expect("malformed optional metadata must not hide the session");
+    assert_eq!(readable.metadata.as_deref(), Some("not-json"));
     let mut rows = conn
         .query(
             "SELECT metadata FROM sessions WHERE public_id = ?1",

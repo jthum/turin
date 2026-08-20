@@ -193,9 +193,20 @@ impl StateStore {
         event_type: &str,
     ) -> Result<Option<EventRow>> {
         Ok(self
-            .query_recent_events_by_types(session_id, &[event_type], 1)
+            .query_recent_events_by_types(session_id, &[event_type], 1, 0)
             .await?
             .pop())
+    }
+
+    pub(crate) async fn get_recent_session_events_by_type_page(
+        &self,
+        session_id: i64,
+        event_type: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<EventRow>> {
+        self.query_recent_events_by_types(session_id, &[event_type], limit, offset)
+            .await
     }
 
     pub async fn get_session_counters(&self, session_id: i64) -> Result<SessionCounters> {
@@ -257,7 +268,7 @@ impl StateStore {
             return Ok(Vec::new());
         }
         let events = self
-            .query_recent_events_by_types(session_id, event_types, limit)
+            .query_recent_events_by_types(session_id, event_types, limit, 0)
             .await?;
         match target {
             SessionReadTarget::ActiveBranch => {
@@ -396,6 +407,7 @@ impl StateStore {
         session_id: i64,
         event_types: &[&str],
         limit: usize,
+        offset: usize,
     ) -> Result<Vec<EventRow>> {
         let conn = self.connect().await?;
         let placeholders = (2..event_types.len() + 2)
@@ -403,6 +415,7 @@ impl StateStore {
             .collect::<Vec<_>>()
             .join(", ");
         let limit_index = event_types.len() + 2;
+        let offset_index = event_types.len() + 3;
         let sql = format!(
             r#"
                 SELECT e.id,
@@ -418,9 +431,10 @@ impl StateStore {
                   AND e.event_type IN ({placeholders})
                 ORDER BY e.id DESC
                 LIMIT ?{limit_index}
+                OFFSET ?{offset_index}
                 "#
         );
-        let mut params = Vec::with_capacity(event_types.len() + 2);
+        let mut params = Vec::with_capacity(event_types.len() + 3);
         params.push(SqlValue::Integer(session_id));
         params.extend(
             event_types
@@ -428,6 +442,7 @@ impl StateStore {
                 .map(|event_type| SqlValue::Text((*event_type).to_string())),
         );
         params.push(SqlValue::Integer(limit as i64));
+        params.push(SqlValue::Integer(offset as i64));
         let mut stmt = conn.prepare(&sql).await?;
         let mut rows = stmt.query(params).await?;
         let mut events = Vec::new();

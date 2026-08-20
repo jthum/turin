@@ -1037,7 +1037,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
 }
 
 #[tokio::test]
-async fn test_refresh_rejects_corrupted_compaction_event_without_mutating_session() -> Result<()> {
+async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
     let mut session = kernel.create_session().await;
@@ -1047,6 +1047,32 @@ async fn test_refresh_rejects_corrupted_compaction_event_without_mutating_sessio
 
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let session_id = session.internal_id.expect("session internal id");
+    let head_turn_id = store
+        .get_active_branch_head(session_id)
+        .await?
+        .and_then(|branch| branch.head_turn_id)
+        .expect("active head turn");
+    let checkpoint = turin::kernel::session::ContextCompactionCheckpoint {
+        summary: "VALID SUMMARY".to_string(),
+        covered_through_turn_id: head_turn_id,
+        covered_through_turn_index: 0,
+        generated_at_turn_index: session.turn_index,
+        provider_name: "mock".to_string(),
+        model: "mock-model".to_string(),
+    };
+    let valid_event = turin::kernel::event::KernelEvent::Audit(
+        turin::kernel::event::AuditEvent::ContextCompaction {
+            checkpoint: checkpoint.clone(),
+        },
+    );
+    store
+        .insert_event(
+            session_id,
+            None,
+            "context_compaction",
+            &serde_json::to_value(valid_event)?,
+        )
+        .await?;
     store
         .insert_event(
             session_id,
@@ -1060,11 +1086,9 @@ async fn test_refresh_rejects_corrupted_compaction_event_without_mutating_sessio
     let original_has_prior_history = session.history.has_prior_history();
     let original_target = session.context_target().clone();
     let original_turn_index = session.turn_index;
-    let error = kernel
+    kernel
         .refresh_session_from_persistence(&mut session)
-        .await
-        .expect_err("a corrupted checkpoint must prevent refresh");
-    assert!(error.to_string().contains("context compaction event"));
+        .await?;
     assert_eq!(format!("{:?}", session.history), original_history);
     assert_eq!(
         session.history.has_prior_history(),
@@ -1072,6 +1096,7 @@ async fn test_refresh_rejects_corrupted_compaction_event_without_mutating_sessio
     );
     assert_eq!(session.context_target(), &original_target);
     assert_eq!(session.turn_index, original_turn_index);
+    assert_eq!(session.context_checkpoint.as_ref(), Some(&checkpoint));
 
     kernel.end_session(&mut session).await?;
     Ok(())
