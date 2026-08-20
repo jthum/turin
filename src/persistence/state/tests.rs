@@ -30,6 +30,26 @@ async fn test_schema_initialization() {
 }
 
 #[tokio::test]
+async fn test_connections_enforce_foreign_keys() {
+    let store = StateStore::open_memory().await.unwrap();
+    let conn = store.get_connection().await.unwrap();
+    let mut rows = conn.query("PRAGMA foreign_keys", ()).await.unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
+
+    let error = conn
+        .execute(
+            "INSERT INTO events (session_id, event_type, payload) VALUES (?1, 'test', '{}')",
+            [i64::MAX],
+        )
+        .await
+        .expect_err("an event must not reference a missing session");
+    assert!(error.to_string().contains("FOREIGN KEY"));
+}
+
+#[tokio::test]
 async fn session_addressed_signals_are_visible_only_to_the_target_runtime() {
     let store = StateStore::open_memory().await.unwrap();
     for (topic, target_session_id) in [
@@ -849,6 +869,154 @@ async fn test_update_session_title_preserves_other_metadata() {
         parsed.get("source").and_then(|value| value.as_str()),
         Some("test")
     );
+}
+
+#[tokio::test]
+async fn test_title_update_rejects_malformed_metadata_without_replacing_it() {
+    let store = StateStore::open_memory().await.unwrap();
+    let public_id = uuid::Uuid::now_v7();
+    store
+        .create_session(public_id, "default", None)
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute(
+        "UPDATE sessions SET metadata = 'not-json' WHERE public_id = ?1",
+        [public_id.into_bytes().to_vec()],
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .update_session_title(public_id, Some("Must not replace metadata"))
+        .await
+        .expect_err("malformed metadata must fail closed");
+    assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
+    let mut rows = conn
+        .query(
+            "SELECT metadata FROM sessions WHERE public_id = ?1",
+            [public_id.into_bytes().to_vec()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<String>(0)
+            .unwrap(),
+        "not-json"
+    );
+}
+
+#[tokio::test]
+async fn test_branch_read_rejects_missing_head_turn() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    let branch = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+    conn.execute(
+        "UPDATE branch_heads SET head_turn_id = ?1 WHERE id = ?2",
+        turso::params![i64::MAX, branch.id],
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .get_active_branch_head(session)
+        .await
+        .expect_err("a missing branch-head turn must fail closed");
+    assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
+}
+
+#[tokio::test]
+async fn test_ancestry_read_rejects_missing_parent_turn() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    for index in 0..2 {
+        store
+            .insert_message(
+                session,
+                turn(index),
+                "user",
+                &json!([{"type": "text", "text": format!("turn {index}")}]),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    let head_turn_id = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .unwrap()
+        .head_turn_id
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+    conn.execute(
+        "UPDATE turns SET parent_turn_id = ?1 WHERE id = ?2",
+        turso::params![i64::MAX, head_turn_id],
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .active_branch_path_turns(session)
+        .await
+        .expect_err("a missing ancestry parent must fail closed");
+    assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
+}
+
+#[tokio::test]
+async fn test_turn_read_rejects_negative_branch_depth() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let turn_id = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .unwrap()
+        .head_turn_id
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute(
+        "UPDATE turns SET branch_depth = -1 WHERE id = ?1",
+        [turn_id],
+    )
+    .await
+    .unwrap();
+
+    let error = store
+        .get_turn_row(turn_id)
+        .await
+        .expect_err("negative branch depth must fail closed");
+    assert!(error.downcast_ref::<PersistenceIntegrityError>().is_some());
 }
 
 #[tokio::test]

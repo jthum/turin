@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     LinkedSessionCreate, LinkedSessionFamilyStats, SessionRow, StateStore,
-    update_session_title_metadata,
+    update_session_title_metadata, validate_session_metadata,
 };
 
 mod search;
@@ -28,6 +28,7 @@ impl StateStore {
         origin_id: Option<&str>,
         metadata: Option<&str>,
     ) -> Result<i64> {
+        validate_session_metadata("new session", metadata)?;
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
 
@@ -50,6 +51,7 @@ impl StateStore {
         metadata: Option<&str>,
         link: &LinkedSessionCreate,
     ) -> Result<i64> {
+        validate_session_metadata("new linked session", metadata)?;
         anyhow::ensure!(
             matches!(link.visibility.as_str(), "contextual" | "hidden"),
             "Linked session visibility must be 'contextual' or 'hidden'"
@@ -396,26 +398,32 @@ impl StateStore {
         title: &str,
     ) -> Result<Option<SessionRow>> {
         let title = title.trim();
+        let Some(existing) = self.get_session_row_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+        let updated_metadata =
+            update_session_title_metadata(existing.metadata.as_deref(), Some(title))?;
+        if existing
+            .metadata
+            .as_deref()
+            .and_then(|metadata| serde_json::from_str::<serde_json::Value>(metadata).ok())
+            .and_then(|metadata| metadata.get("title").cloned())
+            .and_then(|title| title.as_str().map(str::to_owned))
+            .is_some_and(|title| !title.trim().is_empty())
+        {
+            return Ok(Some(existing));
+        }
+
         let conn = self.connect().await?;
         let public_id_bytes = public_id.into_bytes().to_vec();
         conn.execute(
             r#"
 UPDATE sessions
-SET metadata = CASE
-    WHEN metadata IS NULL OR json_valid(metadata) = 0 OR json_type(metadata) <> 'object'
-        THEN json_object('title', ?1)
-    ELSE json_set(metadata, '$.title', ?1)
-END
+SET metadata = ?1
 WHERE public_id = ?2
-  AND (
-      metadata IS NULL
-      OR json_valid(metadata) = 0
-      OR json_type(metadata) <> 'object'
-      OR json_type(metadata, '$.title') IS NULL
-      OR trim(COALESCE(json_extract(metadata, '$.title'), '')) = ''
-  )
+  AND metadata IS ?3
 "#,
-            turso::params![title, public_id_bytes],
+            turso::params![updated_metadata, public_id_bytes, existing.metadata],
         )
         .await
         .context("Failed to set empty session metadata title")?;
@@ -556,12 +564,15 @@ scope_kind = 'session' AND (
 }
 
 pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
+    let id = row.get::<i64>(0)?;
+    let metadata = row.get::<Option<String>>(4)?;
+    validate_session_metadata(&format!("session {id}"), metadata.as_deref())?;
     Ok(SessionRow {
-        id: row.get::<i64>(0)?,
+        id,
         public_id: row.get::<Vec<u8>>(1)?,
         agent_id: row.get::<String>(2)?,
         origin_id: row.get::<Option<String>>(3)?,
-        metadata: row.get::<Option<String>>(4)?,
+        metadata,
         active_branch_head_id: row.get::<Option<i64>>(5)?,
         parent_session_id: row.get::<Option<i64>>(6)?,
         root_session_id: row.get::<Option<i64>>(7)?,

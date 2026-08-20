@@ -77,7 +77,14 @@ impl ExecutionHost {
                     PersistedKernelRecord::Event(record) => {
                         let event = record.event;
                         let event_type = event.event_type().to_string();
-                        let payload = serde_json::to_value(&event).unwrap_or_default();
+                        let payload = match serde_json::to_value(&event) {
+                            Ok(payload) => payload,
+                            Err(error) => {
+                                warn!(%error, "Failed to serialize event for persistence");
+                                pending_error.get_or_insert_with(|| error.to_string());
+                                continue;
+                            }
+                        };
                         let Some(internal_id) = record.internal_id else {
                             warn!("Dropping event: no internal_id for session");
                             continue;

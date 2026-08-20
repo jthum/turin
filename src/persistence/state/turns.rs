@@ -243,6 +243,13 @@ impl StateStore {
             })
         );
         let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
+            if let Some(branch_head_id) = branch_head_id {
+                anyhow::bail!(
+                    "Branch head {} was not found in session {}",
+                    branch_head_id,
+                    session_id
+                );
+            }
             perf_stage_finish!(
                 path_stage,
                 "empty",
@@ -279,6 +286,13 @@ impl StateStore {
         max_turns: usize,
     ) -> Result<(Vec<TurnRow>, bool)> {
         let Some(branch) = self.resolve_branch_head(session_id, branch_head_id).await? else {
+            if let Some(branch_head_id) = branch_head_id {
+                anyhow::bail!(
+                    "Branch head {} was not found in session {}",
+                    branch_head_id,
+                    session_id
+                );
+            }
             return Ok((Vec::new(), false));
         };
         let Some(head_turn_id) = branch.head_turn_id else {
@@ -330,6 +344,7 @@ impl StateStore {
 
         let limit = max_turns.unwrap_or(usize::MAX);
         let mut expected_turn_id = Some(head_turn_id);
+        let mut expected_turn_depth = head.branch_depth;
         let mut upper_depth = head.branch_depth;
         let mut reverse_path = Vec::with_capacity(limit.min(ANCESTRY_DEPTH_CHUNK as usize));
         let mut ancestry_queries = 0usize;
@@ -360,9 +375,36 @@ impl StateStore {
             let mut current_id = expected_id;
             loop {
                 let Some(turn) = chunk.remove(&current_id) else {
-                    anyhow::bail!("Turn {} on ancestry path could not be loaded", current_id);
+                    return Err(super::persistence_integrity_error(
+                        format!("turn ancestry from {head_turn_id}"),
+                        format!("turn {current_id} could not be loaded"),
+                    ));
                 };
+                if expected_turn_depth != turn.branch_depth {
+                    return Err(super::persistence_integrity_error(
+                        format!("turn ancestry from {head_turn_id}"),
+                        format!(
+                            "turn {} has depth {}, expected {}",
+                            turn.id, turn.branch_depth, expected_turn_depth
+                        ),
+                    ));
+                }
                 let parent_turn_id = turn.parent_turn_id;
+                let parent_depth = match parent_turn_id {
+                    Some(_) => turn.branch_depth.checked_sub(1).ok_or_else(|| {
+                        super::persistence_integrity_error(
+                            format!("turn {}", turn.id),
+                            "a depth-zero turn cannot have a parent",
+                        )
+                    })?,
+                    None if turn.branch_depth != 0 => {
+                        return Err(super::persistence_integrity_error(
+                            format!("turn {}", turn.id),
+                            format!("a root turn must have depth 0, found {}", turn.branch_depth),
+                        ));
+                    }
+                    None => 0,
+                };
                 reverse_path.push(turn);
                 if reverse_path.len() >= limit || parent_turn_id.is_none() {
                     expected_turn_id = parent_turn_id;
@@ -371,9 +413,11 @@ impl StateStore {
                 let parent_id = parent_turn_id.expect("parent checked above");
                 if chunk.contains_key(&parent_id) {
                     current_id = parent_id;
+                    expected_turn_depth = parent_depth;
                     continue;
                 }
                 expected_turn_id = Some(parent_id);
+                expected_turn_depth = parent_depth;
                 break;
             }
 
@@ -381,10 +425,13 @@ impl StateStore {
                 break;
             }
             if lower_depth == 0 {
-                anyhow::bail!(
-                    "Turn {} on ancestry path could not be loaded",
-                    expected_turn_id.expect("missing ancestry turn")
-                );
+                return Err(super::persistence_integrity_error(
+                    format!("turn ancestry from {head_turn_id}"),
+                    format!(
+                        "turn {} could not be loaded",
+                        expected_turn_id.expect("missing ancestry turn")
+                    ),
+                ));
             }
             upper_depth = lower_depth - 1;
         }
@@ -501,12 +548,17 @@ impl StateStore {
 }
 
 fn turn_row_from_row(row: &turso::Row) -> Result<TurnRow> {
+    let id = row.get::<i64>(0)?;
     Ok(TurnRow {
-        id: row.get::<i64>(0)?,
+        id,
         public_id: row.get::<Vec<u8>>(1)?,
         session_id: row.get::<i64>(2)?,
         parent_turn_id: row.get::<Option<i64>>(3)?,
-        branch_depth: row.get::<i64>(4)? as u32,
+        branch_depth: super::persisted_u32(
+            &format!("turn {id}"),
+            "branch depth",
+            row.get::<i64>(4)?,
+        )?,
         created_at: row.get::<String>(5)?,
     })
 }

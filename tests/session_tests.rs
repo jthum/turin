@@ -1037,6 +1037,47 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
 }
 
 #[tokio::test]
+async fn test_refresh_rejects_corrupted_compaction_event_without_mutating_session() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut kernel = make_kernel(tmp.path()).await?;
+    let mut session = kernel.create_session().await;
+    kernel
+        .run(&mut session, Some("Stable history".to_string()))
+        .await?;
+
+    let store = kernel.store_manager().open(&session.store_selector).await?;
+    let session_id = session.internal_id.expect("session internal id");
+    store
+        .insert_event(
+            session_id,
+            None,
+            "context_compaction",
+            &serde_json::json!({"not": "a kernel event"}),
+        )
+        .await?;
+
+    let original_history = format!("{:?}", session.history);
+    let original_has_prior_history = session.history.has_prior_history();
+    let original_target = session.context_target().clone();
+    let original_turn_index = session.turn_index;
+    let error = kernel
+        .refresh_session_from_persistence(&mut session)
+        .await
+        .expect_err("a corrupted checkpoint must prevent refresh");
+    assert!(error.to_string().contains("context compaction event"));
+    assert_eq!(format!("{:?}", session.history), original_history);
+    assert_eq!(
+        session.history.has_prior_history(),
+        original_has_prior_history
+    );
+    assert_eq!(session.context_target(), &original_target);
+    assert_eq!(session.turn_index, original_turn_index);
+
+    kernel.end_session(&mut session).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_local_turn_selection_materializes_prefix_without_new_execution() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;

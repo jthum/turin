@@ -9,6 +9,7 @@ SELECT bh.id,
        bh.name,
        bh.head_turn_id,
        t.branch_depth,
+       t.session_id,
        bh.created_from_turn_id,
        bh.origin_kind,
        bh.origin_task_id,
@@ -541,19 +542,46 @@ async fn collect_branch_head_rows(mut rows: turso::Rows) -> Result<Vec<BranchHea
 }
 
 fn branch_head_from_row(row: &turso::Row) -> Result<BranchHeadRow> {
+    let id = row.get::<i64>(0)?;
+    let session_id = row.get::<i64>(2)?;
+    let head_turn_id = row.get::<Option<i64>>(4)?;
+    let head_turn_depth = row.get::<Option<i64>>(5)?;
+    let head_turn_session_id = row.get::<Option<i64>>(6)?;
+    match (head_turn_id, head_turn_depth, head_turn_session_id) {
+        (Some(turn_id), None, _) => {
+            return Err(super::super::persistence_integrity_error(
+                format!("branch head {id}"),
+                format!("head turn {turn_id} could not be loaded"),
+            ));
+        }
+        (Some(turn_id), Some(_), Some(turn_session_id)) if turn_session_id != session_id => {
+            return Err(super::super::persistence_integrity_error(
+                format!("branch head {id}"),
+                format!(
+                    "head turn {turn_id} belongs to session {turn_session_id}, not {session_id}"
+                ),
+            ));
+        }
+        _ => {}
+    }
+
     Ok(BranchHeadRow {
-        id: row.get::<i64>(0)?,
+        id,
         public_id: row.get::<Vec<u8>>(1)?,
-        session_id: row.get::<i64>(2)?,
+        session_id,
         name: row.get::<String>(3)?,
-        head_turn_id: row.get::<Option<i64>>(4)?,
-        head_turn_depth: row.get::<Option<i64>>(5)?.map(|value| value as u32),
-        created_from_turn_id: row.get::<Option<i64>>(6)?,
-        origin_kind: row.get::<String>(7)?,
-        origin_task_id: row.get::<Option<String>>(8)?,
-        origin_execution_id: row.get::<Option<String>>(9)?,
-        origin_metadata: row.get::<Option<String>>(10)?,
-        created_at: row.get::<String>(11)?,
-        is_active: row.get::<i64>(12)? != 0,
+        head_turn_id,
+        head_turn_depth: head_turn_depth
+            .map(|value| {
+                super::super::persisted_u32(&format!("branch head {id}"), "head depth", value)
+            })
+            .transpose()?,
+        created_from_turn_id: row.get::<Option<i64>>(7)?,
+        origin_kind: row.get::<String>(8)?,
+        origin_task_id: row.get::<Option<String>>(9)?,
+        origin_execution_id: row.get::<Option<String>>(10)?,
+        origin_metadata: row.get::<Option<String>>(11)?,
+        created_at: row.get::<String>(12)?,
+        is_active: row.get::<i64>(13)? != 0,
     })
 }

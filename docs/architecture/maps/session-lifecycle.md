@@ -203,6 +203,11 @@ Delete persisted session:
 - Local target switches materialize and validate the proposed projection before replacing
   the live execution target, history, counters, or branch cursor. A failed read must leave
   the resident session coherent on its previous target.
+- Persisted sessions must name an active branch head before transcript or inference-context
+  materialization. Missing branch rows, missing head turns, invalid ancestry depths, and malformed
+  context-compaction events fail deterministically as persistence-integrity errors.
+- Persisted session metadata updates must preserve a valid JSON object. Title updates fail closed
+  over malformed metadata rather than replacing unrelated or unreadable data.
 - Branch-head targets preserve the active branch when no branch id is explicitly selected.
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.

@@ -56,6 +56,50 @@ pub enum TurnWriteError {
     },
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Persisted {record} is invalid: {detail}")]
+pub struct PersistenceIntegrityError {
+    record: String,
+    detail: String,
+}
+
+pub(crate) fn persistence_integrity_error(
+    record: impl Into<String>,
+    detail: impl Into<String>,
+) -> anyhow::Error {
+    PersistenceIntegrityError {
+        record: record.into(),
+        detail: detail.into(),
+    }
+    .into()
+}
+
+pub(crate) fn persisted_u32(record: &str, field: &str, value: i64) -> Result<u32> {
+    u32::try_from(value).map_err(|_| {
+        persistence_integrity_error(
+            record,
+            format!("{field} must be a non-negative 32-bit integer, found {value}"),
+        )
+    })
+}
+
+pub(crate) fn validate_session_metadata(record: &str, metadata: Option<&str>) -> Result<()> {
+    let Some(raw) = metadata else {
+        return Ok(());
+    };
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(serde_json::Value::Object(_)) => Ok(()),
+        Ok(_) => Err(persistence_integrity_error(
+            record,
+            "metadata must be a JSON object",
+        )),
+        Err(error) => Err(persistence_integrity_error(
+            record,
+            format!("metadata contains malformed JSON: {error}"),
+        )),
+    }
+}
+
 pub fn is_turn_write_conflict(error: &anyhow::Error) -> bool {
     error.downcast_ref::<TurnWriteError>().is_some()
 }
@@ -162,6 +206,9 @@ impl StateStore {
     /// SQLITE_BUSY immediately.
     pub(crate) async fn connect(&self) -> Result<Connection> {
         let conn = self.db.connect()?;
+        conn.execute("PRAGMA foreign_keys = ON;", ())
+            .await
+            .context("Failed to enable state-store foreign keys")?;
         // busy_timeout is connection-local in SQLite; must be set per connection.
         conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
         Ok(conn)
@@ -291,9 +338,20 @@ pub(super) fn update_session_title_metadata(
     title: Option<&str>,
 ) -> Result<Option<String>> {
     let mut object = match metadata {
-        Some(raw) => match serde_json::from_str::<serde_json::Value>(raw).ok() {
-            Some(serde_json::Value::Object(map)) => map,
-            _ => serde_json::Map::new(),
+        Some(raw) => match serde_json::from_str::<serde_json::Value>(raw) {
+            Ok(serde_json::Value::Object(map)) => map,
+            Ok(_) => {
+                return Err(persistence_integrity_error(
+                    "session metadata",
+                    "expected a JSON object",
+                ));
+            }
+            Err(error) => {
+                return Err(persistence_integrity_error(
+                    "session metadata",
+                    format!("malformed JSON: {error}"),
+                ));
+            }
         },
         None => serde_json::Map::new(),
     };

@@ -9,7 +9,7 @@ use crate::kernel::session_refs::parse_session_reference;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{MessageRow, SessionRow, TurnRow};
 use crate::persistence::state::TokenBoundedMessages;
-use crate::persistence::state::{SessionReadTarget, StateStore};
+use crate::persistence::state::{SessionReadTarget, StateStore, persistence_integrity_error};
 
 pub(super) struct MaterializedExecutionTarget {
     pub(super) messages: Vec<MessageRow>,
@@ -45,6 +45,12 @@ pub(super) async fn materialize_execution_target(
     match target {
         ExecutionContextTarget::BranchHead { branch_head_id } => {
             let branch_head_id = branch_head_id.or(row.active_branch_head_id);
+            if branch_head_id.is_none() {
+                return Err(persistence_integrity_error(
+                    format!("session {}", row.id),
+                    "no active branch head is recorded",
+                ));
+            }
             let target = SessionReadTarget::branch_head(branch_head_id);
             let branch_head_turn_id = match branch_head_id {
                 Some(branch_head_id) => store
@@ -147,6 +153,12 @@ pub(super) async fn materialize_execution_target(
                 .get_session_row_by_public_id(public_id)
                 .await?
                 .ok_or_else(|| anyhow!("Execution context target '{}' was not found", reference))?;
+            if referenced_row.active_branch_head_id.is_none() {
+                return Err(persistence_integrity_error(
+                    format!("session {}", referenced_row.id),
+                    "no active branch head is recorded",
+                ));
+            }
             let target = SessionReadTarget::branch_head(referenced_row.active_branch_head_id);
             let (messages, has_prior_history) = target_store
                 .get_bounded_context_messages(referenced_row.id, &target, max_turns, max_messages)
@@ -219,10 +231,17 @@ async fn latest_context_checkpoint(
     else {
         return Ok(None);
     };
-    let Ok(KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint })) =
-        serde_json::from_str::<KernelEvent>(&event.payload)
-    else {
-        return Ok(None);
+    let decoded = serde_json::from_str::<KernelEvent>(&event.payload).map_err(|error| {
+        persistence_integrity_error(
+            format!("context compaction event {}", event.id),
+            format!("malformed payload: {error}"),
+        )
+    })?;
+    let KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint }) = decoded else {
+        return Err(persistence_integrity_error(
+            format!("context compaction event {}", event.id),
+            "payload does not contain a context compaction event",
+        ));
     };
     Ok(Some(checkpoint))
 }
@@ -242,6 +261,12 @@ pub(super) async fn materialize_token_bounded_messages(
     } = bounds;
     match target {
         ExecutionContextTarget::BranchHead { branch_head_id } => {
+            if branch_head_id.or(row.active_branch_head_id).is_none() {
+                return Err(persistence_integrity_error(
+                    format!("session {}", row.id),
+                    "no active branch head is recorded",
+                ));
+            }
             let target =
                 SessionReadTarget::branch_head(branch_head_id.or(row.active_branch_head_id));
             store
@@ -305,6 +330,12 @@ pub(super) async fn materialize_token_bounded_messages(
                 .get_session_row_by_public_id(public_id)
                 .await?
                 .ok_or_else(|| anyhow!("Execution context target '{}' was not found", reference))?;
+            if referenced_row.active_branch_head_id.is_none() {
+                return Err(persistence_integrity_error(
+                    format!("session {}", referenced_row.id),
+                    "no active branch head is recorded",
+                ));
+            }
             target_store
                 .get_token_bounded_context_messages(
                     referenced_row.id,

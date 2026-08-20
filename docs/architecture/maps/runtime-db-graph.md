@@ -59,6 +59,11 @@ Runtime graph:
 - Graph refs that materialize to turns must belong to the resolved session.
 - Selected paths must reject duplicate materialized turns.
 - Runtime graph is sparse relationship metadata; durable transcript/session state remains owned by persistence/session modules.
+- Every state-store connection enables foreign-key enforcement. Runtime DB callers may issue
+  advanced SQL, but writes that violate declared state relationships fail at the database boundary.
+- Persisted turn depths, ancestry links, and branch-head targets are validated as they are
+  materialized. Missing or cross-session graph records return a typed persistence-integrity error;
+  Turin does not scan the complete database or attempt automatic repair.
 - Parent/child session ownership is structural persistence data, not a semantic graph
   edge or JSON metadata. It uses normalized session columns and dedicated indexes so
   peer-thread lookup does not scan or parse metadata.
