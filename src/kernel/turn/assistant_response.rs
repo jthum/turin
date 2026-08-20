@@ -4,6 +4,7 @@ use tracing::warn;
 use crate::inference::content::encode_content_json;
 use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::SessionState;
 
 use super::super::PendingToolCall;
@@ -56,21 +57,20 @@ impl ExecutionHost {
 
         if let Some(harness) = self.session_harness_engine(session)
             && let Ok(engine) = harness.lock()
-            && let Err(e) = engine.evaluate(
-                "on_turn_end",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": self.session_reference(session),
-                    "task_id": turn_ctx.task_id.clone(),
-                    "trace_id": turn_ctx.trace_id.clone(),
-                    "plan_id": turn_ctx.plan_id.clone(),
-                    "turn_index": session.turn_index,
-                    "task_turn_index": turn_ctx.task_turn_index,
-                    "has_tool_calls": has_tool_calls,
-                }),
-            )
         {
-            warn!(error = %e, "Harness on_turn_end error");
+            let session_id = self.session_reference(session);
+            if let Err(e) = engine.evaluate_hook(HarnessHook::TurnEnd {
+                identity: &session.identity,
+                session_id: &session_id,
+                task_id: &turn_ctx.task_id,
+                trace_id: &turn_ctx.trace_id,
+                plan_id: turn_ctx.plan_id.as_deref(),
+                turn_index: session.turn_index,
+                task_turn_index: turn_ctx.task_turn_index,
+                has_tool_calls,
+            }) {
+                warn!(error = %e, "Harness on_turn_end error");
+            }
         }
 
         let mut assistant_content: Vec<InferenceContent> = Vec::new();

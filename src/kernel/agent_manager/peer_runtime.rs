@@ -8,6 +8,7 @@ use crate::harness::verdict::Verdict;
 use crate::kernel::TaskExecutionResult;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::QueuedTask;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::{LinkedSessionCreate, SignalRow};
@@ -349,19 +350,17 @@ impl PeerRuntime {
             let task_start_verdict = {
                 if let Some(harness) = self.host.session_harness_engine(&self.session) {
                     let engine = harness.lock().expect("session harness mutex poisoned");
-                    match engine.evaluate(
-                        "on_task_start",
-                        serde_json::json!({
-                            "identity": self.session.identity.clone(),
-                            "session_id": self.host.session_reference(&self.session),
-                            "task_id": task.task_id.clone(),
-                            "trace_id": task.trace_id.clone(),
-                            "plan_id": task.plan_id.clone(),
-                            "title": task.title.clone(),
-                            "prompt": task.prompt.clone(),
-                            "queue_depth": 0,
-                        }),
-                    ) {
+                    let session_id = self.host.session_reference(&self.session);
+                    match engine.evaluate_hook(HarnessHook::TaskStart {
+                        identity: &self.session.identity,
+                        session_id: &session_id,
+                        task_id: &task.task_id,
+                        trace_id: &task.trace_id,
+                        plan_id: task.plan_id.as_deref(),
+                        title: task.title.as_deref(),
+                        prompt: &task.prompt,
+                        queue_depth: 0,
+                    }) {
                         Ok(v) => v,
                         Err(e) => {
                             warn!(error = %e, "Harness on_task_start error");

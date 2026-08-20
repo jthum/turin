@@ -5,6 +5,7 @@ use tracing::warn;
 use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::SessionState;
 
 impl ExecutionHost {
@@ -39,15 +40,13 @@ impl ExecutionHost {
         };
         let engine = harness.lock().expect("session harness mutex poisoned");
 
-        let payload = serde_json::json!({
-            "id": id,
-            "name": name,
-            "args": args,
-            "output": content,
-            "is_error": is_error,
-        });
-
-        match engine.evaluate("on_tool_result", payload) {
+        match engine.evaluate_hook(HarnessHook::ToolResult {
+            id,
+            name,
+            args,
+            output: &content,
+            is_error,
+        }) {
             Ok(Verdict::Allow) => (content, is_error),
             Ok(Verdict::Reject(reason)) => (
                 format!(

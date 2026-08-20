@@ -2,6 +2,7 @@ use tracing::error;
 
 use crate::harness::verdict::Verdict;
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 
 impl ExecutionHost {
@@ -19,14 +20,11 @@ impl ExecutionHost {
         let verdict_result = {
             self.session_harness_engine(session).map(|harness| {
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                engine.evaluate(
-                    "on_plan_submit",
-                    serde_json::json!({
-                        "title": plan_title.clone(),
-                        "tasks": plan_tasks.clone(),
-                        "clear_existing": should_clear_existing,
-                    }),
-                )
+                engine.evaluate_hook(HarnessHook::PlanSubmit {
+                    title: &plan_title,
+                    tasks: &plan_tasks,
+                    clear_existing: should_clear_existing,
+                })
             })
         };
 

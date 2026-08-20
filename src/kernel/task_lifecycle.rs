@@ -5,6 +5,7 @@ use tracing::{info, warn};
 use crate::harness::verdict::Verdict;
 use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskBranchOutcome, TaskTerminalStatus};
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::{
     ExecutionStatusSnapshot, PersistedKernelRecord, QueuedTask, SessionState,
 };
@@ -39,27 +40,26 @@ impl ExecutionHost {
             self.ensure_session_harness_engine(session)?;
             if let Some(harness) = self.session_harness_engine(session) {
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                Some(engine.evaluate(
-                    "on_task_complete",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": self.session_reference(session),
-                        "task_id": task.task_id.clone(),
-                        "trace_id": task.trace_id.clone(),
-                        "plan_id": task.plan_id.clone(),
-                        "status": status,
-                        "task_turn_count": task_turn_count,
-                        "task_started_at_unix_ms": task_budget.task_started_at_unix_ms,
-                        "task_elapsed_ms": task_budget.task_elapsed_ms,
-                        "task_input_tokens": task_budget.task_input_tokens,
-                        "task_output_tokens": task_budget.task_output_tokens,
-                        "task_total_tokens": task_budget.task_total_tokens,
-                        "turn_count": session.turn_index,
-                        "execution": ExecutionStatusSnapshot::from_session(session),
-                        "branch_outcome": branch_outcome,
-                        "error": error_message,
-                    }),
-                ))
+                let session_id = self.session_reference(session);
+                let execution = ExecutionStatusSnapshot::from_session(session);
+                Some(engine.evaluate_hook(HarnessHook::TaskComplete {
+                    identity: &session.identity,
+                    session_id: &session_id,
+                    task_id: &task.task_id,
+                    trace_id: &task.trace_id,
+                    plan_id: task.plan_id.as_deref(),
+                    status,
+                    task_turn_count,
+                    task_started_at_unix_ms: task_budget.task_started_at_unix_ms,
+                    task_elapsed_ms: task_budget.task_elapsed_ms,
+                    task_input_tokens: task_budget.task_input_tokens,
+                    task_output_tokens: task_budget.task_output_tokens,
+                    task_total_tokens: task_budget.task_total_tokens,
+                    turn_count: session.turn_index,
+                    execution: &execution,
+                    branch_outcome: branch_outcome.as_ref(),
+                    error: error_message.as_deref(),
+                }))
             } else {
                 None
             }
@@ -118,19 +118,18 @@ impl ExecutionHost {
                 {
                     if let Some(harness) = self.session_harness_engine(session)
                         && let Ok(engine) = harness.lock()
-                        && let Err(e) = engine.evaluate(
-                            "on_plan_complete",
-                            serde_json::json!({
-                                "identity": session.identity.clone(),
-                                "session_id": self.session_reference(session),
-                                "plan_id": plan.plan_id.clone(),
-                                "title": plan.title.clone(),
-                                "total_tasks": plan.total_tasks,
-                                "completed_tasks": plan.completed_tasks,
-                            }),
-                        )
                     {
-                        warn!(error = %e, "Harness on_plan_complete failed");
+                        let session_id = self.session_reference(session);
+                        if let Err(e) = engine.evaluate_hook(HarnessHook::PlanComplete {
+                            identity: &session.identity,
+                            session_id: &session_id,
+                            plan_id: &plan.plan_id,
+                            title: &plan.title,
+                            total_tasks: plan.total_tasks,
+                            completed_tasks: plan.completed_tasks,
+                        }) {
+                            warn!(error = %e, "Harness on_plan_complete failed");
+                        }
                     }
                 }
 
@@ -183,18 +182,16 @@ impl ExecutionHost {
             if let Some(harness) = self.session_harness_engine(session) {
                 self.bind_harness_execution_context(session, task);
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                let result = engine.evaluate(
-                    "on_inference_error",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": self.session_reference(session),
-                        "task_id": task.task_id.clone(),
-                        "trace_id": task.trace_id.clone(),
-                        "plan_id": task.plan_id.clone(),
-                        "turn_count": session.turn_index,
-                        "error": error,
-                    }),
-                );
+                let session_id = self.session_reference(session);
+                let result = engine.evaluate_hook(HarnessHook::InferenceError {
+                    identity: &session.identity,
+                    session_id: &session_id,
+                    task_id: &task.task_id,
+                    trace_id: &task.trace_id,
+                    plan_id: task.plan_id.as_deref(),
+                    turn_count: session.turn_index,
+                    error,
+                });
                 drop(engine);
                 self.unbind_harness_execution_context(session);
                 Some(result)

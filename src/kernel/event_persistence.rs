@@ -3,6 +3,7 @@ use tracing::{debug, instrument, warn};
 
 use crate::kernel::event::KernelEvent;
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::SessionState;
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 
@@ -35,8 +36,7 @@ impl ExecutionHost {
         {
             if let Some(harness) = self.session_harness_engine(session) {
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                let payload = serde_json::to_value(event).unwrap_or_default();
-                if let Ok(verdict) = engine.evaluate("on_kernel_event", payload)
+                if let Ok(verdict) = engine.evaluate_hook(HarnessHook::KernelEvent(event))
                     && verdict.is_rejected()
                 {
                     if protected_audit_event {

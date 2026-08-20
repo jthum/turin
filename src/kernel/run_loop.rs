@@ -5,6 +5,7 @@ use crate::harness::verdict::Verdict;
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::event::{KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
 use crate::kernel::session_refs::describe_store_selector;
 
@@ -307,14 +308,12 @@ impl ExecutionHost {
                 None
             } else if let Some(harness) = self.session_harness_engine(session) {
                 let engine = harness.lock().expect("session harness mutex poisoned");
-                match engine.evaluate(
-                    "on_all_tasks_complete",
-                    serde_json::json!({
-                        "identity": session.identity.clone(),
-                        "session_id": self.session_reference(session),
-                        "turn_count": session.turn_index,
-                    }),
-                ) {
+                let session_id = self.session_reference(session);
+                match engine.evaluate_hook(HarnessHook::AllTasksComplete {
+                    identity: &session.identity,
+                    session_id: &session_id,
+                    turn_count: session.turn_index,
+                }) {
                     Ok(v) => Some(v),
                     Err(e) => {
                         warn!(error = %e, "Harness on_all_tasks_complete failed");
@@ -407,19 +406,17 @@ impl ExecutionHost {
     ) -> Verdict {
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
-            match engine.evaluate(
-                "on_task_start",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": self.session_reference(session),
-                    "task_id": task.task_id.clone(),
-                    "trace_id": task.trace_id.clone(),
-                    "plan_id": task.plan_id.clone(),
-                    "title": task.title.clone(),
-                    "prompt": task.prompt.clone(),
-                    "queue_depth": queue_depth_after_pop,
-                }),
-            ) {
+            let session_id = self.session_reference(session);
+            match engine.evaluate_hook(HarnessHook::TaskStart {
+                identity: &session.identity,
+                session_id: &session_id,
+                task_id: &task.task_id,
+                trace_id: &task.trace_id,
+                plan_id: task.plan_id.as_deref(),
+                title: task.title.as_deref(),
+                prompt: &task.prompt,
+                queue_depth: queue_depth_after_pop,
+            }) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(error = %e, "Harness on_task_start error");

@@ -2,6 +2,7 @@ use tracing::{info, warn};
 
 use crate::harness::verdict::Verdict;
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::policy::PolicyScope;
 use crate::kernel::session::SessionState;
 
@@ -32,12 +33,7 @@ impl ExecutionHost {
     ) -> Verdict {
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
-            let payload = serde_json::json!({
-                "name": name,
-                "id": id,
-                "args": args,
-            });
-            match engine.evaluate("on_tool_call", payload) {
+            match engine.evaluate_hook(HarnessHook::ToolCall { name, id, args }) {
                 Ok(verdict) => {
                     if !verdict.is_allowed() {
                         info!(tool = %name, verdict = %verdict, "Harness verdict");
@@ -71,18 +67,15 @@ impl ExecutionHost {
             if let Some(harness) = self.session_harness_engine(session) {
                 let engine = harness.lock().expect("session harness mutex poisoned");
                 let task_budget = session.active_task_budget_snapshot(task_turn_count);
-                let payload = serde_json::json!({
-                    "input_tokens": session.total_input_tokens,
-                    "output_tokens": session.total_output_tokens,
-                    "total_tokens": session.total_input_tokens + session.total_output_tokens,
-                    "task_started_at_unix_ms": task_budget.task_started_at_unix_ms,
-                    "task_elapsed_ms": task_budget.task_elapsed_ms,
-                    "task_input_tokens": task_budget.task_input_tokens,
-                    "task_output_tokens": task_budget.task_output_tokens,
-                    "task_total_tokens": task_budget.task_total_tokens,
-                    "task_turn_count": task_budget.task_turn_count,
-                });
-                Some(engine.evaluate("on_token_usage", payload))
+                Some(engine.evaluate_hook(HarnessHook::TokenUsage {
+                    input_tokens: session.total_input_tokens,
+                    output_tokens: session.total_output_tokens,
+                    task_started_at_unix_ms: task_budget.task_started_at_unix_ms,
+                    task_elapsed_ms: task_budget.task_elapsed_ms,
+                    task_input_tokens: task_budget.task_input_tokens,
+                    task_output_tokens: task_budget.task_output_tokens,
+                    task_turn_count: task_budget.task_turn_count,
+                }))
             } else {
                 None
             }

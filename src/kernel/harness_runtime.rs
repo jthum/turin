@@ -22,6 +22,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
@@ -51,7 +52,7 @@ pub(crate) trait HarnessInstance: Send {
     fn ui_intent_count(&self) -> Result<usize>;
     fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>>;
     fn load_script_str(&mut self, script: &str) -> Result<()>;
-    fn evaluate(&self, hook_name: &str, payload: serde_json::Value) -> Result<Verdict>;
+    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict>;
     fn has_hook(&self, hook_name: &str) -> bool;
     fn evaluate_turn_prepare(
         &self,
@@ -130,8 +131,8 @@ impl HarnessInstance for LuaHarnessInstance {
         self.engine.load_script_str(script)
     }
 
-    fn evaluate(&self, hook_name: &str, payload: serde_json::Value) -> Result<Verdict> {
-        self.engine.evaluate(hook_name, payload)
+    fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
+        self.engine.evaluate(hook.name(), hook.lua_payload())
     }
 
     fn has_hook(&self, hook_name: &str) -> bool {

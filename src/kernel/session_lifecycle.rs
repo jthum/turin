@@ -10,6 +10,7 @@ mod sidestep;
 use crate::kernel::config::ContextPersistenceConfig;
 use crate::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent};
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::{
     ExecutionContextTarget, ExecutionWritePolicy, SessionState, SessionStatus,
@@ -546,14 +547,11 @@ impl ExecutionHost {
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
-            if let Err(e) = engine.evaluate(
-                "on_session_start",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": session_id,
-                    "governance": governance_snapshot,
-                }),
-            ) {
+            if let Err(e) = engine.evaluate_hook(HarnessHook::SessionStart {
+                identity: &session.identity,
+                session_id: &session_id,
+                governance: &governance_snapshot,
+            }) {
                 warn!(error = %e, "Harness on_session_start failed");
             }
         }
@@ -588,16 +586,14 @@ impl ExecutionHost {
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
-            if let Err(e) = engine.evaluate(
-                "on_session_end",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": self.session_reference(session),
-                    "turn_count": session.turn_index,
-                    "total_input_tokens": session.total_input_tokens,
-                    "total_output_tokens": session.total_output_tokens,
-                }),
-            ) {
+            let session_id = self.session_reference(session);
+            if let Err(e) = engine.evaluate_hook(HarnessHook::SessionEnd {
+                identity: &session.identity,
+                session_id: &session_id,
+                turn_count: session.turn_index,
+                total_input_tokens: session.total_input_tokens,
+                total_output_tokens: session.total_output_tokens,
+            }) {
                 warn!(error = %e, "Harness on_session_end failed");
             }
             engine.set_active_queue(None);

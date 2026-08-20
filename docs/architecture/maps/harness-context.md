@@ -21,6 +21,10 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/harness_runtime.rs`
   - Owns the object-safe session-harness capability contract and its Lua adapter.
     Kernel and daemon code must not reach through the adapter into the Lua engine.
+- `src/kernel/harness_contract.rs`
+  - Typed borrowed lifecycle and policy hook inputs shared by kernel execution and
+    harness implementations. Lua payload conversion belongs here as adapter behavior;
+    generic JSON hook dispatch is not part of the session-harness contract.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -59,6 +63,9 @@ Structured inference:
   `HarnessEngine`; session state stores `Box<dyn HarnessInstance>`, not a concrete Lua
   engine. This boundary is the migration seam for native harnesses and optional
   scripting adapters.
+- Kernel hook call sites must construct `HarnessHook` variants from domain values.
+  Do not reintroduce hook-name strings plus generic JSON payloads at the contract
+  boundary. JSON remains appropriate inside dynamic fields such as tool arguments.
 
 ## Common Changes
 
@@ -107,5 +114,7 @@ layering in `request_options.rs`, and the structured inference operation in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
 contract sits between session execution and the private `LuaHarnessInstance` adapter.
-It currently retains some Lua-shaped method inputs while those contracts move to typed
-kernel DTOs, but runtime call sites no longer store or reach a concrete Lua engine.
+Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
+Lua adapter materializes the legacy Lua payload shape. Request preparation and several
+registration/execution capabilities still have Lua-owned types and are the next
+decoupling boundary.

@@ -21,6 +21,7 @@ use crate::kernel::turn::context_window::{
 use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
 use super::TurnContext;
+use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::turn::context_window::estimate_request_token_breakdown;
 
 mod compaction;
@@ -277,18 +278,16 @@ impl ExecutionHost {
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
-            match engine.evaluate(
-                "on_turn_start",
-                serde_json::json!({
-                    "identity": session.identity.clone(),
-                    "session_id": self.session_reference(session),
-                    "task_id": turn_ctx.task_id.clone(),
-                    "trace_id": turn_ctx.trace_id.clone(),
-                    "plan_id": turn_ctx.plan_id.clone(),
-                    "turn_index": session.turn_index,
-                    "task_turn_index": turn_ctx.task_turn_index,
-                }),
-            ) {
+            let session_id = self.session_reference(session);
+            match engine.evaluate_hook(HarnessHook::TurnStart {
+                identity: &session.identity,
+                session_id: &session_id,
+                task_id: &turn_ctx.task_id,
+                trace_id: &turn_ctx.trace_id,
+                plan_id: turn_ctx.plan_id.as_deref(),
+                turn_index: session.turn_index,
+                task_turn_index: turn_ctx.task_turn_index,
+            }) {
                 Ok(Verdict::Reject(reason)) => {
                     warn!(reason = %reason, "Turn rejected by on_turn_start");
                     return true;
