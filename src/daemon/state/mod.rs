@@ -9,6 +9,7 @@ mod runtime_tasks;
 mod scheduled_execution;
 mod scheduled_jobs;
 mod scheduled_worklist_actions;
+mod source_revision;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -30,6 +31,7 @@ use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
 use crate::persistence::state::StateStore;
+use source_revision::{SourceRevision, calculate_source_revision};
 
 pub(crate) use harness_sources::HarnessSourceConflict;
 pub(crate) use runtime_sessions::SessionDeleteBusy;
@@ -87,6 +89,7 @@ pub struct DaemonState {
     pub(super) kernel: Kernel,
     pub(super) runtime_store: Arc<StateStore>,
     pub(super) scheduler_wake: Option<Arc<Notify>>,
+    source_revision: SourceRevision,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +165,14 @@ impl DaemonState {
         kernel.init_harness().await?;
         kernel.start_watcher()?;
 
+        let watch_paths = DaemonWatchPaths {
+            config_path: config_path.clone(),
+            agents_dir: registry_load.agents_dir.clone(),
+            harnesses_dir: registry_load.harnesses_dir.clone(),
+            channels_dir: registry_load.channels_dir.clone(),
+        };
+        let source_revision = calculate_source_revision(&config_path, &watch_paths)?;
+
         Ok(Self {
             config_path,
             config_base,
@@ -171,6 +182,7 @@ impl DaemonState {
             kernel,
             runtime_store,
             scheduler_wake: None,
+            source_revision,
         })
     }
 
@@ -236,10 +248,19 @@ impl DaemonState {
         new_kernel.init_harness().await?;
         new_kernel.start_watcher()?;
 
+        let watch_paths = DaemonWatchPaths {
+            config_path: self.config_path.clone(),
+            agents_dir: registry_load.agents_dir.clone(),
+            harnesses_dir: registry_load.harnesses_dir.clone(),
+            channels_dir: registry_load.channels_dir.clone(),
+        };
+        let source_revision = calculate_source_revision(&self.config_path, &watch_paths)?;
+
         let old_kernel = std::mem::replace(&mut self.kernel, new_kernel);
         self.bootstrap_config = bootstrap_config;
         self.registry_load = registry_load;
         self.runtime_store = runtime_store;
+        self.source_revision = source_revision;
 
         tokio::spawn(async move {
             let mut kernel = old_kernel;
@@ -247,6 +268,14 @@ impl DaemonState {
         });
 
         Ok(self.status().await)
+    }
+
+    pub(super) async fn rescan_if_changed(&mut self) -> Result<DaemonStatus> {
+        let revision = calculate_source_revision(&self.config_path, &self.watch_paths())?;
+        if revision == self.source_revision {
+            return Ok(self.status().await);
+        }
+        self.rescan().await
     }
 
     pub async fn reload_runtime(&mut self) -> Result<DaemonStatus> {

@@ -233,16 +233,6 @@ impl EventSubscription {
             Err(_) => Ok(()),
         }
     }
-
-    async fn drain_until_quiet(&mut self, quiet_ms: u64) -> Result<()> {
-        loop {
-            match timeout(Duration::from_millis(quiet_ms), self.next_event()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(err)) => return Err(err),
-                Err(_) => return Ok(()),
-            }
-        }
-    }
 }
 
 fn result_value(response: ResponseEnvelope) -> Value {
@@ -1357,10 +1347,6 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
         .await?;
     let created = agent_subscription.wait_for("agent.created").await?;
     assert_eq!(created.data["id"], "writer");
-    // Registry writes rescan synchronously and also notify the debounced filesystem
-    // watcher. Let that duplicate notification settle before opening scoped sessions.
-    agent_subscription.drain_until_quiet(300).await?;
-
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(

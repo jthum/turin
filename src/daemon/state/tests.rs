@@ -238,6 +238,23 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
 }
 
 #[tokio::test]
+async fn unchanged_conditional_rescan_preserves_live_sessions() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+    let opened = state
+        .open_session("default", Some("stable-session"), None)
+        .await?;
+
+    let status = state.rescan_if_changed().await?;
+
+    assert!(status.live_sessions.iter().any(|session| {
+        session.slot_id == "stable-session" && session.session_id == opened.session_id
+    }));
+    Ok(())
+}
+
+#[tokio::test]
 async fn wait_for_task_returns_terminal_result() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

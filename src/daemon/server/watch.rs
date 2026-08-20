@@ -93,7 +93,7 @@ pub(super) async fn rescan_and_refresh_watcher(
 ) -> Result<DaemonRuntimeSnapshot> {
     let (status, watch_paths, workspace_root, channels) = {
         let mut guard = state.write().await;
-        let status = guard.rescan().await?;
+        let status = guard.rescan_if_changed().await?;
         let watch_paths = guard.watch_paths();
         let workspace_root = PathBuf::from(&guard.bootstrap_config.kernel.workspace_root);
         let channels = guard.registry_load.channels.clone();

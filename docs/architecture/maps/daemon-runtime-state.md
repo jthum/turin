@@ -29,6 +29,9 @@ This subsystem should preserve three guarantees:
   - Harness action runtime targeting, agent execution identity resolution, and action result collection.
 - `src/daemon/state/harness_sources.rs`
   - Harness source listing/reading, candidate validation, safe relative-path resolution, hash-guarded batch saves, and file-atomic replacement.
+- `src/daemon/state/source_revision.rs`
+  - Compact revision of bootstrap configuration, registry shape, registry configs,
+    and Lua sources used to suppress redundant watcher-triggered kernel rebuilds.
 - `src/daemon/server/dispatch/task.rs`
   - Daemon task request handlers.
 - `src/daemon/server/dispatch/session.rs`
@@ -195,6 +198,8 @@ Persisted session deletion:
 - Session deletion must reject any attached live runtime, regardless of slot.
 - Root-session listing must not mix contextual or hidden child sessions into the
   operator's conversation list.
+- Filesystem notifications for an already-loaded source revision must not replace
+  the kernel or terminate idle live sessions. Explicit runtime reload remains forced.
 - Session deletion must be transactional and must not delete durable work
   items merely because the session claimed them.
 
