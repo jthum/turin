@@ -1,20 +1,19 @@
+mod finalization;
 mod plan_submission;
 mod result_hooks;
+mod validation;
 mod virtual_tools;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use std::time::Instant;
+use tracing::info;
 
-use crate::display;
 use crate::harness::verdict::Verdict;
 use crate::harness::virtual_tools::{VirtualToolPlan, VirtualToolResultResolution};
-use crate::inference::content::encode_content_json;
-use crate::inference::provider::{InferenceContent, InferenceMessage, InferenceRole};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::governance::{CapabilityDecision, GovernanceSubject, tool_capability_name};
 use crate::kernel::session::SessionState;
@@ -25,8 +24,6 @@ use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
 
 const MAX_VIRTUAL_TOOL_DEPTH: usize = 8;
-const MAX_TOOL_CALLS_PER_WINDOW: usize = 32;
-const TOOL_CALL_WINDOW: Duration = Duration::from_secs(10);
 const MAX_PARALLEL_TOOL_CALLS: usize = 8;
 
 #[derive(Debug, Clone)]
@@ -118,152 +115,6 @@ impl ExecutionHost {
             self.finalize_tool_records(session, &pending_tool_calls, final_by_id, false)
                 .await
         })
-    }
-
-    fn evaluate_pending_tool_calls(
-        &self,
-        session: &SessionState,
-        pending_tool_calls: &[PendingToolCall],
-        exposed_tool_names: Option<&BTreeSet<String>>,
-    ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
-        let mut immediate_records: Vec<FinalToolRecord> = Vec::new();
-        let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
-        let ansi_stdout = display::stdout_ansi();
-
-        for tc in pending_tool_calls {
-            if exposed_tool_names.is_some_and(|names| !names.contains(&tc.name)) {
-                warn!(tool = %tc.name, "Tool call rejected because it was not exposed for this inference");
-                immediate_records.push(FinalToolRecord {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    args: tc.args.clone(),
-                    verdict: "not_exposed".to_string(),
-                    duration_ms: 0,
-                    content: format!(
-                        "[NOT EXPOSED] Tool '{}' was not available for this inference",
-                        tc.name
-                    ),
-                    is_error: true,
-                    emit_exec_start: true,
-                    governance_denial: None,
-                });
-                continue;
-            }
-            let verdict = self.evaluate_tool_call(session, &tc.name, &tc.id, &tc.args);
-            match &verdict {
-                Verdict::Reject(reason) => {
-                    if !self.json {
-                        println!(
-                            "{}",
-                            display::rejection_line("✗ Rejected by harness:", reason, ansi_stdout,)
-                        );
-                    }
-                    warn!(tool = %tc.name, reason = %reason, "Tool rejected by on_tool_call");
-                    let msg = format!("[HARNESS REJECTED] Tool '{}' blocked: {}", tc.name, reason);
-                    immediate_records.push(FinalToolRecord {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        args: tc.args.clone(),
-                        verdict: verdict.to_string(),
-                        duration_ms: 0,
-                        content: msg,
-                        is_error: true,
-                        emit_exec_start: true,
-                        governance_denial: None,
-                    });
-                }
-                Verdict::Escalate(reason) => {
-                    warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
-                    if !self.prompt_for_approval(reason) {
-                        if !self.json {
-                            println!("{}", display::approval_line(false, ansi_stdout));
-                        }
-                        let msg =
-                            format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
-                        immediate_records.push(FinalToolRecord {
-                            id: tc.id.clone(),
-                            name: tc.name.clone(),
-                            args: tc.args.clone(),
-                            verdict: "escalate_denied".to_string(),
-                            duration_ms: 0,
-                            content: msg,
-                            is_error: true,
-                            emit_exec_start: true,
-                            governance_denial: None,
-                        });
-                    } else {
-                        if !self.json {
-                            println!("{}", display::approval_line(true, ansi_stdout));
-                        }
-                        validated_calls.push((tc.clone(), Verdict::Allow));
-                    }
-                }
-                Verdict::Allow | Verdict::Modify(_) => {
-                    validated_calls.push((tc.clone(), verdict));
-                }
-            }
-        }
-
-        (immediate_records, validated_calls)
-    }
-
-    fn apply_tool_rate_limit(
-        &self,
-        session: &mut SessionState,
-        mut immediate_records: Vec<FinalToolRecord>,
-        validated_calls: Vec<(PendingToolCall, Verdict)>,
-    ) -> (Vec<FinalToolRecord>, Vec<(PendingToolCall, Verdict)>) {
-        if validated_calls.is_empty() {
-            return (immediate_records, validated_calls);
-        }
-
-        let allowed = session.reserve_tool_calls(
-            validated_calls.len(),
-            MAX_TOOL_CALLS_PER_WINDOW,
-            TOOL_CALL_WINDOW,
-        );
-        let allowed = allowed.min(session.reserve_delegation_tool_calls(allowed));
-        if allowed >= validated_calls.len() {
-            return (immediate_records, validated_calls);
-        }
-
-        let blocked = validated_calls.len() - allowed;
-        warn!(
-            session_id = %session.identity.session_id(),
-            allowed,
-            blocked,
-            limit = MAX_TOOL_CALLS_PER_WINDOW,
-            window_seconds = TOOL_CALL_WINDOW.as_secs(),
-            "Tool rate limit exceeded; blocking excess tool calls",
-        );
-
-        let mut permitted = Vec::with_capacity(allowed);
-        for (index, (tc, verdict)) in validated_calls.into_iter().enumerate() {
-            if index < allowed {
-                permitted.push((tc, verdict));
-                continue;
-            }
-
-            let msg = format!(
-                "[RATE LIMITED] Tool '{}' blocked: exceeded built-in safety limit of {} tool calls per {}s session window",
-                tc.name,
-                MAX_TOOL_CALLS_PER_WINDOW,
-                TOOL_CALL_WINDOW.as_secs()
-            );
-            immediate_records.push(FinalToolRecord {
-                id: tc.id,
-                name: tc.name,
-                args: tc.args,
-                verdict: "rate_limited".to_string(),
-                duration_ms: 0,
-                content: msg,
-                is_error: true,
-                emit_exec_start: true,
-                governance_denial: None,
-            });
-        }
-
-        (immediate_records, permitted)
     }
 
     async fn execute_validated_tool_calls(
@@ -498,127 +349,5 @@ impl ExecutionHost {
         }
 
         final_by_id
-    }
-
-    async fn finalize_tool_records(
-        &mut self,
-        session: &mut SessionState,
-        pending_tool_calls: &[PendingToolCall],
-        mut final_by_id: HashMap<String, FinalToolRecord>,
-        publish_to_history: bool,
-    ) -> Result<Vec<FinalToolRecord>> {
-        let mut tool_results: Vec<InferenceContent> = Vec::new();
-        let mut finalized_records = Vec::new();
-        let ansi_stdout = display::stdout_ansi();
-
-        for tc in pending_tool_calls {
-            let Some(mut record) = final_by_id.remove(&tc.id) else {
-                continue;
-            };
-
-            if record.emit_exec_start {
-                self.persist_event(
-                    session,
-                    &KernelEvent::Audit(AuditEvent::ToolExecStart {
-                        id: record.id.clone(),
-                        name: record.name.clone(),
-                    }),
-                );
-            }
-
-            if let Some(decision) = record.governance_denial.take() {
-                self.persist_event(
-                    session,
-                    &KernelEvent::Audit(AuditEvent::GovernanceDenial { decision }),
-                );
-            }
-
-            let (content, is_error) = self.apply_tool_result_hook(
-                session,
-                &record.id,
-                &record.name,
-                &record.args,
-                record.content,
-                record.is_error,
-            );
-            record.content = content;
-            record.is_error = is_error;
-
-            if let (Some(iid), Some(target)) =
-                (session.internal_id, session.active_turn_write_target())
-            {
-                let store = self
-                    .store_manager
-                    .open(&session.store_selector)
-                    .await
-                    .context("Failed to open state store for tool execution persistence")?;
-                let _guard = session.persistence_lock.lock().await;
-                store
-                    .insert_tool_execution(
-                        iid,
-                        target,
-                        &record.id,
-                        &record.name,
-                        &record.args,
-                        Some(&record.content),
-                        record.is_error,
-                        Some(record.duration_ms),
-                        &record.verdict,
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("Failed to persist tool execution '{}'", record.name)
-                    })?;
-            }
-
-            self.persist_event(
-                session,
-                &KernelEvent::Audit(AuditEvent::ToolResult {
-                    id: record.id.clone(),
-                    output: record.content.clone(),
-                    is_error: record.is_error,
-                }),
-            );
-            self.persist_event(
-                session,
-                &KernelEvent::Audit(AuditEvent::ToolExecEnd {
-                    id: record.id.clone(),
-                    success: !record.is_error,
-                }),
-            );
-
-            if !self.json {
-                println!(
-                    "{}",
-                    display::tool_status_line(&record.name, !record.is_error, ansi_stdout)
-                );
-            }
-
-            if publish_to_history {
-                tool_results.push(InferenceContent::ToolResult {
-                    tool_use_id: record.id.clone(),
-                    content: record.content.clone(),
-                    is_error: record.is_error,
-                });
-            }
-
-            finalized_records.push(record);
-        }
-
-        if publish_to_history && !tool_results.is_empty() {
-            self.persist_turn_message(session, "tool_result", &encode_content_json(&tool_results))
-                .await?;
-            let origin = session.active_history_origin();
-            session.history.push_with_origin(
-                InferenceMessage {
-                    role: InferenceRole::Tool,
-                    content: tool_results.clone(),
-                    tool_call_id: None,
-                },
-                origin,
-            );
-        }
-
-        Ok(finalized_records)
     }
 }

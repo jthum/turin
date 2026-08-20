@@ -12,7 +12,14 @@ This subsystem should preserve two guarantees:
 ## Files
 
 - `src/kernel/turn/tool_execution.rs`
-  - Main orchestration: verdict evaluation, rate limiting, native tool execution, virtual-plan dispatch, side effects, result persistence, and history publishing.
+  - Main orchestration: bounded parallel native/virtual dispatch, governance checks,
+    side-effect handling, and virtual-plan coordination.
+- `src/kernel/turn/tool_execution/validation.rs`
+  - Pre-execution admission: exposed-tool enforcement, harness verdicts, interactive
+    escalation, session rate limiting, and transitive delegation-budget reservation.
+- `src/kernel/turn/tool_execution/finalization.rs`
+  - Ordered post-execution processing: result hooks, tool-row persistence, audit events,
+    terminal display, and provider-history publication.
 - `src/kernel/turn/tool_execution/virtual_tools.rs`
   - Virtual tool call expansion, recursion/depth checks, nested result aggregation, result-handler invocation, and hidden nested execution.
 - `src/kernel/turn/tool_execution/plan_submission.rs`
@@ -70,6 +77,12 @@ Change native tool execution behavior:
 2. Preserve governance denial audit events and tool result persistence.
 3. Run `cargo test -p turin --test harness_tests tool`.
 
+Change admission or finalization behavior:
+
+1. Update `validation.rs` for exposure, verdict, escalation, or rate-limit policy.
+2. Update `finalization.rs` for result hooks, persistence, audits, or history publication.
+3. Preserve pending-call order and the hidden nested-call publication rule.
+
 Change virtual tool behavior:
 
 1. Update `tool_execution/virtual_tools.rs`.
@@ -102,4 +115,7 @@ git diff --check
 
 ## Current Shape
 
-The current split keeps the high-level execution loop in `tool_execution.rs` and moves only the virtual-tool mechanics into a child module. That is deliberate: native and virtual tools still share finalization, persistence, audit events, result hooks, and history publication.
+The high-level execution loop remains in `tool_execution.rs`. Admission and finalization
+are separate ordered phases because native and virtual tools share them. Dispatch and
+effect handling stay together in the main module because they coordinate bounded
+parallelism, governance, recursive virtual plans, MCP registration, and plan submission.
