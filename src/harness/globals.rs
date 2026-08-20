@@ -3,7 +3,6 @@
 use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 use std::future::Future;
 use std::path::PathBuf;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::harness::dx;
@@ -14,61 +13,26 @@ use crate::harness::stdlib::{
 };
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
-use crate::kernel::event::KernelEvent;
+pub(crate) use crate::kernel::harness_contract::{
+    HarnessEventContext, HarnessExecutionBinding, SessionQueue,
+};
 use crate::kernel::session::{
     CompletedLocalTaskResultsHandle, ExecutionConflictPolicy, ExecutionContextTarget,
-    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy, PersistedKernelRecord,
-    QueuedTask,
+    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy,
 };
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use crate::harness::source::HarnessSourceOverlay;
 
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 
-pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 pub type ActiveHarnessModuleList = Arc<std::sync::Mutex<Vec<String>>>;
 pub type ExplicitWatchRoots = Arc<std::sync::Mutex<Vec<PathBuf>>>;
 pub type HarnessLoadPhase = Arc<std::sync::Mutex<bool>>;
-
-#[derive(Clone)]
-pub struct HarnessEventContext {
-    pub json: bool,
-    pub internal_id: Option<i64>,
-    pub turn_id: Option<i64>,
-    pub branch_head_id: Option<i64>,
-    pub execution_id: String,
-    pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
-    pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
-}
-
-#[derive(Clone)]
-pub struct HarnessExecutionMetadata {
-    pub execution_id: String,
-    pub context_target: ExecutionContextTarget,
-    pub visibility: ExecutionVisibility,
-    pub durability: ExecutionDurability,
-    pub write_policy: ExecutionWritePolicy,
-    pub conflict_policy: ExecutionConflictPolicy,
-}
-
-#[derive(Clone)]
-pub struct HarnessExecutionBinding {
-    pub agent_id: String,
-    pub session_id: String,
-    pub store_selector: StoreSelector,
-    pub default_store_selector: Option<StoreSelector>,
-    pub execution: HarnessExecutionMetadata,
-    pub runtime_slot_id: Option<String>,
-    pub trace_id: String,
-    pub completed_task_results: CompletedLocalTaskResultsHandle,
-    pub event_context: HarnessEventContext,
-    pub cancel_token: CancellationToken,
-}
 
 #[derive(Clone, Default)]
 pub struct HarnessExecutionContext {

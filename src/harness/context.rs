@@ -7,6 +7,7 @@ use crate::inference::content::{infer_prompt_from_messages, replace_user_text_co
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
+use crate::kernel::harness_contract::{HarnessTurnRequest, HarnessTurnServices};
 
 mod request_options;
 mod structured_call;
@@ -124,6 +125,49 @@ struct ToolExposureProxy {
 }
 
 impl ContextWrapper {
+    pub(crate) fn from_harness_request(
+        request: &mut HarnessTurnRequest,
+        services: HarnessTurnServices<'_>,
+    ) -> Self {
+        let context = Self::new(ContextInit {
+            inference: request.inference.take(),
+            model: std::mem::take(&mut request.model),
+            provider: std::mem::take(&mut request.provider),
+            system_prompt: std::mem::take(&mut request.system_prompt),
+            messages: std::mem::take(&mut request.messages),
+            turn_index: request.turn_index,
+            task_turn_index: request.task_turn_index,
+            is_first_turn_in_task: request.is_first_turn_in_task,
+            task_id: request.task_id.clone(),
+            plan_id: request.plan_id.clone(),
+            token_count: request.token_count,
+            token_limit: request.token_limit,
+            thinking_budget: request.thinking_budget,
+            request_options: std::mem::take(&mut request.request_options),
+            clients: services.clients.clone(),
+            config: Arc::clone(services.config),
+            agent_id: request.agent_id.clone(),
+            session_inference: request.session_inference.clone(),
+            session_id: request.session_id.clone(),
+            session_title: request.session_title.clone(),
+            available_tools: std::mem::take(&mut request.available_tools),
+        });
+        context.lock_state().tool_exposure = std::mem::take(&mut request.tool_exposure);
+        context
+    }
+
+    pub(crate) fn apply_to_harness_request(self, request: &mut HarnessTurnRequest) {
+        let state = self.into_state();
+        request.inference = state.inference;
+        request.model = state.model;
+        request.provider = state.provider;
+        request.system_prompt = state.system_prompt;
+        request.messages = state.messages;
+        request.thinking_budget = state.thinking_budget;
+        request.request_options = state.request_options;
+        request.tool_exposure = state.tool_exposure;
+    }
+
     pub fn new(init: ContextInit) -> Self {
         let ContextInit {
             inference,

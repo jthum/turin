@@ -218,7 +218,7 @@ impl HarnessEngine {
     }
 
     /// Bind the full active execution context for the current task.
-    pub fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
+    pub(crate) fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {

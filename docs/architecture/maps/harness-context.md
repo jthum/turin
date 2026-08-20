@@ -25,6 +25,7 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Typed borrowed lifecycle and policy hook inputs shared by kernel execution and
     harness implementations. Lua payload conversion belongs here as adapter behavior;
     generic JSON hook dispatch is not part of the session-harness contract.
+  - Owns the neutral mutable turn-preparation request and execution-binding DTOs.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -52,6 +53,9 @@ Structured inference:
 - Provider defaults, context overrides, and call-local overrides must layer in that order.
 - Normal turn preflight and `ctx:structured` must share the same request-option merge semantics.
 - `ctx.prompt` and `ctx.messages` must remain synchronized when either is replaced.
+- Turn preparation transfers provider-request ownership into `HarnessTurnRequest` and
+  back. The Lua adapter may wrap it as userdata, but the session-harness contract must
+  not expose `ContextWrapper` or another scripting-engine type.
 - Rust call sites must initialize `ContextWrapper` through named `ContextInit` fields;
   positional construction is too error-prone for the request/runtime handoff.
 - Structured calls may define `prompt` or `messages`, not both.
@@ -115,6 +119,7 @@ layering in `request_options.rs`, and the structured inference operation in
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
 contract sits between session execution and the private `LuaHarnessInstance` adapter.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
-Lua adapter materializes the legacy Lua payload shape. Request preparation and several
-registration/execution capabilities still have Lua-owned types and are the next
-decoupling boundary.
+Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
+ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation
+detail. Execution bindings and session queues are kernel-owned DTOs rather than Lua
+globals, while registration and virtual-tool capabilities remain to be generalized.

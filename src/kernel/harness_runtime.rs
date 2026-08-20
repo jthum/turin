@@ -8,9 +8,7 @@ use tracing::{debug, info, warn};
 use turin_daemon_protocol::UiIntentMessage;
 
 use crate::harness::engine::HarnessEngine;
-use crate::harness::globals::{
-    HarnessAppData, HarnessExecutionBinding, HarnessExecutionContext, SessionQueue,
-};
+use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::verdict::Verdict;
@@ -22,7 +20,9 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
-use crate::kernel::harness_contract::HarnessHook;
+use crate::kernel::harness_contract::{
+    HarnessExecutionBinding, HarnessHook, HarnessTurnRequest, HarnessTurnServices, SessionQueue,
+};
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
@@ -54,9 +54,10 @@ pub(crate) trait HarnessInstance: Send {
     fn load_script_str(&mut self, script: &str) -> Result<()>;
     fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict>;
     fn has_hook(&self, hook_name: &str) -> bool;
-    fn evaluate_turn_prepare(
+    fn prepare_turn(
         &self,
-        context: crate::harness::context::ContextWrapper,
+        request: &mut HarnessTurnRequest,
+        services: HarnessTurnServices<'_>,
     ) -> Result<Verdict>;
     fn bind_execution_context(&self, binding: HarnessExecutionBinding);
     fn unbind_execution_context(&self);
@@ -139,11 +140,18 @@ impl HarnessInstance for LuaHarnessInstance {
         self.engine.has_hook(hook_name)
     }
 
-    fn evaluate_turn_prepare(
+    fn prepare_turn(
         &self,
-        context: crate::harness::context::ContextWrapper,
+        request: &mut HarnessTurnRequest,
+        services: HarnessTurnServices<'_>,
     ) -> Result<Verdict> {
-        self.engine.evaluate_userdata("on_turn_prepare", context)
+        let context =
+            crate::harness::context::ContextWrapper::from_harness_request(request, services);
+        let verdict = self
+            .engine
+            .evaluate_userdata("on_turn_prepare", context.clone());
+        context.apply_to_harness_request(request);
+        verdict
     }
 
     fn bind_execution_context(&self, binding: HarnessExecutionBinding) {

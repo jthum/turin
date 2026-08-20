@@ -6,7 +6,7 @@ pub mod event;
 mod event_persistence;
 mod execution_host;
 pub mod governance;
-mod harness_contract;
+pub(crate) mod harness_contract;
 mod harness_hooks;
 mod harness_manager;
 pub(crate) mod harness_runtime;

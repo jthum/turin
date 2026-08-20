@@ -1,9 +1,92 @@
 use serde_json::{Value, json};
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use super::event::{KernelEvent, TaskBranchOutcome, TaskTerminalStatus};
 use super::governance::GovernanceSnapshot;
 use super::identity::RuntimeIdentity;
 use super::session::ExecutionStatusSnapshot;
+use super::session::{
+    CompletedLocalTaskResultsHandle, ExecutionConflictPolicy, ExecutionContextTarget,
+    ExecutionDurability, ExecutionVisibility, ExecutionWritePolicy, PersistedKernelRecord,
+    QueuedTask,
+};
+use crate::persistence::manager::StoreSelector;
+
+pub(crate) type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
+
+#[derive(Clone)]
+pub struct HarnessEventContext {
+    pub json: bool,
+    pub internal_id: Option<i64>,
+    pub turn_id: Option<i64>,
+    pub branch_head_id: Option<i64>,
+    pub execution_id: String,
+    pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
+    pub durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
+}
+
+#[derive(Clone)]
+pub struct HarnessExecutionMetadata {
+    pub(crate) execution_id: String,
+    pub(crate) context_target: ExecutionContextTarget,
+    pub(crate) visibility: ExecutionVisibility,
+    pub(crate) durability: ExecutionDurability,
+    pub(crate) write_policy: ExecutionWritePolicy,
+    pub(crate) conflict_policy: ExecutionConflictPolicy,
+}
+
+#[derive(Clone)]
+pub struct HarnessExecutionBinding {
+    pub(crate) agent_id: String,
+    pub(crate) session_id: String,
+    pub(crate) store_selector: StoreSelector,
+    pub(crate) default_store_selector: Option<StoreSelector>,
+    pub(crate) execution: HarnessExecutionMetadata,
+    pub(crate) runtime_slot_id: Option<String>,
+    pub(crate) trace_id: String,
+    pub(crate) completed_task_results: CompletedLocalTaskResultsHandle,
+    pub(crate) event_context: HarnessEventContext,
+    pub(crate) cancel_token: CancellationToken,
+}
+use crate::harness::context::{RequestOptionsOverride, ToolExposure};
+use crate::inference::provider::{InferenceMessage, ProviderClient};
+use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
+
+/// Mutable provider request and turn metadata presented to `on_turn_prepare`.
+///
+/// Ownership moves into this value before the hook and back into the provider request
+/// afterward. Native harnesses mutate it directly; scripting adapters may temporarily
+/// wrap it without making JSON the canonical representation.
+pub(crate) struct HarnessTurnRequest {
+    pub(crate) inference: Option<String>,
+    pub(crate) model: String,
+    pub(crate) provider: String,
+    pub(crate) system_prompt: String,
+    pub(crate) messages: Vec<InferenceMessage>,
+    pub(crate) turn_index: u32,
+    pub(crate) task_turn_index: u32,
+    pub(crate) is_first_turn_in_task: bool,
+    pub(crate) task_id: String,
+    pub(crate) plan_id: Option<String>,
+    pub(crate) token_count: u32,
+    pub(crate) token_limit: u32,
+    pub(crate) thinking_budget: u32,
+    pub(crate) request_options: RequestOptionsOverride,
+    pub(crate) agent_id: String,
+    pub(crate) session_inference: InferenceOverrideConfig,
+    pub(crate) session_id: String,
+    pub(crate) session_title: Option<String>,
+    pub(crate) available_tools: BTreeSet<String>,
+    pub(crate) tool_exposure: ToolExposure,
+}
+
+pub(crate) struct HarnessTurnServices<'a> {
+    pub(crate) clients: &'a HashMap<String, ProviderClient>,
+    pub(crate) config: &'a Arc<TurinConfig>,
+}
 
 /// Typed lifecycle and policy input presented to a session harness.
 ///

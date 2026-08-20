@@ -149,12 +149,12 @@ impl ExecutionHost {
         };
 
         let engine = harness.lock().expect("session harness mutex poisoned");
-        engine.bind_execution_context(crate::harness::globals::HarnessExecutionBinding {
+        engine.bind_execution_context(crate::kernel::harness_contract::HarnessExecutionBinding {
             agent_id: session.identity.agent_id().to_string(),
             session_id: self.session_reference(session),
             store_selector: session.store_selector.clone(),
             default_store_selector: session.default_store_selector.clone(),
-            execution: crate::harness::globals::HarnessExecutionMetadata {
+            execution: crate::kernel::harness_contract::HarnessExecutionMetadata {
                 execution_id: session.execution_id().to_string(),
                 context_target: session.context_target().clone(),
                 visibility: session.execution.visibility,
@@ -165,7 +165,7 @@ impl ExecutionHost {
             runtime_slot_id: session.runtime_slot_id.clone(),
             trace_id: task.trace_id.clone(),
             completed_task_results: session.completed_task_results.clone(),
-            event_context: crate::harness::globals::HarnessEventContext {
+            event_context: crate::kernel::harness_contract::HarnessEventContext {
                 json: self.json,
                 internal_id: session.internal_id,
                 turn_id: session.active_history_origin().map(|origin| origin.turn_id),

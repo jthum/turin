@@ -6,9 +6,7 @@ use futures::Stream;
 use tracing::{debug, error, warn};
 
 use crate::display;
-use crate::harness::context::{
-    ContextInit, ContextWrapper, RequestOptionsOverride, build_merged_request_options,
-};
+use crate::harness::context::{RequestOptionsOverride, build_merged_request_options};
 use crate::harness::verdict::Verdict;
 use crate::inference::provider;
 use crate::kernel::config::{ProviderConfig, ResolvedInferenceCandidate, ResolvedInferenceRoute};
@@ -21,7 +19,7 @@ use crate::kernel::turn::context_window::{
 use super::super::event::{AuditEvent, InferenceRequestMetrics, KernelEvent, LifecycleEvent};
 use super::super::execution_host::ExecutionHost;
 use super::TurnContext;
-use crate::kernel::harness_contract::HarnessHook;
+use crate::kernel::harness_contract::{HarnessHook, HarnessTurnRequest, HarnessTurnServices};
 use crate::kernel::turn::context_window::estimate_request_token_breakdown;
 
 mod compaction;
@@ -341,7 +339,7 @@ impl ExecutionHost {
             let session_id = self.session_reference(session);
             let session_title = self.session_title(session).await?;
             let engine = harness.lock().expect("session harness mutex poisoned");
-            let ctx = ContextWrapper::new(ContextInit {
+            let mut hook_request = HarnessTurnRequest {
                 inference: req.inference_context.take(),
                 model: std::mem::take(&mut req.model),
                 provider: std::mem::take(&mut req.provider_name),
@@ -356,16 +354,21 @@ impl ExecutionHost {
                 token_limit,
                 thinking_budget: req.thinking_budget,
                 request_options: std::mem::take(&mut req.request_options_override),
-                clients: self.clients.clone(),
-                config: self.config.clone(),
                 agent_id: session.identity.agent_id().to_string(),
                 session_inference: session.inference.clone(),
                 session_id,
                 session_title,
                 available_tools: available_tool_names,
-            });
+                tool_exposure: std::mem::take(&mut req.tool_exposure),
+            };
 
-            match engine.evaluate_turn_prepare(ctx.clone()) {
+            match engine.prepare_turn(
+                &mut hook_request,
+                HarnessTurnServices {
+                    clients: &self.clients,
+                    config: &self.config,
+                },
+            ) {
                 Ok(Verdict::Reject(reason)) => {
                     warn!(reason = %reason, "Turn rejected by on_turn_prepare");
                     return Ok(true);
@@ -380,15 +383,14 @@ impl ExecutionHost {
                 }
             }
 
-            let state = ctx.into_state();
-            req.messages = state.messages;
-            req.inference_context = state.inference;
-            req.system_prompt = state.system_prompt;
-            req.model = state.model;
-            req.provider_name = state.provider;
-            req.thinking_budget = state.thinking_budget;
-            req.request_options_override = state.request_options;
-            req.tool_exposure = state.tool_exposure;
+            req.messages = hook_request.messages;
+            req.inference_context = hook_request.inference;
+            req.system_prompt = hook_request.system_prompt;
+            req.model = hook_request.model;
+            req.provider_name = hook_request.provider;
+            req.thinking_budget = hook_request.thinking_budget;
+            req.request_options_override = hook_request.request_options;
+            req.tool_exposure = hook_request.tool_exposure;
         }
 
         Ok(false)
