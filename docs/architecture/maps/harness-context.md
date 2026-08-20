@@ -11,8 +11,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/harness/context.rs`
   - `ContextWrapper`, named `ContextInit`, `ContextState`, Lua property accessors,
     message mutation helpers, and summarization.
-- `src/harness/context/request_options.rs`
-  - `RequestOptionsOverride` and shared provider request-option layering.
+- `src/kernel/harness_contract/request_options.rs`
+  - Engine-neutral `RequestOptionsOverride` and shared provider request-option layering.
 - `src/harness/context/structured_call.rs`
   - `ctx:structured` argument parsing, route resolution, provider fallback,
     request construction, and response validation.
@@ -75,7 +75,7 @@ Structured inference:
 
 Change request-option behavior:
 
-1. Update `src/harness/context/request_options.rs`.
+1. Update `src/kernel/harness_contract/request_options.rs`.
 2. Add or adjust helper tests for layering and validation.
 3. Run the request-options unit tests plus at least one harness request-options integration test.
 
@@ -113,8 +113,8 @@ git diff --check
 
 ## Current Shape
 
-The current shape keeps Lua property and message mutation in `context.rs`, request-option
-layering in `request_options.rs`, and the structured inference operation in
+The current shape keeps Lua property and message mutation in `context.rs`, engine-neutral
+request-option layering in `kernel/harness_contract/request_options.rs`, and structured inference in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
 contract sits between session execution and the private `LuaHarnessInstance` adapter.

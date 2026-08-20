@@ -15,6 +15,54 @@ use super::session::{
 };
 use crate::persistence::manager::StoreSelector;
 
+mod request_options;
+pub use request_options::RequestOptionsOverride;
+pub(crate) use request_options::build_merged_request_options;
+
+#[derive(Clone, Debug, Default)]
+pub struct ToolExposure {
+    selected: Option<BTreeSet<String>>,
+    excluded: BTreeSet<String>,
+}
+
+impl ToolExposure {
+    pub fn exposes(&self, name: &str) -> bool {
+        self.selected
+            .as_ref()
+            .is_none_or(|selected| selected.contains(name))
+            && !self.excluded.contains(name)
+    }
+
+    pub fn only(&mut self, names: BTreeSet<String>) {
+        self.selected = Some(names);
+        self.excluded.clear();
+    }
+
+    pub fn include(&mut self, names: BTreeSet<String>) {
+        for name in names {
+            self.excluded.remove(&name);
+            if let Some(selected) = self.selected.as_mut() {
+                selected.insert(name);
+            }
+        }
+    }
+
+    pub fn exclude(&mut self, names: BTreeSet<String>) {
+        if let Some(selected) = self.selected.as_mut() {
+            for name in names {
+                selected.remove(&name);
+            }
+        } else {
+            self.excluded.extend(names);
+        }
+    }
+
+    pub fn expose_all(&mut self) {
+        self.selected = None;
+        self.excluded.clear();
+    }
+}
+
 pub(crate) type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 
 #[derive(Clone)]
@@ -51,7 +99,6 @@ pub struct HarnessExecutionBinding {
     pub(crate) event_context: HarnessEventContext,
     pub(crate) cancel_token: CancellationToken,
 }
-use crate::harness::context::{RequestOptionsOverride, ToolExposure};
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 

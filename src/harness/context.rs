@@ -9,11 +9,10 @@ use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
 use crate::kernel::harness_contract::{HarnessTurnRequest, HarnessTurnServices};
 
-mod request_options;
 mod structured_call;
 
-pub use request_options::RequestOptionsOverride;
-pub(crate) use request_options::build_merged_request_options;
+pub(crate) use crate::kernel::harness_contract::build_merged_request_options;
+pub use crate::kernel::harness_contract::{RequestOptionsOverride, ToolExposure};
 
 /// Inner state shareable between Rust and Lua
 #[derive(Clone, Debug)]
@@ -37,50 +36,6 @@ pub struct ContextState {
     pub session_title: Option<String>,
     pub user_message_count: usize,
     pub tool_exposure: ToolExposure,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ToolExposure {
-    selected: Option<BTreeSet<String>>,
-    excluded: BTreeSet<String>,
-}
-
-impl ToolExposure {
-    pub fn exposes(&self, name: &str) -> bool {
-        self.selected
-            .as_ref()
-            .is_none_or(|selected| selected.contains(name))
-            && !self.excluded.contains(name)
-    }
-
-    fn only(&mut self, names: BTreeSet<String>) {
-        self.selected = Some(names);
-        self.excluded.clear();
-    }
-
-    fn include(&mut self, names: BTreeSet<String>) {
-        for name in names {
-            self.excluded.remove(&name);
-            if let Some(selected) = self.selected.as_mut() {
-                selected.insert(name);
-            }
-        }
-    }
-
-    fn exclude(&mut self, names: BTreeSet<String>) {
-        if let Some(selected) = self.selected.as_mut() {
-            for name in names {
-                selected.remove(&name);
-            }
-        } else {
-            self.excluded.extend(names);
-        }
-    }
-
-    fn expose_all(&mut self) {
-        self.selected = None;
-        self.excluded.clear();
-    }
 }
 
 /// UserData wrapper for Context validation and mutation
