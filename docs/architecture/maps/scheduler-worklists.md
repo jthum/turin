@@ -98,6 +98,10 @@ Runtime schedule API:
 - Scheduled worklist dispatch must not execute nested `worklist.*` actions from work item action payloads.
 - Work item prompt rows should become `QueuedTask`s through `work_item_prompt_task`, not ad hoc row parsing.
 - Worklist filtering should use shared `work_items.rs` helpers so scheduler, daemon, and runtime paths do not drift.
+- Stale-claim release must recheck the persisted heartbeat and claim identity while updating.
+  A heartbeat that lands after candidate selection must prevent release in both runtime and scheduled paths.
+- Partial work-item updates mutate only fields present in the update request. They must not
+  read and rewrite unrelated fields that another execution may have changed concurrently.
 - `runtime_schedule.rs` should remain a binding/validation layer; scheduler semantics belong in daemon state code.
 
 ## Common Changes

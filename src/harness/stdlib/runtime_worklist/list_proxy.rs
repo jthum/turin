@@ -127,9 +127,15 @@ pub(super) fn worklist_proxy(lua: &Lua, handle: WorklistHandle) -> LuaResult<Tab
                 })?;
                 let mut released_rows = Vec::with_capacity(candidates.len());
                 for row in candidates {
-                    let released =
-                        bridge_async_lua(async { handle.store.release_work_item(row.id).await })?;
-                    released_rows.push(released);
+                    let released = bridge_async_lua(async {
+                        handle
+                            .store
+                            .release_stale_work_item(row.id, stale_before)
+                            .await
+                    })?;
+                    if let Some(released) = released {
+                        released_rows.push(released);
+                    }
                 }
                 work_items_value(lua, &handle, released_rows)
             })?,

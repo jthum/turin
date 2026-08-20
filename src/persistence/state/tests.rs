@@ -768,6 +768,67 @@ async fn test_work_item_claim_pause_and_complete_lifecycle() {
 }
 
 #[tokio::test]
+async fn stale_release_does_not_clear_a_refreshed_work_item_claim() {
+    let store = StateStore::open_memory().await.unwrap();
+    let worklist = store.open_worklist("leases", "", None).await.unwrap();
+    let item = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Keep lease",
+            item_kind: "prompt",
+            prompt: Some("Keep lease"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .try_claim_work_item(item.id, "worker", None, Some("exec-a"), 100)
+            .await
+            .unwrap()
+    );
+
+    store
+        .heartbeat_work_item_claim(item.id, "exec-a", 1_000)
+        .await
+        .unwrap()
+        .expect("heartbeat should refresh the claim");
+    assert!(
+        store
+            .release_stale_work_item(item.id, 500)
+            .await
+            .unwrap()
+            .is_none(),
+        "a heartbeat newer than the stale scan boundary must win"
+    );
+    let active = store
+        .get_work_item_by_id(item.id)
+        .await
+        .unwrap()
+        .expect("work item");
+    assert_eq!(active.status, "active");
+    assert_eq!(active.claim_execution_id.as_deref(), Some("exec-a"));
+    assert_eq!(active.claim_heartbeat_unix_ms, Some(1_000));
+
+    let released = store
+        .release_stale_work_item(item.id, 1_500)
+        .await
+        .unwrap()
+        .expect("the unchanged expired claim should be released");
+    assert_eq!(released.status, "pending");
+    assert!(released.claim_execution_id.is_none());
+}
+
+#[tokio::test]
 async fn test_insert_and_get_messages() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store

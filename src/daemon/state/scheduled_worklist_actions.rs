@@ -162,12 +162,14 @@ impl DaemonState {
             .collect::<Vec<_>>();
         let mut released = 0usize;
         for row in candidates {
-            context
+            let released_item = context
                 .store
-                .release_work_item(row.id)
+                .release_stale_work_item(row.id, stale_before)
                 .await
                 .map_err(builtin_failed)?;
-            released += 1;
+            if released_item.is_some() {
+                released += 1;
+            }
         }
         Ok(format!("completed: released {} stale work items", released))
     }

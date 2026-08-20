@@ -73,6 +73,7 @@ impl StateStore {
             r#"
             INSERT INTO worklists (public_id, name, scope_ref, metadata, updated_at)
             VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            ON CONFLICT(name, scope_ref) DO NOTHING
             "#,
             turso::params![public_id, name, scope_ref, metadata],
         )
@@ -168,50 +169,57 @@ impl StateStore {
     }
 
     pub async fn update_work_item(&self, update: WorkItemUpdate<'_>) -> Result<WorkItemRow> {
-        let current = self.require_work_item(update.id).await?;
         let conn = self.connect().await?;
-        conn.execute(
-            r#"
+        let changed = conn
+            .execute(
+                r#"
             UPDATE work_items
-            SET title = ?2,
-                prompt = ?3,
-                content = ?4,
-                tools = ?5,
-                conflict_policy = ?6,
-                action_name = ?7,
-                action_params = ?8,
-                priority = ?9,
-                after_ids = ?10,
-                metadata = ?11,
-                status = ?12,
-                failure_reason = ?13,
+            SET title = CASE WHEN ?2 != 0 THEN ?3 ELSE title END,
+                prompt = CASE WHEN ?4 != 0 THEN ?5 ELSE prompt END,
+                content = CASE WHEN ?6 != 0 THEN ?7 ELSE content END,
+                tools = CASE WHEN ?8 != 0 THEN ?9 ELSE tools END,
+                conflict_policy = CASE WHEN ?10 != 0 THEN ?11 ELSE conflict_policy END,
+                action_name = CASE WHEN ?12 != 0 THEN ?13 ELSE action_name END,
+                action_params = CASE WHEN ?14 != 0 THEN ?15 ELSE action_params END,
+                priority = CASE WHEN ?16 != 0 THEN ?17 ELSE priority END,
+                after_ids = CASE WHEN ?18 != 0 THEN ?19 ELSE after_ids END,
+                metadata = CASE WHEN ?20 != 0 THEN ?21 ELSE metadata END,
+                status = CASE WHEN ?22 != 0 THEN ?23 ELSE status END,
+                failure_reason = CASE WHEN ?24 != 0 THEN ?25 ELSE failure_reason END,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![
-                update.id,
-                update.title.unwrap_or(&current.title),
-                update.prompt.unwrap_or(current.prompt.as_deref()),
-                update.content.unwrap_or(current.content.as_deref()),
-                update.tools.unwrap_or(current.tools.as_deref()),
-                update
-                    .conflict_policy
-                    .unwrap_or(current.conflict_policy.as_deref()),
-                update.action_name.unwrap_or(current.action_name.as_deref()),
-                update
-                    .action_params
-                    .unwrap_or(current.action_params.as_deref()),
-                update.priority.unwrap_or(current.priority),
-                update.after_ids.unwrap_or(current.after_ids.as_deref()),
-                update.metadata.unwrap_or(current.metadata.as_deref()),
-                update.status.unwrap_or(&current.status),
-                update
-                    .failure_reason
-                    .unwrap_or(current.failure_reason.as_deref()),
-            ],
-        )
-        .await
-        .context("Failed to update work item")?;
+                turso::params![
+                    update.id,
+                    update.title.is_some(),
+                    update.title,
+                    update.prompt.is_some(),
+                    update.prompt.flatten(),
+                    update.content.is_some(),
+                    update.content.flatten(),
+                    update.tools.is_some(),
+                    update.tools.flatten(),
+                    update.conflict_policy.is_some(),
+                    update.conflict_policy.flatten(),
+                    update.action_name.is_some(),
+                    update.action_name.flatten(),
+                    update.action_params.is_some(),
+                    update.action_params.flatten(),
+                    update.priority.is_some(),
+                    update.priority,
+                    update.after_ids.is_some(),
+                    update.after_ids.flatten(),
+                    update.metadata.is_some(),
+                    update.metadata.flatten(),
+                    update.status.is_some(),
+                    update.status,
+                    update.failure_reason.is_some(),
+                    update.failure_reason.flatten(),
+                ],
+            )
+            .await
+            .context("Failed to update work item")?;
+        anyhow::ensure!(changed == 1, "Work item {} not found", update.id);
         self.require_visible_work_item_after(update.id, "updated")
             .await
     }
@@ -281,14 +289,67 @@ impl StateStore {
         self.require_visible_work_item_after(id, "released").await
     }
 
-    pub async fn pause_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
+    pub async fn release_stale_work_item(
+        &self,
+        id: i64,
+        stale_before_unix_ms: i64,
+    ) -> Result<Option<WorkItemRow>> {
         let current = self.require_work_item(id).await?;
+        if current.status != "active"
+            || current
+                .claim_heartbeat_unix_ms
+                .is_some_and(|heartbeat| heartbeat > stale_before_unix_ms)
+        {
+            return Ok(None);
+        }
+        let metadata = clear_pause_metadata(current.metadata.as_deref())?;
         let conn = self.connect().await?;
-        conn.execute(
-            r#"
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE work_items
+                SET status = 'pending',
+                    metadata = ?2,
+                    claim_agent_id = NULL,
+                    claim_session_id = NULL,
+                    claim_execution_id = NULL,
+                    claim_heartbeat_unix_ms = NULL,
+                    claimed_at = NULL,
+                    completed_at = NULL,
+                    failure_reason = NULL,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?1
+                  AND status = 'active'
+                  AND claim_execution_id IS ?3
+                  AND claim_heartbeat_unix_ms IS ?4
+                  AND metadata IS ?5
+                  AND (claim_heartbeat_unix_ms IS NULL OR claim_heartbeat_unix_ms <= ?6)
+                "#,
+                turso::params![
+                    id,
+                    metadata,
+                    current.claim_execution_id,
+                    current.claim_heartbeat_unix_ms,
+                    current.metadata,
+                    stale_before_unix_ms,
+                ],
+            )
+            .await
+            .context("Failed to release stale work item")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_work_item_by_id(id).await
+    }
+
+    pub async fn pause_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
+        let conn = self.connect().await?;
+        let changed = conn
+            .execute(
+                r#"
             UPDATE work_items
             SET status = 'paused',
-                metadata = ?2,
+                metadata = COALESCE(?2, metadata),
                 claim_agent_id = NULL,
                 claim_session_id = NULL,
                 claim_execution_id = NULL,
@@ -299,10 +360,11 @@ impl StateStore {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![id, metadata.or(current.metadata.as_deref())],
-        )
-        .await
-        .context("Failed to pause work item")?;
+                turso::params![id, metadata],
+            )
+            .await
+            .context("Failed to pause work item")?;
+        anyhow::ensure!(changed == 1, "Work item {} not found", id);
         self.require_visible_work_item_after(id, "paused").await
     }
 
@@ -334,13 +396,13 @@ impl StateStore {
     }
 
     pub async fn complete_work_item(&self, id: i64, metadata: Option<&str>) -> Result<WorkItemRow> {
-        let current = self.require_work_item(id).await?;
         let conn = self.connect().await?;
-        conn.execute(
-            r#"
+        let changed = conn
+            .execute(
+                r#"
             UPDATE work_items
             SET status = 'done',
-                metadata = ?2,
+                metadata = COALESCE(?2, metadata),
                 claim_agent_id = NULL,
                 claim_session_id = NULL,
                 claim_execution_id = NULL,
@@ -351,10 +413,11 @@ impl StateStore {
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1
             "#,
-            turso::params![id, metadata.or(current.metadata.as_deref())],
-        )
-        .await
-        .context("Failed to complete work item")?;
+                turso::params![id, metadata],
+            )
+            .await
+            .context("Failed to complete work item")?;
+        anyhow::ensure!(changed == 1, "Work item {} not found", id);
         self.require_visible_work_item_after(id, "completed").await
     }
 
