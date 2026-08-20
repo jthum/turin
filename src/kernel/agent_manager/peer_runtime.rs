@@ -10,32 +10,20 @@ use crate::kernel::event::{KernelEvent, LifecycleEvent, TaskTerminalStatus};
 use crate::kernel::execution_host::{ExecutionHost, TaskRunAttempt};
 use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::QueuedTask;
-use crate::persistence::manager::StoreSelector;
-use crate::persistence::schema::{LinkedSessionCreate, SignalRow};
 use turin_types::TaskInputContent;
 
 use super::{
-    AgentManager, ExecutionStatusSnapshot, LinkedSessionTarget, LiveSessionHistorySnapshot,
-    PeerAgentTaskEnvelope, PeerAgentTaskResult, RuntimeControl, SessionContextOverrides,
-    TaskPromotionCandidate, task_prompt_preview,
+    AgentManager, ExecutionStatusSnapshot, LiveSessionHistorySnapshot, PeerAgentTaskEnvelope,
+    PeerAgentTaskResult, RuntimeControl, TaskPromotionCandidate, task_prompt_preview,
 };
 
 pub(super) struct PeerRuntime {
-    manager: Arc<AgentManager>,
-    control: Arc<RuntimeControl>,
-    host: ExecutionHost,
-    session: crate::kernel::session::SessionState,
-    agent_id: String,
-    slot_id: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(super) struct SessionBootstrap {
-    pub(super) initial_session_id: Option<String>,
-    pub(super) initial_state_selector: Option<StoreSelector>,
-    pub(super) initial_default_store_selector: Option<StoreSelector>,
-    pub(super) context: SessionContextOverrides,
-    pub(super) link: Option<LinkedSessionCreate>,
+    pub(super) manager: Arc<AgentManager>,
+    pub(super) control: Arc<RuntimeControl>,
+    pub(super) host: ExecutionHost,
+    pub(super) session: crate::kernel::session::SessionState,
+    pub(super) agent_id: String,
+    pub(super) slot_id: String,
 }
 
 #[derive(Debug)]
@@ -52,69 +40,6 @@ pub(super) struct PeerRunOutcome {
 }
 
 impl PeerRuntime {
-    pub(super) async fn start(
-        manager: Arc<AgentManager>,
-        agent_id: &str,
-        slot_id: &str,
-        control: Arc<RuntimeControl>,
-        bootstrap: SessionBootstrap,
-    ) -> Result<Self> {
-        let mut host = fork_peer_kernel(&manager);
-        if host.clients.is_empty() {
-            host.init_clients()?;
-        }
-
-        let mut session = if let Some(session_id) = bootstrap.initial_session_id.as_deref() {
-            host.resume_session_for_agent_with_context(
-                agent_id,
-                session_id,
-                bootstrap.context.origin_id.clone(),
-                bootstrap.context.inference.clone(),
-            )
-            .await?
-        } else if let Some(link) = bootstrap.link {
-            host.create_linked_session_for_agent_with_context(
-                agent_id,
-                bootstrap
-                    .initial_state_selector
-                    .ok_or_else(|| anyhow::anyhow!("Linked peer session requires a state store"))?,
-                bootstrap.initial_default_store_selector,
-                bootstrap.context.origin_id.clone(),
-                bootstrap.context.inference.clone(),
-                link,
-            )
-            .await?
-        } else {
-            host.create_session_for_agent_with_context(
-                agent_id,
-                bootstrap.initial_state_selector,
-                bootstrap.initial_default_store_selector,
-                bootstrap.context.origin_id.clone(),
-                bootstrap.context.inference.clone(),
-            )
-            .await
-        };
-        session.runtime_slot_id = Some(slot_id.to_string());
-        host.start_session(&mut session).await?;
-        control.set_current_session(
-            Some(host.session_reference(&session)),
-            Some(session.event_tx.clone()),
-            session_context_from_session(&session),
-            Some(ExecutionStatusSnapshot::from_session(&session)),
-            session.execution.conflict_policy,
-            Some(LiveSessionHistorySnapshot::from_session(&session)),
-        );
-
-        Ok(Self {
-            manager,
-            control,
-            host,
-            session,
-            agent_id: agent_id.to_string(),
-            slot_id: slot_id.to_string(),
-        })
-    }
-
     pub(super) async fn handle_envelope(&mut self, mut envelope: PeerAgentTaskEnvelope) {
         let request_id = envelope.request_id.clone();
         let intended_session_id = envelope.session_target.session_id.clone();
@@ -214,72 +139,6 @@ impl PeerRuntime {
         if let Err(err) = self.reset_session_if_requested().await {
             error!(agent_id = %self.agent_id, error = %err, "Peer runtime failed to reset session");
         }
-    }
-
-    async fn activate_linked_session(&mut self, target: LinkedSessionTarget) -> Result<()> {
-        let store = self
-            .manager
-            .store_manager
-            .open(&target.state_selector)
-            .await?;
-        if let Some(linked) = store
-            .find_linked_session(
-                target.link.parent_session_id,
-                &self.agent_id,
-                &target.link.thread_key,
-            )
-            .await?
-        {
-            let public_id = uuid::Uuid::from_slice(&linked.public_id)?
-                .simple()
-                .to_string();
-            let session_id = crate::kernel::session_refs::format_session_reference(
-                &public_id,
-                &target.state_selector,
-            );
-            if self
-                .control
-                .current_session_id()
-                .as_deref()
-                .is_some_and(|current| {
-                    crate::kernel::session_refs::session_references_match(current, &session_id)
-                })
-            {
-                return Ok(());
-            }
-            return self.restore_session(&session_id, target.context).await;
-        }
-
-        let session = self
-            .host
-            .create_linked_session_for_agent_with_context(
-                &self.agent_id,
-                target.state_selector,
-                target.default_store_selector,
-                target.context.origin_id,
-                target.context.inference,
-                target.link,
-            )
-            .await?;
-        self.replace_session(session).await
-    }
-
-    pub(super) async fn shutdown(mut self) {
-        if let Err(e) = self.host.end_session(&mut self.session).await {
-            warn!(agent_id = %self.agent_id, error = %e, "Peer agent session end error");
-        }
-        self.control.clear_active_task();
-        self.control.set_current_session(
-            None,
-            None,
-            SessionContextOverrides::default(),
-            None,
-            crate::kernel::session::ExecutionConflictPolicy::Reject,
-            None,
-        );
-        self.host.shutdown_mcp_clients().await;
-        super::allocator::trim_after_peer_idle_if_enabled();
-        info!(agent_id = %self.agent_id, "Peer runtime shut down");
     }
 
     pub(super) fn allocate_runtime_task_id(&mut self, task: &mut QueuedTask) -> String {
@@ -569,191 +428,12 @@ impl PeerRuntime {
         );
     }
 
-    pub(super) async fn reset_session_if_requested(&mut self) -> Result<bool> {
-        let Some(request) = self.control.take_session_reset_request() else {
-            return Ok(false);
-        };
-
-        match request {
-            super::SessionResetRequest::Fresh(context) => self.reset_session(context).await?,
-            super::SessionResetRequest::Resume {
-                session_id,
-                context,
-            } => self.restore_session(&session_id, context).await?,
-        }
-        Ok(true)
-    }
-
-    pub(super) async fn process_pending_signals(&mut self) -> Result<usize> {
-        let Some(runtime_scheduler) = self.host.scheduler.as_ref() else {
-            return Ok(0);
-        };
-        let store = runtime_scheduler.runtime_store();
-        let current_session_id = self.control.current_session_id();
-        let signals = store
-            .list_signals_for_agent(&self.agent_id, current_session_id.as_deref(), 64)
-            .await?;
-        if signals.is_empty() {
-            return Ok(0);
-        }
-
-        let mut processed = 0usize;
-        for signal in signals {
-            store.record_signal_attempt(signal.id).await?;
-            match self.dispatch_signal(&signal).await {
-                Ok(_) => {
-                    store.delete_signal(signal.id).await?;
-                    processed += 1;
-                }
-                Err(err) => {
-                    let error_message = err.to_string();
-                    store.set_signal_error(signal.id, &error_message).await?;
-                    return Err(err);
-                }
-            }
-        }
-
-        Ok(processed)
-    }
-
-    async fn reset_session(&mut self, context: SessionContextOverrides) -> Result<()> {
-        let context = effective_session_context(&self.session, context);
-        let session = self
-            .host
-            .create_session_for_agent_with_context(
-                &self.agent_id,
-                Some(self.session.store_selector.clone()),
-                self.session.default_store_selector.clone(),
-                context.origin_id.clone(),
-                context.inference.clone(),
-            )
-            .await;
-        self.replace_session(session).await
-    }
-
-    async fn restore_session(
-        &mut self,
-        session_id: &str,
-        context: SessionContextOverrides,
-    ) -> Result<()> {
-        let context = effective_session_context(&self.session, context);
-        let session = self
-            .host
-            .resume_session_for_agent_with_context(
-                &self.agent_id,
-                session_id,
-                context.origin_id.clone(),
-                context.inference.clone(),
-            )
-            .await?;
-        self.replace_session(session).await
-    }
-
-    async fn replace_session(
-        &mut self,
-        mut session: crate::kernel::session::SessionState,
-    ) -> Result<()> {
-        session.runtime_slot_id = Some(self.slot_id.clone());
-        self.host.start_session(&mut session).await?;
-        let previous_end = self.host.end_session(&mut self.session).await;
-        self.control.set_current_session(
-            Some(self.host.session_reference(&session)),
-            Some(session.event_tx.clone()),
-            session_context_from_session(&session),
-            Some(ExecutionStatusSnapshot::from_session(&session)),
-            session.execution.conflict_policy,
-            Some(LiveSessionHistorySnapshot::from_session(&session)),
-        );
-        self.session = session;
-        previous_end
-    }
-
-    fn sync_control_execution_state(&self) {
+    pub(super) fn sync_control_execution_state(&self) {
         self.control
             .set_current_execution_snapshot(ExecutionStatusSnapshot::from_session(&self.session));
         self.control
             .set_current_conflict_policy(self.session.effective_conflict_policy());
         self.control
             .set_current_history_snapshot(LiveSessionHistorySnapshot::from_session(&self.session));
-    }
-
-    async fn dispatch_signal(&mut self, signal: &SignalRow) -> Result<usize> {
-        self.host.ensure_session_harness_engine(&mut self.session)?;
-        let trace_task = QueuedTask::ad_hoc(format!("signal:{}", signal.topic));
-        self.host
-            .bind_harness_execution_context(&self.session, &trace_task);
-        let result = {
-            let harness = self
-                .host
-                .session_harness_engine(&self.session)
-                .expect("session harness engine should be present after ensure");
-            let engine = harness.lock().expect("session harness mutex poisoned");
-            engine.dispatch_runtime_signal(crate::kernel::harness_contract::HarnessSignal {
-                signal_id: uuid::Uuid::from_slice(&signal.public_id).ok(),
-                topic: &signal.topic,
-                source_agent_id: &signal.source_agent_id,
-                target_agent_id: &signal.target_agent_id,
-                source_session_id: signal.source_session_id.as_deref(),
-                target_session_id: signal.target_session_id.as_deref(),
-                payload: &signal.payload,
-                created_at: &signal.created_at,
-            })
-        };
-        self.host.unbind_harness_execution_context(&self.session);
-        result
-    }
-}
-
-fn session_context_from_session(
-    session: &crate::kernel::session::SessionState,
-) -> SessionContextOverrides {
-    SessionContextOverrides {
-        origin_id: session.identity.origin_id().map(ToOwned::to_owned),
-        inference: session.inference.clone(),
-    }
-}
-
-fn effective_session_context(
-    session: &crate::kernel::session::SessionState,
-    requested: SessionContextOverrides,
-) -> SessionContextOverrides {
-    SessionContextOverrides {
-        origin_id: requested
-            .origin_id
-            .or_else(|| session.identity.origin_id().map(ToOwned::to_owned)),
-        inference: if requested.inference.is_empty() {
-            session.inference.clone()
-        } else {
-            requested.inference
-        },
-    }
-}
-
-pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
-    let shared = manager
-        .shared_runtime()
-        .expect("AgentManager shared runtime not bound");
-    let inference = manager
-        .shared_inference
-        .lock()
-        .expect("agent manager shared inference mutex poisoned")
-        .clone();
-    let (config, harness_manager) = manager.runtime_catalog_snapshot();
-
-    ExecutionHost {
-        config,
-        json: shared.json,
-        tool_registry: shared.tool_registry.clone(),
-        store_manager: Arc::clone(&manager.store_manager),
-        agent_manager: Arc::clone(manager),
-        policy_manager: Arc::clone(&shared.policy_manager),
-        governance_manager: Arc::clone(&shared.governance_manager),
-        harness_manager,
-        scheduler: manager.shared_scheduler(),
-        persistence_locks: Arc::clone(&shared.persistence_locks),
-        clients: inference.clients,
-        embedding_provider: inference.embedding_provider,
-        rust_harness_factories: None,
-        mcp_clients: Vec::new(),
     }
 }

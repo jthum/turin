@@ -29,6 +29,10 @@ This surface sits between harness code and core runtime state. It should stay bo
   - `runtime_control.rs` owns each resident runtime's coherent session, execution,
     cancellation, and reset snapshot.
   - `caches.rs` owns bounded completed-result and trace delegation-budget retention.
+  - `peer_runtime.rs` owns peer task execution against the currently resident session.
+  - `peer_session.rs` owns peer session bootstrap, linked-session activation, switching,
+    and shutdown.
+  - `peer_signals.rs` owns durable runtime-signal polling, delivery, and acknowledgement.
 - `src/kernel/session.rs`
   - Queued task, execution context target, conflict policy, and branch outcome types.
 - `src/kernel/task_promotion.rs`

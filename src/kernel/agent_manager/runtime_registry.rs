@@ -8,7 +8,8 @@ use tokio::sync::{Notify, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
-use super::peer_runtime::{PeerRuntime, SessionBootstrap};
+use super::peer_runtime::PeerRuntime;
+use super::peer_session::SessionBootstrap;
 use super::{
     AgentManager, AgentRuntimeHandle, PeerAgentTaskEnvelope, RuntimeControl, RuntimeSlotKey,
     SessionContextOverrides,
