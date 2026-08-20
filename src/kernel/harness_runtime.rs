@@ -63,8 +63,25 @@ pub(crate) trait HarnessAdapterFactory: Send + Sync {
         &self,
         definition: &HarnessDefinition,
         ctx: HarnessRuntimeInitContext,
-        source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>>;
+
+    fn validate_sources(
+        &self,
+        _definition: &HarnessDefinition,
+        _ctx: HarnessRuntimeInitContext,
+        _source_overlay: Arc<HarnessSourceOverlay>,
+    ) -> Result<usize> {
+        anyhow::bail!("this harness adapter does not support source validation")
+    }
+
+    fn run_source(
+        &self,
+        _definition: &HarnessDefinition,
+        _ctx: HarnessRuntimeInitContext,
+        _source: &str,
+    ) -> Result<()> {
+        anyhow::bail!("this harness adapter does not support direct source execution")
+    }
 }
 
 pub(crate) trait HarnessInstance: Send {
@@ -85,9 +102,6 @@ pub(crate) trait HarnessInstance: Send {
     }
     fn ui_intents_from(&self, _start_index: usize) -> Result<Vec<UiIntentMessage>> {
         Ok(Vec::new())
-    }
-    fn load_script_str(&mut self, _script: &str) -> Result<()> {
-        anyhow::bail!("this harness adapter does not support source loading")
     }
     fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict>;
     fn has_hook(&self, hook_name: &str) -> bool;
@@ -339,17 +353,19 @@ impl HarnessDefinition {
         ctx: HarnessRuntimeInitContext,
         source_overlay: HarnessSourceOverlay,
     ) -> Result<usize> {
-        let instance = self
-            .adapter
-            .create(self, ctx, Some(Arc::new(source_overlay)))?;
-        Ok(instance.loaded_scripts().len())
+        self.adapter
+            .validate_sources(self, ctx, Arc::new(source_overlay))
+    }
+
+    pub(crate) fn run_source(&self, ctx: HarnessRuntimeInitContext, source: &str) -> Result<()> {
+        self.adapter.run_source(self, ctx, source)
     }
 
     pub(crate) fn create_instance(
         &self,
         ctx: HarnessRuntimeInitContext,
     ) -> Result<Box<dyn HarnessInstance>> {
-        self.adapter.create(self, ctx, None)
+        self.adapter.create(self, ctx)
     }
 }
 

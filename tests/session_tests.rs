@@ -94,6 +94,19 @@ async fn make_kernel(tmp: &std::path::Path) -> Result<Kernel> {
     Ok(kernel)
 }
 
+#[tokio::test]
+async fn test_run_script_delegates_to_lua_source_capability() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+
+    kernel.run_script("local value = 6 * 7; assert(value == 42)")?;
+    let error = kernel
+        .run_script("error('direct-source-sentinel')")
+        .expect_err("direct script errors should propagate");
+    assert!(error.to_string().contains("direct-source-sentinel"));
+    Ok(())
+}
+
 fn event_has_task_status(events: &[turin::persistence::schema::EventRow], status: &str) -> bool {
     events.iter().any(|e| {
         e.event_type == "task_complete"

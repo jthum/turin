@@ -30,6 +30,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/harness_runtime/lua_adapter.rs`
   - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
     implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.
+    Source overlay validation and direct script execution are adapter-factory capabilities;
+    they must not leak into the normal session-local `HarnessInstance` contract.
 - `src/kernel/harness_runtime/rust_adapter.rs`
   - Adapts a session-local Rust `Harness` to the internal contract. Unsupported optional
     capabilities use contract defaults instead of fake Rust implementations.
@@ -105,6 +107,9 @@ Structured inference:
   Lua and Rust harnesses receive the same semantic signal fields.
 - Rust harness runtimes do not watch configured script directories. Lua harnesses
   retain their normal loading and hot-reload behavior.
+- Normal session creation is source-agnostic. Script validation and one-off source
+  execution delegate through optional adapter-factory capabilities; unsupported adapters
+  do not implement placeholder methods on every session instance.
 - Config remains authoritative for agent-to-harness bindings. A named Rust factory
   must correspond to a declared `config.harnesses` ID; factory registration does not
   create a second binding system.

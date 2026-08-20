@@ -205,11 +205,9 @@ impl Kernel {
 
     /// Run a Lua script directly in the harness (for testing/verification).
     pub fn run_script(&self, script: &str) -> Result<()> {
-        let mut instance = self
-            .harness_manager
+        self.harness_manager
             .default_definition()
-            .create_instance(self.harness_init_context())?;
-        instance.load_script_str(script)
+            .run_source(self.harness_init_context(), script)
     }
 }
 

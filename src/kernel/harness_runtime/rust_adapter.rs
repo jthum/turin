@@ -7,7 +7,6 @@ use super::{
     HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
     HarnessTurnServices,
 };
-use crate::harness::source::HarnessSourceOverlay;
 use crate::kernel::harness::{Harness, HarnessFactory, Verdict};
 use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessHook, HarnessSignal, HarnessTurnRequest,
@@ -26,12 +25,7 @@ impl HarnessAdapterFactory for RustHarnessAdapterFactory {
         &self,
         _definition: &HarnessDefinition,
         _ctx: HarnessRuntimeInitContext,
-        source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>> {
-        anyhow::ensure!(
-            source_overlay.is_none(),
-            "Rust harnesses do not support source overlays"
-        );
         Ok(Box::new(RustHarnessInstance {
             harness: RefCell::new(self.factory.create()?),
         }))
@@ -43,10 +37,6 @@ struct RustHarnessInstance {
 }
 
 impl HarnessInstance for RustHarnessInstance {
-    fn load_script_str(&mut self, _script: &str) -> Result<()> {
-        anyhow::bail!("Rust harnesses do not load script source")
-    }
-
     fn runtime_signal_topics(&self) -> Vec<String> {
         self.harness.borrow().runtime_signal_topics()
     }

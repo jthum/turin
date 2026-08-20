@@ -35,9 +35,30 @@ impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
         &self,
         definition: &HarnessDefinition,
         ctx: HarnessRuntimeInitContext,
-        source_overlay: Option<Arc<HarnessSourceOverlay>>,
     ) -> Result<Box<dyn HarnessInstance>> {
-        build_instance(definition, ctx, source_overlay)
+        Ok(Box::new(LuaHarnessInstance {
+            engine: build_engine(definition, ctx, None)?,
+        }))
+    }
+
+    fn validate_sources(
+        &self,
+        definition: &HarnessDefinition,
+        ctx: HarnessRuntimeInitContext,
+        source_overlay: Arc<HarnessSourceOverlay>,
+    ) -> Result<usize> {
+        let engine = build_engine(definition, ctx, Some(source_overlay))?;
+        Ok(engine.loaded_scripts().len())
+    }
+
+    fn run_source(
+        &self,
+        definition: &HarnessDefinition,
+        ctx: HarnessRuntimeInitContext,
+        source: &str,
+    ) -> Result<()> {
+        let mut engine = build_engine(definition, ctx, None)?;
+        engine.load_script_str(source)
     }
 }
 
@@ -68,10 +89,6 @@ impl HarnessInstance for LuaHarnessInstance {
 
     fn ui_intents_from(&self, start_index: usize) -> Result<Vec<UiIntentMessage>> {
         self.engine.ui_intents_from(start_index)
-    }
-
-    fn load_script_str(&mut self, script: &str) -> Result<()> {
-        self.engine.load_script_str(script)
     }
 
     fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
@@ -162,11 +179,11 @@ impl HarnessInstance for LuaHarnessInstance {
     }
 }
 
-pub(super) fn build_instance(
+fn build_engine(
     definition: &HarnessDefinition,
     ctx: HarnessRuntimeInitContext,
     source_overlay: Option<Arc<HarnessSourceOverlay>>,
-) -> Result<Box<dyn HarnessInstance>> {
+) -> Result<HarnessEngine> {
     let app_data = HarnessAppData {
         fs_root: definition.fs_root.clone(),
         workspace_root: definition.workspace_root.clone(),
@@ -194,7 +211,7 @@ pub(super) fn build_instance(
         )
     })?;
     engine.set_loading_phase(false);
-    Ok(Box::new(LuaHarnessInstance { engine }))
+    Ok(engine)
 }
 
 pub(super) fn factory() -> Arc<dyn HarnessAdapterFactory> {
