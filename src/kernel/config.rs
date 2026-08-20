@@ -80,7 +80,7 @@ impl EmbeddingConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AgentConfig {
     /// The identity string for the agent instance (e.g. "default", "coder", "reviewer")
     #[serde(default = "default_agent_id")]

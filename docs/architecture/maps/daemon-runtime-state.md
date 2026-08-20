@@ -205,6 +205,11 @@ Persisted session deletion:
   operator's conversation list.
 - Filesystem notifications for an already-loaded source revision must not replace
   the kernel or terminate idle live sessions. Explicit runtime reload remains forced.
+- Registry-only rescans publish a prepared agent/harness catalog without replacing
+  the kernel. Added agents do not wait for unrelated work; changed or removed agents
+  retire only idle slots and reject while that agent has active, queued, or awaiting work.
+- Bootstrap config changes and explicit runtime reloads retain full-kernel replacement
+  and therefore require all runtime work to be idle.
 - Session deletion must be transactional and must not delete durable work
   items merely because the session claimed them.
 

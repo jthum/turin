@@ -8,6 +8,12 @@ use super::DaemonWatchPaths;
 
 pub(super) type SourceRevision = [u8; 32];
 
+pub(super) fn calculate_bootstrap_revision(config_path: &Path) -> Result<SourceRevision> {
+    let mut hasher = Sha256::new();
+    hash_file(&mut hasher, config_path, config_path)?;
+    Ok(hasher.finalize().into())
+}
+
 pub(super) fn calculate_source_revision(
     config_path: &Path,
     watch_paths: &DaemonWatchPaths,

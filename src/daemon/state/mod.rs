@@ -29,7 +29,7 @@ use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
 use crate::persistence::state::StateStore;
-use source_revision::{SourceRevision, calculate_source_revision};
+use source_revision::{SourceRevision, calculate_bootstrap_revision, calculate_source_revision};
 
 pub(crate) use harness_sources::HarnessSourceConflict;
 pub(crate) use runtime_sessions::SessionDeleteBusy;
@@ -85,6 +85,7 @@ pub struct DaemonState {
     pub(super) kernel: Kernel,
     pub(super) runtime_store: Arc<StateStore>,
     pub(super) scheduler_wake: Option<Arc<Notify>>,
+    bootstrap_revision: SourceRevision,
     source_revision: SourceRevision,
 }
 
@@ -149,6 +150,7 @@ impl DaemonState {
             harnesses_dir: registry_load.harnesses_dir.clone(),
         };
         let source_revision = calculate_source_revision(&config_path, &watch_paths)?;
+        let bootstrap_revision = calculate_bootstrap_revision(&config_path)?;
 
         Ok(Self {
             config_path,
@@ -159,6 +161,7 @@ impl DaemonState {
             kernel,
             runtime_store,
             scheduler_wake: None,
+            bootstrap_revision,
             source_revision,
         })
     }
@@ -192,6 +195,42 @@ impl DaemonState {
     }
 
     pub async fn rescan(&mut self) -> Result<DaemonStatus> {
+        let bootstrap_revision = calculate_bootstrap_revision(&self.config_path)?;
+        if bootstrap_revision == self.bootstrap_revision {
+            return self.reconcile_registry().await;
+        }
+        self.full_rescan(bootstrap_revision).await
+    }
+
+    async fn reconcile_registry(&mut self) -> Result<DaemonStatus> {
+        self.reconcile_registry_with(&std::collections::HashSet::new())
+            .await
+    }
+
+    pub(super) async fn reconcile_registry_with(
+        &mut self,
+        forced_agents: &std::collections::HashSet<String>,
+    ) -> Result<DaemonStatus> {
+        let registry_load = scan_registry(&self.bootstrap_config, &self.config_base)?;
+        let effective_config = build_effective_config(&self.bootstrap_config, &registry_load)?;
+        let current_agents = &self.kernel.config().agents;
+        let mut affected_agents = std::collections::HashSet::new();
+        for agent_id in current_agents.keys().chain(effective_config.agents.keys()) {
+            if current_agents.get(agent_id) != effective_config.agents.get(agent_id) {
+                affected_agents.insert(agent_id.clone());
+            }
+        }
+        affected_agents.extend(forced_agents.iter().cloned());
+
+        self.kernel
+            .reconcile_agent_catalog(effective_config, &affected_agents)
+            .await?;
+        self.registry_load = registry_load;
+        self.source_revision = calculate_source_revision(&self.config_path, &self.watch_paths())?;
+        Ok(self.status().await)
+    }
+
+    async fn full_rescan(&mut self, bootstrap_revision: SourceRevision) -> Result<DaemonStatus> {
         let active = self.kernel.agent_manager().list_statuses().await;
         if active.iter().any(|status| {
             status.active_tasks > 0 || status.queued_tasks > 0 || status.awaiting_results > 0
@@ -233,6 +272,7 @@ impl DaemonState {
         self.bootstrap_config = bootstrap_config;
         self.registry_load = registry_load;
         self.runtime_store = runtime_store;
+        self.bootstrap_revision = bootstrap_revision;
         self.source_revision = source_revision;
 
         tokio::spawn(async move {
@@ -252,7 +292,8 @@ impl DaemonState {
     }
 
     pub async fn reload_runtime(&mut self) -> Result<DaemonStatus> {
-        self.rescan().await
+        let bootstrap_revision = calculate_bootstrap_revision(&self.config_path)?;
+        self.full_rescan(bootstrap_revision).await
     }
 
     pub async fn shutdown(&mut self) {

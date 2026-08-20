@@ -206,6 +206,42 @@ impl ExecutionHost {
 }
 
 impl Kernel {
+    pub(crate) async fn reconcile_agent_catalog(
+        &mut self,
+        config: crate::kernel::config::TurinConfig,
+        affected_agents: &HashSet<String>,
+    ) -> Result<()> {
+        self.agent_manager
+            .ensure_agents_reconfigurable(affected_agents)
+            .await?;
+        let config = Arc::new(config);
+        let harness_manager = Arc::new(
+            crate::kernel::harness_manager::HarnessManager::from_config(config.as_ref())?,
+        );
+        let mut init_context = self.harness_init_context();
+        init_context.config = Arc::clone(&config);
+        for runtime in harness_manager.runtimes() {
+            runtime.init(init_context.clone())?;
+        }
+
+        self.agent_manager
+            .reconcile_runtime_catalog(
+                Arc::clone(&config),
+                Arc::clone(&harness_manager),
+                affected_agents,
+            )
+            .await?;
+        self.host.config = config;
+        self.host.harness_manager = harness_manager;
+        if let Err(err) = self.sync_runtime_signal_subscriptions().await {
+            warn!(error = %err, "Failed to reconcile runtime signal subscriptions after agent catalog update");
+        }
+        if let Err(err) = self.start_watcher() {
+            warn!(error = %err, "Failed to refresh harness watcher after agent catalog update");
+        }
+        Ok(())
+    }
+
     /// Start watching the harness directory for changes (background thread).
     #[instrument(skip(self))]
     pub fn start_watcher(&mut self) -> Result<()> {

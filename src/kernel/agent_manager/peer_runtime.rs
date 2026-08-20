@@ -730,16 +730,17 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
         .lock()
         .expect("agent manager shared inference mutex poisoned")
         .clone();
+    let (config, harness_manager) = manager.runtime_catalog_snapshot();
 
     ExecutionHost {
-        config: Arc::clone(&manager.config),
+        config,
         json: shared.json,
         tool_registry: shared.tool_registry.clone(),
         store_manager: Arc::clone(&manager.store_manager),
         agent_manager: Arc::clone(manager),
         policy_manager: Arc::clone(&shared.policy_manager),
         governance_manager: Arc::clone(&shared.governance_manager),
-        harness_manager: Arc::clone(&shared.harness_manager),
+        harness_manager,
         scheduler: manager.shared_scheduler(),
         persistence_locks: Arc::clone(&shared.persistence_locks),
         clients: inference.clients,

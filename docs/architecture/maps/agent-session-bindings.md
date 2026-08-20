@@ -88,6 +88,9 @@ Linked runtime residency:
    their transcripts, harness state, or promotion provenance.
 5. Pending and terminal task records retain the logical child session id. Session
    cancellation and queued-session kill target that id rather than draining the lane.
+6. Runtime slots retain the immutable agent/harness catalog generation used at
+   startup. Targeted registry reconciliation retires only changed idle agents;
+   unaffected active slots continue and future slots use the new generation.
 
 ## Invariants
 
@@ -112,6 +115,8 @@ Linked runtime residency:
 - Resolve live linked-session affinity before hashing or probing a new lane.
 - Same-agent delegation must never queue onto a busy ancestor's lane. If every linked
   lane is occupied by an awaiting ancestor, fail with bounded-capacity feedback.
+- Per-agent catalog gates serialize task admission against that agent's rare
+  configuration replacement without blocking submissions to unrelated agents.
 - Queue mutations must honor `queue.max_depth`.
 - Current-session branch checkout is deferred through `pending_branch_checkout`; it must not mutate the active branch immediately inside the harness callback.
 - Non-current live sessions must be reloaded after branch activation or checkout.

@@ -53,6 +53,7 @@ impl AgentManager {
         mut task: QueuedTask,
         delegated_capabilities: Option<BTreeMap<String, bool>>,
     ) -> Result<String> {
+        let config = self.config_snapshot();
         let thread_key = mode.into_thread_key();
         let thread_key = thread_key.trim();
         anyhow::ensure!(!thread_key.is_empty(), "Peer thread key must not be empty");
@@ -64,7 +65,7 @@ impl AgentManager {
         let session_ref = parse_session_reference(origin_session_id)?;
         let state_selector = session_ref
             .store_selector
-            .unwrap_or(self.config.persistence.top_level_state_selector()?);
+            .unwrap_or(config.persistence.top_level_state_selector()?);
         let store = self.store_manager.open(&state_selector).await?;
         let parent_public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
         let parent = store
@@ -104,7 +105,7 @@ impl AgentManager {
             max_depth,
             family_stats.depth
         );
-        let lane_capacity = self.config.linked_runtime_lanes_for_agent(agent_id)?;
+        let lane_capacity = config.linked_runtime_lanes_for_agent(agent_id)?;
         let linked = store
             .find_linked_session(parent.id, agent_id, thread_key)
             .await?;
@@ -325,6 +326,7 @@ impl AgentManager {
         task: QueuedTask,
         submission: PeerTaskSubmission,
     ) -> Result<String> {
+        let _catalog_guard = self.catalog_gate(&runtime_key.agent_id).read_owned().await;
         let trace_id = task.trace_id.clone();
         let title = task.title.clone();
         let prompt_preview = task_prompt_preview(&task.prompt);

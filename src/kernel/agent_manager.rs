@@ -621,7 +621,7 @@ pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,
-    pub(crate) harness_manager: Arc<HarnessManager>,
+    pub(crate) harness_manager: Arc<StdRwLock<Arc<HarnessManager>>>,
     pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
 }
 
@@ -705,11 +705,15 @@ impl CompletedTaskCache {
 /// Orchestrates peer agents, spinning them up on demand and routing tasks to their independent runtimes.
 pub struct AgentManager {
     /// The full configuration, used to look up agent profiles and instantiate kernels.
-    config: Arc<TurinConfig>,
+    config: StdRwLock<Arc<TurinConfig>>,
     /// Reference to the shared StoreManager for database operations.
     store_manager: Arc<StoreManager>,
     /// The list of active, running agent handles, keyed by runtime slot.
     runtimes: RwLock<HashMap<RuntimeSlotKey, Arc<AgentRuntimeHandle>>>,
+    /// Per-agent gates serialize rare catalog replacement against task admission.
+    catalog_gates: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
+    /// Keeps config and harness snapshots coherent while publishing a generation.
+    catalog_snapshot_gate: StdRwLock<()>,
     /// Task result receivers keyed by runtime request id (consumed by `await_result`).
     pending_results: RwLock<HashMap<String, oneshot::Receiver<PeerAgentTaskResult>>>,
     /// Mapping of request id -> current non-terminal task state for status accounting.
@@ -733,9 +737,11 @@ impl AgentManager {
     /// Create a new AgentManager.
     pub fn new(config: Arc<TurinConfig>, store_manager: Arc<StoreManager>) -> Self {
         Self {
-            config,
+            config: StdRwLock::new(config),
             store_manager,
             runtimes: RwLock::new(HashMap::new()),
+            catalog_gates: Mutex::new(HashMap::new()),
+            catalog_snapshot_gate: StdRwLock::new(()),
             pending_results: RwLock::new(HashMap::new()),
             pending_task_states: RwLock::new(HashMap::new()),
             completed_results: RwLock::new(CompletedTaskCache::default()),
@@ -782,5 +788,61 @@ impl AgentManager {
             .lock()
             .expect("agent manager shared scheduler mutex poisoned")
             .clone()
+    }
+
+    pub(crate) fn config_snapshot(&self) -> Arc<TurinConfig> {
+        self.config
+            .read()
+            .expect("agent manager config lock poisoned")
+            .clone()
+    }
+
+    pub(crate) fn install_runtime_catalog(
+        &self,
+        config: Arc<TurinConfig>,
+        harness_manager: Arc<HarnessManager>,
+    ) {
+        let _snapshot_guard = self
+            .catalog_snapshot_gate
+            .write()
+            .expect("agent manager catalog snapshot lock poisoned");
+        *self
+            .config
+            .write()
+            .expect("agent manager config lock poisoned") = config;
+        if let Some(shared) = self.shared_runtime() {
+            *shared
+                .harness_manager
+                .write()
+                .expect("agent manager harness catalog lock poisoned") = harness_manager;
+        }
+    }
+
+    pub(crate) fn runtime_catalog_snapshot(&self) -> (Arc<TurinConfig>, Arc<HarnessManager>) {
+        let _snapshot_guard = self
+            .catalog_snapshot_gate
+            .read()
+            .expect("agent manager catalog snapshot lock poisoned");
+        let config = self.config_snapshot();
+        let harness_manager = self
+            .shared_runtime()
+            .expect("AgentManager shared runtime not bound")
+            .harness_manager
+            .read()
+            .expect("agent manager harness catalog lock poisoned")
+            .clone();
+        (config, harness_manager)
+    }
+
+    fn catalog_gate(&self, agent_id: &str) -> Arc<tokio::sync::RwLock<()>> {
+        let mut gates = self
+            .catalog_gates
+            .lock()
+            .expect("agent manager catalog gates lock poisoned");
+        Arc::clone(
+            gates
+                .entry(agent_id.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(()))),
+        )
     }
 }

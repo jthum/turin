@@ -194,7 +194,7 @@ async fn create_disable_and_delete_agent_updates_filesystem_state() -> Result<()
 }
 
 #[tokio::test]
-async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -> Result<()> {
+async fn submit_task_exposes_completed_result_and_blocks_full_reload_while_active() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
     let mut state = DaemonState::load(&config_path).await?;
@@ -211,7 +211,7 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
         .await?;
     assert_eq!(task.agent_id, "default");
     assert!(matches!(task.state.as_str(), "queued" | "running"));
-    assert!(state.rescan().await.is_err());
+    assert!(state.reload_runtime().await.is_err());
 
     let mut saw_completed = false;
     for _ in 0..50 {
@@ -232,8 +232,168 @@ async fn submit_task_exposes_completed_result_and_blocks_rescan_while_active() -
             .iter()
             .any(|entry| entry.request_id == task.request_id)
     );
-    assert!(state.rescan().await.is_ok());
+    assert!(state.reload_runtime().await.is_ok());
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn adding_agent_preserves_unrelated_active_runtime() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+    let opened = state
+        .open_session("default", Some("primary-slot"), None)
+        .await?;
+    let task = state
+        .submit_task(
+            None,
+            Some(&opened.session_id),
+            Some("primary-slot"),
+            "Keep working".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+
+    let created = state
+        .create_agent(CreateAgentInput {
+            id: "new-worker".to_string(),
+            provider: "mock".to_string(),
+            model: "mock-model".to_string(),
+            system_prompt: None,
+            thinking: None,
+            harness: None,
+            idle_timeout_seconds: None,
+            enabled: true,
+            tools: Default::default(),
+        })
+        .await?;
+    assert_eq!(created.id, "new-worker");
+    assert!(
+        state
+            .list_live_sessions()
+            .await
+            .iter()
+            .any(|session| session.slot_id == "primary-slot"
+                && session.session_id == opened.session_id)
+    );
+
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn changing_busy_agent_is_deferred_until_later_rescan() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+    state
+        .create_agent(CreateAgentInput {
+            id: "worker".to_string(),
+            provider: "mock".to_string(),
+            model: "mock-model".to_string(),
+            system_prompt: None,
+            thinking: None,
+            harness: None,
+            idle_timeout_seconds: None,
+            enabled: true,
+            tools: Default::default(),
+        })
+        .await?;
+    let task = state
+        .submit_task(
+            Some("worker"),
+            None,
+            None,
+            "Keep working".to_string(),
+            None,
+            Default::default(),
+        )
+        .await?;
+
+    let error = state
+        .update_agent(
+            "worker",
+            UpdateAgentInput {
+                model: Some("mock-model-2".to_string()),
+                ..UpdateAgentInput::default()
+            },
+        )
+        .await
+        .expect_err("busy agent replacement should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("Cannot reconfigure agent 'worker'")
+    );
+    assert_eq!(
+        state
+            .wait_for_task(&task.request_id, Some(2_000))
+            .await?
+            .state,
+        "completed"
+    );
+
+    state.rescan().await?;
+    let status = state
+        .agent_runtime_status("worker")
+        .await?
+        .expect("worker remains configured");
+    assert_eq!(status.model, "mock-model-2");
+    Ok(())
+}
+
+#[tokio::test]
+async fn changing_idle_agent_retires_only_its_runtime() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+    state
+        .create_agent(CreateAgentInput {
+            id: "worker".to_string(),
+            provider: "mock".to_string(),
+            model: "mock-model".to_string(),
+            system_prompt: None,
+            thinking: None,
+            harness: None,
+            idle_timeout_seconds: None,
+            enabled: true,
+            tools: Default::default(),
+        })
+        .await?;
+    let primary = state
+        .open_session("default", Some("primary-slot"), None)
+        .await?;
+    let worker = state
+        .open_session("worker", Some("worker-slot"), None)
+        .await?;
+
+    let updated = state
+        .update_agent(
+            "worker",
+            UpdateAgentInput {
+                model: Some("mock-model-2".to_string()),
+                ..UpdateAgentInput::default()
+            },
+        )
+        .await?;
+    assert_eq!(updated.model, "mock-model-2");
+
+    let live = state.list_live_sessions().await;
+    assert!(live.iter().any(|session| {
+        session.slot_id == "primary-slot" && session.session_id == primary.session_id
+    }));
+    assert!(
+        live.iter()
+            .all(|session| session.session_id != worker.session_id)
+    );
     Ok(())
 }
 

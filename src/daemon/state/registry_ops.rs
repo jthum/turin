@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
@@ -117,7 +118,8 @@ impl DaemonState {
         if !agent_dir.exists() {
             anyhow::bail!("Agent '{}' does not exist", agent_id);
         }
-        self.rescan().await?;
+        self.reconcile_registry_with(&HashSet::from([agent_id.to_string()]))
+            .await?;
         self.agent_detail(agent_id)?
             .ok_or_else(|| anyhow!("Agent '{}' could not be reloaded", agent_id))
     }

@@ -223,6 +223,13 @@ Current protocol:
 - NDJSON event stream for subscriptions
 - `daemon.ping` is the handshake endpoint for protocol compatibility checks
 
+Registry-only agent changes are reconciled independently. Adding an agent does
+not interrupt existing sessions or wait for unrelated tasks. Updating, disabling,
+deleting, or explicitly reloading an agent retires only that agent's idle runtime
+slots; if the affected agent is busy, reconciliation fails and the file change can
+be applied with a later rescan. Changes to the bootstrap config and explicit full
+runtime reloads still replace the kernel and require all work to be idle.
+
 Example request:
 
 ```json

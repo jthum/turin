@@ -35,6 +35,11 @@ daemon.
 3. Scan agents, resolving local or shared harness bindings.
 4. Sort entries and issues for deterministic status.
 5. Merge enabled entries into a cloned bootstrap config and validate it.
+6. When bootstrap configuration is unchanged, compare the effective agent map
+   with the live kernel catalog and publish a prepared replacement generation.
+7. Added agents become available immediately. Changed or removed agents retire
+   only their idle runtime slots; unrelated runtimes keep their current generation.
+8. Bootstrap configuration changes retain full-kernel replacement semantics.
 
 ## Invariants
 
@@ -45,6 +50,13 @@ daemon.
 - Agent writes use temp-file plus atomic rename.
 - Snapshot shaping performs no additional scanning or validation.
 - Channel paths do not trigger daemon rescans or registry issue events.
+- Agent catalog replacement is generation-based: running unrelated runtimes keep
+  the immutable config and harness generation with which they started, while new
+  runtimes use the latest published catalog.
+- A changed agent with active, queued, or awaiting work rejects reconciliation.
+  The desired file remains on disk and can be applied by a later rescan.
+- Explicit runtime reload remains a full-kernel operation and is not equivalent
+  to a targeted registry rescan.
 
 ## Tests
 

@@ -92,10 +92,11 @@ impl AgentManager {
     }
 
     pub async fn resolve_session_target(&self, session_id: &str) -> Result<(String, String)> {
+        let config = self.config_snapshot();
         let session_ref = parse_session_reference(session_id)?;
         let selector = session_ref
             .store_selector
-            .unwrap_or(self.config.persistence.top_level_state_selector()?);
+            .unwrap_or(config.persistence.top_level_state_selector()?);
         let public_id = uuid::Uuid::parse_str(&session_ref.public_id)?;
         let store = self.store_manager.open(&selector).await?;
         let row = store
@@ -224,6 +225,7 @@ impl AgentManager {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
         let agent_id = row.agent_id.clone();
+        let config = self.config_snapshot();
 
         let runtime_key = RuntimeSlotKey {
             agent_id: agent_id.clone(),
@@ -232,8 +234,8 @@ impl AgentManager {
                 .unwrap_or_else(|| format!("sl_{}", uuid::Uuid::now_v7().simple())),
         };
 
-        if agent_id != self.config.agent.id {
-            self.config
+        if agent_id != config.agent.id {
+            config
                 .agents
                 .get(&agent_id)
                 .ok_or_else(|| anyhow::anyhow!("Unknown agent profile '{}'", agent_id))?;
@@ -397,6 +399,7 @@ impl AgentManager {
 
     /// List configured agents with runtime status.
     pub async fn list_statuses(&self) -> Vec<AgentStatusSnapshot> {
+        let config = self.config_snapshot();
         let runtimes = self.runtimes.read().await;
         let pending = self.pending_task_states.read().await;
         let mut awaiting_by_agent: HashMap<&str, usize> = HashMap::new();
@@ -406,23 +409,22 @@ impl AgentManager {
                 .or_default() += 1;
         }
 
-        let mut ids = vec![self.config.agent.id.clone()];
-        ids.extend(self.config.agents.keys().cloned());
+        let mut ids = vec![config.agent.id.clone()];
+        ids.extend(config.agents.keys().cloned());
         ids.sort();
         ids.dedup();
 
         ids.into_iter()
             .map(|agent_id| {
-                let agent = if agent_id == self.config.agent.id {
-                    &self.config.agent
+                let agent = if agent_id == config.agent.id {
+                    &config.agent
                 } else {
-                    self.config
+                    config
                         .agents
                         .get(&agent_id)
                         .expect("configured agent id remains resolvable")
                 };
-                let effective_inference = self
-                    .config
+                let effective_inference = config
                     .effective_inference_config_for_agent(&agent_id, None)
                     .expect("validated agent inference configuration remains resolvable");
                 let mut inference_contexts: Vec<_> = effective_inference

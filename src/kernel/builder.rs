@@ -59,13 +59,14 @@ impl RuntimeBuilder {
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
         let harness_manager = Arc::new(HarnessManager::from_config(config_arc.as_ref())?);
+        let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
             json: self.json,
             tool_registry: self.tool_registry.clone(),
             policy_manager: Arc::clone(&policy_manager),
             governance_manager: Arc::clone(&governance_manager),
-            harness_manager: Arc::clone(&harness_manager),
+            harness_manager: shared_harness_manager,
             persistence_locks: Arc::clone(&persistence_locks),
         });
         Ok(Kernel {

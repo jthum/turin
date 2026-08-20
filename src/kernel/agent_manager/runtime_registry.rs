@@ -115,6 +115,7 @@ impl AgentManager {
         initial_default_store_selector: Option<StoreSelector>,
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        let _catalog_guard = self.catalog_gate(&runtime_key.agent_id).read_owned().await;
         if self.shutting_down.load(Ordering::Acquire) {
             anyhow::bail!("Agent manager is shutting down");
         }
@@ -142,6 +143,7 @@ impl AgentManager {
         session_id: String,
         session_context: SessionContextOverrides,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        let _catalog_guard = self.catalog_gate(&runtime_key.agent_id).read_owned().await;
         if self.shutting_down.load(Ordering::Acquire) {
             anyhow::bail!("Agent manager is shutting down");
         }
@@ -183,6 +185,7 @@ impl AgentManager {
         session_context: SessionContextOverrides,
         link: LinkedSessionCreate,
     ) -> Result<Arc<AgentRuntimeHandle>> {
+        let _catalog_guard = self.catalog_gate(&runtime_key.agent_id).read_owned().await;
         let mut runtimes = self.runtimes.write().await;
         if self.shutting_down.load(Ordering::Acquire) {
             anyhow::bail!("Agent manager is shutting down");
@@ -223,6 +226,7 @@ impl AgentManager {
         session_context: SessionContextOverrides,
         initial_link: Option<LinkedSessionCreate>,
     ) -> Result<AgentRuntimeHandle> {
+        let config = self.config_snapshot();
         let agent_id = runtime_key.agent_id.as_str();
         info!(
             agent_id = %agent_id,
@@ -230,7 +234,7 @@ impl AgentManager {
             "Starting background peer agent runtime"
         );
 
-        if agent_id != self.config.agent.id && !self.config.agents.contains_key(agent_id) {
+        if agent_id != config.agent.id && !config.agents.contains_key(agent_id) {
             return Err(anyhow::anyhow!("Unknown agent profile: {}", agent_id));
         }
 
@@ -428,14 +432,15 @@ impl AgentManager {
         agent_id: &str,
         current_session_id: Option<&str>,
     ) -> Option<u64> {
-        let mut effective = if agent_id == self.config.agent.id {
-            self.config.agent.idle_timeout_seconds
+        let config = self.config_snapshot();
+        let mut effective = if agent_id == config.agent.id {
+            config.agent.idle_timeout_seconds
         } else {
-            self.config
+            config
                 .agents
                 .get(agent_id)
                 .map(|agent| agent.idle_timeout_seconds)
-                .unwrap_or(self.config.agent.idle_timeout_seconds)
+                .unwrap_or(config.agent.idle_timeout_seconds)
         };
 
         let session_public_id = current_session_id.and_then(|raw| {
