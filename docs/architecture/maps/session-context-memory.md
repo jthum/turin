@@ -13,7 +13,11 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/kernel/session.rs`
-  - `SessionState`, execution write policy, context targets, and context checkpoint state.
+  - `SessionState`, active-task state, context checkpoint state, and the public session facade.
+- `src/kernel/session/execution.rs`
+  - Execution context targets, visibility/durability/write/conflict policies, sidestep modes,
+    task overrides, and execution status snapshots. These types are re-exported by
+    `session.rs` so existing kernel paths remain stable.
 - `src/kernel/session/resident_history.rs`
   - Turn-addressed resident message storage, origin alignment, and checkpoint-relative suffix selection.
 - `src/kernel/session_lifecycle.rs`
