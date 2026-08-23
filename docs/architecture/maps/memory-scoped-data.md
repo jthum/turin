@@ -85,6 +85,8 @@ Lua bridge:
   transaction. Concurrent deltas accumulate from the persisted weight rather than overwriting it.
 - Correcting memory must insert the replacement and supersede the original in one transaction.
   Competing corrections may commit at most one replacement.
+- A non-dry-run purge must delete selected memories and their feedback history in one transaction.
+  Failure must not leave either side partially removed.
 
 ## Common Changes
 
@@ -130,6 +132,7 @@ cargo test -p turin scoped_data_backend::tests::memory --lib
 cargo test -p turin concurrent_memory_ --lib
 cargo test -p turin memory_feedback_rolls_back_weight_when_audit_insert_fails --lib
 cargo test -p turin memory_correction_rolls_back_replacement_when_supersession_fails --lib
+cargo test -p turin memory_purge_rolls_back_audit_deletion_when_memory_deletion_fails --lib
 ```
 
 Harness integration tests:

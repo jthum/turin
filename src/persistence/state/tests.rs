@@ -3633,6 +3633,79 @@ async fn concurrent_memory_correction_commits_one_replacement() {
 }
 
 #[tokio::test]
+async fn memory_purge_rolls_back_audit_deletion_when_memory_deletion_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "session",
+            "purge-test",
+            "Retained after failed purge",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let public_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    store
+        .apply_memory_feedback(
+            "session",
+            "purge-test",
+            public_id,
+            0.1,
+            0.1,
+            2.0,
+            Some("useful"),
+            None,
+        )
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_memory_purge
+        BEFORE DELETE ON memories
+        BEGIN
+            SELECT RAISE(FAIL, 'injected memory purge failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .purge_memories(
+            "session",
+            "purge-test",
+            None,
+            None,
+            None,
+            false,
+            true,
+            false,
+        )
+        .await
+        .expect_err("memory deletion failure must abort its audit deletion");
+
+    let mut rows = conn
+        .query(
+            r#"
+            SELECT COUNT(memory.id), COUNT(feedback.id)
+            FROM memories memory
+            LEFT JOIN memory_feedback_events feedback ON feedback.memory_id = memory.id
+            WHERE memory.public_id = ?1
+            "#,
+            [stored.public_id],
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<i64>(0).unwrap(), 1);
+    assert_eq!(row.get::<i64>(1).unwrap(), 1);
+}
+
+#[tokio::test]
 async fn test_lexical_only_hybrid_fallback_prefers_best_text_match() {
     let store = StateStore::open_memory()
         .await

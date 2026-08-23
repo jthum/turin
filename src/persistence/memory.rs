@@ -601,7 +601,7 @@ impl StateStore {
         all: bool,
         dry_run: bool,
     ) -> Result<MemoryPurgeReport> {
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT id,
@@ -664,6 +664,7 @@ impl StateStore {
                 matched_ids.push(row_id);
             }
         }
+        drop(rows);
 
         if dry_run || matched_ids.is_empty() {
             return Ok(MemoryPurgeReport {
@@ -673,17 +674,24 @@ impl StateStore {
             });
         }
 
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start memory purge transaction")?;
         for row_id in &matched_ids {
-            conn.execute(
+            tx.execute(
                 "DELETE FROM memory_feedback_events WHERE memory_id = ?1",
                 turso::params![row_id],
             )
             .await
             .with_context(|| format!("Failed to delete feedback events for memory {}", row_id))?;
-            conn.execute("DELETE FROM memories WHERE id = ?1", turso::params![row_id])
+            tx.execute("DELETE FROM memories WHERE id = ?1", turso::params![row_id])
                 .await
                 .with_context(|| format!("Failed to delete memory {}", row_id))?;
         }
+        tx.commit()
+            .await
+            .context("Failed to commit memory purge transaction")?;
 
         Ok(MemoryPurgeReport {
             matched: matched_ids.len(),
