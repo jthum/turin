@@ -89,7 +89,7 @@ impl HarnessInstance for LuaHarnessInstance {
     }
 
     fn evaluate_hook(&self, hook: HarnessHook<'_>) -> Result<Verdict> {
-        self.engine.evaluate(hook.name(), hook.lua_payload())
+        self.engine.evaluate(hook.name(), hook.to_json_value())
     }
 
     fn prepares_turn(&self) -> bool {

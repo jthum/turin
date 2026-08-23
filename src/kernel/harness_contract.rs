@@ -1,5 +1,4 @@
 use serde_json::Value;
-#[cfg(feature = "lua")]
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
@@ -297,8 +296,9 @@ impl HarnessHook<'_> {
         }
     }
 
-    #[cfg(feature = "lua")]
-    pub(crate) fn lua_payload(&self) -> Value {
+    /// Materialize this borrowed hook for a dynamic-language adapter.
+    #[doc(hidden)]
+    pub fn to_json_value(&self) -> Value {
         match self {
             Self::SessionStart {
                 identity,
