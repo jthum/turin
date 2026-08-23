@@ -190,6 +190,7 @@ impl ContextWrapper {
     }
 
     /// Retrieve the inner state (cloning the data out)
+    #[cfg(test)]
     pub fn get_state(&self) -> ContextState {
         self.lock_state().clone()
     }

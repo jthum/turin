@@ -126,6 +126,9 @@ Structured inference:
 - Only types needed to implement the public Rust contract are public. Execution binding
   DTOs remain kernel-private until a concrete Rust capability needs them; do not expose
   scripting-adapter plumbing as a speculative service API.
+- `turin-harness-lua` exposes only its concrete adapter factory plus the `factory`,
+  `runtime_builder`, and `serve_daemon` composition helpers. Its VM, globals, context,
+  DX, and binding modules are crate-private implementation details.
 - Runtime signal delivery crosses the harness boundary as `HarnessSignal`, not
   `persistence::SignalRow`. Persistence retry metadata remains owned by the scheduler;
   Lua and Rust harnesses receive the same semantic signal fields.

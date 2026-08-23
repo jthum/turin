@@ -20,6 +20,7 @@ use turin_core::kernel::harness_runtime::{
     HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
 };
 
+/// Factory for session-scoped Lua harness instances.
 pub struct LuaHarnessAdapterFactory;
 
 impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
@@ -193,7 +194,6 @@ fn build_engine(
         governance_manager: ctx.governance_manager,
         scheduler: ctx.scheduler,
         execution_ctx: Arc::new(std::sync::Mutex::new(HarnessExecutionContext::default())),
-        clients: ctx.clients,
         embedding_provider: ctx.embedding_provider,
         config: ctx.config,
         spawn_depth: definition.spawn_depth,

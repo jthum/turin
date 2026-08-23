@@ -1,21 +1,25 @@
-pub use turin_core::{
-    code_index_reader, display, inference, kernel, persistence, schedule_support, signal_topics,
-    tools, work_items,
+pub(crate) use turin_core::{
+    code_index_reader, display, inference, kernel, persistence, signal_topics, tools, work_items,
 };
 
-pub mod harness;
+mod harness;
 mod runtime;
 
 pub use runtime::LuaHarnessAdapterFactory;
 
-pub fn factory() -> std::sync::Arc<dyn kernel::harness_runtime::HarnessAdapterFactory> {
+/// Creates the Lua adapter used by a Turin runtime composition.
+pub fn factory() -> std::sync::Arc<dyn turin_core::kernel::harness_runtime::HarnessAdapterFactory> {
     std::sync::Arc::new(LuaHarnessAdapterFactory)
 }
 
-pub fn runtime_builder(config: kernel::config::TurinConfig) -> kernel::builder::RuntimeBuilder {
-    kernel::builder::RuntimeBuilder::new(config).with_harness_adapter(factory())
+/// Creates a runtime builder configured with the Lua harness adapter.
+pub fn runtime_builder(
+    config: turin_core::kernel::config::TurinConfig,
+) -> turin_core::kernel::builder::RuntimeBuilder {
+    turin_core::kernel::builder::RuntimeBuilder::new(config).with_harness_adapter(factory())
 }
 
+/// Runs the Turin daemon with Lua harness support enabled.
 pub async fn serve_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     turin_core::daemon::server::serve_with_harness_adapter(config_path, factory()).await
 }

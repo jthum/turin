@@ -12,7 +12,6 @@ use crate::harness::stdlib::{
     session_user_aliases, system_globals, tool_bindings, ui_bindings,
 };
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::inference::provider::ProviderClient;
 pub(crate) use crate::kernel::harness_contract::{
     HarnessEventContext, HarnessExecutionBinding, SessionQueue,
 };
@@ -23,7 +22,7 @@ use crate::kernel::session::{
 use crate::persistence::manager::StoreManager;
 use crate::persistence::manager::StoreSelector;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::harness::source::HarnessSourceOverlay;
@@ -73,7 +72,6 @@ pub struct HarnessAppData {
     pub governance_manager: Arc<crate::kernel::governance::GovernanceManager>,
     pub scheduler: Option<Arc<HarnessSchedulerAccess>>,
     pub execution_ctx: ActiveHarnessExecutionContext,
-    pub clients: HashMap<String, ProviderClient>,
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub config: Arc<crate::kernel::config::TurinConfig>,
     pub spawn_depth: u32,

@@ -75,7 +75,6 @@ fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> Harnes
             crate::kernel::config::GovernanceConfig::default(),
         )),
         scheduler: None,
-        clients: std::collections::HashMap::new(),
         embedding_provider: None,
         execution_ctx: std::sync::Arc::new(std::sync::Mutex::new(
             crate::harness::globals::HarnessExecutionContext {

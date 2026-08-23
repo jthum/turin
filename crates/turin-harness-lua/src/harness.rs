@@ -1,7 +1,7 @@
-pub mod context;
-pub mod dx;
-pub mod engine;
-pub mod globals;
-pub mod stdlib;
+pub(crate) mod context;
+pub(crate) mod dx;
+pub(crate) mod engine;
+pub(crate) mod globals;
+pub(crate) mod stdlib;
 
-pub use turin_core::harness::{scheduler, source, verdict, virtual_tools};
+pub(crate) use turin_core::harness::{scheduler, source, verdict, virtual_tools};
