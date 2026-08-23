@@ -104,6 +104,9 @@ Structured inference:
 - Turn preparation transfers provider-request ownership into `HarnessTurnRequest` and
   back. The Lua adapter may wrap it as userdata, but the session-harness contract must
   not expose `ContextWrapper` or another scripting-engine type.
+- Provider clients are turn-time services, not adapter-initialization state. They cross
+  the boundary through `HarnessTurnServices`; `HarnessRuntimeInitContext` must not clone
+  or retain the provider registry.
 - Rust call sites must initialize `ContextWrapper` through named `ContextInit` fields;
   positional construction is too error-prone for the request/runtime handoff.
 - Structured calls may define `prompt` or `messages`, not both.

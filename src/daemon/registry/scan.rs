@@ -273,7 +273,6 @@ fn validate_harness_dir(
 
     runtime.validate(HarnessRuntimeInitContext {
         config,
-        clients: HashMap::new(),
         store_manager,
         agent_manager,
         policy_manager: Arc::new(RuntimePolicyManager::new()),

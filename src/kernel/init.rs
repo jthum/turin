@@ -53,7 +53,6 @@ impl ExecutionHost {
     pub(crate) fn harness_init_context(&self) -> HarnessRuntimeInitContext {
         HarnessRuntimeInitContext {
             config: self.config.clone(),
-            clients: self.clients.clone(),
             store_manager: self.store_manager.clone(),
             agent_manager: self.agent_manager.clone(),
             policy_manager: self.policy_manager.clone(),

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +12,6 @@ use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
 };
 use crate::inference::embeddings::EmbeddingProvider;
-use crate::inference::provider::ProviderClient;
 use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::TurinConfig;
 use crate::kernel::governance::GovernanceManager;
@@ -26,7 +25,6 @@ use crate::persistence::manager::StoreManager;
 #[derive(Clone)]
 pub struct HarnessRuntimeInitContext {
     pub config: Arc<TurinConfig>,
-    pub clients: HashMap<String, ProviderClient>,
     pub store_manager: Arc<StoreManager>,
     pub agent_manager: Arc<AgentManager>,
     pub policy_manager: Arc<RuntimePolicyManager>,
