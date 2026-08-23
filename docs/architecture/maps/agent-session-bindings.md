@@ -9,8 +9,11 @@ This surface sits between harness code and core runtime state. It should stay bo
 ## Files
 
 - `src/harness/stdlib/agent_bindings.rs`
-  - Lua-facing `agent.*` and `agent.session.*` API.
+  - Lua-facing top-level `agent.*` task, sidestep, promotion, and peer-delegation API.
   - Registration/orchestration only; helper domains live under `agent_bindings/`.
+- `src/harness/stdlib/agent_bindings/session_api.rs`
+  - Lua-facing `agent.session.*` namespace registration for identity, local queueing,
+    session lookup/metadata, branch operations, and session listing.
 - `src/harness/stdlib/agent_bindings/queue.rs`
   - Local queue helpers for `agent.spawn`, `agent.sidestep`, and `agent.session.queue*`.
 - `src/harness/stdlib/agent_bindings/session_store.rs`
@@ -189,7 +192,9 @@ cargo test -p turin --test harness_tests test_runtime_agent_peer_submit_await_an
 
 ## Current Shape
 
-The current pass keeps `agent_bindings.rs` as the Lua registration and policy-flow file, while private child modules own mechanical helper domains:
+The current pass keeps `agent_bindings.rs` as the top-level `agent.*` registration and
+policy-flow file. `session_api.rs` separately owns registration of the nested
+`agent.session.*` namespace. Private child modules own mechanical helper domains:
 
 - `queue.rs` owns local queue depth checks, trace inheritance helpers, and queue push operations reused by runtime worklist bindings.
 - `session_store.rs` owns session reference resolution, store opening, current-session matching, and completed-task-cache lookup.
