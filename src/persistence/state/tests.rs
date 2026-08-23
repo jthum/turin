@@ -1,4 +1,6 @@
 use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::Barrier;
 use turin_daemon_protocol::{SessionSearchHitKind, SessionSearchScope};
 
 use super::*;
@@ -576,6 +578,91 @@ async fn test_scheduled_job_run_bookkeeping_tracks_parallel_active_runs() {
     assert!(run_history.iter().all(|run| run.finished_unix_ms.is_some()));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_scheduled_run_transitions_preserve_job_summary() {
+    let store = StateStore::open_memory().await.unwrap();
+    let job_id = store
+        .create_scheduled_job(ScheduledJobInsert {
+            public_id: uuid::Uuid::now_v7(),
+            agent_id: "default",
+            job_kind: "prompt",
+            prompt: Some("Run maintenance"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            state_target: None,
+            store_target: None,
+            next_run_unix_ms: 100,
+            interval_seconds: Some(60),
+            recurring_pattern: None,
+            overlap_policy: "parallel",
+            work_key: Some("maintenance"),
+            max_concurrency: Some(2),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+
+    let start_barrier = Arc::new(Barrier::new(3));
+    let mut starts = Vec::new();
+    for task_id in ["task-a", "task-b"] {
+        let store = store.clone();
+        let barrier = Arc::clone(&start_barrier);
+        starts.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .mark_scheduled_job_started(job_id, task_id, 200, true, 100)
+                .await
+        }));
+    }
+    start_barrier.wait().await;
+    for start in starts {
+        start.await.unwrap().unwrap();
+    }
+
+    let running = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job");
+    assert_eq!(running.active_run_count, 2);
+    assert_eq!(
+        store.count_active_scheduled_job_runs(job_id).await.unwrap(),
+        2
+    );
+
+    let finish_barrier = Arc::new(Barrier::new(3));
+    let mut finishes = Vec::new();
+    for task_id in ["task-a", "task-b"] {
+        let store = store.clone();
+        let barrier = Arc::clone(&finish_barrier);
+        finishes.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .finish_scheduled_job_run(job_id, task_id, 300, Some("completed"))
+                .await
+        }));
+    }
+    finish_barrier.wait().await;
+    for finish in finishes {
+        finish.await.unwrap().unwrap();
+    }
+
+    let settled = store
+        .get_scheduled_job_by_id(job_id)
+        .await
+        .unwrap()
+        .expect("scheduled job");
+    assert_eq!(settled.active_run_count, 0);
+    assert!(settled.running_task_id.is_none());
+    assert_eq!(
+        store.count_active_scheduled_job_runs(job_id).await.unwrap(),
+        0
+    );
+}
+
 #[tokio::test]
 async fn scheduled_run_transitions_roll_back_when_job_summary_update_fails() {
     let store = StateStore::open_memory().await.unwrap();
@@ -826,6 +913,75 @@ async fn stale_release_does_not_clear_a_refreshed_work_item_claim() {
         .expect("the unchanged expired claim should be released");
     assert_eq!(released.status, "pending");
     assert!(released.claim_execution_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn heartbeat_and_stale_release_cannot_both_win() {
+    let store = StateStore::open_memory().await.unwrap();
+    let worklist = store.open_worklist("leases", "", None).await.unwrap();
+    let item = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Contended lease",
+            item_kind: "prompt",
+            prompt: Some("Contended lease"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        store
+            .try_claim_work_item(item.id, "worker", None, Some("exec-a"), 100)
+            .await
+            .unwrap()
+    );
+
+    let barrier = Arc::new(Barrier::new(3));
+    let heartbeat = {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .heartbeat_work_item_claim(item.id, "exec-a", 1_000)
+                .await
+        })
+    };
+    let release = {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        tokio::spawn(async move {
+            barrier.wait().await;
+            store.release_stale_work_item(item.id, 500).await
+        })
+    };
+    barrier.wait().await;
+
+    let heartbeat_won = heartbeat.await.unwrap().unwrap().is_some();
+    let release_won = release.await.unwrap().unwrap().is_some();
+    assert_ne!(heartbeat_won, release_won);
+
+    let current = store
+        .get_work_item_by_id(item.id)
+        .await
+        .unwrap()
+        .expect("work item");
+    if heartbeat_won {
+        assert_eq!(current.status, "active");
+        assert_eq!(current.claim_heartbeat_unix_ms, Some(1_000));
+    } else {
+        assert_eq!(current.status, "pending");
+        assert!(current.claim_execution_id.is_none());
+    }
 }
 
 #[tokio::test]
@@ -1341,6 +1497,161 @@ async fn linked_sessions_are_indexed_by_parent_agent_and_thread() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_linked_session_creation_never_leaves_duplicates_or_partial_rows() {
+    let store = StateStore::open_memory().await.unwrap();
+    let root = store
+        .create_session(uuid::Uuid::now_v7(), "primary", None)
+        .await
+        .unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let mut attempts = Vec::new();
+    for _ in 0..2 {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        attempts.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .create_linked_session(
+                    uuid::Uuid::now_v7(),
+                    "reviewer",
+                    None,
+                    &LinkedSessionCreate {
+                        parent_session_id: root,
+                        origin_turn_id: None,
+                        relation_kind: "delegated".to_string(),
+                        thread_key: "architecture".to_string(),
+                        visibility: "contextual".to_string(),
+                    },
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+
+    let results = futures::future::join_all(attempts).await;
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(Ok(_))))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(Err(_))))
+            .count(),
+        1
+    );
+
+    let children = store.list_linked_session_rows(root, 10, 0).await.unwrap();
+    assert_eq!(children.len(), 1);
+    let conn = store.get_connection().await.unwrap();
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM branch_heads WHERE session_id = ?1",
+            [children[0].id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_session_deletion_and_link_creation_never_leave_an_orphan() {
+    let store = StateStore::open_memory().await.unwrap();
+    let root_public_id = uuid::Uuid::now_v7();
+    let root = store
+        .create_session(root_public_id, "primary", None)
+        .await
+        .unwrap();
+    let child_public_id = uuid::Uuid::now_v7();
+    let barrier = Arc::new(Barrier::new(3));
+    let deletion = {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        tokio::spawn(async move {
+            barrier.wait().await;
+            store.delete_session_by_public_id(root_public_id).await
+        })
+    };
+    let creation = {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .create_linked_session(
+                    child_public_id,
+                    "reviewer",
+                    None,
+                    &LinkedSessionCreate {
+                        parent_session_id: root,
+                        origin_turn_id: None,
+                        relation_kind: "delegated".to_string(),
+                        thread_key: "architecture".to_string(),
+                        visibility: "contextual".to_string(),
+                    },
+                )
+                .await
+        })
+    };
+    barrier.wait().await;
+
+    let deletion = deletion.await.unwrap();
+    let creation = creation.await.unwrap();
+    assert!(deletion.is_ok() || creation.is_ok());
+
+    let conn = store.get_connection().await.unwrap();
+    let mut orphan_rows = conn
+        .query(
+            r#"
+            SELECT COUNT(*)
+            FROM sessions child
+            LEFT JOIN sessions parent ON parent.id = child.parent_session_id
+            WHERE child.parent_session_id IS NOT NULL AND parent.id IS NULL
+            "#,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        orphan_rows
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<i64>(0)
+            .unwrap(),
+        0
+    );
+    let mut partial_rows = conn
+        .query(
+            r#"
+            SELECT COUNT(*)
+            FROM sessions session
+            WHERE (SELECT COUNT(*) FROM branch_heads WHERE session_id = session.id) != 1
+            "#,
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        partial_rows
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<i64>(0)
+            .unwrap(),
+        0
     );
 }
 
@@ -2549,6 +2860,84 @@ async fn test_prepare_turn_write_target_rejects_stale_branch_head_and_reuses_res
             .content
             .contains("second write on resolved turn")
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn competing_branch_advances_commit_exactly_one_turn() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let main = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch");
+    let request =
+        TurnWriteTarget::branch_head_with_expectation(Some(main.id), main.head_turn_id, 1);
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut attempts = Vec::new();
+    for _ in 0..2 {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        attempts.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store.prepare_turn_write_target(session, request).await
+        }));
+    }
+    barrier.wait().await;
+
+    let results = futures::future::join_all(attempts).await;
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(Ok(Some(_)))))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result,
+                    Ok(Err(error)) if error.downcast_ref::<TurnWriteError>().is_some()
+                )
+            })
+            .count(),
+        1
+    );
+
+    let conn = store.get_connection().await.unwrap();
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM turns WHERE session_id = ?1",
+            [session],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        2
+    );
+    let advanced = store
+        .get_active_branch_head(session)
+        .await
+        .unwrap()
+        .expect("active branch");
+    assert_eq!(advanced.head_turn_depth, Some(1));
 }
 
 #[tokio::test]

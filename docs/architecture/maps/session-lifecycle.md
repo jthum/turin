@@ -262,6 +262,9 @@ cargo test -p turin --test session_tests test_cancelling_stalled_inference_does_
 cargo test -p turin --test session_tests test_cancelling_stalled_tool_does_not_append_tool_result
 cargo test -p turin --test daemon_integration_tests daemon_session_resume_round_trip_over_restart
 cargo test -p turin --test daemon_integration_tests daemon_task_sidestep_can_fork_a_sibling_branch
+cargo test -p turin competing_branch_advances_commit_exactly_one_turn --lib
+cargo test -p turin concurrent_linked_session_creation_never_leaves_duplicates_or_partial_rows --lib
+cargo test -p turin concurrent_session_deletion_and_link_creation_never_leave_an_orphan --lib
 ```
 
 Basic checks:

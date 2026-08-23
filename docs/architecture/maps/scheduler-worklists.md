@@ -141,6 +141,9 @@ cargo test -p turin scheduled_ --lib
 cargo test -p turin schedule --lib
 cargo test -p turin worklist --lib
 cargo test -p turin work_item_prompt_task --lib
+cargo test -p turin concurrent_scheduled_run_transitions_preserve_job_summary --lib
+cargo test -p turin heartbeat_and_stale_release_cannot_both_win --lib
+cargo test -p turin scheduler_reconciles_persisted_run_missing_from_runtime_after_restart --lib
 ```
 
 Basic compile/format checks:

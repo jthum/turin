@@ -507,6 +507,61 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
 }
 
 #[tokio::test]
+async fn scheduler_reconciles_persisted_run_missing_from_runtime_after_restart() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let future_run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64
+        + 3_600_000;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("Recover after restart".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: future_run,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+    state
+        .runtime_store
+        .mark_scheduled_job_started(job.id, "lost-task", future_run, true, future_run - 1)
+        .await?;
+
+    drop(state);
+    let mut restarted = DaemonState::load(&config_path).await?;
+    restarted.scheduler_tick().await?;
+
+    let recovered = restarted
+        .runtime_store
+        .get_scheduled_job_by_id(job.id)
+        .await?
+        .expect("scheduled job");
+    assert_eq!(recovered.active_run_count, 0);
+    assert!(recovered.running_task_id.is_none());
+    assert_eq!(recovered.last_status.as_deref(), Some("orphaned"));
+    let runs = restarted
+        .runtime_store
+        .list_scheduled_job_runs(job.id, false, None)
+        .await?;
+    assert_eq!(runs.len(), 1);
+    assert!(runs[0].finished_unix_ms.is_some());
+    assert_eq!(runs[0].last_status.as_deref(), Some("orphaned"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduled_interval_job_reschedules_after_submit() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
