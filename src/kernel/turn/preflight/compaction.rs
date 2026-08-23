@@ -199,7 +199,8 @@ impl ExecutionHost {
         self.persist_event(
             session,
             &KernelEvent::Audit(AuditEvent::ContextCompaction { checkpoint }),
-        );
+        )
+        .await;
         Ok(())
     }
 

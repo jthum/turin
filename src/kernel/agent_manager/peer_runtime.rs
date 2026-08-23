@@ -208,7 +208,7 @@ impl PeerRuntime {
                     queue_depth: 0,
                     execution: ExecutionStatusSnapshot::from_session(&self.session),
                 }),
-            );
+            ).await;
 
             let task_start_verdict = {
                 if let Some(harness) = self.host.session_harness_engine(&self.session) {

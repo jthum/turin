@@ -132,7 +132,8 @@ impl ExecutionHost {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                 }),
-            );
+            )
+            .await;
         }
 
         let kernel = &*self;

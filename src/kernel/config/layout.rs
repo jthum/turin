@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use turin_types::layout::{
     DEFAULT_LAYOUT_AGENTS_DIR, DEFAULT_LAYOUT_DAEMON_SOCKET, DEFAULT_LAYOUT_DATA_DIR,
@@ -10,6 +12,8 @@ use turin_types::layout::{
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LayoutConfig {
+    #[serde(skip)]
+    environment: BTreeMap<String, String>,
     #[serde(default)]
     pub root: Option<String>,
     #[serde(default = "default_layout_data_dir")]
@@ -33,6 +37,7 @@ pub struct LayoutConfig {
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
+            environment: BTreeMap::new(),
             root: None,
             data_dir: default_layout_data_dir(),
             states_dir: default_layout_states_dir(),
@@ -64,6 +69,25 @@ pub struct ResolvedLayout {
 }
 
 impl LayoutConfig {
+    pub(super) fn load_environment(&mut self, env_path: &Path) -> Result<()> {
+        self.environment.clear();
+        if !env_path.is_file() {
+            return Ok(());
+        }
+        for item in dotenvy::from_path_iter(env_path)
+            .with_context(|| format!("Failed to parse '{}'", env_path.display()))?
+        {
+            let (key, value) =
+                item.with_context(|| format!("Failed to parse '{}'", env_path.display()))?;
+            self.environment.insert(key, value);
+        }
+        Ok(())
+    }
+
+    pub(super) fn environment_value(&self, key: &str) -> Option<String> {
+        self.environment.get(key).cloned()
+    }
+
     pub fn resolve(&self, config_path: &Path) -> ResolvedLayout {
         let config_path = config_path.to_path_buf();
         let config_dir = config_dir(&config_path);

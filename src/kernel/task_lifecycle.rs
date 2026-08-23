@@ -33,7 +33,8 @@ impl ExecutionHost {
                 branch_outcome: branch_outcome.clone(),
                 error: error_message.clone(),
             }),
-        );
+        )
+        .await;
         let task_budget = session.active_task_budget_snapshot(task_turn_count);
 
         let verdict_result = {
@@ -113,7 +114,8 @@ impl ExecutionHost {
                         total_tasks: plan.total_tasks,
                         completed_tasks: plan.completed_tasks,
                     }),
-                );
+                )
+                .await;
 
                 {
                     if let Some(harness) = self.session_harness_engine(session)
@@ -158,6 +160,7 @@ impl ExecutionHost {
         let (tx, rx) = oneshot::channel();
         durability_tx
             .send(PersistedKernelRecord::Barrier(tx))
+            .await
             .map_err(|_| anyhow::anyhow!("Event durability lane is unavailable"))?;
         match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
             Ok(Ok(Ok(()))) => Ok(()),

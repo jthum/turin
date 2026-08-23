@@ -8,9 +8,47 @@ use crate::kernel::session::SessionState;
 use crate::kernel::session::{PersistedKernelEvent, PersistedKernelRecord};
 
 impl ExecutionHost {
+    /// Publish an ephemeral event to observers and harness hooks without recording it.
+    pub(crate) fn publish_ephemeral_event(
+        &self,
+        session: &SessionState,
+        event: &KernelEvent,
+    ) -> bool {
+        if let Some(harness) = self.session_harness_engine(session) {
+            let engine = harness.lock().expect("session harness mutex poisoned");
+            if let Ok(verdict) = engine.evaluate_hook(HarnessHook::KernelEvent(event))
+                && verdict.is_rejected()
+            {
+                warn!(event_type = %event.event_type(), "Event REJECTED by harness on_kernel_event");
+                return false;
+            }
+        }
+        self.publish_event_internal(&session.event_tx, session, event);
+        true
+    }
+
+    /// Record an event that has already been published to live observers.
+    pub(crate) async fn persist_published_event(
+        &self,
+        session: &SessionState,
+        event: &KernelEvent,
+    ) {
+        let Some(record) = persisted_event_record(session, event) else {
+            return;
+        };
+        if let Some(durability_tx) = session.durability_tx.as_ref()
+            && durability_tx
+                .send(PersistedKernelRecord::Event(Box::new(record)))
+                .await
+                .is_err()
+        {
+            warn!("Event durability send failed — persistence task unavailable");
+        }
+    }
+
     /// Persist an event to the state store in the background.
     #[instrument(skip(self, session, event), fields(event_type = %event.event_type()))]
-    pub(crate) fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
+    pub(crate) async fn persist_event(&self, session: &SessionState, event: &KernelEvent) {
         let audit_persist_before_hooks = self
             .governance_manager
             .config()
@@ -29,7 +67,8 @@ impl ExecutionHost {
                 session.durability_tx.as_ref(),
                 session,
                 event,
-            );
+            )
+            .await;
         }
 
         // Allow harness to observe/intercept any event.
@@ -59,34 +98,44 @@ impl ExecutionHost {
                 session.durability_tx.as_ref(),
                 session,
                 event,
-            );
+            )
+            .await;
         }
     }
 
     /// Internal helper for persistence (used by parallel runners).
-    pub(crate) fn persist_event_internal(
+    pub(crate) async fn persist_event_internal(
         &self,
         tx: &broadcast::Sender<(Option<i64>, KernelEvent)>,
-        durability_tx: Option<&tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
+        durability_tx: Option<&tokio::sync::mpsc::Sender<PersistedKernelRecord>>,
         session: &SessionState,
         event: &KernelEvent,
     ) {
-        if self.json {
-            // In JSON mode, all events go to stdout as NDJSON.
-            println!("{}", serde_json::to_string(event).unwrap_or_default());
-        }
-        if tx.send((session.internal_id, event.clone())).is_err() {
-            debug!("Event broadcast skipped — no active receivers");
-        }
+        self.publish_event_internal(tx, session, event);
         let Some(record) = persisted_event_record(session, event) else {
             return;
         };
         if let Some(durability_tx) = durability_tx
             && durability_tx
                 .send(PersistedKernelRecord::Event(Box::new(record)))
+                .await
                 .is_err()
         {
             warn!("Event durability send failed — persistence task unavailable");
+        }
+    }
+
+    fn publish_event_internal(
+        &self,
+        tx: &broadcast::Sender<(Option<i64>, KernelEvent)>,
+        session: &SessionState,
+        event: &KernelEvent,
+    ) {
+        if self.json {
+            println!("{}", serde_json::to_string(event).unwrap_or_default());
+        }
+        if tx.send((session.internal_id, event.clone())).is_err() {
+            debug!("Event broadcast skipped — no active receivers");
         }
     }
 }

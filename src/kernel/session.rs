@@ -182,7 +182,7 @@ pub struct SessionState {
     // Event channel for this session
     pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
     /// Reliable durability lane (separate from observer fanout).
-    pub durability_tx: Option<mpsc::UnboundedSender<PersistedKernelRecord>>,
+    pub durability_tx: Option<mpsc::Sender<PersistedKernelRecord>>,
     /// Serializes branch-scoped persistence so turn creation stays consistent.
     pub persistence_lock: Arc<Mutex<()>>,
     pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,

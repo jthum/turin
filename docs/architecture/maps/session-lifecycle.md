@@ -79,7 +79,9 @@ Durable turn writes:
 1. Allocate a turn and advance its branch head in one transaction using the head turn
    that was observed while preparing the write as an optimistic precondition.
 2. Persist the user message before adding it to resident history or invoking inference.
-3. Stream events through the ordered background durability lane.
+3. Publish every provider delta live, but coalesce text, thinking, and signature deltas before
+   sending them through the bounded ordered durability lane. Exact provider chunk boundaries are
+   intentionally ephemeral; complete content and terminal stream records remain durable.
 4. Persist the complete assistant message before emitting `TurnEnd` and adding it to resident history.
 5. Persist finalized tool records and the tool-result message before exposing the result in resident history.
 6. At task completion, use a barrier to report any background event-write failure to the caller.
@@ -221,6 +223,8 @@ Delete persisted session:
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
+- The durability lane is bounded. Producers apply backpressure rather than dropping lifecycle,
+  audit, tool, completed-stream, or barrier records when persistence falls behind.
 - Turn insertion and branch-head advancement must commit or roll back together. The head update
   must fail as a turn-write conflict if the branch moved after its parent was selected.
 - Durable transcript and tool-record write failures must stop the active task; they must not be reduced to warnings.

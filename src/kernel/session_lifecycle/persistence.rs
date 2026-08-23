@@ -66,7 +66,7 @@ impl ExecutionHost {
         }
 
         let (durability_tx, mut durability_rx) =
-            tokio::sync::mpsc::unbounded_channel::<PersistedKernelRecord>();
+            tokio::sync::mpsc::channel::<PersistedKernelRecord>(256);
         session.durability_tx = Some(durability_tx);
         let persistence_lock = Arc::clone(&session.persistence_lock);
         let handle = tokio::spawn(async move {

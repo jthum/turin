@@ -568,7 +568,8 @@ impl ExecutionHost {
                     identity: session.identity.clone(),
                 }
             }),
-        );
+        )
+        .await;
         let governance_snapshot = self
             .governance_manager
             .snapshot_for_agent(Some(session.identity.agent_id()));
@@ -577,7 +578,8 @@ impl ExecutionHost {
             &KernelEvent::Audit(AuditEvent::GovernanceSnapshot {
                 snapshot: governance_snapshot.clone(),
             }),
-        );
+        )
+        .await;
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
@@ -616,7 +618,8 @@ impl ExecutionHost {
                 total_input_tokens: session.total_input_tokens,
                 total_output_tokens: session.total_output_tokens,
             }),
-        );
+        )
+        .await;
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");

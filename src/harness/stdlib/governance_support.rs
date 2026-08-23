@@ -192,12 +192,12 @@ pub(crate) fn emit_governance_audit_event(app_data: &HarnessAppData, audit_event
     }
     let _ = ctx.event_tx.send((ctx.internal_id, event.clone()));
     if let Some(durability_tx) = ctx.durability_tx {
-        let _ = durability_tx.send(PersistedKernelRecord::Event(Box::new(
-            PersistedKernelEvent {
+        let _ = crate::harness::globals::block_on_current(durability_tx.send(
+            PersistedKernelRecord::Event(Box::new(PersistedKernelEvent {
                 internal_id: ctx.internal_id,
                 turn_target: None,
                 event,
-            },
-        )));
+            })),
+        ));
     }
 }

@@ -90,7 +90,7 @@ impl ExecutionHost {
     ) -> Result<TurnPreflight> {
         let mut req = self.default_turn_request_state(session, turn_ctx)?;
 
-        if self.emit_turn_start_and_gate(session, turn_ctx) {
+        if self.emit_turn_start_and_gate(session, turn_ctx).await {
             return Ok(TurnPreflight::Rejected);
         }
 
@@ -257,7 +257,11 @@ impl ExecutionHost {
         }))
     }
 
-    fn emit_turn_start_and_gate(&self, session: &mut SessionState, turn_ctx: &TurnContext) -> bool {
+    async fn emit_turn_start_and_gate(
+        &self,
+        session: &mut SessionState,
+        turn_ctx: &TurnContext,
+    ) -> bool {
         if !self.json {
             println!(
                 "\n{}",
@@ -274,7 +278,8 @@ impl ExecutionHost {
                 trace_id: turn_ctx.trace_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
             }),
-        );
+        )
+        .await;
 
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
@@ -322,7 +327,8 @@ impl ExecutionHost {
                 trace_id: turn_ctx.trace_id.clone(),
                 task_turn_index: turn_ctx.task_turn_index,
             }),
-        );
+        )
+        .await;
 
         let has_prepare_hook = self.session_harness_engine(session).is_some_and(|harness| {
             harness
@@ -563,7 +569,8 @@ impl ExecutionHost {
                         &KernelEvent::Audit(AuditEvent::InferenceRequest {
                             metrics: request_metrics,
                         }),
-                    );
+                    )
+                    .await;
                     debug!(
                         requested_context = requested_context.as_str(),
                         resolved_context = resolved_context_label(&candidate),

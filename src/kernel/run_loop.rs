@@ -300,7 +300,8 @@ impl ExecutionHost {
             &KernelEvent::Lifecycle(LifecycleEvent::AllTasksComplete {
                 identity: session.identity.clone(),
             }),
-        );
+        )
+        .await;
 
         let verdict = {
             if let Err(error) = self.ensure_session_harness_engine(session) {
@@ -358,7 +359,8 @@ impl ExecutionHost {
                 queue_depth: queue_depth_after_pop,
                 execution: crate::kernel::session::ExecutionStatusSnapshot::from_session(session),
             }),
-        );
+        )
+        .await;
 
         match self.evaluate_task_start_verdict(session, task, queue_depth_after_pop) {
             Verdict::Reject(reason) => {

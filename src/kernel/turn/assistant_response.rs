@@ -53,7 +53,8 @@ impl ExecutionHost {
                 task_turn_index: turn_ctx.task_turn_index,
                 has_tool_calls,
             }),
-        );
+        )
+        .await;
 
         if let Some(harness) = self.session_harness_engine(session)
             && let Ok(engine) = harness.lock()

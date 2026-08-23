@@ -74,7 +74,7 @@ pub(crate) struct HarnessEventContext {
     pub(crate) internal_id: Option<i64>,
     pub(crate) turn_id: Option<i64>,
     pub(crate) event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
-    pub(crate) durability_tx: Option<tokio::sync::mpsc::UnboundedSender<PersistedKernelRecord>>,
+    pub(crate) durability_tx: Option<tokio::sync::mpsc::Sender<PersistedKernelRecord>>,
 }
 
 #[derive(Clone)]

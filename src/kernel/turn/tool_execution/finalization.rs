@@ -36,14 +36,16 @@ impl ExecutionHost {
                         id: record.id.clone(),
                         name: record.name.clone(),
                     }),
-                );
+                )
+                .await;
             }
 
             if let Some(decision) = record.governance_denial.take() {
                 self.persist_event(
                     session,
                     &KernelEvent::Audit(AuditEvent::GovernanceDenial { decision }),
-                );
+                )
+                .await;
             }
 
             let (content, is_error) = self.apply_tool_result_hook(
@@ -91,14 +93,16 @@ impl ExecutionHost {
                     output: record.content.clone(),
                     is_error: record.is_error,
                 }),
-            );
+            )
+            .await;
             self.persist_event(
                 session,
                 &KernelEvent::Audit(AuditEvent::ToolExecEnd {
                     id: record.id.clone(),
                     success: !record.is_error,
                 }),
-            );
+            )
+            .await;
 
             if !self.json {
                 println!(
