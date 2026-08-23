@@ -7,7 +7,7 @@ use tracing::debug;
 
 use super::config::TurinConfig;
 use super::harness::RustHarnessFactories;
-use super::harness_runtime::{HarnessAdapterResolver, HarnessDefinition};
+use super::harness_runtime::{HarnessAdapterFactory, HarnessAdapterResolver, HarnessDefinition};
 
 pub(crate) struct HarnessManager {
     agent_bindings: HashMap<String, String>,
@@ -18,14 +18,17 @@ pub(crate) struct HarnessManager {
 impl HarnessManager {
     #[cfg(test)]
     pub(crate) fn from_config(config: &TurinConfig) -> Result<Self> {
-        Self::from_config_with_harnesses(config, &RustHarnessFactories::new())
+        let adapter = super::harness_runtime::default_script_adapter_factory().ok();
+        Self::from_config_with_harnesses(config, &RustHarnessFactories::new(), adapter.as_ref())
     }
 
     pub(crate) fn from_config_with_harnesses(
         config: &TurinConfig,
         rust_harness_factories: &RustHarnessFactories,
+        script_harness_adapter: Option<&Arc<dyn HarnessAdapterFactory>>,
     ) -> Result<Self> {
-        let adapters = HarnessAdapterResolver::new(config, rust_harness_factories)?;
+        let adapters =
+            HarnessAdapterResolver::new(config, rust_harness_factories, script_harness_adapter)?;
 
         let default_harness_id = "default".to_string();
         let default_definition = Arc::new(HarnessDefinition::from_config(

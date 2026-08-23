@@ -77,6 +77,8 @@ pub struct ExecutionHost {
     pub(crate) clients: HashMap<String, ProviderClient>,
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub(crate) rust_harness_factories: Option<Arc<crate::kernel::harness::RustHarnessFactories>>,
+    pub(crate) script_harness_adapter:
+        Option<Arc<dyn crate::kernel::harness_runtime::HarnessAdapterFactory>>,
     pub(crate) mcp_clients: Vec<McpClientEntry>,
 }
 

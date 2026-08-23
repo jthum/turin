@@ -2,19 +2,21 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::{HarnessAdapterFactory, default_script_adapter_factory, rust_adapter_factory};
+use super::{HarnessAdapterFactory, rust_adapter_factory};
 use crate::kernel::config::TurinConfig;
 use crate::kernel::harness::RustHarnessFactories;
 
 /// Resolves harness implementations once while constructing the harness catalog.
 pub(crate) struct HarnessAdapterResolver<'a> {
     rust_harness_factories: &'a RustHarnessFactories,
+    script_harness_adapter: Option<&'a Arc<dyn HarnessAdapterFactory>>,
 }
 
 impl<'a> HarnessAdapterResolver<'a> {
     pub(crate) fn new(
         config: &TurinConfig,
         rust_harness_factories: &'a RustHarnessFactories,
+        script_harness_adapter: Option<&'a Arc<dyn HarnessAdapterFactory>>,
     ) -> Result<Self> {
         if let Some(unknown_id) = rust_harness_factories
             .keys()
@@ -28,6 +30,7 @@ impl<'a> HarnessAdapterResolver<'a> {
 
         Ok(Self {
             rust_harness_factories,
+            script_harness_adapter,
         })
     }
 
@@ -36,11 +39,8 @@ impl<'a> HarnessAdapterResolver<'a> {
             return Ok(rust_adapter_factory(Arc::clone(factory)));
         }
 
-        default_script_adapter_factory().map_err(|_| {
-            anyhow::anyhow!(
-                "Harness '{}' has no Rust factory and no script adapter is enabled",
-                harness_id
-            )
+        self.script_harness_adapter.cloned().ok_or_else(|| {
+            anyhow::anyhow!("Harness '{}' has no registered implementation", harness_id)
         })
     }
 }

@@ -243,7 +243,12 @@ fn validate_harness_dir(
     ));
     let agent_manager = Arc::new(AgentManager::new(config.clone(), store_manager.clone()));
     let rust_harness_factories = crate::kernel::harness::RustHarnessFactories::new();
-    let adapters = HarnessAdapterResolver::new(config.as_ref(), &rust_harness_factories)?;
+    let script_adapter = crate::kernel::harness_runtime::default_script_adapter_factory().ok();
+    let adapters = HarnessAdapterResolver::new(
+        config.as_ref(),
+        &rust_harness_factories,
+        script_adapter.as_ref(),
+    )?;
     let runtime = HarnessDefinition::new(
         harness_id.to_string(),
         harness_dir.to_path_buf(),

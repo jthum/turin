@@ -27,15 +27,15 @@ struct HarnessLoadedState {
 /// Shared harness configuration, adapter factory, and loaded metadata.
 ///
 /// Live sessions use fresh `HarnessInstance` values created from this definition.
-pub(crate) struct HarnessDefinition {
+pub struct HarnessDefinition {
     harness_id: String,
     directory: PathBuf,
     #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-    pub(super) fs_root: PathBuf,
+    pub fs_root: PathBuf,
     #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-    pub(super) workspace_root: PathBuf,
+    pub workspace_root: PathBuf,
     #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-    pub(super) spawn_depth: u32,
+    pub spawn_depth: u32,
     loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,
     adapter: Arc<dyn HarnessAdapterFactory>,
@@ -87,7 +87,7 @@ impl HarnessDefinition {
         self.generation.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn directory(&self) -> &Path {
+    pub fn directory(&self) -> &Path {
         &self.directory
     }
 

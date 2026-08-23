@@ -3,16 +3,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Default)]
-pub(crate) struct HarnessSourceOverlay {
+pub struct HarnessSourceOverlay {
     changes: BTreeMap<PathBuf, Option<String>>,
 }
 
 impl HarnessSourceOverlay {
-    pub(crate) fn insert(&mut self, path: PathBuf, source: Option<String>) {
+    pub fn insert(&mut self, path: PathBuf, source: Option<String>) {
         self.changes.insert(path, source);
     }
 
-    pub(crate) fn root_lua_paths(&self) -> impl Iterator<Item = (&Path, bool)> {
+    pub fn root_lua_paths(&self) -> impl Iterator<Item = (&Path, bool)> {
         self.changes.iter().filter_map(|(path, source)| {
             let is_root_lua = path
                 .parent()
@@ -22,14 +22,14 @@ impl HarnessSourceOverlay {
         })
     }
 
-    pub(crate) fn path_exists(&self, root: &Path, path: &Path) -> bool {
+    pub fn path_exists(&self, root: &Path, path: &Path) -> bool {
         match self.lookup(root, path) {
             Some(source) => source.is_some(),
             None => path.is_file(),
         }
     }
 
-    pub(crate) fn read_to_string(&self, root: &Path, path: &Path) -> io::Result<String> {
+    pub fn read_to_string(&self, root: &Path, path: &Path) -> io::Result<String> {
         match self.lookup(root, path) {
             Some(Some(source)) => Ok(source.clone()),
             Some(None) => Err(io::Error::new(

@@ -26,18 +26,18 @@ use crate::persistence::manager::StoreManager;
 
 #[derive(Clone)]
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) struct HarnessRuntimeInitContext {
-    pub(crate) config: Arc<TurinConfig>,
-    pub(crate) clients: HashMap<String, ProviderClient>,
-    pub(crate) store_manager: Arc<StoreManager>,
-    pub(crate) agent_manager: Arc<AgentManager>,
-    pub(crate) policy_manager: Arc<RuntimePolicyManager>,
-    pub(crate) governance_manager: Arc<GovernanceManager>,
-    pub(crate) scheduler: Option<Arc<HarnessSchedulerAccess>>,
-    pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+pub struct HarnessRuntimeInitContext {
+    pub config: Arc<TurinConfig>,
+    pub clients: HashMap<String, ProviderClient>,
+    pub store_manager: Arc<StoreManager>,
+    pub agent_manager: Arc<AgentManager>,
+    pub policy_manager: Arc<RuntimePolicyManager>,
+    pub governance_manager: Arc<GovernanceManager>,
+    pub scheduler: Option<Arc<HarnessSchedulerAccess>>,
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
-pub(crate) trait HarnessAdapterFactory: Send + Sync {
+pub trait HarnessAdapterFactory: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn watches_sources(&self) -> bool {
@@ -69,7 +69,7 @@ pub(crate) trait HarnessAdapterFactory: Send + Sync {
     }
 }
 
-pub(crate) trait HarnessInstance: Send {
+pub trait HarnessInstance: Send {
     fn loaded_scripts(&self) -> Vec<String> {
         Vec::new()
     }

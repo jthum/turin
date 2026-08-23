@@ -226,6 +226,7 @@ impl Kernel {
             crate::kernel::harness_manager::HarnessManager::from_config_with_harnesses(
                 config.as_ref(),
                 rust_harness_factories,
+                self.host.script_harness_adapter.as_ref(),
             )?,
         );
         let mut init_context = self.harness_init_context();

@@ -106,6 +106,8 @@ Structured inference:
   `HarnessEngine`; session state stores `Box<dyn HarnessInstance>`, not a concrete Lua
   engine. This boundary is the migration seam for Rust harnesses and optional
   scripting adapters.
+- Script harness implementations are injected through `HarnessAdapterFactory`; kernel
+  construction must not infer or construct a language VM behind that contract.
 - Kernel hook call sites must construct `HarnessHook` variants from domain values.
   Do not reintroduce hook-name strings plus generic JSON payloads at the contract
   boundary. JSON remains appropriate inside dynamic fields such as tool arguments.

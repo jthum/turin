@@ -65,42 +65,42 @@ impl ToolExposure {
     }
 }
 
-pub(crate) type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
+pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 
 #[derive(Clone)]
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) struct HarnessEventContext {
-    pub(crate) json: bool,
-    pub(crate) internal_id: Option<i64>,
-    pub(crate) turn_id: Option<i64>,
-    pub(crate) event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
-    pub(crate) durability_tx: Option<tokio::sync::mpsc::Sender<PersistedKernelRecord>>,
+pub struct HarnessEventContext {
+    pub json: bool,
+    pub internal_id: Option<i64>,
+    pub turn_id: Option<i64>,
+    pub event_tx: tokio::sync::broadcast::Sender<(Option<i64>, KernelEvent)>,
+    pub durability_tx: Option<tokio::sync::mpsc::Sender<PersistedKernelRecord>>,
 }
 
 #[derive(Clone)]
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) struct HarnessExecutionMetadata {
-    pub(crate) execution_id: String,
-    pub(crate) context_target: ExecutionContextTarget,
-    pub(crate) visibility: ExecutionVisibility,
-    pub(crate) durability: ExecutionDurability,
-    pub(crate) write_policy: ExecutionWritePolicy,
-    pub(crate) conflict_policy: ExecutionConflictPolicy,
+pub struct HarnessExecutionMetadata {
+    pub execution_id: String,
+    pub context_target: ExecutionContextTarget,
+    pub visibility: ExecutionVisibility,
+    pub durability: ExecutionDurability,
+    pub write_policy: ExecutionWritePolicy,
+    pub conflict_policy: ExecutionConflictPolicy,
 }
 
 #[derive(Clone)]
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) struct HarnessExecutionBinding {
-    pub(crate) agent_id: String,
-    pub(crate) session_id: String,
-    pub(crate) store_selector: StoreSelector,
-    pub(crate) default_store_selector: Option<StoreSelector>,
-    pub(crate) execution: HarnessExecutionMetadata,
-    pub(crate) runtime_slot_id: Option<String>,
-    pub(crate) trace_id: String,
-    pub(crate) completed_task_results: CompletedLocalTaskResultsHandle,
-    pub(crate) event_context: HarnessEventContext,
-    pub(crate) cancel_token: CancellationToken,
+pub struct HarnessExecutionBinding {
+    pub agent_id: String,
+    pub session_id: String,
+    pub store_selector: StoreSelector,
+    pub default_store_selector: Option<StoreSelector>,
+    pub execution: HarnessExecutionMetadata,
+    pub runtime_slot_id: Option<String>,
+    pub trace_id: String,
+    pub completed_task_results: CompletedLocalTaskResultsHandle,
+    pub event_context: HarnessEventContext,
+    pub cancel_token: CancellationToken,
 }
 use crate::inference::provider::{InferenceMessage, ProviderClient};
 use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
@@ -157,9 +157,9 @@ pub struct HarnessActionRequest<'a> {
 }
 
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) struct HarnessTurnServices<'a> {
-    pub(crate) clients: &'a HashMap<String, ProviderClient>,
-    pub(crate) config: &'a Arc<TurinConfig>,
+pub struct HarnessTurnServices<'a> {
+    pub clients: &'a HashMap<String, ProviderClient>,
+    pub config: &'a Arc<TurinConfig>,
 }
 
 /// Typed lifecycle and policy input presented to a session harness.

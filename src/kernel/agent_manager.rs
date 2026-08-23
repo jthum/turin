@@ -219,6 +219,8 @@ pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) governance_manager: Arc<GovernanceManager>,
     pub(crate) harness_manager: Arc<StdRwLock<Arc<HarnessManager>>>,
     pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
+    pub(crate) script_harness_adapter:
+        Option<Arc<dyn crate::kernel::harness_runtime::HarnessAdapterFactory>>,
 }
 
 #[derive(Clone, Default)]

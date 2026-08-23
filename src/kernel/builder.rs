@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::inference::embeddings::EmbeddingProvider;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness::RustHarnessFactories;
+use crate::kernel::harness_runtime::HarnessAdapterFactory;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::{
     Kernel, TurinConfig,
@@ -24,6 +25,7 @@ pub struct RuntimeBuilder {
 
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     rust_harness_factories: RustHarnessFactories,
+    script_harness_adapter: Option<Arc<dyn HarnessAdapterFactory>>,
 }
 
 impl RuntimeBuilder {
@@ -36,6 +38,9 @@ impl RuntimeBuilder {
 
             embedding_provider: None,
             rust_harness_factories: HashMap::new(),
+            script_harness_adapter: crate::kernel::harness_runtime::default_script_adapter_factory(
+            )
+            .ok(),
         }
     }
 
@@ -69,6 +74,12 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Use a script/runtime adapter for harness IDs without a Rust factory.
+    pub fn with_harness_adapter(mut self, adapter: Arc<dyn HarnessAdapterFactory>) -> Self {
+        self.script_harness_adapter = Some(adapter);
+        self
+    }
+
     /// Build the Kernel.
     pub fn build(self) -> Result<Kernel> {
         let available_tools = self.tool_registry.names();
@@ -97,6 +108,7 @@ impl RuntimeBuilder {
         let harness_manager = Arc::new(HarnessManager::from_config_with_harnesses(
             config_arc.as_ref(),
             rust_harness_factories.as_ref(),
+            self.script_harness_adapter.as_ref(),
         )?);
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
@@ -107,6 +119,7 @@ impl RuntimeBuilder {
             governance_manager: Arc::clone(&governance_manager),
             harness_manager: shared_harness_manager,
             persistence_locks: Arc::clone(&persistence_locks),
+            script_harness_adapter: self.script_harness_adapter.clone(),
         });
         Ok(Kernel {
             host: ExecutionHost {
@@ -123,6 +136,7 @@ impl RuntimeBuilder {
                 clients: HashMap::new(),
                 embedding_provider: self.embedding_provider,
                 rust_harness_factories: Some(rust_harness_factories),
+                script_harness_adapter: self.script_harness_adapter,
                 mcp_clients: Vec::new(),
             },
             check_watcher: Arc::new(std::sync::Mutex::new(None)),
