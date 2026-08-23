@@ -43,7 +43,7 @@
 Focused checks:
 
 ```sh
-cargo check -p turin --bin turin
+cargo check -p turin-cli --bin turin
 ```
 
 Basic checks:

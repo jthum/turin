@@ -1,3 +1,4 @@
+#[path = "dispatch/daemon.rs"]
 mod daemon;
 
 use anyhow::{Context, Result};
@@ -7,7 +8,6 @@ use crate::commands;
 use crate::commands::harness::{HarnessNewArgs, HarnessTestArgs};
 use crate::commands::init::{InitArgs, QuickstartArgs};
 use daemon::handle_daemon_command;
-use turin::kernel::Kernel;
 
 pub(crate) async fn run(cli: Cli) -> Result<()> {
     let Cli {
@@ -58,7 +58,9 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
             let config =
                 commands::common::load_config_with_overrides(&config, model, provider, None)?;
 
-            let mut kernel = Kernel::builder(config).json_mode(false).build()?;
+            let mut kernel = crate::composition::kernel_builder(config)
+                .json_mode(false)
+                .build()?;
             kernel.init_state().await?;
             kernel.init_clients()?;
             kernel.init_harness().await?;

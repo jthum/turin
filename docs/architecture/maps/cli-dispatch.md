@@ -12,6 +12,14 @@ This subsystem should preserve three guarantees:
 
 ## Files
 
+- `crates/turin-cli/Cargo.toml`
+  - Owns the `turin` and `turin-remote` executable targets. Core is consumed with
+    default features disabled; Lua is an explicit product dependency.
+- `crates/turin-cli/src/composition.rs`
+  - Product composition root that injects `turin-harness-lua` into direct kernel
+    construction and daemon startup.
+- `crates/turin-cli/src/main.rs`
+  - Executable entry point and CLI module assembly.
 - `src/cli.rs`
   - Top-level `Cli`, root commands, harness commands, and root command argument groups.
 - `src/cli/daemon.rs`
@@ -25,7 +33,7 @@ This subsystem should preserve three guarantees:
 
 ## Data Flow
 
-1. `main.rs` parses `Cli` with `clap`.
+1. `crates/turin-cli/src/main.rs` parses `Cli` with `clap`.
 2. `dispatch::run` routes root commands.
 3. `dispatch/daemon.rs` routes daemon subcommands and converts CLI-only convenience values into daemon command payloads.
 4. `src/commands/*` performs the operation and rendering.
@@ -35,6 +43,8 @@ This subsystem should preserve three guarantees:
 - Keep root dispatch and daemon dispatch separate.
 - Do not put daemon protocol or state logic in dispatch.
 - CLI-only JSON payload construction should be small and visible near the subcommand it supports.
+- Kernel and daemon construction must go through `composition.rs`; command modules
+  must not select or instantiate a scripting engine themselves.
 
 ## Common Changes
 
@@ -55,13 +65,13 @@ Add a daemon subcommand:
 Focused tests:
 
 ```sh
-cargo test -p turin --bin turin parse_cli_settings
+cargo test -p turin-cli --bin turin parse_cli_settings
 ```
 
 Basic checks:
 
 ```sh
-cargo check -p turin
+cargo check -p turin-cli --all-targets
 cargo fmt --all -- --check
 git diff --check
 ```

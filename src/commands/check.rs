@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
 use turin::display;
-use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 use turin::persistence::manager::StoreSelector;
 
@@ -80,7 +79,7 @@ pub async fn run_check(config_path: &Path) -> Result<()> {
     }
 
     println!("  Validating harness scripts...");
-    let mut kernel = match Kernel::builder(config.clone()).build() {
+    let mut kernel = match crate::composition::kernel_builder(config.clone()).build() {
         Ok(k) => k,
         Err(e) => {
             println!("{} Failed to build Kernel: {}", display::err_mark(ansi), e);

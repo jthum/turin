@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use turin::display;
-use turin::kernel::Kernel;
 use turin::kernel::config::TurinConfig;
 use turin::kernel::session::SessionState;
 
@@ -83,7 +82,9 @@ pub(crate) async fn run_prompt_once(
         "Config loaded"
     );
 
-    let mut kernel = Kernel::builder(config).json_mode(json).build()?;
+    let mut kernel = crate::composition::kernel_builder(config)
+        .json_mode(json)
+        .build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

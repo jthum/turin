@@ -9,7 +9,7 @@ pub async fn run_start(
     log_file_override: Option<&Path>,
 ) -> Result<()> {
     if !background {
-        return turin::daemon::server::serve(config_path).await;
+        return crate::composition::serve_daemon(config_path).await;
     }
 
     let report = ensure_background_daemon(
