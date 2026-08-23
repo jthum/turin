@@ -37,6 +37,11 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.
     Source overlay validation and direct script execution are adapter-factory capabilities;
     they must not leak into the normal session-local `HarnessInstance` contract.
+- `src/harness/engine.rs`
+  - Lua VM construction, source loading, execution binding, and adapter-facing capabilities.
+- `src/harness/engine/hook_dispatch.rs`
+  - Lua hook iteration, active module/delegation context, userdata hook context,
+    verdict parsing, and hook-emitted UI-intent forwarding.
 - `src/kernel/harness_runtime/rust_adapter.rs`
   - Adapts a session-local Rust `Harness` to the internal contract. Unsupported optional
     capabilities use contract defaults instead of fake Rust implementations.
@@ -186,6 +191,8 @@ request-option layering in `kernel/harness_contract/request_options.rs`, and str
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
 contract sits between session execution and private Rust and Lua adapters.
+`engine.rs` owns VM lifecycle and adapter-facing capabilities, while
+`engine/hook_dispatch.rs` owns Lua-specific callback dispatch and temporary callback context.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
 Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
 ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation

@@ -21,6 +21,9 @@ This file is security-sensitive because it defines how harness code loads other 
   - File path safety and `fs.stat` session hash tracking.
 - `src/harness/engine.rs`
   - Module loading, loaded-module registry, load phase, and watch roots.
+- `src/harness/engine/hook_dispatch.rs`
+  - Hook dispatch using the loaded-module registry, including temporary module/root and
+    delegated-capability context restoration.
 - `src/harness/source.rs`
   - In-memory source overlay used to validate a complete unsaved harness candidate.
 - `src/harness/stdlib/governance_support.rs`
