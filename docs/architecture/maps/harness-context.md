@@ -69,9 +69,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Owns the construction-time Rust harness registry. `with_default_harness` registers
     `default`; `with_harness` registers a configured harness ID.
 - `crates/turin-harness-lua/Cargo.toml`
-  - Owns `mlua` and Lua-only dependencies. Its Turin dependency disables default
-    features, making accidental Lua coupling in the engine-neutral contract a
-    compile-time failure.
+  - Owns `mlua` and Lua-only dependencies. The inverse dependency direction makes
+    accidental Lua coupling in the engine-neutral core a compile-time failure.
 - `crates/turin-cli/src/composition.rs`
   - Installs the Lua adapter for the standard Turin product. Core construction has no
     implicit scripting adapter.
@@ -146,9 +145,9 @@ Structured inference:
   to the kernel. They are not general application-authoring APIs.
 - Engine-neutral call sites ask whether an instance `prepares_turn`; string hook names
   remain an implementation detail of scripting adapters.
-- A build without the `lua` feature must fail clearly if no Rust factory is installed;
-  it must not silently run with an empty harness. Scheduler, native tools, persistence,
-  inference, governance, memory, and session graph support remain available.
+- Core construction without an injected adapter must fail clearly if no Rust factory is
+  installed; it must not silently run with an empty harness. Scheduler, native tools,
+  persistence, inference, governance, memory, and session graph support remain available.
 - Rust harness callbacks are policy boundaries, not process-wide service locators.
   Agent-triggered async operations belong in governed native tools and kernel effects;
   do not pass internal manager collections through a generic native services object.
@@ -182,22 +181,22 @@ Focused tests:
 
 ```sh
 cargo test -p turin request_options_override --lib
-cargo test -p turin --test harness_tests test_harness_request_options_passthrough
-cargo test -p turin --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
-cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
-cargo test -p turin --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
-cargo test -p turin --test rust_harness_api --no-default-features
-cargo test -p turin --test rust_embedding --no-default-features
-cargo check -p turin --example rust_harness --no-default-features
+cargo test -p turin-harness-lua --test harness_tests test_harness_request_options_passthrough
+cargo test -p turin-harness-lua --test harness_tests test_harness_conditionally_exposes_one_shot_session_title_tool
+cargo test -p turin-harness-lua --test session_tests test_on_turn_prepare_structured_output_uses_native_response_format
+cargo test -p turin-harness-lua --test session_tests test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validate
+cargo test -p turin --test rust_harness_api
+cargo test -p turin --test rust_embedding
+cargo check -p turin --example rust_harness
 ```
 
 The Rust harness integration test must include a full kernel inference run so the
-no-Lua build proves turn-preparation mutations reach the provider request.
+Lua-free core build proves turn-preparation mutations reach the provider request.
 
 Basic checks:
 
 ```sh
-cargo clippy -p turin --lib --no-default-features -- -D warnings
+cargo clippy -p turin --lib -- -D warnings
 cargo test -p turin-harness-lua
 cargo fmt --all -- --check
 git diff --check
@@ -214,6 +213,8 @@ contract sits between session execution and compiled Rust or externally supplied
 scripting adapters.
 `engine.rs` owns VM lifecycle and adapter-facing capabilities, while
 `engine/hook_dispatch.rs` owns Lua-specific callback dispatch and temporary callback context.
+Lua-composed integration suites live under `crates/turin-harness-lua/tests`; core unit tests use
+an engine-neutral fixture adapter and the core package has no Lua development dependency.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
 Lua adapter materializes the legacy Lua payload shape. Turn preparation uses the
 ownership-based `HarnessTurnRequest`; `ContextWrapper` is now a private Lua adaptation
@@ -225,6 +226,6 @@ The core `turin` crate has no `mlua` dependency or Lua feature. The
 `turin-harness-lua` crate owns all VM, context, DX, globals, and binding code and
 depends on the engine-neutral core. `turin-cli` composes the standard product by
 injecting that adapter explicitly. Rust embedders may omit it and use
-`with_default_harness` or `with_harness` exclusively. Core unit tests include the
-moved implementation under `cfg(test)` only so adapter-sensitive kernel behavior can
-be tested without restoring a shipped dependency.
+`with_default_harness` or `with_harness` exclusively. Core unit tests use a small
+engine-neutral fixture adapter; Lua-specific unit and integration coverage belongs to
+`turin-harness-lua`.

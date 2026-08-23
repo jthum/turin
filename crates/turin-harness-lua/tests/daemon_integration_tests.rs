@@ -7,11 +7,11 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep, timeout};
-use turin::daemon::protocol::{
+use turin_core::daemon::protocol::{
     DaemonRequest, EventEnvelope, RequestEnvelope, ResponseEnvelope, SessionGetParams,
 };
-use turin::kernel::session_refs::parse_session_reference;
-use turin::persistence::state::StateStore;
+use turin_core::kernel::session_refs::parse_session_reference;
+use turin_core::persistence::state::StateStore;
 use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
 use turin_local_ipc::{
     LocalIpcReadHalf, LocalIpcWriteHalf, connect as connect_local_ipc, current_transport_name,
@@ -163,7 +163,7 @@ bind = "127.0.0.1:0"
 
     async fn subscribe(
         &self,
-        params: turin::daemon::protocol::RuntimeEventsSubscribeParams,
+        params: turin_core::daemon::protocol::RuntimeEventsSubscribeParams,
     ) -> Result<(ResponseEnvelope, EventEnvelope, EventSubscription)> {
         let stream = connect_local_ipc(&self.endpoint).await?;
         let (reader, mut writer) = split_local_ipc(stream);
@@ -258,7 +258,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let created = result_value(
         daemon
             .request(DaemonRequest::AgentCreate(
-                turin::daemon::protocol::CreateAgentParams {
+                turin_core::daemon::protocol::CreateAgentParams {
                     id: "docs-reviewer".to_string(),
                     provider: "mock".to_string(),
                     model: "mock-model".to_string(),
@@ -278,7 +278,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let fetched = result_value(
         daemon
             .request(DaemonRequest::AgentGet(
-                turin::daemon::protocol::EntityIdParams {
+                turin_core::daemon::protocol::EntityIdParams {
                     id: "docs-reviewer".to_string(),
                 },
             ))
@@ -289,7 +289,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let updated = result_value(
         daemon
             .request(DaemonRequest::AgentUpdate(
-                turin::daemon::protocol::UpdateAgentParams {
+                turin_core::daemon::protocol::UpdateAgentParams {
                     id: "docs-reviewer".to_string(),
                     provider: None,
                     model: Some("mock-model-v2".to_string()),
@@ -306,7 +306,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let disabled = result_value(
         daemon
             .request(DaemonRequest::AgentDisable(
-                turin::daemon::protocol::EntityIdParams {
+                turin_core::daemon::protocol::EntityIdParams {
                     id: "docs-reviewer".to_string(),
                 },
             ))
@@ -317,7 +317,7 @@ async fn daemon_agent_crud_round_trip_over_endpoint() -> Result<()> {
     let deleted = result_value(
         daemon
             .request(DaemonRequest::AgentDelete(
-                turin::daemon::protocol::EntityIdParams {
+                turin_core::daemon::protocol::EntityIdParams {
                     id: "docs-reviewer".to_string(),
                 },
             ))
@@ -338,7 +338,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let live = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("chat-thread-1".to_string()),
                     origin_id: None,
@@ -355,7 +355,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let live_sessions = result_value(
         daemon
             .request(DaemonRequest::SessionListLive(
-                turin::daemon::protocol::NoParams::default(),
+                turin_core::daemon::protocol::NoParams::default(),
             ))
             .await?,
     );
@@ -370,7 +370,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let daemon_status = result_value(
         daemon
             .request(DaemonRequest::DaemonStatus(
-                turin::daemon::protocol::NoParams::default(),
+                turin_core::daemon::protocol::NoParams::default(),
             ))
             .await?,
     );
@@ -387,7 +387,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(live_session_id.clone()),
                     slot_id: None,
@@ -408,7 +408,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let completed = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -422,7 +422,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
     let sessions = result_value(
         daemon
             .request(DaemonRequest::SessionList(
-                turin::daemon::protocol::SessionListParams {
+                turin_core::daemon::protocol::SessionListParams {
                     limit: 10,
                     offset: 0,
                     store: None,
@@ -469,7 +469,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("restart-thread".to_string()),
                     origin_id: None,
@@ -485,7 +485,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: None,
@@ -505,7 +505,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -519,7 +519,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let resumed = result_value(
         daemon
             .request(DaemonRequest::SessionResume(
-                turin::daemon::protocol::ResumeSessionParams {
+                turin_core::daemon::protocol::ResumeSessionParams {
                     session_id: session_id.clone(),
                     slot_id: Some("restart-thread".to_string()),
                 },
@@ -532,7 +532,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let resubmitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: None,
@@ -552,7 +552,7 @@ async fn daemon_session_resume_round_trip_over_restart() -> Result<()> {
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -573,7 +573,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("crash-thread".to_string()),
                     origin_id: None,
@@ -588,7 +588,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: None,
@@ -608,7 +608,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id: request_id.clone(),
                     timeout_ms: Some(5_000),
                 },
@@ -620,7 +620,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
     let daemon = daemon.restart_unclean().await?;
     let old_request = daemon
         .request(DaemonRequest::TaskGet(
-            turin::daemon::protocol::TaskIdParams { request_id },
+            turin_core::daemon::protocol::TaskIdParams { request_id },
         ))
         .await?;
     assert!(
@@ -631,7 +631,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
     let resumed = result_value(
         daemon
             .request(DaemonRequest::SessionResume(
-                turin::daemon::protocol::ResumeSessionParams {
+                turin_core::daemon::protocol::ResumeSessionParams {
                     session_id: session_id.clone(),
                     slot_id: Some("crash-thread".to_string()),
                 },
@@ -670,7 +670,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
                     origin_id: None,
@@ -686,7 +686,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: Some("main".to_string()),
@@ -706,7 +706,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -735,13 +735,13 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
     let sidestep = result_value(
         daemon
             .request(DaemonRequest::TaskSidestep(
-                turin::daemon::protocol::SidestepTaskParams {
+                turin_core::daemon::protocol::SidestepTaskParams {
                     session_id: session_id.clone(),
                     slot_id: None,
                     prompt: "Explore a side question".to_string(),
                     content: None,
                     tools: Default::default(),
-                    mode: turin::daemon::protocol::SidestepModeParams::Ephemeral,
+                    mode: turin_core::daemon::protocol::SidestepModeParams::Ephemeral,
                     context_target: None,
                     timeout_ms: Some(5_000),
                 },
@@ -768,7 +768,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
     let live_sessions = result_value(
         daemon
             .request(DaemonRequest::SessionListLive(
-                turin::daemon::protocol::NoParams::default(),
+                turin_core::daemon::protocol::NoParams::default(),
             ))
             .await?,
     );
@@ -808,7 +808,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
                     origin_id: None,
@@ -824,7 +824,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: Some("main".to_string()),
@@ -844,7 +844,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -856,13 +856,13 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let sidestep = result_value(
         daemon
             .request(DaemonRequest::TaskSidestep(
-                turin::daemon::protocol::SidestepTaskParams {
+                turin_core::daemon::protocol::SidestepTaskParams {
                     session_id: session_id.clone(),
                     slot_id: None,
                     prompt: "Explore a side question".to_string(),
                     content: None,
                     tools: Default::default(),
-                    mode: turin::daemon::protocol::SidestepModeParams::Ephemeral,
+                    mode: turin_core::daemon::protocol::SidestepModeParams::Ephemeral,
                     context_target: None,
                     timeout_ms: Some(5_000),
                 },
@@ -882,7 +882,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let promoted = result_value(
         daemon
             .request(DaemonRequest::TaskPromote(
-                turin::daemon::protocol::PromoteTaskParams {
+                turin_core::daemon::protocol::PromoteTaskParams {
                     request_id: sidestep_request_id.clone(),
                     branch_name: Some("kept-side-question".to_string()),
                     source_turn_id: None,
@@ -895,7 +895,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let promoted_again = result_value(
         daemon
             .request(DaemonRequest::TaskPromote(
-                turin::daemon::protocol::PromoteTaskParams {
+                turin_core::daemon::protocol::PromoteTaskParams {
                     request_id: sidestep_request_id.clone(),
                     branch_name: Some("should-not-create-new-branch".to_string()),
                     source_turn_id: None,
@@ -909,7 +909,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let task_after_promote = result_value(
         daemon
             .request(DaemonRequest::TaskGet(
-                turin::daemon::protocol::TaskIdParams {
+                turin_core::daemon::protocol::TaskIdParams {
                     request_id: sidestep_request_id.clone(),
                 },
             ))
@@ -923,7 +923,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let task_list = result_value(
         daemon
             .request(DaemonRequest::TaskList(
-                turin::daemon::protocol::NoParams {},
+                turin_core::daemon::protocol::NoParams {},
             ))
             .await?,
     );
@@ -939,7 +939,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
     let branches = result_value(
         daemon
             .request(DaemonRequest::SessionBranchList(
-                turin::daemon::protocol::SessionIdParams {
+                turin_core::daemon::protocol::SessionIdParams {
                     session_id: session_id.clone(),
                 },
             ))
@@ -999,7 +999,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("main".to_string()),
                     origin_id: None,
@@ -1015,7 +1015,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: Some("main".to_string()),
@@ -1035,7 +1035,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let waited = result_value(
         daemon
             .request(DaemonRequest::TaskWait(
-                turin::daemon::protocol::WaitTaskParams {
+                turin_core::daemon::protocol::WaitTaskParams {
                     request_id,
                     timeout_ms: Some(5_000),
                 },
@@ -1064,7 +1064,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let before_branches = result_value(
         daemon
             .request(DaemonRequest::SessionBranchList(
-                turin::daemon::protocol::SessionIdParams {
+                turin_core::daemon::protocol::SessionIdParams {
                     session_id: session_id.clone(),
                 },
             ))
@@ -1078,13 +1078,13 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let sidestep = result_value(
         daemon
             .request(DaemonRequest::TaskSidestep(
-                turin::daemon::protocol::SidestepTaskParams {
+                turin_core::daemon::protocol::SidestepTaskParams {
                     session_id: session_id.clone(),
                     slot_id: None,
                     prompt: "Explore on sibling branch".to_string(),
                     content: None,
                     tools: Default::default(),
-                    mode: turin::daemon::protocol::SidestepModeParams::ForkSibling,
+                    mode: turin_core::daemon::protocol::SidestepModeParams::ForkSibling,
                     context_target: None,
                     timeout_ms: Some(5_000),
                 },
@@ -1131,7 +1131,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
     let after_branches = result_value(
         daemon
             .request(DaemonRequest::SessionBranchList(
-                turin::daemon::protocol::SessionIdParams { session_id },
+                turin_core::daemon::protocol::SessionIdParams { session_id },
             ))
             .await?,
     );
@@ -1197,7 +1197,7 @@ async fn daemon_event_subscription_receives_snapshot_and_mutation() -> Result<()
 
     let _ = daemon
         .request(DaemonRequest::AgentCreate(
-            turin::daemon::protocol::CreateAgentParams {
+            turin_core::daemon::protocol::CreateAgentParams {
                 id: "writer".to_string(),
                 provider: "mock".to_string(),
                 model: "mock-model".to_string(),
@@ -1249,7 +1249,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
     let created = result_value(
         daemon
             .request(DaemonRequest::AgentCreate(
-                turin::daemon::protocol::CreateAgentParams {
+                turin_core::daemon::protocol::CreateAgentParams {
                     id: "before-restart".to_string(),
                     provider: "mock".to_string(),
                     model: "mock-model".to_string(),
@@ -1297,7 +1297,7 @@ async fn daemon_managed_subscription_reconnects_after_restart() -> Result<()> {
     let created = result_value(
         daemon
             .request(DaemonRequest::AgentCreate(
-                turin::daemon::protocol::CreateAgentParams {
+                turin_core::daemon::protocol::CreateAgentParams {
                     id: "after-restart".to_string(),
                     provider: "mock".to_string(),
                     model: "mock-model".to_string(),
@@ -1331,7 +1331,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
     let daemon = DaemonHarness::start().await?;
 
     let (_ack, _snapshot, mut agent_subscription) = daemon
-        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+        .subscribe(turin_core::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: Some("writer".to_string()),
             session_id: None,
             slot_id: None,
@@ -1340,7 +1340,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 
     let _ = daemon
         .request(DaemonRequest::AgentCreate(
-            turin::daemon::protocol::CreateAgentParams {
+            turin_core::daemon::protocol::CreateAgentParams {
                 id: "other".to_string(),
                 provider: "mock".to_string(),
                 model: "mock-model".to_string(),
@@ -1357,7 +1357,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 
     let _ = daemon
         .request(DaemonRequest::AgentCreate(
-            turin::daemon::protocol::CreateAgentParams {
+            turin_core::daemon::protocol::CreateAgentParams {
                 id: "writer".to_string(),
                 provider: "mock".to_string(),
                 model: "mock-model".to_string(),
@@ -1375,7 +1375,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("filter-session".to_string()),
                     origin_id: None,
@@ -1389,7 +1389,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
         .to_string();
 
     let (_ack, _snapshot, mut session_subscription) = daemon
-        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+        .subscribe(turin_core::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: None,
             session_id: Some(session_id.clone()),
             slot_id: None,
@@ -1398,7 +1398,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 
     let _ = daemon
         .request(DaemonRequest::SessionOpen(
-            turin::daemon::protocol::OpenSessionParams {
+            turin_core::daemon::protocol::OpenSessionParams {
                 agent_id: "default".to_string(),
                 slot_id: Some("other-session".to_string()),
                 origin_id: None,
@@ -1409,7 +1409,7 @@ async fn daemon_event_subscription_filters_by_agent_and_session() -> Result<()> 
 
     let _ = daemon
         .request(DaemonRequest::SessionResume(
-            turin::daemon::protocol::ResumeSessionParams {
+            turin_core::daemon::protocol::ResumeSessionParams {
                 session_id: session_id.clone(),
                 slot_id: Some("filter-session".to_string()),
             },
@@ -1428,7 +1428,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("stream-session".to_string()),
                     origin_id: None,
@@ -1442,7 +1442,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
         .to_string();
 
     let (_ack, _snapshot, mut subscription) = daemon
-        .subscribe(turin::daemon::protocol::RuntimeEventsSubscribeParams {
+        .subscribe(turin_core::daemon::protocol::RuntimeEventsSubscribeParams {
             agent_id: None,
             session_id: Some(session_id.clone()),
             slot_id: None,
@@ -1452,7 +1452,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
     let submitted = result_value(
         daemon
             .request(DaemonRequest::TaskSubmit(
-                turin::daemon::protocol::SubmitTaskParams {
+                turin_core::daemon::protocol::SubmitTaskParams {
                     agent_id: None,
                     session_id: Some(session_id.clone()),
                     slot_id: None,
@@ -1481,7 +1481,7 @@ async fn daemon_session_subscription_receives_kernel_stream_events() -> Result<(
 
     let _ = daemon
         .request(DaemonRequest::TaskWait(
-            turin::daemon::protocol::WaitTaskParams {
+            turin_core::daemon::protocol::WaitTaskParams {
                 request_id,
                 timeout_ms: Some(5_000),
             },
@@ -1521,7 +1521,7 @@ poll_interval_ms = 25
     let opened = result_value(
         daemon
             .request(DaemonRequest::SessionOpen(
-                turin::daemon::protocol::OpenSessionParams {
+                turin_core::daemon::protocol::OpenSessionParams {
                     agent_id: "default".to_string(),
                     slot_id: Some("isolated-slot".to_string()),
                     origin_id: Some("relay:fs-isolated".to_string()),
@@ -1547,7 +1547,7 @@ poll_interval_ms = 25
     let matching = result_value(
         daemon
             .request(DaemonRequest::SessionList(
-                turin::daemon::protocol::SessionListParams {
+                turin_core::daemon::protocol::SessionListParams {
                     limit: 20,
                     offset: 0,
                     store: None,
@@ -1565,7 +1565,7 @@ poll_interval_ms = 25
     let absent = result_value(
         daemon
             .request(DaemonRequest::SessionList(
-                turin::daemon::protocol::SessionListParams {
+                turin_core::daemon::protocol::SessionListParams {
                     limit: 20,
                     offset: 0,
                     store: None,

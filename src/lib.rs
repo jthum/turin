@@ -18,6 +18,3 @@ pub mod tracing_support;
 pub mod work_items;
 
 pub use turin_code_index::code_index_reader;
-
-#[cfg(test)]
-extern crate self as turin_core;

@@ -7,8 +7,7 @@ mod definition;
 mod resolver;
 mod rust_adapter;
 #[cfg(test)]
-#[path = "../../crates/turin-harness-lua/src/runtime.rs"]
-mod test_lua_adapter;
+mod test_adapter;
 
 pub use contract::{HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext};
 #[doc(hidden)]
@@ -21,7 +20,7 @@ fn rust_adapter_factory(factory: Arc<dyn HarnessFactory>) -> Arc<dyn HarnessAdap
 
 #[cfg(test)]
 pub(crate) fn test_script_adapter_factory() -> Arc<dyn HarnessAdapterFactory> {
-    Arc::new(test_lua_adapter::LuaHarnessAdapterFactory)
+    Arc::new(test_adapter::TestHarnessAdapterFactory)
 }
 
 #[cfg(test)]

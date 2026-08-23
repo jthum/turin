@@ -9,22 +9,22 @@ use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
-use turin::inference::provider::{
+use turin_core::inference::provider::{
     InferenceEvent, InferenceMessage, InferenceProvider, InferenceRequest, InferenceResponseFormat,
     InferenceResult, InferenceStream, ProviderClient, RequestOptions, SdkError, Usage,
 };
-use turin::kernel::Kernel;
-use turin::kernel::config::{
+use turin_core::kernel::Kernel;
+use turin_core::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, KernelConfig, PersistenceConfig,
     ProviderConfig, StoreTargetConfig, TurinConfig,
 };
-use turin::kernel::policy::PolicyScope;
-use turin::kernel::session::{
+use turin_core::kernel::policy::PolicyScope;
+use turin_core::kernel::session::{
     ExecutionContextTarget, ExecutionVisibility, ExecutionWritePolicy, QueuedTask, SessionStatus,
     TaskExecutionOverrides,
 };
-use turin::kernel::session_refs::parse_session_reference;
-use turin::persistence::state::{SessionReadTarget, TurnWriteTarget};
+use turin_core::kernel::session_refs::parse_session_reference;
+use turin_core::persistence::state::{SessionReadTarget, TurnWriteTarget};
 use turin_types::TaskInputContent;
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     }
@@ -107,7 +107,10 @@ async fn test_run_script_delegates_to_lua_source_capability() -> Result<()> {
     Ok(())
 }
 
-fn event_has_task_status(events: &[turin::persistence::schema::EventRow], status: &str) -> bool {
+fn event_has_task_status(
+    events: &[turin_core::persistence::schema::EventRow],
+    status: &str,
+) -> bool {
     events.iter().any(|e| {
         e.event_type == "task_complete"
             && serde_json::from_str::<serde_json::Value>(&e.payload)
@@ -117,13 +120,16 @@ fn event_has_task_status(events: &[turin::persistence::schema::EventRow], status
     })
 }
 
-fn count_event_type(events: &[turin::persistence::schema::EventRow], event_type: &str) -> usize {
+fn count_event_type(
+    events: &[turin_core::persistence::schema::EventRow],
+    event_type: &str,
+) -> usize {
     events.iter().filter(|e| e.event_type == event_type).count()
 }
 
 #[derive(Default)]
 struct CaptureMessagesProvider {
-    seen_messages: Arc<Mutex<Vec<turin::inference::provider::InferenceMessage>>>,
+    seen_messages: Arc<Mutex<Vec<turin_core::inference::provider::InferenceMessage>>>,
 }
 
 #[async_trait]
@@ -166,7 +172,7 @@ impl InferenceProvider for CaptureMessagesProvider {
 
 #[derive(Default)]
 struct ContextCheckpointProvider {
-    seen_stream_messages: Arc<Mutex<Vec<turin::inference::provider::InferenceMessage>>>,
+    seen_stream_messages: Arc<Mutex<Vec<turin_core::inference::provider::InferenceMessage>>>,
     seen_stream_system: Arc<Mutex<Option<String>>>,
     complete_calls: Arc<Mutex<usize>>,
 }
@@ -308,7 +314,7 @@ impl InferenceProvider for StructuredOutputProvider {
 
         Box::pin(async move {
             Ok(InferenceResult {
-                content: vec![turin::inference::provider::InferenceContent::Text {
+                content: vec![turin_core::inference::provider::InferenceContent::Text {
                     text: r#"{"approved":true,"summary":"structured ok"}"#.to_string(),
                 }],
                 model: "structured-model".to_string(),
@@ -375,7 +381,7 @@ impl InferenceProvider for PromptStructuredFallbackProvider {
 
         Box::pin(async move {
             Ok(InferenceResult {
-                content: vec![turin::inference::provider::InferenceContent::Text {
+                content: vec![turin_core::inference::provider::InferenceContent::Text {
                     text: r#"{"decision":"fallback","confidence":0.8}"#.to_string(),
                 }],
                 model: "fallback-model".to_string(),
@@ -424,7 +430,7 @@ impl InferenceProvider for ContextCheckpointProvider {
         &'a self,
         request: InferenceRequest,
         _options: Option<RequestOptions>,
-    ) -> BoxFuture<'a, Result<turin::inference::provider::InferenceResult, SdkError>> {
+    ) -> BoxFuture<'a, Result<turin_core::inference::provider::InferenceResult, SdkError>> {
         {
             let mut calls = self
                 .complete_calls
@@ -435,13 +441,13 @@ impl InferenceProvider for ContextCheckpointProvider {
 
         let _ = request;
         Box::pin(async move {
-            Ok(turin::inference::provider::InferenceResult {
-                content: vec![turin::inference::provider::InferenceContent::Text {
+            Ok(turin_core::inference::provider::InferenceResult {
+                content: vec![turin_core::inference::provider::InferenceContent::Text {
                     text: "CHECKPOINT SUMMARY".to_string(),
                 }],
                 model: "checkpoint-model".to_string(),
                 stop_reason: None,
-                usage: turin::inference::provider::Usage {
+                usage: turin_core::inference::provider::Usage {
                     input_tokens: 32,
                     output_tokens: 8,
                     cache_read_input_tokens: None,
@@ -617,7 +623,7 @@ async fn test_cancelling_stalled_inference_does_not_append_assistant_output() ->
     assert_eq!(session.history.len(), 1);
     assert_eq!(
         session.history.messages()[0].role,
-        turin::inference::provider::InferenceRole::User
+        turin_core::inference::provider::InferenceRole::User
     );
     Ok(())
 }
@@ -653,11 +659,9 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
         .await?;
     assert_eq!(session.history.len(), 2);
     assert!(
-        session
-            .history
-            .messages()
-            .iter()
-            .all(|message| { message.role != turin::inference::provider::InferenceRole::Tool })
+        session.history.messages().iter().all(|message| {
+            message.role != turin_core::inference::provider::InferenceRole::Tool
+        })
     );
     Ok(())
 }
@@ -863,11 +867,11 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
     let first_user_message = first_seen
         .iter()
         .rev()
-        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("captured first session user message");
     assert!(matches!(
         &first_user_message.content[0],
-        turin::inference::provider::InferenceContent::Text { text }
+        turin_core::inference::provider::InferenceContent::Text { text }
         if text == "Investigate alpha [session_counter=1]"
     ));
 
@@ -883,11 +887,11 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
     let second_user_message = second_seen
         .iter()
         .rev()
-        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("captured second session user message");
     assert!(matches!(
         &second_user_message.content[0],
-        turin::inference::provider::InferenceContent::Text { text }
+        turin_core::inference::provider::InferenceContent::Text { text }
         if text == "Investigate beta [session_counter=1]"
     ));
 
@@ -940,7 +944,7 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
         message.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text }
+                turin_core::inference::provider::InferenceContent::Text { text }
                 if text == "ALT PATH ONLY"
             )
         })
@@ -992,7 +996,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
         .await?
         .and_then(|branch| branch.head_turn_id)
         .expect("main head turn");
-    let checkpoint = turin::kernel::session::ContextCompactionCheckpoint {
+    let checkpoint = turin_core::kernel::session::ContextCompactionCheckpoint {
         summary: "MAIN PATH SUMMARY".to_string(),
         covered_through_turn_id: main_head,
         covered_through_turn_index: 1,
@@ -1000,8 +1004,8 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
-    let event = turin::kernel::event::KernelEvent::Audit(
-        turin::kernel::event::AuditEvent::ContextCompaction { checkpoint },
+    let event = turin_core::kernel::event::KernelEvent::Audit(
+        turin_core::kernel::event::AuditEvent::ContextCompaction { checkpoint },
     );
     store
         .insert_event(
@@ -1052,7 +1056,7 @@ async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid
         .await?
         .and_then(|branch| branch.head_turn_id)
         .expect("active head turn");
-    let checkpoint = turin::kernel::session::ContextCompactionCheckpoint {
+    let checkpoint = turin_core::kernel::session::ContextCompactionCheckpoint {
         summary: "VALID SUMMARY".to_string(),
         covered_through_turn_id: head_turn_id,
         covered_through_turn_index: 0,
@@ -1060,8 +1064,8 @@ async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
-    let valid_event = turin::kernel::event::KernelEvent::Audit(
-        turin::kernel::event::AuditEvent::ContextCompaction {
+    let valid_event = turin_core::kernel::event::KernelEvent::Audit(
+        turin_core::kernel::event::AuditEvent::ContextCompaction {
             checkpoint: checkpoint.clone(),
         },
     );
@@ -1146,7 +1150,7 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
         message.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text }
+                turin_core::inference::provider::InferenceContent::Text { text }
                 if text == "Turn zero"
             )
         })
@@ -1155,7 +1159,7 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
         message.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text }
+                turin_core::inference::provider::InferenceContent::Text { text }
                 if text == "Turn one"
             )
         })
@@ -1207,7 +1211,7 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
         session.execution.write_policy,
         ExecutionWritePolicy::Detached
     );
-    let turin::kernel::session::ExecutionContextTarget::ExternalReference { reference } =
+    let turin_core::kernel::session::ExecutionContextTarget::ExternalReference { reference } =
         session.context_target()
     else {
         panic!("expected external reference context target");
@@ -1221,7 +1225,7 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
             .any(|message| message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::Text { text }
+                    turin_core::inference::provider::InferenceContent::Text { text }
                     if text == "Remote context"
                 )
             })),
@@ -1348,7 +1352,7 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
             .any(|message| message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::Text { text }
+                    turin_core::inference::provider::InferenceContent::Text { text }
                     if text == "Turn one"
                 )
             })),
@@ -1361,7 +1365,7 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
             .any(|message| message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::Text { text }
+                    turin_core::inference::provider::InferenceContent::Text { text }
                     if text == "Revisit old context"
                 )
             })),
@@ -1458,7 +1462,7 @@ async fn test_resume_preserves_user_only_partial_turn_without_replay() -> Result
         message.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text }
+                turin_core::inference::provider::InferenceContent::Text { text }
                 if text == "Committed before crash"
             )
         })
@@ -1731,29 +1735,31 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
     let mut session = kernel.create_session().await;
     session
         .history
-        .push(turin::inference::provider::InferenceMessage {
-            role: turin::inference::provider::InferenceRole::User,
-            content: vec![turin::inference::provider::InferenceContent::Text {
+        .push(turin_core::inference::provider::InferenceMessage {
+            role: turin_core::inference::provider::InferenceRole::User,
+            content: vec![turin_core::inference::provider::InferenceContent::Text {
                 text: "Old prompt".to_string(),
             }],
             tool_call_id: None,
         });
     session
         .history
-        .push(turin::inference::provider::InferenceMessage {
-            role: turin::inference::provider::InferenceRole::Tool,
-            content: vec![turin::inference::provider::InferenceContent::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                content: "x".repeat(4_000),
-                is_error: false,
-            }],
+        .push(turin_core::inference::provider::InferenceMessage {
+            role: turin_core::inference::provider::InferenceRole::Tool,
+            content: vec![
+                turin_core::inference::provider::InferenceContent::ToolResult {
+                    tool_use_id: "tool_1".to_string(),
+                    content: "x".repeat(4_000),
+                    is_error: false,
+                },
+            ],
             tool_call_id: None,
         });
     session
         .history
-        .push(turin::inference::provider::InferenceMessage {
-            role: turin::inference::provider::InferenceRole::Assistant,
-            content: vec![turin::inference::provider::InferenceContent::Text {
+        .push(turin_core::inference::provider::InferenceMessage {
+            role: turin_core::inference::provider::InferenceRole::Assistant,
+            content: vec![turin_core::inference::provider::InferenceContent::Text {
                 text: "Recent assistant context".to_string(),
             }],
             tool_call_id: None,
@@ -1789,7 +1795,8 @@ async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_contex
     config.agent.provider = "capture".to_string();
     config.agent.model = "capture-model".to_string();
     config.inference.hot_history.max_messages = Some(4);
-    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
+    config.inference.compaction.mode =
+        turin_core::kernel::config::InferenceCompactionMode::TrimOnly;
     config.providers.insert(
         "capture".to_string(),
         ProviderConfig {
@@ -1866,7 +1873,8 @@ async fn test_complete_current_resident_history_bypasses_context_rematerializati
     let mut config = make_config(tmp.path());
     config.agent.provider = "capture".to_string();
     config.agent.model = "capture-model".to_string();
-    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
+    config.inference.compaction.mode =
+        turin_core::kernel::config::InferenceCompactionMode::TrimOnly;
     config.providers.insert(
         "capture".to_string(),
         ProviderConfig {
@@ -1901,7 +1909,7 @@ async fn test_complete_current_resident_history_bypasses_context_rematerializati
         .iter_mut()
         .flat_map(|message| message.content.iter_mut())
         .find_map(|content| match content {
-            turin::inference::provider::InferenceContent::Text { text }
+            turin_core::inference::provider::InferenceContent::Text { text }
                 if text == "Persisted original" =>
             {
                 Some(text)
@@ -2104,16 +2112,16 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
     let user_message = seen
         .iter()
         .rev()
-        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("captured user message");
     assert!(matches!(
         &user_message.content[0],
-        turin::inference::provider::InferenceContent::Text { text }
+        turin_core::inference::provider::InferenceContent::Text { text }
         if text == "Inspect the attached files"
     ));
 
     let captured_image_path = match &user_message.content[1] {
-        turin::inference::provider::InferenceContent::Image { local_path, .. } => {
+        turin_core::inference::provider::InferenceContent::Image { local_path, .. } => {
             local_path.clone().expect("captured image local_path")
         }
         other => panic!("expected image content, got {other:?}"),
@@ -2130,7 +2138,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
     );
 
     let captured_file_path = match &user_message.content[2] {
-        turin::inference::provider::InferenceContent::File { local_path, .. } => {
+        turin_core::inference::provider::InferenceContent::File { local_path, .. } => {
             local_path.clone().expect("captured file local_path")
         }
         other => panic!("expected file content, got {other:?}"),
@@ -2154,12 +2162,12 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
     let resumed_user_message = resumed
         .history
         .iter()
-        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("resumed user message");
 
     assert!(matches!(
         &resumed_user_message.content[1],
-        turin::inference::provider::InferenceContent::Image {
+        turin_core::inference::provider::InferenceContent::Image {
             name: Some(name),
             local_path: Some(path),
             ..
@@ -2167,7 +2175,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
     ));
     assert!(matches!(
         &resumed_user_message.content[2],
-        turin::inference::provider::InferenceContent::File {
+        turin_core::inference::provider::InferenceContent::File {
             name: Some(name),
             local_path: Some(path),
             ..
@@ -2263,7 +2271,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::ToolUse { name, .. }
+                    turin_core::inference::provider::InferenceContent::ToolUse { name, .. }
                     if name == "read_file"
                 )
             })
@@ -2275,7 +2283,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::ToolResult { content, .. }
+                    turin_core::inference::provider::InferenceContent::ToolResult { content, .. }
                     if content.contains("tool transcript body")
                 )
             })
@@ -2294,7 +2302,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::ToolUse { name, .. }
+                    turin_core::inference::provider::InferenceContent::ToolUse { name, .. }
                     if name == "read_file"
                 )
             })
@@ -2306,7 +2314,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
             message.content.iter().any(|content| {
                 matches!(
                     content,
-                    turin::inference::provider::InferenceContent::ToolResult { content, .. }
+                    turin_core::inference::provider::InferenceContent::ToolResult { content, .. }
                     if content.contains("tool transcript body")
                 )
             })
@@ -2393,11 +2401,11 @@ async fn test_multimodal_task_content_respects_relative_layout_root() -> Result<
     let user_message = seen
         .iter()
         .rev()
-        .find(|message| message.role == turin::inference::provider::InferenceRole::User)
+        .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("captured user message");
 
     let captured_image_path = match &user_message.content[0] {
-        turin::inference::provider::InferenceContent::Image { local_path, .. } => {
+        turin_core::inference::provider::InferenceContent::Image { local_path, .. } => {
             local_path.clone().expect("captured image local_path")
         }
         other => panic!("expected image content, got {other:?}"),
@@ -2422,7 +2430,8 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
     config.agent.provider = "checkpoint".to_string();
     config.agent.model = "checkpoint-model".to_string();
     config.agent.system_prompt = "Trim-only history compaction".to_string();
-    config.inference.compaction.mode = turin::kernel::config::InferenceCompactionMode::TrimOnly;
+    config.inference.compaction.mode =
+        turin_core::kernel::config::InferenceCompactionMode::TrimOnly;
     config.providers.insert(
         "checkpoint".to_string(),
         ProviderConfig {
@@ -2456,9 +2465,9 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
     for i in 0..12 {
         session
             .history
-            .push(turin::inference::provider::InferenceMessage {
-                role: turin::inference::provider::InferenceRole::User,
-                content: vec![turin::inference::provider::InferenceContent::Text {
+            .push(turin_core::inference::provider::InferenceMessage {
+                role: turin_core::inference::provider::InferenceRole::User,
+                content: vec![turin_core::inference::provider::InferenceContent::Text {
                     text: format!("Trim-only history {i}: {}", "x".repeat(240)),
                 }],
                 tool_call_id: None,
@@ -2522,7 +2531,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
     config.inference.compaction.trigger_ratio = 0.2;
     config.inference.contexts.insert(
         "summary".to_string(),
-        turin::kernel::config::InferenceContextConfig {
+        turin_core::kernel::config::InferenceContextConfig {
             provider: "summary".to_string(),
             model: "summary-model".to_string(),
             fallback: None,
@@ -2948,7 +2957,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -3107,7 +3116,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -3258,7 +3267,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -3367,7 +3376,7 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
     )?;
 
     config.governance.profile = "governed".to_string();
-    config.governance.audit.mode = turin::kernel::config::GovernanceAuditMode::Immutable;
+    config.governance.audit.mode = turin_core::kernel::config::GovernanceAuditMode::Immutable;
     config.governance.enforcement_enabled = false;
 
     let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
@@ -3539,7 +3548,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };

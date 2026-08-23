@@ -110,7 +110,7 @@ provider = "mock"
     )?;
     fs::write(
         root.join(".turin/runtime/agents/bad/harness/main.lua"),
-        "function on_turn_prepare(",
+        "INVALID TEST SOURCE",
     )?;
 
     let bootstrap = bootstrap_config(root);

@@ -25,9 +25,9 @@ This subsystem should preserve four guarantees:
   - Index writer/chunker/store implementation.
 - `crates/turin-map`
   - CLI/binary that builds or refreshes code indexes.
-- `tests/harness_tests.rs`
+- `crates/turin-harness-lua/tests/harness_tests.rs`
   - Runtime Lua integration coverage for code search.
-- `tests/dx_harness_examples.rs`
+- `crates/turin-harness-lua/tests/dx_harness_examples.rs`
   - DX fixture coverage for code-search fallback behavior.
 
 ## Data Flow

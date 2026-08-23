@@ -4,10 +4,6 @@ version = "0.30.1"
 edition = "2024"
 description = "Lua harness runtime adapter for Turin"
 
-[features]
-default = ["lua"]
-lua = []
-
 [dependencies]
 turin-core = { package = "turin", path = "../..", default-features = false }
 anyhow = "1.0"
@@ -28,3 +24,14 @@ turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.27"
+async-trait = "0.1"
+bytes = "1.0"
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "stream", "rustls"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
+turin-channel-core = { path = "../turin-channel-core" }
+turin-channel-fs = { path = "../turin-channel-fs" }
+turin-channel-runner = { path = "../turin-channel-runner" }
+turin-channel-telegram = { path = "../turin-channel-telegram" }
+turin-code-index-writer = { path = "../turin-code-index-writer" }
+turin-daemon-client = { path = "../turin-daemon-client" }
+turin-local-ipc = { path = "../turin-local-ipc" }

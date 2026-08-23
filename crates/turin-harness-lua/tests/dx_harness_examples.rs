@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
-use turin::kernel::config::{AgentConfig, GovernanceConfig, GovernanceGrantsConfig};
 use turin_code_index_writer::build_index;
+use turin_core::kernel::config::{AgentConfig, GovernanceConfig, GovernanceGrantsConfig};
 
 mod support;
 
@@ -309,14 +309,14 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
     config.governance = GovernanceConfig {
         profile: "balanced".to_string(),
         enforcement_enabled: true,
-        import: turin::kernel::config::GovernanceImportConfig {
-            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+        import: turin_core::kernel::config::GovernanceImportConfig {
+            mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
             default_root: Some("core".to_string()),
             allow_unscoped_in_open: false,
         },
         roots: HashMap::from([(
             "core".to_string(),
-            turin::kernel::config::GovernanceRootConfig {
+            turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
                 default_profile: Some("core_full".to_string()),
@@ -359,14 +359,14 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
     config.governance = GovernanceConfig {
         profile: "balanced".to_string(),
         enforcement_enabled: true,
-        import: turin::kernel::config::GovernanceImportConfig {
-            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+        import: turin_core::kernel::config::GovernanceImportConfig {
+            mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
             default_root: Some("core".to_string()),
             allow_unscoped_in_open: false,
         },
         roots: HashMap::from([(
             "core".to_string(),
-            turin::kernel::config::GovernanceRootConfig {
+            turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
                 default_profile: Some("core_full".to_string()),
@@ -375,7 +375,7 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
         )]),
         agents: HashMap::from([(
             "default".to_string(),
-            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
                 capability_profile: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
@@ -441,14 +441,14 @@ async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
     config.governance = GovernanceConfig {
         profile: "balanced".to_string(),
         enforcement_enabled: true,
-        import: turin::kernel::config::GovernanceImportConfig {
-            mode: turin::kernel::config::GovernanceImportMode::Mixed,
+        import: turin_core::kernel::config::GovernanceImportConfig {
+            mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
             default_root: Some("core".to_string()),
             allow_unscoped_in_open: false,
         },
         roots: HashMap::from([(
             "core".to_string(),
-            turin::kernel::config::GovernanceRootConfig {
+            turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
                 default_profile: Some("core_full".to_string()),
@@ -501,7 +501,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
-            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
                 capability_profile: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
@@ -566,7 +566,7 @@ async fn test_dx_fixture_peer_ask_delegated_caps() -> Result<()> {
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
-            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
                 capability_profile: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],

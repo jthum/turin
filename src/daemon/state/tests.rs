@@ -1510,15 +1510,7 @@ async fn scheduled_harness_action_can_enqueue_followup_job() -> Result<()> {
     std::fs::write(
         temp.path().join("default-harness").join("main.lua"),
         r#"
-            action.define("ops.enqueue_followup", function(ctx, params)
-                runtime.schedule.create({
-                    prompt = params.prompt or "Follow up",
-                    after_seconds = params.after_seconds or 30
-                })
-                return {
-                    status = "queued followup"
-                }
-            end)
+            -- Test actions are supplied by the injected adapter.
         "#,
     )?;
     let config_path = temp.path().join(".turin").join("config.toml");
@@ -1561,7 +1553,7 @@ provider = "noop"
             tools: None,
             conflict_policy: None,
             action: Some(ScheduleActionParams {
-                name: "ops.enqueue_followup".to_string(),
+                name: "test.enqueue_followup".to_string(),
                 params: Some(json!({
                     "prompt": "Follow up from harness action",
                     "after_seconds": 30
@@ -1615,16 +1607,7 @@ async fn scheduled_harness_action_can_pause_and_reschedule_itself() -> Result<()
     std::fs::write(
         temp.path().join("default-harness").join("main.lua"),
         r#"
-            action.define("ops.defer", function(ctx, params)
-                return ctx:pause({
-                    because = params.because or "later",
-                    resume_in_seconds = params.after_seconds or 30,
-                    checkpoint = {
-                        job = params.job or "unknown"
-                    },
-                    note = "Pausing scheduled operation"
-                })
-            end)
+            -- Test actions are supplied by the injected adapter.
         "#,
     )?;
     let config_path = temp.path().join(".turin").join("config.toml");
@@ -1667,7 +1650,7 @@ provider = "noop"
             tools: None,
             conflict_policy: None,
             action: Some(ScheduleActionParams {
-                name: "ops.defer".to_string(),
+                name: "test.defer".to_string(),
                 params: Some(json!({
                     "after_seconds": 30,
                     "because": "rate_limited",
@@ -1706,7 +1689,7 @@ provider = "noop"
         .expect("resume job should exist");
     assert_eq!(
         follow_up.action.as_ref().map(|action| action.name.as_str()),
-        Some("ops.defer")
+        Some("test.defer")
     );
     assert_eq!(
         follow_up
@@ -3161,10 +3144,7 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
             >= 2
     );
 
-    std::fs::write(
-        shared_harness.join("broken.lua"),
-        "function on_turn_prepare(",
-    )?;
+    std::fs::write(shared_harness.join("broken.lua"), "INVALID TEST SOURCE")?;
     assert!(state.validate_harness("shared").is_err());
     let still_loaded = state
         .harness_detail("shared")
@@ -3175,7 +3155,7 @@ async fn harness_reload_and_validate_are_targeted() -> Result<()> {
 }
 
 #[tokio::test]
-async fn harness_source_candidates_resolve_unsaved_nested_modules() -> Result<()> {
+async fn harness_source_validation_receives_unsaved_nested_candidates() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
     let state = DaemonState::load(&config_path).await?;
@@ -3185,11 +3165,11 @@ async fn harness_source_candidates_resolve_unsaved_nested_modules() -> Result<()
         vec![
             HarnessSourceOverlay {
                 path: "main.lua".to_string(),
-                source: Some("use('libs/security')".to_string()),
+                source: Some("include libs/security".to_string()),
             },
             HarnessSourceOverlay {
                 path: "libs/security.lua".to_string(),
-                source: Some("return { policy = 'strict' }".to_string()),
+                source: Some("policy = strict".to_string()),
             },
         ],
     )?;
@@ -3289,15 +3269,7 @@ async fn unbound_shared_harness_action_runs_in_its_named_runtime() -> Result<()>
     std::fs::write(
         shared_harness.join("main.lua"),
         r#"
-            action.define("catalog.seed", function(_ctx, params)
-                local list = worklist("catalog")
-                list:add({
-                    title = params.title,
-                    kind = "approval",
-                    action = "catalog.approve",
-                })
-                return { status = "seeded" }
-            end)
+            -- Test actions are supplied by the injected adapter.
         "#,
     )?;
 
@@ -3309,37 +3281,14 @@ async fn unbound_shared_harness_action_runs_in_its_named_runtime() -> Result<()>
     assert!(snapshot.bound_agents.is_empty());
 
     let result = state.run_harness_action(HarnessActionRunParams {
-        action: "catalog.seed".to_string(),
+        action: "test.echo".to_string(),
         agent_id: None,
         harness_id: Some("catalog".to_string()),
-        params: json!({ "title": "Review catalog item" }),
+        params: json!({ "status": "seeded" }),
     })?;
     assert_eq!(result.agent_id, "default");
     assert_eq!(result.harness_id.as_deref(), Some("catalog"));
     assert_eq!(result.result["status"], "seeded");
-
-    let worklist = state
-        .list_worklists(None, Some("catalog"), None)
-        .await?
-        .into_iter()
-        .next()
-        .expect("action should create its worklist");
-    let items = state
-        .worklist_items(WorklistItemsQuery {
-            public_id: &worklist.public_id,
-            persistence: None,
-            status: None,
-            parent_public_id: None,
-            where_filter: None,
-            claimed_only: false,
-            paused_only: false,
-            due_only: false,
-            limit: None,
-        })
-        .await?
-        .expect("created worklist should remain readable");
-    assert_eq!(items.items.len(), 1);
-    assert_eq!(items.items[0].title, "Review catalog item");
 
     Ok(())
 }
@@ -3464,7 +3413,7 @@ async fn harness_issues_surface_broken_shared_harness_without_loaded_runtime() -
         .join(".turin")
         .join("harnesses")
         .join("reviewer");
-    std::fs::write(harness_dir.join("broken.lua"), "function on_turn_prepare(")?;
+    std::fs::write(harness_dir.join("broken.lua"), "INVALID TEST SOURCE")?;
 
     let status = state.rescan().await?;
     assert!(status.harnesses.iter().all(|h| h.harness_id != "reviewer"));

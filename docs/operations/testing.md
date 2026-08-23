@@ -377,7 +377,7 @@ scripts/prepush_ci.sh ci
 ### Governance changes
 
 1. unit tests (`kernel::governance`)
-2. harness integration tests (`tests/harness_tests.rs`)
+2. Lua harness integration tests (`crates/turin-harness-lua/tests/harness_tests.rs`)
 3. `scripts/prepush_ci.sh clippy`
 4. optional governed-mode live `smoke`/`core` suite (project-specific harness/config)
 

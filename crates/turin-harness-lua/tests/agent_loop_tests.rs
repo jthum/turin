@@ -5,16 +5,16 @@ use futures::stream;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
-use turin::inference::provider::{
+use turin_core::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
     RequestOptions, SdkError,
 };
-use turin::kernel::config::{
+use turin_core::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
 };
-use turin::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
-use turin::kernel::session::{ExecutionConflictPolicy, QueuedTask};
+use turin_core::kernel::event::{AuditEvent, KernelEvent, LifecycleEvent, StreamEvent};
+use turin_core::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 
 /// A mock provider that returns a text response followed by a tool call in the next turn.
 struct SequenceMockProvider {
@@ -138,7 +138,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_seconds: 30,
@@ -155,7 +155,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -345,7 +345,7 @@ async fn test_harness_observation() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -362,7 +362,7 @@ async fn test_harness_observation() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -464,7 +464,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -481,7 +481,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -593,7 +593,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_seconds: 30,
@@ -610,7 +610,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -633,7 +633,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         msg.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text } if text.contains("Recovered")
+                turin_core::inference::provider::InferenceContent::Text { text } if text.contains("Recovered")
             )
         })
     });
@@ -690,7 +690,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_seconds: 30,
@@ -707,7 +707,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -732,7 +732,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
     let first_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 session.selected_branch_head_turn_id(),
                 0,
@@ -741,14 +741,14 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         .await?
         .expect("first turn should be created");
     let first_turn_id = match first_turn {
-        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        turin_core::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
         _ => unreachable!("prepared turn targets should resolve to an existing turn"),
     };
 
     let second_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 Some(first_turn_id),
                 1,
@@ -757,7 +757,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         .await?
         .expect("second turn should be created");
     let second_turn_id = match second_turn {
-        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        turin_core::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
         _ => unreachable!("prepared turn targets should resolve to an existing turn"),
     };
     let existing_message = serde_json::json!([
@@ -841,7 +841,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_seconds: 30,
@@ -858,7 +858,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -884,7 +884,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
     let first_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 session.selected_branch_head_turn_id(),
                 0,
@@ -893,14 +893,14 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         .await?
         .expect("first turn should be created");
     let first_turn_id = match first_turn {
-        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        turin_core::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
         _ => unreachable!("prepared turn targets should resolve to an existing turn"),
     };
 
     let second_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 Some(first_turn_id),
                 1,
@@ -954,7 +954,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
     let messages = store
         .get_messages(
             internal_id,
-            &turin::persistence::state::SessionReadTarget::branch_head(
+            &turin_core::persistence::state::SessionReadTarget::branch_head(
                 session.selected_branch_head_id(),
             ),
         )
@@ -964,7 +964,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         msg.content.iter().any(|content| {
             matches!(
                 content,
-                turin::inference::provider::InferenceContent::Text { text } if text.contains("Finishing.")
+                turin_core::inference::provider::InferenceContent::Text { text } if text.contains("Finishing.")
             )
         })
     }));
@@ -1008,7 +1008,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_seconds: 30,
@@ -1025,7 +1025,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -1051,7 +1051,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
     let first_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 session.selected_branch_head_turn_id(),
                 0,
@@ -1060,14 +1060,14 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         .await?
         .expect("first turn should be created");
     let first_turn_id = match first_turn {
-        turin::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
+        turin_core::persistence::state::TurnWriteTarget::ExistingTurn { turn_id, .. } => turn_id,
         _ => unreachable!("prepared turn targets should resolve to an existing turn"),
     };
 
     let second_turn = store
         .prepare_turn_write_target(
             internal_id,
-            turin::persistence::state::TurnWriteTarget::branch_head_with_expectation(
+            turin_core::persistence::state::TurnWriteTarget::branch_head_with_expectation(
                 session.selected_branch_head_id(),
                 Some(first_turn_id),
                 1,
@@ -1153,7 +1153,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
     let active_messages = store
         .get_messages(
             internal_id,
-            &turin::persistence::state::SessionReadTarget::branch_head(
+            &turin_core::persistence::state::SessionReadTarget::branch_head(
                 session.selected_branch_head_id(),
             ),
         )
@@ -1179,7 +1179,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
     let main_messages = store
         .get_messages(
             internal_id,
-            &turin::persistence::state::SessionReadTarget::ActiveBranch,
+            &turin_core::persistence::state::SessionReadTarget::ActiveBranch,
         )
         .await?;
     assert_eq!(main_messages.len(), 1);
@@ -1236,7 +1236,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_seconds: 30,
@@ -1253,7 +1253,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };

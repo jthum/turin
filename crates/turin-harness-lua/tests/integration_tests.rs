@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use tempfile::tempdir;
-use turin::kernel::config::{
+use turin_core::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
 };
@@ -41,7 +41,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_seconds: 30,
@@ -58,7 +58,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -84,7 +84,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     let last_msg = session.history.last().unwrap();
     assert_eq!(
         last_msg.role,
-        turin::inference::provider::InferenceRole::Assistant
+        turin_core::inference::provider::InferenceRole::Assistant
     );
 
     // Check content (mock returns "Mock response content")

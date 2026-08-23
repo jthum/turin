@@ -4,18 +4,18 @@ use futures::stream;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
-use turin::inference::provider::{
+use turin_core::inference::provider::{
     InferenceContent, InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream,
     ProviderClient, RequestOptions, SdkError,
 };
-use turin::kernel::config::{
+use turin_core::kernel::config::{
     AgentConfig, ContextPersistenceConfig, EmbeddingConfig, GovernanceConfig,
     GovernanceGrantsConfig, HarnessConfig, InferenceConfig, InferenceContextConfig, KernelConfig,
     NamedStoreConfig, PersistenceConfig, ProviderConfig, ScopedStorePlacementConfig,
     StoreTargetConfig, TurinConfig,
 };
-use turin::kernel::policy::PolicyScope;
-use turin::persistence::manager::StoreSelector;
+use turin_core::kernel::policy::PolicyScope;
+use turin_core::persistence::manager::StoreSelector;
 struct ToolMockProvider {
     tool_name: String,
     tool_args: serde_json::Value,
@@ -322,7 +322,7 @@ async fn test_harness_rejection() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 5,
             heartbeat_interval_seconds: 30,
@@ -339,7 +339,7 @@ async fn test_harness_rejection() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -1600,7 +1600,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 3,
             heartbeat_interval_seconds: 30,
@@ -1617,10 +1617,10 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "governed".to_string(),
             enforcement_enabled: true,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -1830,7 +1830,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -1864,10 +1864,10 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         ]),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -2001,7 +2001,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
     let mut governance_agents = std::collections::HashMap::new();
     governance_agents.insert(
         "orchestrator".to_string(),
-        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+        turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
             capability_profile: None,
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec!["worker_allowed".to_string()],
@@ -2025,7 +2025,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -2049,11 +2049,11 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -2181,7 +2181,7 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -2205,10 +2205,10 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -2283,7 +2283,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 2,
             heartbeat_interval_seconds: 30,
@@ -2300,7 +2300,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -2392,7 +2392,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 2,
             heartbeat_interval_seconds: 30,
@@ -2413,7 +2413,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -2638,7 +2638,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -2655,7 +2655,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: None,
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -2787,7 +2787,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -2850,7 +2850,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
 
     let alias_store = kernel
         .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
+        .open(&turin_core::persistence::manager::StoreSelector::Alias(
             "rust_kb".to_string(),
         ))
         .await?;
@@ -2884,7 +2884,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
     );
     let path_store = kernel
         .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Path(
+        .open(&turin_core::persistence::manager::StoreSelector::Path(
             ".turin/kb/project.db".to_string(),
         ))
         .await?;
@@ -3042,7 +3042,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
 
     let kb_store = kernel
         .store_manager()
-        .open(&turin::persistence::manager::StoreSelector::Alias(
+        .open(&turin_core::persistence::manager::StoreSelector::Alias(
             "rust_kb".to_string(),
         ))
         .await?;
@@ -3270,7 +3270,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -3287,7 +3287,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -3307,7 +3307,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         .policy_manager()
         .get(
             "spawn.max_depth",
-            &turin::kernel::policy::PolicyScope::default(),
+            &turin_core::kernel::policy::PolicyScope::default(),
         )
         .await?;
     assert_eq!(global_value, Some(serde_json::json!(2)));
@@ -3316,9 +3316,9 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         .policy_manager()
         .get(
             "queue.max_depth",
-            &turin::kernel::policy::PolicyScope {
+            &turin_core::kernel::policy::PolicyScope {
                 agent_id: Some("default".to_string()),
-                ..turin::kernel::policy::PolicyScope::default()
+                ..turin_core::kernel::policy::PolicyScope::default()
             },
         )
         .await?;
@@ -3885,7 +3885,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4011,7 +4011,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4111,7 +4111,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: "harness/core".to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -4121,7 +4121,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
     let mut agents = std::collections::HashMap::new();
     agents.insert(
         "reviewer".to_string(),
-        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+        turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
             capability_profile: Some("reviewer_ro".to_string()),
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec!["worker".to_string()],
@@ -4153,7 +4153,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4170,25 +4170,25 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: false,
-            unmatched_capability: turin::kernel::config::GovernanceUnmatchedCapability::Deny,
+            unmatched_capability: turin_core::kernel::config::GovernanceUnmatchedCapability::Deny,
             capabilities: Default::default(),
-            audit: turin::kernel::config::GovernanceAuditConfig {
-                mode: turin::kernel::config::GovernanceAuditMode::Observational,
+            audit: turin_core::kernel::config::GovernanceAuditConfig {
+                mode: turin_core::kernel::config::GovernanceAuditMode::Observational,
                 include_capability_context: true,
                 persist_before_hooks: None,
             },
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
                 default_root: Some("core".to_string()),
                 allow_unscoped_in_open: false,
             },
             roots,
             capability_profiles,
             agents,
-            grants: turin::kernel::config::GovernanceGrantsConfig {
+            grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
                 max_ttl_ms: Some(60_000),
                 require_audit_reason: true,
@@ -4288,7 +4288,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -4313,7 +4313,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4330,11 +4330,11 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -4403,7 +4403,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -4428,7 +4428,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4445,16 +4445,16 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "governed".to_string(),
             enforcement_enabled: true,
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Scoped,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Scoped,
                 default_root: Some("core".to_string()),
                 allow_unscoped_in_open: false,
             },
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -4530,7 +4530,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -4555,7 +4555,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4572,16 +4572,16 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Scoped,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Scoped,
                 default_root: Some("core".to_string()),
                 allow_unscoped_in_open: false,
             },
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -4638,7 +4638,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -4663,7 +4663,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4680,11 +4680,11 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -4757,7 +4757,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
     );
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_locked".to_string()),
@@ -4782,7 +4782,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4799,11 +4799,11 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -4877,7 +4877,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
     );
     governance_agents.insert(
         "default".to_string(),
-        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+        turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
             capability_profile: None,
             max_capabilities: agent_caps,
             allowed_child_agents: vec![],
@@ -4901,7 +4901,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -4918,11 +4918,11 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5063,7 +5063,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
     let mut governance_agents = std::collections::HashMap::new();
     governance_agents.insert(
         "reviewer".to_string(),
-        turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+        turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
             capability_profile: Some("reviewer_ro".to_string()),
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec![],
@@ -5087,7 +5087,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5111,12 +5111,12 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
             capability_profiles,
             agents: governance_agents,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5285,7 +5285,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5302,15 +5302,15 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            grants: turin::kernel::config::GovernanceGrantsConfig {
+            grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
                 max_ttl_ms: Some(10_000),
                 require_audit_reason: true,
             },
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5453,7 +5453,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5477,15 +5477,15 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            grants: turin::kernel::config::GovernanceGrantsConfig {
+            grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
                 max_ttl_ms: Some(10_000),
                 require_audit_reason: true,
             },
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5585,7 +5585,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -5610,7 +5610,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5627,16 +5627,16 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
                 default_root: Some("core".to_string()),
                 allow_unscoped_in_open: false,
             },
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5736,7 +5736,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -5761,7 +5761,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5778,16 +5778,16 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
                 default_root: Some("core".to_string()),
                 allow_unscoped_in_open: false,
             },
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -5887,7 +5887,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
     let mut roots = std::collections::HashMap::new();
     roots.insert(
         "core".to_string(),
-        turin::kernel::config::GovernanceRootConfig {
+        turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
             default_profile: Some("core_full".to_string()),
@@ -5912,7 +5912,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -5929,16 +5929,16 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "balanced".to_string(),
             enforcement_enabled: true,
-            import: turin::kernel::config::GovernanceImportConfig {
-                mode: turin::kernel::config::GovernanceImportMode::Mixed,
+            import: turin_core::kernel::config::GovernanceImportConfig {
+                mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
                 default_root: None,
                 allow_unscoped_in_open: false,
             },
             roots,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -6035,7 +6035,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -6052,10 +6052,10 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig {
+        governance: turin_core::kernel::config::GovernanceConfig {
             profile: "governed".to_string(),
             enforcement_enabled: true,
-            ..turin::kernel::config::GovernanceConfig::default()
+            ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
         remote: Default::default(),
@@ -6177,7 +6177,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -6194,7 +6194,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -6317,7 +6317,7 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
         },
         agents: std::collections::HashMap::new(),
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -6334,7 +6334,7 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
         harnesses: std::collections::HashMap::new(),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -6650,7 +6650,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         },
         agents,
         runtime: Default::default(),
-        kernel: turin::kernel::config::KernelConfig {
+        kernel: turin_core::kernel::config::KernelConfig {
             workspace_root: tmp.path().to_str().unwrap().to_string(),
             max_turns: 1,
             heartbeat_interval_seconds: 30,
@@ -6674,7 +6674,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         )]),
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
-        governance: turin::kernel::config::GovernanceConfig::default(),
+        governance: turin_core::kernel::config::GovernanceConfig::default(),
         daemon: Default::default(),
         remote: Default::default(),
     };
@@ -7185,7 +7185,7 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
     let branch_messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),
-            &turin::persistence::state::SessionReadTarget::BranchHead(sidestep_branch.id),
+            &turin_core::persistence::state::SessionReadTarget::BranchHead(sidestep_branch.id),
         )
         .await?;
     assert!(
@@ -7336,7 +7336,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
     let messages = store
         .get_messages(
             session.internal_id.expect("session internal id"),
-            &turin::persistence::state::SessionReadTarget::BranchHead(promoted.id),
+            &turin_core::persistence::state::SessionReadTarget::BranchHead(promoted.id),
         )
         .await?;
     let transcript = messages

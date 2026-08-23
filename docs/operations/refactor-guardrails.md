@@ -215,7 +215,7 @@ Use these placement rules while splitting god files:
 - private pure helper tests can stay in-module
 - public behavior tests should move to `tests/` or crate integration tests
 - fixture-heavy channel tests should live outside production adapter files
-- reusable setup belongs in `tests/support` or crate-local `test_support`
+- reusable setup belongs beside the owning integration suite or in crate-local `test_support`
 - capability characterization tests should be named for behavior, not implementation
 
 ## Checkpoint Commit Pattern

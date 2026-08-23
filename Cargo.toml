@@ -106,18 +106,6 @@ time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 [dev-dependencies]
 tempfile = "3.10"
 proptest = "1.4"
-reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "stream", "rustls"] }
-turin-daemon-client = { path = "crates/turin-daemon-client" }
-turin-daemon-protocol = { path = "crates/turin-daemon-protocol" }
-turin-local-ipc = { path = "crates/turin-local-ipc" }
-turin-channel-core = { path = "crates/turin-channel-core" }
-turin-channel-runner = { path = "crates/turin-channel-runner" }
-turin-channel-fs = { path = "crates/turin-channel-fs" }
-turin-channel-discord = { path = "crates/turin-channel-discord" }
-turin-channel-telegram = { path = "crates/turin-channel-telegram" }
-turin-code-index-writer = { path = "crates/turin-code-index-writer" }
-mlua = { version = "0.12", features = ["luau", "serialize", "async", "macros", "send"] }
-turin-harness-lua = { path = "crates/turin-harness-lua" }
 
 [profile.dev]
 debug = 0         # Lower compile memory and artifact size during normal iteration

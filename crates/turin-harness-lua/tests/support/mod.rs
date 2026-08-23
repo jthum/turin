@@ -4,8 +4,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use turin::kernel::Kernel;
-use turin::kernel::config::{
+use turin_core::kernel::Kernel;
+use turin_core::kernel::config::{
     AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig, KernelConfig,
     PersistenceConfig, ProviderConfig, TurinConfig,
 };
@@ -17,7 +17,9 @@ use turin_types::layout::{
 const TEST_RELAY_RUNTIME_DIR: &str = "runtime/relays";
 
 pub fn repo_path(relative: impl AsRef<Path>) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative)
 }
 
 pub fn copy_file(src: impl AsRef<Path>, dest: impl AsRef<Path>) -> Result<()> {

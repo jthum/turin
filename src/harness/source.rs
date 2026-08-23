@@ -22,6 +22,14 @@ impl HarnessSourceOverlay {
         })
     }
 
+    /// Iterates all candidate source changes supplied to an adapter validation pass.
+    #[doc(hidden)]
+    pub fn entries(&self) -> impl Iterator<Item = (&Path, Option<&str>)> {
+        self.changes
+            .iter()
+            .map(|(path, source)| (path.as_path(), source.as_deref()))
+    }
+
     pub fn path_exists(&self, root: &Path, path: &Path) -> bool {
         match self.lookup(root, path) {
             Some(source) => source.is_some(),

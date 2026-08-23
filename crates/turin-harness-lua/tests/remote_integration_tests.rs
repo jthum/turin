@@ -15,7 +15,7 @@ use tokio_tungstenite::{
     client_async,
     tungstenite::{client::IntoClientRequest, protocol::Message},
 };
-use turin::remote::{RemoteServeOptions, start as start_remote};
+use turin_core::remote::{RemoteServeOptions, start as start_remote};
 use turin_daemon_protocol::DAEMON_PROTOCOL_VERSION;
 
 struct DaemonHarness {
@@ -84,7 +84,7 @@ impl DaemonHarness {
 
 struct RemoteHarness {
     base_url: String,
-    server: turin::remote::RunningRemoteServer,
+    server: turin_core::remote::RunningRemoteServer,
 }
 
 impl RemoteHarness {

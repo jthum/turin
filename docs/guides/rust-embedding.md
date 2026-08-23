@@ -7,14 +7,16 @@ without shipping a scripting VM.
 
 ## Dependency
 
-Disable default features to omit `mlua` and the Lua adapter:
+Depend on the kernel package directly. It does not include `mlua` or a scripting adapter:
 
 ```toml
 [dependencies]
-turin = { path = "../turin", default-features = false }
+turin = { path = "../turin" }
 ```
 
-Keeping default features enabled allows compiled and Lua harnesses to coexist.
+Applications that want Lua add `turin-harness-lua` separately and inject its adapter
+through `RuntimeBuilder::with_harness_adapter`. Turin's CLI product performs that
+composition by default.
 
 ## Default Harness
 

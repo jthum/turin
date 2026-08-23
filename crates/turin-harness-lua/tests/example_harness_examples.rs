@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use tokio::time::sleep;
-use turin::kernel::Kernel;
-use turin::kernel::config::{AgentConfig, GovernanceConfig, GovernanceGrantsConfig};
-use turin::persistence::state::SessionReadTarget;
+use turin_core::kernel::Kernel;
+use turin_core::kernel::config::{AgentConfig, GovernanceConfig, GovernanceGrantsConfig};
+use turin_core::persistence::state::SessionReadTarget;
 
 mod support;
 
@@ -1325,7 +1325,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
-            turin::kernel::config::GovernanceAgentCapabilitiesConfig {
+            turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
                 capability_profile: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],

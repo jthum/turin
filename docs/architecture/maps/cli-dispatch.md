@@ -13,8 +13,8 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `crates/turin-cli/Cargo.toml`
-  - Owns the `turin` and `turin-remote` executable targets. Core is consumed with
-    default features disabled; Lua is an explicit product dependency.
+  - Owns the `turin` and `turin-remote` executable targets. Lua is an explicit product
+    dependency alongside the engine-neutral core.
 - `crates/turin-cli/src/composition.rs`
   - Product composition root that injects `turin-harness-lua` into direct kernel
     construction and daemon startup.
