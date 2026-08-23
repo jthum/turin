@@ -22,8 +22,7 @@ pub mod runtime_policy;
 pub mod runtime_schedule;
 pub mod runtime_signal;
 pub mod runtime_worklist;
-#[doc(hidden)]
-pub mod runtime_worklist_selection;
+pub(crate) mod runtime_worklist_selection;
 #[allow(unused_imports)]
 pub use turin_core::harness::stdlib::scoped_data_backend;
 pub mod session_user_aliases;

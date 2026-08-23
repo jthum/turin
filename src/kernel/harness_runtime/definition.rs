@@ -6,8 +6,9 @@ use anyhow::Result;
 use tracing::{debug, info, warn};
 use turin_daemon_protocol::UiIntentMessage;
 
-use super::{HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext};
-use crate::harness::source::HarnessSourceOverlay;
+use super::{
+    HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext, HarnessSourceOverlay,
+};
 use crate::kernel::config::TurinConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

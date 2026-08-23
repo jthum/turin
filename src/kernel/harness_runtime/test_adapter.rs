@@ -3,9 +3,11 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext};
+use super::{
+    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
+    HarnessSourceOverlay,
+};
 use crate::harness::scheduler::HarnessSchedulerAccess;
-use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::verdict::Verdict;
 use crate::kernel::harness_contract::{
     HarnessActionRequest, HarnessHook, HarnessSignal, HarnessTurnRequest, HarnessTurnServices,

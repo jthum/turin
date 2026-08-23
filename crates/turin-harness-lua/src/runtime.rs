@@ -7,7 +7,6 @@ use turin_daemon_protocol::UiIntentMessage;
 use crate::harness::context::ContextWrapper;
 use crate::harness::engine::HarnessEngine;
 use crate::harness::globals::{HarnessAppData, HarnessExecutionContext};
-use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
 };
@@ -18,6 +17,7 @@ use turin_core::kernel::harness_contract::{
 };
 use turin_core::kernel::harness_runtime::{
     HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
+    HarnessSourceOverlay,
 };
 
 /// Factory for session-scoped Lua harness instances.

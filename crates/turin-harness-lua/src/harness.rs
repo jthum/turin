@@ -4,4 +4,4 @@ pub(crate) mod engine;
 pub(crate) mod globals;
 pub(crate) mod stdlib;
 
-pub(crate) use turin_core::harness::{scheduler, source, verdict, virtual_tools};
+pub(crate) use turin_core::harness::{scheduler, verdict, virtual_tools};

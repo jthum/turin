@@ -146,6 +146,10 @@ Structured inference:
 - Adapter-support exports are deliberately `#[doc(hidden)]`: they let an adapter crate
   implement Turin's complete harness semantics without exposing scripting-engine types
   to the kernel. They are not general application-authoring APIs.
+- Source overlays are exposed through `kernel::harness_runtime`, alongside the factory
+  contract that consumes them. The underlying `harness::source` module and scheduling
+  implementation remain core-private; do not expose whole implementation modules when
+  an adapter needs only one contract type.
 - Engine-neutral call sites ask whether an instance `prepares_turn`; string hook names
   remain an implementation detail of scripting adapters.
 - Core construction without an injected adapter must fail clearly if no Rust factory is

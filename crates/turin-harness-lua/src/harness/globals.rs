@@ -25,7 +25,7 @@ use crate::persistence::manager::StoreSelector;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::harness::source::HarnessSourceOverlay;
+use turin_core::kernel::harness_runtime::HarnessSourceOverlay;
 
 const MAX_HARNESS_FILE_SIZE: usize = 10 * 1024 * 1024;
 

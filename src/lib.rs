@@ -6,8 +6,7 @@ pub mod kernel;
 pub(crate) mod perf_diagnostics;
 pub mod persistence;
 pub mod remote;
-#[doc(hidden)]
-pub mod schedule_support;
+pub(crate) mod schedule_support;
 #[doc(hidden)]
 pub mod signal_topics;
 #[cfg(test)]

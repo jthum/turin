@@ -5,9 +5,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use turin_daemon_protocol::UiIntentMessage;
 
-use super::HarnessDefinition;
+use super::{HarnessDefinition, HarnessSourceOverlay};
 use crate::harness::scheduler::HarnessSchedulerAccess;
-use crate::harness::source::HarnessSourceOverlay;
 use crate::harness::verdict::Verdict;
 use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,

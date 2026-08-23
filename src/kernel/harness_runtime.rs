@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+pub use crate::harness::source::HarnessSourceOverlay;
 use crate::kernel::harness::HarnessFactory;
 
 mod contract;
