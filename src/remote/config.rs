@@ -41,7 +41,7 @@ impl ResolvedRemoteConfig {
             .unwrap_or_else(|| config.remote.auth_token_env.clone());
         let auth_token = match options.auth_token {
             Some(token) => token,
-            None => std::env::var(&auth_token_env).with_context(|| {
+            None => config.environment_value(&auth_token_env).with_context(|| {
                 format!(
                     "Remote auth token env var '{}' is not set for turin-remote",
                     auth_token_env

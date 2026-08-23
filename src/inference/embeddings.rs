@@ -7,7 +7,7 @@ use inference_sdk_registry::{ProviderInit, create_embedding_provider as create_s
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::kernel::config::{EmbeddingConfig, ProviderConfig, ProvidersConfig};
+use crate::kernel::config::{EmbeddingConfig, ProviderConfig, ProvidersConfig, TurinConfig};
 
 /// A vector embedding of a text string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,11 +46,12 @@ impl SdkEmbeddingProviderAdapter {
         provider_name: &str,
         provider_config: Option<&ProviderConfig>,
         embedding_config: &EmbeddingConfig,
+        config: &TurinConfig,
     ) -> Result<Self> {
         let driver = provider_config
             .map(|config| config.kind.as_str())
             .unwrap_or(provider_name);
-        let api_key = resolve_api_key(driver, provider_config)?;
+        let api_key = resolve_api_key(driver, provider_config, config)?;
 
         let mut init = ProviderInit::new(api_key);
         if let Some(base_url) = provider_config.and_then(|config| config.base_url.as_ref()) {
@@ -148,10 +149,11 @@ impl EmbeddingProvider for SdkEmbeddingProviderAdapter {
 }
 
 pub fn create_embedding_provider(
-    config: &EmbeddingConfig,
+    embedding_config: &EmbeddingConfig,
     providers: &ProvidersConfig,
+    config: &TurinConfig,
 ) -> Result<Arc<dyn EmbeddingProvider>> {
-    let provider_name = config.provider.trim();
+    let provider_name = embedding_config.provider.trim();
     if provider_name.is_empty() {
         anyhow::bail!("embeddings.provider must not be empty");
     }
@@ -170,6 +172,7 @@ pub fn create_embedding_provider(
     Ok(Arc::new(SdkEmbeddingProviderAdapter::new(
         provider_name,
         provider_config,
+        embedding_config,
         config,
     )?))
 }
@@ -188,7 +191,11 @@ fn build_config_key(
     )
 }
 
-fn resolve_api_key(driver: &str, provider_config: Option<&ProviderConfig>) -> Result<String> {
+fn resolve_api_key(
+    driver: &str,
+    provider_config: Option<&ProviderConfig>,
+    config: &TurinConfig,
+) -> Result<String> {
     let Some(provider_config) = provider_config else {
         return Ok(String::new());
     };
@@ -196,10 +203,10 @@ fn resolve_api_key(driver: &str, provider_config: Option<&ProviderConfig>) -> Re
     let base_url_present = provider_config.base_url.is_some();
 
     match provider_config.api_key_env.as_deref() {
-        Some(env) => match std::env::var(env) {
-            Ok(value) => Ok(value),
-            Err(_) if base_url_present => Ok(String::new()),
-            Err(_) => Err(anyhow::anyhow!("Environment variable '{}' not set", env)),
+        Some(env) => match config.environment_value(env) {
+            Some(value) => Ok(value),
+            None if base_url_present => Ok(String::new()),
+            None => Err(anyhow::anyhow!("Environment variable '{}' not set", env)),
         },
         None if driver == "openai" && !base_url_present => Err(anyhow::anyhow!(
             "Embedding provider '{}' requires api_key_env unless base_url is set for a local OpenAI-compatible endpoint",

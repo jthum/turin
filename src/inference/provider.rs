@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::kernel::config::ProviderConfig;
+use crate::kernel::config::{ProviderConfig, TurinConfig};
 use crate::kernel::event::{KernelEvent, StreamEvent};
 
 // Use standardized types from SDK
@@ -374,6 +374,7 @@ pub fn build_request_options(provider_config: &ProviderConfig) -> Result<Request
 
 pub fn create_provider_client(
     provider_config: &ProviderConfig,
+    config: &TurinConfig,
 ) -> Result<std::sync::Arc<dyn InferenceProvider>> {
     if provider_config.kind.eq_ignore_ascii_case("mock") {
         return Ok(create_mock_client(provider_config));
@@ -383,7 +384,8 @@ pub fn create_provider_client(
         .api_key_env
         .as_ref()
         .context("API key environment variable not configured")?;
-    let api_key = std::env::var(env_var)
+    let api_key = config
+        .environment_value(env_var)
         .with_context(|| format!("Missing API key in environment variable '{}'", env_var))?;
 
     let mut init = ProviderInit::new(api_key);

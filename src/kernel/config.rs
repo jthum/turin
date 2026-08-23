@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use turin_local_ipc::resolve_endpoint as resolve_local_ipc_endpoint;
 use turin_types::layout::config_workspace_anchor;
@@ -29,6 +30,9 @@ pub use persistence::{
 /// Top-level Turin configuration, parsed from the workspace config file.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
+    /// Values loaded from the workspace env file without mutating process state.
+    #[serde(skip)]
+    pub(crate) environment: BTreeMap<String, String>,
     #[serde(default)]
     pub tools: ToolsConfig,
     pub agent: AgentConfig,
@@ -467,7 +471,7 @@ impl TurinConfig {
         let mut config: TurinConfig =
             toml::from_str(&contents).with_context(|| "Failed to parse Turin config")?;
         let config_dir = turin_types::layout::config_dir(path);
-        load_env_file(&config.layout.resolve(path).env_file)?;
+        config.environment = load_env_file(&config.layout.resolve(path).env_file)?;
         config.normalize_runtime_paths(&config_dir);
         config.validate()?;
         Ok(config)
@@ -480,6 +484,14 @@ impl TurinConfig {
             toml::from_str(toml_str).with_context(|| "Failed to parse Turin config")?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// Resolve a named environment value, preferring the process environment
+    /// over the workspace env file captured when this config was loaded.
+    pub fn environment_value(&self, key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .or_else(|| self.environment.get(key).cloned())
     }
 
     pub fn harness_id_for_agent<'a>(&self, agent: &'a AgentConfig) -> &'a str {
@@ -646,24 +658,21 @@ fn normalize_workspace_runtime_path(
     }
 }
 
-fn load_env_file(env_path: &Path) -> Result<()> {
+fn load_env_file(env_path: &Path) -> Result<BTreeMap<String, String>> {
     if !env_path.is_file() {
-        return Ok(());
+        return Ok(BTreeMap::new());
     }
 
+    let mut values = BTreeMap::new();
     for item in dotenvy::from_path_iter(env_path)
         .with_context(|| format!("Failed to parse '{}'", env_path.display()))?
     {
         let (key, value) =
             item.with_context(|| format!("Failed to parse '{}'", env_path.display()))?;
-        if std::env::var_os(&key).is_none() {
-            unsafe {
-                std::env::set_var(&key, value);
-            }
-        }
+        values.insert(key, value);
     }
 
-    Ok(())
+    Ok(values)
 }
 
 fn resolve_under_workspace(base: &Path, workspace_root: &str, value: &str) -> PathBuf {

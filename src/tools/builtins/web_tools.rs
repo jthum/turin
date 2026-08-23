@@ -397,10 +397,24 @@ impl Tool for WebSearchTool {
         for provider in providers.iter().copied() {
             let result = match provider {
                 WebSearchProvider::Brave => {
-                    search_brave(&client, &ctx.tools.web_search, query, limit).await
+                    search_brave(
+                        &client,
+                        &ctx.tools.web_search,
+                        ctx.config.as_deref(),
+                        query,
+                        limit,
+                    )
+                    .await
                 }
                 WebSearchProvider::Tavily => {
-                    search_tavily(&client, &ctx.tools.web_search, query, limit).await
+                    search_tavily(
+                        &client,
+                        &ctx.tools.web_search,
+                        ctx.config.as_deref(),
+                        query,
+                        limit,
+                    )
+                    .await
                 }
                 WebSearchProvider::Searxng => {
                     search_searxng(&client, &ctx.tools.web_search, query, limit).await

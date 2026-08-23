@@ -918,14 +918,18 @@ api_key_env = "{key}"
     unsafe {
         std::env::remove_var(key);
     }
-    let _ = TurinConfig::from_file(&config_path).expect("config loads");
-    assert_eq!(std::env::var(key).as_deref(), Ok("from-dotenv"));
+    let config = TurinConfig::from_file(&config_path).expect("config loads");
+    assert_eq!(
+        config.environment_value(key).as_deref(),
+        Some("from-dotenv")
+    );
+    assert!(std::env::var(key).is_err());
 
     unsafe {
         std::env::set_var(key, "from-env");
     }
-    let _ = TurinConfig::from_file(&config_path).expect("config loads twice");
-    assert_eq!(std::env::var(key).as_deref(), Ok("from-env"));
+    let config = TurinConfig::from_file(&config_path).expect("config loads twice");
+    assert_eq!(config.environment_value(key).as_deref(), Some("from-env"));
 
     unsafe {
         std::env::remove_var(key);

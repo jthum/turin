@@ -69,7 +69,7 @@ impl ExecutionHost {
         _name: &str,
         config: &crate::kernel::config::ProviderConfig,
     ) -> Result<ProviderClient> {
-        let client = provider::create_provider_client(config)?;
+        let client = provider::create_provider_client(config, &self.config)?;
         Ok(ProviderClient::new(config.kind.clone(), client))
     }
 }
@@ -106,6 +106,7 @@ impl ExecutionHost {
             Some(crate::inference::embeddings::create_embedding_provider(
                 config,
                 &self.config.providers,
+                &self.config,
             )?)
         } else {
             // No embeddings configured means lexical-only memory behavior.

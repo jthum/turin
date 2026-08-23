@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::{Result, bail};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -209,8 +207,15 @@ async fn read_json_response<T: for<'de> Deserialize<'de>>(
         .map_err(|e| ToolError::ExecutionError(format!("{label} response decode failed: {e}")))
 }
 
-fn load_required_api_key(env_name: &str, provider: &str) -> Result<String, ToolError> {
-    env::var(env_name).map_err(|_| {
+fn load_required_api_key(
+    config: Option<&crate::kernel::config::TurinConfig>,
+    env_name: &str,
+    provider: &str,
+) -> Result<String, ToolError> {
+    let value = config
+        .and_then(|config| config.environment_value(env_name))
+        .or_else(|| std::env::var(env_name).ok());
+    value.ok_or_else(|| {
         ToolError::ExecutionError(format!(
             "{provider} search requires environment variable '{}'",
             env_name
@@ -240,6 +245,7 @@ pub(super) async fn search_duckduckgo_html(
 pub(super) async fn search_brave(
     client: &Client,
     settings: &WebSearchToolSettings,
+    config: Option<&crate::kernel::config::TurinConfig>,
     query: &str,
     limit: usize,
 ) -> Result<Vec<WebSearchHit>, ToolError> {
@@ -247,7 +253,7 @@ pub(super) async fn search_brave(
         settings.brave.api_key_env.as_deref().ok_or_else(|| {
             ToolError::ExecutionError("Brave search is not configured".to_string())
         })?;
-    let api_key = load_required_api_key(env_name, "Brave")?;
+    let api_key = load_required_api_key(config, env_name, "Brave")?;
     let request = client
         .get(
             settings
@@ -270,6 +276,7 @@ pub(super) async fn search_brave(
 pub(super) async fn search_tavily(
     client: &Client,
     settings: &WebSearchToolSettings,
+    config: Option<&crate::kernel::config::TurinConfig>,
     query: &str,
     limit: usize,
 ) -> Result<Vec<WebSearchHit>, ToolError> {
@@ -277,7 +284,7 @@ pub(super) async fn search_tavily(
         settings.tavily.api_key_env.as_deref().ok_or_else(|| {
             ToolError::ExecutionError("Tavily search is not configured".to_string())
         })?;
-    let api_key = load_required_api_key(env_name, "Tavily")?;
+    let api_key = load_required_api_key(config, env_name, "Tavily")?;
     let request = client
         .post(
             settings

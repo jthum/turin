@@ -29,7 +29,9 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - Defaults used in serde attributes must remain available to the modules that reference them.
 - Validation stays centralized in `validation.rs` when it checks cross-field behavior.
 - Persistence target resolution should stay in `config/persistence.rs`; call sites should not duplicate alias/path selection rules.
-- `from_file` normalizes runtime paths after loading the adjacent env file and before validation.
+- `from_file` captures the adjacent env file without mutating process state, then normalizes
+  runtime paths before validation. Process environment values take precedence when credentials
+  are resolved.
 - `from_str` parses and validates without filesystem path normalization.
 - Plain daemon filesystem paths share one normalization helper; the daemon endpoint stays separate because local IPC endpoint resolution has different semantics.
 - `runtime.linked_runtime_lanes` is a positive startup-stable global default; an
