@@ -161,6 +161,10 @@ Structured inference:
 - Rust harness callbacks are policy boundaries, not process-wide service locators.
   Agent-triggered async operations belong in governed native tools and kernel effects;
   do not pass internal manager collections through a generic native services object.
+- Harness adapter implementations are trusted Rust components and must not panic. Turin
+  does not apply `catch_unwind` around callbacks: translating a panic into an ordinary
+  hook error could continue with partially mutated adapter state and trigger fail-open
+  behavior on informational hooks. Fallible adapter work must return `anyhow::Result`.
 - `tests/rust_embedding.rs` is the outside-in contract fixture. It must continue to use
   only public APIs while covering multiple compiled harnesses, custom tools, governance,
   provider inference, and persistence in a build without Lua.

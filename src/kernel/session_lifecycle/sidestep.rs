@@ -9,7 +9,7 @@ use crate::kernel::session::{
 };
 use crate::kernel::session_refs::{format_session_reference, parse_session_reference};
 use crate::persistence::manager::{StoreManager, StoreSelector};
-use crate::persistence::schema::{BranchHeadRow, BranchProvenance, SessionRow};
+use crate::persistence::schema::{BranchHeadRow, BranchProvenance, SessionRow, TurnRow};
 use crate::persistence::state::StateStore;
 
 pub async fn prepare_persisted_session_sidestep(
@@ -105,7 +105,7 @@ async fn normalize_sidestep_target(
             }),
         },
         ExecutionContextTarget::TurnId { turn_id } => {
-            validate_session_turn_target(store, row.id, turn_id, "sidestep target").await?;
+            load_session_turn_target(store, row.id, turn_id, "sidestep target").await?;
             Ok(ExecutionContextTarget::TurnId { turn_id })
         }
         ExecutionContextTarget::SelectedPath { turn_ids } => {
@@ -116,7 +116,7 @@ async fn normalize_sidestep_target(
             Ok(ExecutionContextTarget::SelectedPath { turn_ids })
         }
         ExecutionContextTarget::SummarySource { source_turn_id } => {
-            validate_session_turn_target(store, row.id, source_turn_id, "sidestep summary source")
+            load_session_turn_target(store, row.id, source_turn_id, "sidestep summary source")
                 .await?;
             Ok(ExecutionContextTarget::SummarySource { source_turn_id })
         }
@@ -235,12 +235,12 @@ fn sidestep_branch_source_from_branch(
     })
 }
 
-async fn validate_session_turn_target(
+async fn load_session_turn_target(
     store: &StateStore,
     session_internal_id: i64,
     turn_id: i64,
     label: &str,
-) -> Result<()> {
+) -> Result<TurnRow> {
     let Some(turn) = store.get_turn_row(turn_id).await? else {
         anyhow::bail!("{} '{}' not found", label, turn_id);
     };
@@ -251,7 +251,7 @@ async fn validate_session_turn_target(
             turn_id
         );
     }
-    Ok(())
+    Ok(turn)
 }
 
 async fn sidestep_branch_source_from_turn(
@@ -259,12 +259,9 @@ async fn sidestep_branch_source_from_turn(
     session_internal_id: i64,
     turn_id: i64,
 ) -> Result<SidestepBranchSource> {
-    validate_session_turn_target(store, session_internal_id, turn_id, "sidestep source turn")
-        .await?;
-    let turn = store
-        .get_turn_row(turn_id)
-        .await?
-        .expect("validated sidestep source turn should exist");
+    let turn =
+        load_session_turn_target(store, session_internal_id, turn_id, "sidestep source turn")
+            .await?;
     Ok(SidestepBranchSource {
         turn_index: Some(turn.branch_depth),
     })

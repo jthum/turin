@@ -247,6 +247,12 @@ Delete persisted session:
 - Session deletion owns session-scoped KV and memory, including namespaced scope
   keys, but must not delete agent/user/global memory or worklist records.
 - Fork-sibling sidesteps must not mutate the persisted active head.
+- Sidestep turn targets are loaded and ownership-validated in one persistence read. Do
+  not reintroduce check-then-read assertions over externally stored turn state.
+- Assertions are reserved for states proven within one synchronous critical section or
+  for poisoned internal locks after a Rust programming panic. Missing or malformed
+  persistence state, adapter errors, provider failures, and subprocess failures must
+  return typed/runtime errors rather than panic.
 - The background durability lane should reuse its event writer/connection for sequential event writes, but must recreate it after a write error so connection-local failures do not poison the lane.
 
 ## Tests
