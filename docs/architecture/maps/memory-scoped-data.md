@@ -81,6 +81,10 @@ Lua bridge:
 - Lua-facing memory/KV APIs should share bridge helpers; do not copy backend invocation blocks into every namespace.
 - Native `remember` and `recall` should continue to call the scoped-data backend directly, not reimplement persistence semantics.
 - Operator inspection must not update retrieval count or last-retrieved timestamps and must never expose embedding blobs.
+- Applying memory feedback must update the ranking weight and append its audit event in one
+  transaction. Concurrent deltas accumulate from the persisted weight rather than overwriting it.
+- Correcting memory must insert the replacement and supersede the original in one transaction.
+  Competing corrections may commit at most one replacement.
 
 ## Common Changes
 
@@ -123,6 +127,9 @@ Focused backend tests:
 
 ```sh
 cargo test -p turin scoped_data_backend::tests::memory --lib
+cargo test -p turin concurrent_memory_ --lib
+cargo test -p turin memory_feedback_rolls_back_weight_when_audit_insert_fails --lib
+cargo test -p turin memory_correction_rolls_back_replacement_when_supersession_fails --lib
 ```
 
 Harness integration tests:

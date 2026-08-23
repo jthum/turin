@@ -435,25 +435,48 @@ impl StateStore {
             anyhow::bail!("invalid feedback clamp: min cannot exceed max");
         }
 
-        let conn = self.connect().await?;
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start memory feedback transaction")?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        let (row_id, current_weight) =
-            resolve_memory_feedback_target(&conn, scope_kind, scope_key, &public_id_bytes).await?;
-        let updated_weight = (current_weight + delta).clamp(clamp_min, clamp_max);
-        let updated_at = current_utc_timestamp(&conn).await?;
+        let mut rows = tx
+            .query(
+                r#"
+                UPDATE memories
+                SET weight = min(max(weight + ?4, ?5), ?6)
+                WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3
+                RETURNING id, weight
+                "#,
+                turso::params![
+                    scope_kind,
+                    scope_key,
+                    public_id_bytes.clone(),
+                    delta,
+                    clamp_min,
+                    clamp_max
+                ],
+            )
+            .await
+            .context("Failed to apply memory feedback")?;
+        let Some(row) = rows.next().await? else {
+            anyhow::bail!("runtime.memory.feedback: memory not found");
+        };
+        let row_id = row.get::<i64>(0)?;
+        let updated_weight = row.get::<f64>(1)?;
+        drop(rows);
+        let updated_at = current_utc_timestamp_in_transaction(&tx).await?;
 
-        conn.execute(
-            "UPDATE memories SET weight = ?2 WHERE id = ?1",
-            turso::params![row_id, updated_weight],
-        )
-        .await
-        .with_context(|| format!("Failed to update weight for memory {}", row_id))?;
-        conn.execute(
+        tx.execute(
             "INSERT INTO memory_feedback_events (memory_id, delta, reason, task_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             turso::params![row_id, delta, reason, task_id, updated_at.clone()],
         )
         .await
         .with_context(|| format!("Failed to insert feedback event for memory {}", row_id))?;
+        tx.commit()
+            .await
+            .context("Failed to commit memory feedback transaction")?;
 
         Ok(MemoryFeedbackState {
             public_id: public_id_bytes,
@@ -474,42 +497,94 @@ impl StateStore {
         embedding_dimensions: Option<usize>,
         metadata: &serde_json::Value,
     ) -> Result<MemoryCorrectionRow> {
-        let conn = self.connect().await?;
+        let metadata_str = serde_json::to_string(metadata)?;
+        let (vector_bytes, embedding_key, embedding_dimensions) = match vector {
+            Some(vector) => (
+                Some(vector_to_le_bytes(vector)),
+                Some(
+                    embedding_key
+                        .context("Missing embedding key for embedded memory")?
+                        .to_string(),
+                ),
+                Some(
+                    i64::try_from(
+                        embedding_dimensions
+                            .context("Missing embedding dimensions for embedded memory")?,
+                    )
+                    .context("Embedding dimensions exceed the persisted integer range")?,
+                ),
+            ),
+            None => (None, None, None),
+        };
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start memory correction transaction")?;
         let public_id_bytes = public_id.into_bytes().to_vec();
-        let (old_row_id, already_superseded) =
-            resolve_memory_correction_target(&conn, scope_kind, scope_key, &public_id_bytes)
-                .await?;
+        let mut rows = tx
+            .query(
+                "SELECT id, superseded_at FROM memories WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3",
+                turso::params![scope_kind, scope_key, public_id_bytes.clone()],
+            )
+            .await
+            .context("Failed to look up memory for correction")?;
+        let Some(row) = rows.next().await? else {
+            anyhow::bail!("runtime.memory.correct: memory not found");
+        };
+        let old_row_id = row.get::<i64>(0)?;
+        let already_superseded = row.get::<Option<String>>(1)?.is_some();
+        drop(rows);
         if already_superseded {
             anyhow::bail!("runtime.memory.correct: memory is already superseded");
         }
 
-        let inserted = self
-            .insert_memory(
+        let replacement_public_id = Uuid::now_v7().into_bytes().to_vec();
+        tx.execute(
+            r#"
+            INSERT INTO memories (
+                public_id, scope_kind, scope_key, content, embedding,
+                embedding_key, embedding_dimensions, metadata
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            turso::params![
+                replacement_public_id.clone(),
                 scope_kind,
                 scope_key,
                 content,
-                vector,
+                vector_bytes,
                 embedding_key,
                 embedding_dimensions,
-                metadata,
-            )
-            .await
-            .context("Failed to store corrected memory")?;
-        let replacement_row_id = resolve_memory_row_id(&conn, &inserted.public_id)
-            .await?
-            .context("Corrected memory row missing after insert")?;
-        let corrected_at = current_utc_timestamp(&conn).await?;
-
-        conn.execute(
-            "UPDATE memories SET superseded_at = ?2, superseded_by_memory_id = ?3 WHERE id = ?1",
-            turso::params![old_row_id, corrected_at.clone(), replacement_row_id],
+                metadata_str
+            ],
         )
         .await
-        .with_context(|| format!("Failed to mark memory {} as superseded", old_row_id))?;
+        .context("Failed to store corrected memory")?;
+        let replacement_row_id = tx.last_insert_rowid();
+        let corrected_at = current_utc_timestamp_in_transaction(&tx).await?;
+
+        let changed = tx
+            .execute(
+                r#"
+                UPDATE memories
+                SET superseded_at = ?2, superseded_by_memory_id = ?3
+                WHERE id = ?1 AND superseded_at IS NULL
+                "#,
+                turso::params![old_row_id, corrected_at.clone(), replacement_row_id],
+            )
+            .await
+            .with_context(|| format!("Failed to mark memory {} as superseded", old_row_id))?;
+        anyhow::ensure!(
+            changed == 1,
+            "runtime.memory.correct: memory was concurrently superseded"
+        );
+        tx.commit()
+            .await
+            .context("Failed to commit memory correction transaction")?;
 
         Ok(MemoryCorrectionRow {
             superseded_public_id: public_id_bytes,
-            replacement_public_id: inserted.public_id,
+            replacement_public_id,
             corrected_at,
         })
     }
@@ -700,57 +775,16 @@ async fn current_utc_timestamp(conn: &turso::Connection) -> Result<String> {
         .context("Timestamp query returned no row")
 }
 
-async fn resolve_memory_feedback_target(
-    conn: &turso::Connection,
-    scope_kind: &str,
-    scope_key: &str,
-    public_id: &[u8],
-) -> Result<(i64, f64)> {
-    let mut rows = conn
-        .query(
-            "SELECT id, weight FROM memories WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3",
-            turso::params![scope_kind, scope_key, public_id.to_vec()],
-        )
+async fn current_utc_timestamp_in_transaction(
+    tx: &turso::transaction::Transaction<'_>,
+) -> Result<String> {
+    let mut rows = tx
+        .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", ())
         .await
-        .context("Failed to look up memory for feedback")?;
-    if let Some(row) = rows.next().await? {
-        Ok((row.get(0)?, row.get(1)?))
-    } else {
-        anyhow::bail!("runtime.memory.feedback: memory not found")
-    }
-}
-
-async fn resolve_memory_correction_target(
-    conn: &turso::Connection,
-    scope_kind: &str,
-    scope_key: &str,
-    public_id: &[u8],
-) -> Result<(i64, bool)> {
-    let mut rows = conn
-        .query(
-            "SELECT id, superseded_at FROM memories WHERE scope_kind = ?1 AND scope_key = ?2 AND public_id = ?3",
-            turso::params![scope_kind, scope_key, public_id.to_vec()],
-        )
-        .await
-        .context("Failed to look up memory for correction")?;
-    if let Some(row) = rows.next().await? {
-        Ok((row.get(0)?, row.get::<Option<String>>(1)?.is_some()))
-    } else {
-        anyhow::bail!("runtime.memory.correct: memory not found")
-    }
-}
-
-async fn resolve_memory_row_id(conn: &turso::Connection, public_id: &[u8]) -> Result<Option<i64>> {
-    let mut rows = conn
-        .query(
-            "SELECT id FROM memories WHERE public_id = ?1",
-            turso::params![public_id.to_vec()],
-        )
-        .await
-        .context("Failed to look up inserted memory id")?;
-    if let Some(row) = rows.next().await? {
-        Ok(Some(row.get(0)?))
-    } else {
-        Ok(None)
-    }
+        .context("Failed to fetch current UTC timestamp")?;
+    rows.next()
+        .await?
+        .map(|row| row.get::<String>(0))
+        .transpose()?
+        .context("Timestamp query returned no row")
 }

@@ -3386,6 +3386,253 @@ async fn test_memory_store_returns_public_id_and_updates_retrieval_metadata() {
 }
 
 #[tokio::test]
+async fn memory_feedback_rolls_back_weight_when_audit_insert_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "session",
+            "feedback-test",
+            "Useful preference",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let public_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_memory_feedback_audit
+        BEFORE INSERT ON memory_feedback_events
+        BEGIN
+            SELECT RAISE(FAIL, 'injected feedback audit failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .apply_memory_feedback(
+            "session",
+            "feedback-test",
+            public_id,
+            0.25,
+            0.1,
+            2.0,
+            Some("useful"),
+            Some("task-a"),
+        )
+        .await
+        .expect_err("audit failure must abort the weight update");
+
+    let mut rows = conn
+        .query(
+            "SELECT weight FROM memories WHERE public_id = ?1",
+            [stored.public_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<f64>(0).unwrap(),
+        1.0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_memory_feedback_accumulates_every_delta_and_audit_event() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "session",
+            "feedback-race",
+            "Useful preference",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let public_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let mut feedback = Vec::new();
+    for task_id in ["task-a", "task-b"] {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        feedback.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .apply_memory_feedback(
+                    "session",
+                    "feedback-race",
+                    public_id,
+                    0.25,
+                    0.1,
+                    2.0,
+                    Some("useful"),
+                    Some(task_id),
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+    for result in feedback {
+        result.await.unwrap().unwrap();
+    }
+
+    let conn = store.get_connection().await.unwrap();
+    let mut rows = conn
+        .query(
+            r#"
+            SELECT memory.weight, COUNT(feedback.id)
+            FROM memories memory
+            LEFT JOIN memory_feedback_events feedback ON feedback.memory_id = memory.id
+            WHERE memory.public_id = ?1
+            GROUP BY memory.id
+            "#,
+            [stored.public_id],
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<f64>(0).unwrap(), 1.5);
+    assert_eq!(row.get::<i64>(1).unwrap(), 2);
+}
+
+#[tokio::test]
+async fn memory_correction_rolls_back_replacement_when_supersession_fails() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "session",
+            "correction-test",
+            "Outdated fact",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let public_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(
+        r#"
+        CREATE TRIGGER fail_memory_supersession
+        BEFORE UPDATE OF superseded_at ON memories
+        BEGIN
+            SELECT RAISE(FAIL, 'injected supersession failure');
+        END;
+        "#,
+    )
+    .await
+    .unwrap();
+
+    store
+        .correct_memory(
+            "session",
+            "correction-test",
+            public_id,
+            "Corrected fact",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .expect_err("supersession failure must abort replacement insertion");
+
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM memories WHERE scope_kind = 'session' AND scope_key = 'correction-test'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_memory_correction_commits_one_replacement() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "session",
+            "correction-race",
+            "Outdated fact",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let public_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let mut corrections = Vec::new();
+    for content in ["Correction A", "Correction B"] {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        corrections.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .correct_memory(
+                    "session",
+                    "correction-race",
+                    public_id,
+                    content,
+                    None,
+                    None,
+                    None,
+                    &json!({}),
+                )
+                .await
+        }));
+    }
+    barrier.wait().await;
+    let results = futures::future::join_all(corrections).await;
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(Ok(_))))
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Ok(Err(_))))
+            .count(),
+        1
+    );
+
+    let conn = store.get_connection().await.unwrap();
+    let mut rows = conn
+        .query(
+            r#"
+            SELECT COUNT(*),
+                   SUM(CASE WHEN superseded_at IS NULL THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN superseded_at IS NOT NULL THEN 1 ELSE 0 END)
+            FROM memories
+            WHERE scope_kind = 'session' AND scope_key = 'correction-race'
+            "#,
+            (),
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<i64>(0).unwrap(), 2);
+    assert_eq!(row.get::<i64>(1).unwrap(), 1);
+    assert_eq!(row.get::<i64>(2).unwrap(), 1);
+}
+
+#[tokio::test]
 async fn test_lexical_only_hybrid_fallback_prefers_best_text_match() {
     let store = StateStore::open_memory()
         .await
