@@ -8,15 +8,15 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 
 ## Files
 
-- `src/harness/context.rs`
+- `crates/turin-harness-lua/src/harness/context.rs`
   - `ContextWrapper`, named `ContextInit`, `ContextState`, Lua property accessors,
     message mutation helpers, and summarization.
-- `src/harness/context/tool_exposure.rs`
+- `crates/turin-harness-lua/src/harness/context/tool_exposure.rs`
   - Lua `ctx.tools` proxy, tool-name input normalization, availability validation,
     and exposed-tool inspection.
 - `src/kernel/harness_contract/request_options.rs`
   - Engine-neutral `RequestOptionsOverride` and shared provider request-option layering.
-- `src/harness/context/structured_call.rs`
+- `crates/turin-harness-lua/src/harness/context/structured_call.rs`
   - `ctx:structured` argument parsing, route resolution, provider fallback,
     request construction, and response validation.
 - `src/kernel/turn/preflight.rs`
@@ -46,9 +46,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `crates/turin-harness-lua/src/harness.rs`
   - Hosts the Lua VM, context, DX, globals, and standard-library implementation while
     reusing engine-neutral harness types from Turin.
-- `src/harness/engine.rs`
+- `crates/turin-harness-lua/src/harness/engine.rs`
   - Lua VM construction, source loading, execution binding, and adapter-facing capabilities.
-- `src/harness/engine/hook_dispatch.rs`
+- `crates/turin-harness-lua/src/harness/engine/hook_dispatch.rs`
   - Lua hook iteration, active module/delegation context, userdata hook context,
     verdict parsing, and hook-emitted UI-intent forwarding.
 - `src/kernel/harness_runtime/rust_adapter.rs`
@@ -56,8 +56,8 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     capabilities use contract defaults instead of fake Rust implementations.
 - `src/kernel/harness_contract.rs`
   - Typed borrowed lifecycle and policy hook inputs shared by kernel execution and
-    harness implementations. Lua payload conversion belongs here as adapter behavior;
-    generic JSON hook dispatch is not part of the session-harness contract.
+    harness implementations. Its hidden JSON materialization helper gives dynamic
+    adapters a stable payload without introducing a language-specific type.
   - Owns the neutral mutable turn-preparation request and execution-binding DTOs.
 - `src/kernel/harness.rs`
   - Public compiled-harness and per-session factory contracts. Default hook methods
@@ -72,6 +72,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Owns `mlua` and Lua-only dependencies. Its Turin dependency disables default
     features, making accidental Lua coupling in the engine-neutral contract a
     compile-time failure.
+- `crates/turin-cli/src/composition.rs`
+  - Installs the Lua adapter for the standard Turin product. Core construction has no
+    implicit scripting adapter.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -218,7 +221,10 @@ detail. Execution bindings and session queues are kernel-owned DTOs rather than 
 globals. Native tools are the compiled operational surface rather than a translation of
 Lua virtual tools. Runtime builder factories are keyed by the same harness IDs used by
 agent configuration, with the existing default-factory method retained as shorthand.
-The `turin-harness-lua` crate compiles against Turin with default features disabled,
-which verifies that the adapter contract itself has no `mlua` dependency. Product
-composition still installs Lua by default; Rust embedders may omit the adapter and use
-`with_default_harness` or `with_harness` exclusively.
+The core `turin` crate has no `mlua` dependency or Lua feature. The
+`turin-harness-lua` crate owns all VM, context, DX, globals, and binding code and
+depends on the engine-neutral core. `turin-cli` composes the standard product by
+injecting that adapter explicitly. Rust embedders may omit it and use
+`with_default_harness` or `with_harness` exclusively. Core unit tests include the
+moved implementation under `cfg(test)` only so adapter-sensitive kernel behavior can
+be tested without restoring a shipped dependency.

@@ -6,7 +6,7 @@ description = "Command-line product composition for Turin"
 
 [features]
 default = []
-heap-profile = ["dep:dhat", "turin/heap-profile"]
+heap-profile = ["dep:dhat"]
 perf-diagnostics = ["turin/perf-diagnostics"]
 
 [dependencies]
@@ -32,3 +32,6 @@ path = "src/main.rs"
 [[bin]]
 name = "turin-remote"
 path = "src/bin/turin_remote.rs"
+
+[dev-dependencies]
+tempfile = "3.27"

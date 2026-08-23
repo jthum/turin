@@ -8,23 +8,23 @@ This surface sits between harness code and core runtime state. It should stay bo
 
 ## Files
 
-- `src/harness/stdlib/agent_bindings.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings.rs`
   - Lua-facing top-level `agent.*` task, sidestep, promotion, and peer-delegation API.
   - Registration/orchestration only; helper domains live under `agent_bindings/`.
-- `src/harness/stdlib/agent_bindings/session_api.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/session_api.rs`
   - Lua-facing `agent.session.*` namespace registration for identity, local queueing,
     session lookup/metadata, branch operations, and session listing.
-- `src/harness/stdlib/agent_bindings/queue.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/queue.rs`
   - Local queue helpers for `agent.spawn`, `agent.sidestep`, and `agent.session.queue*`.
-- `src/harness/stdlib/agent_bindings/session_store.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/session_store.rs`
   - Session-store lookup helpers for branch/list/load APIs.
-- `src/harness/stdlib/agent_bindings/sidestep_graph.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/sidestep_graph.rs`
   - Sidestep graph relation parsing and persisted graph-edge attachment.
-- `src/harness/stdlib/agent_bindings/branch_lua.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/branch_lua.rs`
   - Branch-head row to Lua-table conversion.
-- `src/harness/stdlib/agent_bindings/options.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/agent_bindings/options.rs`
   - Option parsing for spawn/sidestep/peer/session helper APIs.
-- `src/harness/stdlib/runtime_agent.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_agent.rs`
   - Lua-facing `runtime.agent.*` API for peer-agent submit, await, status, sidestep, and promotion.
 - `src/kernel/agent_manager/*`
   - Peer-agent lifecycle, task submission, result await, and live-session reload.

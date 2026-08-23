@@ -30,11 +30,11 @@ This subsystem is security-sensitive. Refactors here should be small, test-backe
   - Governance configuration types and defaults.
 - `src/kernel/config/validation.rs`
   - Governance config validation.
-- `src/harness/stdlib/governance_support.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/governance_support.rs`
   - Active harness subject construction and capability checks.
-- `src/harness/stdlib/runtime_governance.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_governance.rs`
   - Lua `runtime.governance.*` API.
-- `src/harness/dx/governance.rs`
+- `crates/turin-harness-lua/src/harness/dx/governance.rs`
   - DX wrapper helpers for grants.
 
 ## Data Flow
@@ -135,8 +135,8 @@ template as a compatibility fallback.
 This centralized the exact/wildcard bool-rule matcher that had been duplicated in:
 
 - `src/kernel/governance.rs`
-- `src/harness/stdlib/governance_support.rs`
-- `src/harness/stdlib/system_globals/imports.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/governance_support.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/system_globals/imports.rs`
 
 The shared matcher preserves these security rules with dedicated tests:
 

@@ -207,7 +207,7 @@ pub fn bind_named_harness(config: &mut TurinConfig, harness_id: &str, harness_di
 }
 
 pub async fn build_kernel(config: TurinConfig) -> Result<Kernel> {
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

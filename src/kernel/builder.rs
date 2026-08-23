@@ -38,9 +38,7 @@ impl RuntimeBuilder {
 
             embedding_provider: None,
             rust_harness_factories: HashMap::new(),
-            script_harness_adapter: crate::kernel::harness_runtime::default_script_adapter_factory(
-            )
-            .ok(),
+            script_harness_adapter: None,
         }
     }
 

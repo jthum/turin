@@ -13,7 +13,7 @@ This subsystem should preserve four guarantees:
 
 ## Files
 
-- `src/harness/stdlib/runtime_code.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_code.rs`
   - Lua-facing `runtime.code.search` namespace, governance capability checks, option parsing, embedding-provider negotiation, runtime fallback trace annotation.
 - `crates/turin-code-index/src/code_index_reader.rs`
   - Shared read API for status, lexical search, semantic search, hybrid search, tracing, and request structs.
@@ -75,13 +75,13 @@ Indexing:
 
 Change Lua API shape:
 
-1. Update `src/harness/stdlib/runtime_code.rs`.
+1. Update `crates/turin-harness-lua/src/harness/stdlib/runtime_code.rs`.
 2. Preserve capability names unless the governance model is being intentionally changed.
 3. Run the runtime code search harness tests.
 
 Change fallback or embedding-profile behavior:
 
-1. Update `resolve_query_embedding` in `src/harness/stdlib/runtime_code.rs`.
+1. Update `resolve_query_embedding` in `crates/turin-harness-lua/src/harness/stdlib/runtime_code.rs`.
 2. Add/adjust harness tests for strict and non-strict behavior.
 3. Run:
 

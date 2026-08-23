@@ -115,10 +115,11 @@ pub struct UpdateAgentInput {
 }
 
 impl DaemonState {
+    #[cfg(test)]
     pub async fn load(config_path: &Path) -> Result<Self> {
         Self::load_with_harness_adapter(
             config_path,
-            crate::kernel::harness_runtime::default_script_adapter_factory()?,
+            crate::kernel::harness_runtime::test_script_adapter_factory(),
         )
         .await
     }

@@ -17,3 +17,4 @@ turin-types = { path = "../turin-types" }
 tempfile = "3.10"
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
 turin = { path = "../.." }
+turin-harness-lua = { path = "../turin-harness-lua" }

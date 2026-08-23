@@ -31,14 +31,6 @@ struct ClientContext {
     shutdown_rx: watch_channel::Receiver<bool>,
 }
 
-pub async fn serve(config_path: &Path) -> Result<()> {
-    serve_with_harness_adapter(
-        config_path,
-        crate::kernel::harness_runtime::default_script_adapter_factory()?,
-    )
-    .await
-}
-
 pub async fn serve_with_harness_adapter(
     config_path: &Path,
     script_harness_adapter: Arc<dyn HarnessAdapterFactory>,

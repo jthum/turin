@@ -21,21 +21,21 @@ This subsystem should preserve two guarantees:
   - Daemon-facing worklist list/detail/item query APIs.
 - `src/work_items.rs`
   - Shared row-level work item domain helpers: public id formatting, pause/claimability/orphan checks, dependency checks, where filtering, and `WorkItemRow` to `QueuedTask` conversion.
-- `src/harness/stdlib/runtime_worklist.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist.rs`
   - Harness runtime worklist namespace registration, shared row conversion and dispatch helpers, and store opening/hydration.
-- `src/harness/stdlib/runtime_worklist/item_proxy.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist/item_proxy.rs`
   - Lua work-item fields and claim, heartbeat, dispatch, completion, failure, update, and child methods.
-- `src/harness/stdlib/runtime_worklist/list_proxy.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist/list_proxy.rs`
   - Lua worklist add, selection, claim-next, stale-release, progress, and dispatch-next methods.
-- `src/harness/stdlib/runtime_worklist/params.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist/params.rs`
   - Lua option and payload parsing for runtime worklist scope, add/update payloads, where/limit filters, stale-release options, and JSON field serialization.
-- `src/harness/stdlib/runtime_worklist_selection.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist_selection.rs`
   - Shared runtime work item selection rules for pending, orphaned, paused, active, next, empty, progress, and child queries.
-- `src/harness/stdlib/runtime_schedule.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_schedule.rs`
   - Lua-facing `runtime.schedule` API registration, capability gates, agent validation, result shaping, and scheduler access bridging.
-- `src/harness/stdlib/runtime_schedule/params.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_schedule/params.rs`
   - Lua option decoding for schedule create/update, persistence target parsing, schedule action parsing, and next-run time parsing.
-- `src/harness/stdlib/action_bindings.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/action_bindings.rs`
   - Built-in action bridge for worklist actions invoked from harness code.
 - `src/persistence/state/scheduler.rs`
   - Scheduled job persistence operations: CRUD, due/running queries, overlap state, recurrence/failure status, enable/disable, and deletion.

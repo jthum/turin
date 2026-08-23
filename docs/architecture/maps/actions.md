@@ -8,15 +8,15 @@ Keep this subsystem small and explicit: action bindings should translate Lua val
 
 ## Files
 
-- `src/harness/stdlib/action_bindings.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/action_bindings.rs`
   - Lua `action.define`, `action.define_on`, and `action.run`.
   - Declared action registry lookup and invocation.
-- `src/harness/stdlib/action_bindings/context.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/action_bindings/context.rs`
   - Action context helpers: `ctx:complete`, `ctx:fail`, `ctx:cancel`, `ctx:pause`, `ctx:pause_for`, `ctx.is_cancelled`, and `ctx.checkpoint`.
   - Work-item metadata patching and scheduled resume creation.
-- `src/harness/stdlib/action_bindings/builtins.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/action_bindings/builtins.rs`
   - Built-in worklist actions: `worklist.dispatch_next`, `worklist.release_stale`.
-- `src/harness/stdlib/runtime_worklist.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist.rs`
   - Worklist proxies and dispatch integration that can invoke declared actions.
 - `src/harness/scheduler.rs`
   - Harness-facing scheduler access used by action resume scheduling.
@@ -27,7 +27,7 @@ Keep this subsystem small and explicit: action bindings should translate Lua val
   - Optional Rust `on_action` callback. `None` means the action is not defined.
 - `src/daemon/state/scheduled_worklist_actions.rs`
   - Daemon execution path for scheduled worklist actions.
-- `src/harness/stdlib/object_refs.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/object_refs.rs`
   - Object reference encoding and proxy-method registration used by `action.define_on`.
 
 ## Data Flow

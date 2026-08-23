@@ -15,15 +15,15 @@ These namespaces are powerful. They should preserve three guarantees:
 
 ## Files
 
-- `src/harness/stdlib/runtime_db.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_db.rs`
   - Lua-facing `runtime.db` API, DB target resolution, open handle listing/closing, SQL query/exec dispatch, and SQL row conversion.
-- `src/harness/stdlib/runtime_graph.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_graph.rs`
   - Lua-facing `runtime.graph` API, graph node/edge conversion, graph ref parsing, selected-path materialization, and graph session resolution.
-- `src/harness/stdlib/db_support.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/db_support.rs`
   - Shared DB selector parsing, SQL param parsing, store path policy helpers, and SQL value conversion.
-- `src/harness/dx/db.rs`
+- `crates/turin-harness-lua/src/harness/dx/db.rs`
   - DX helpers layered over `runtime.db`.
-- `src/harness/dx/graph.rs`
+- `crates/turin-harness-lua/src/harness/dx/graph.rs`
   - DX helpers layered over `runtime.graph`.
 - `src/persistence/state/graph.rs`
   - Graph persistence operations.
@@ -83,13 +83,13 @@ Runtime graph:
 
 Change SQL selector or param behavior:
 
-1. Prefer updating `src/harness/stdlib/db_support.rs`.
+1. Prefer updating `crates/turin-harness-lua/src/harness/stdlib/db_support.rs`.
 2. Keep `runtime_db.rs` focused on capability checks and dispatch.
 3. Run runtime DB harness tests.
 
 Change runtime DB query/exec behavior:
 
-1. Update `src/harness/stdlib/runtime_db.rs`.
+1. Update `crates/turin-harness-lua/src/harness/stdlib/runtime_db.rs`.
 2. Keep query and exec using the shared target/open path.
 3. Run:
 
@@ -100,7 +100,7 @@ cargo test -p turin --lib runtime_db
 
 Change graph selected-path behavior:
 
-1. Update selected-path helpers in `src/harness/stdlib/runtime_graph.rs`.
+1. Update selected-path helpers in `crates/turin-harness-lua/src/harness/stdlib/runtime_graph.rs`.
 2. Preserve duplicate-turn rejection and session ownership checks.
 3. Run:
 

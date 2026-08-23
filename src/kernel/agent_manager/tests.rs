@@ -1,6 +1,5 @@
 use super::*;
 use crate::harness::scheduler::HarnessSchedulerAccess;
-use crate::kernel::Kernel;
 use crate::kernel::config::{
     AgentConfig, EmbeddingConfig, GovernanceConfig, HarnessConfig, InferenceConfig,
     InferenceOverrideConfig, KernelConfig, LayoutConfig, PersistenceConfig, ProviderConfig,
@@ -102,7 +101,7 @@ async fn linked_runtime_routing_excludes_busy_same_agent_ancestor_lanes() -> any
     config.persistence = PersistenceConfig::with_state_path(
         tmp.path().join("state.db").to_string_lossy().to_string(),
     );
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(config).build()?;
     kernel.init_state().await?;
     let manager = Arc::clone(kernel.agent_manager());
     let store = kernel.store_manager().get_default().await?;
@@ -315,7 +314,9 @@ async fn manager_shutdown_stops_cooperative_runtime() -> anyhow::Result<()> {
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = Arc::clone(kernel.agent_manager());
     let shutdown_token = CancellationToken::new();
     let shutdown_bg = shutdown_token.clone();
@@ -351,7 +352,9 @@ async fn manager_shutdown_aborts_stalled_runtime_after_grace() -> anyhow::Result
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = Arc::clone(kernel.agent_manager());
     let runtime_key = RuntimeSlotKey::default_for("default");
     let request_id = "req_stalled_shutdown".to_string();
@@ -467,9 +470,10 @@ async fn build_shared_peer_kernel_reuses_configured_tool_registry() -> anyhow::R
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(TestTool))?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir))
-        .with_tool_registry(registry.clone())
-        .build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .with_tool_registry(registry.clone())
+            .build()?;
 
     let peer_kernel = super::peer_session::fork_peer_kernel(&kernel.agent_manager);
 
@@ -493,7 +497,7 @@ async fn peer_runtime_idle_zero_waits_for_first_submitted_task() -> anyhow::Resu
     let mut config = test_config(tmp.path(), &harness_dir);
     config.agent.idle_timeout_seconds = Some(0);
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -530,7 +534,9 @@ async fn cancel_task_removes_queued_work_and_records_terminal_result() -> anyhow
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let request_id = "req_cancelled".to_string();
     let (tx_result, rx_result) = oneshot::channel();
@@ -665,7 +671,9 @@ async fn closed_result_channel_terminally_fails_pending_task() -> anyhow::Result
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let request_id = "req_lost_result".to_string();
     let (tx_result, rx_result) = oneshot::channel::<PeerAgentTaskResult>();
@@ -730,7 +738,9 @@ async fn cancel_task_marks_running_work_cancelling() -> anyhow::Result<()> {
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let request_id = "req_running".to_string();
     let cancel_token = CancellationToken::new();
@@ -783,7 +793,9 @@ async fn cancellation_during_task_activation_is_applied_when_token_becomes_avail
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let request_id = "req_activating".to_string();
     let runtime_key = RuntimeSlotKey::default_for("default");
@@ -851,7 +863,9 @@ async fn cancel_session_cancels_queued_work_and_requests_reset() -> anyhow::Resu
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let session_id = "s_cancel";
     let request_id = "req_session_cancel".to_string();
@@ -937,7 +951,9 @@ async fn kill_session_marks_running_and_queued_work_killed() -> anyhow::Result<(
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let session_id = "s_kill";
     let running_request_id = "req_running_kill".to_string();
@@ -1053,7 +1069,9 @@ async fn pooled_linked_lane_cancels_only_the_target_session() -> anyhow::Result<
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let runtime_key = RuntimeSlotKey {
         agent_id: "worker".to_string(),
@@ -1169,7 +1187,9 @@ async fn pooled_linked_lane_kills_a_queued_session_without_stopping_the_lane() -
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let runtime_key = RuntimeSlotKey {
         agent_id: "worker".to_string(),
@@ -1247,7 +1267,9 @@ async fn session_family_work_count_includes_an_unmaterialized_linked_task() -> a
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let store_selector = kernel.config().persistence.top_level_state_selector()?;
     manager.pending_task_states.write().await.insert(
@@ -1290,7 +1312,9 @@ async fn linked_submission_admission_bounds_outstanding_children_and_fan_out() -
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let runtime_key = RuntimeSlotKey {
         agent_id: "worker".to_string(),
@@ -1385,7 +1409,9 @@ async fn stopped_runtime_rejects_submission_without_pending_state() -> anyhow::R
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let shutdown_token = CancellationToken::new();
     shutdown_token.cancel();
@@ -1437,7 +1463,7 @@ async fn linked_submission_depth_uses_persisted_session_ancestry() -> anyhow::Re
     config.persistence = PersistenceConfig::with_state_path(
         tmp.path().join("state.db").to_string_lossy().to_string(),
     );
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(config).build()?;
     kernel.init_state().await?;
     let store = kernel.store_manager().get_default().await?;
     let root = store
@@ -1493,7 +1519,7 @@ async fn recursive_cancellation_includes_materialized_and_queued_descendants() -
     config.persistence = PersistenceConfig::with_state_path(
         tmp.path().join("state.db").to_string_lossy().to_string(),
     );
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(config).build()?;
     kernel.init_state().await?;
     let manager = kernel.agent_manager();
     let store = kernel.store_manager().get_default().await?;
@@ -1616,7 +1642,9 @@ async fn resume_session_restarts_dead_requested_slot() -> anyhow::Result<()> {
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let slot_id = "chan-stale";
     let opened = manager
@@ -1674,7 +1702,9 @@ async fn failed_runtime_bootstrap_is_not_published() -> anyhow::Result<()> {
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let mut kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let mut kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     kernel.init_state().await?;
     let manager = Arc::clone(kernel.agent_manager());
     let runtime_key = RuntimeSlotKey {
@@ -1707,7 +1737,9 @@ async fn resume_session_accepts_bare_id_for_path_backed_state_store() -> anyhow:
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let mut kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let mut kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     kernel.init_state().await?;
     let manager = kernel.agent_manager();
     let opened = manager
@@ -1749,7 +1781,9 @@ async fn explicit_runtime_slots_allow_multiple_live_runtimes_for_one_session() -
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
 
     let slot_a = manager
@@ -1890,7 +1924,9 @@ async fn live_session_snapshots_expose_effective_conflict_policy() -> anyhow::Re
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
 
-    let kernel = Kernel::builder(test_config(tmp.path(), &harness_dir)).build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
     let manager = kernel.agent_manager();
     let session_id = "s_live_conflict";
     let control = Arc::new(RuntimeControl::default());
@@ -1966,7 +2002,7 @@ async fn runtime_signals_can_wake_subscribed_agent_and_dispatch_to_worklist() ->
         "#,
     )?;
 
-    let mut kernel = Kernel::builder(signal_test_config(
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(signal_test_config(
         tmp.path(),
         &publisher_harness,
         &reviewer_harness,
@@ -2092,7 +2128,7 @@ async fn runtime_signals_hydrate_reference_payloads_in_subscribed_agent() -> any
         "#,
     )?;
 
-    let mut kernel = Kernel::builder(signal_test_config(
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(signal_test_config(
         tmp.path(),
         &publisher_harness,
         &reviewer_harness,
@@ -2185,7 +2221,7 @@ async fn runtime_signal_subscriptions_sync_on_harness_reload() -> anyhow::Result
         "#,
     )?;
 
-    let mut kernel = Kernel::builder(signal_test_config(
+    let mut kernel = crate::kernel::harness_runtime::test_runtime_builder(signal_test_config(
         tmp.path(),
         &publisher_harness,
         &reviewer_harness,

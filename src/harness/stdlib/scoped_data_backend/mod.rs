@@ -8,15 +8,15 @@ mod memory;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use kv::{kv_delete_backend, kv_get_backend, kv_set_backend};
-pub(crate) use memory::{
+pub use kv::{kv_delete_backend, kv_get_backend, kv_set_backend};
+pub use memory::{
     memory_correct_backend_with_request, memory_feedback_backend_with_request,
     memory_purge_backend_with_request, memory_search_backend_with_request,
     memory_store_backend_with_request,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) enum MemoryStoreMode {
+pub enum MemoryStoreMode {
     #[default]
     Auto,
     LexicalOnly,
@@ -24,7 +24,7 @@ pub(crate) enum MemoryStoreMode {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct MemoryStoreRequest {
+pub struct MemoryStoreRequest {
     pub source_task: Option<String>,
     pub tags: Vec<String>,
     pub storage: MemoryStoreMode,
@@ -32,7 +32,7 @@ pub(crate) struct MemoryStoreRequest {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) enum MemorySearchMode {
+pub enum MemorySearchMode {
     #[default]
     Auto,
     Lexical,
@@ -41,7 +41,7 @@ pub(crate) enum MemorySearchMode {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MemorySearchRequest {
+pub struct MemorySearchRequest {
     pub limit: usize,
     pub mode: MemorySearchMode,
     pub min_score: f64,
@@ -68,7 +68,7 @@ impl Default for MemorySearchRequest {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MemorySearchSource {
+pub struct MemorySearchSource {
     pub scope_kind: String,
     pub scope_key: String,
     pub raw_scope_key: String,
@@ -77,14 +77,14 @@ pub(crate) struct MemorySearchSource {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum MemoryFeedbackSignal {
+pub enum MemoryFeedbackSignal {
     Up,
     Down,
     Delta(f64),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MemoryFeedbackRequest {
+pub struct MemoryFeedbackRequest {
     pub reason: Option<String>,
     pub task_id: Option<String>,
     pub step: f64,
@@ -107,7 +107,7 @@ impl Default for MemoryFeedbackRequest {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MemoryPurgeRequest {
+pub struct MemoryPurgeRequest {
     pub older_than_days: Option<u64>,
     pub min_weight: Option<f64>,
     pub max_retrieval_count: Option<u64>,
@@ -145,14 +145,14 @@ fn visibility_allowed(selector: &ContextSelector) -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ScopedStateRef {
+pub struct ScopedStateRef {
     pub scope_kind: String,
     pub scope_key: String,
     pub raw_scope_key: Option<String>,
     pub namespace: String,
 }
 
-pub(crate) fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
+pub fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
     if namespace == "default" {
         raw_key.to_string()
     } else {
@@ -164,7 +164,7 @@ pub(crate) fn encode_scope_key(raw_key: &str, namespace: &str) -> String {
     }
 }
 
-pub(crate) fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateRef> {
+pub fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<ScopedStateRef> {
     visibility_allowed(selector)?;
     if selector.tags.len() == 1
         && let Some((kind, key)) = selector.tags[0].split_once(':')
@@ -192,7 +192,7 @@ pub(crate) fn selector_scope_ref(selector: &ContextSelector) -> anyhow::Result<S
     })
 }
 
-pub(crate) async fn open_state_store(
+pub async fn open_state_store(
     manager: &StoreManager,
     store_selector: Option<&StoreSelector>,
     path_scope: StorePathScope,
@@ -209,7 +209,7 @@ pub(crate) async fn open_state_store(
     }
 }
 
-pub(crate) fn augment_memory_metadata(
+pub fn augment_memory_metadata(
     metadata: &serde_json::Value,
     request: &MemoryStoreRequest,
 ) -> serde_json::Value {

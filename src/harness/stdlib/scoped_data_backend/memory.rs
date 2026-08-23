@@ -152,7 +152,7 @@ fn feedback_delta(signal: MemoryFeedbackSignal, request: &MemoryFeedbackRequest)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) async fn memory_store_backend(
+pub async fn memory_store_backend(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -173,7 +173,7 @@ pub(crate) async fn memory_store_backend(
     .await
 }
 
-pub(crate) async fn memory_store_backend_with_request(
+pub async fn memory_store_backend_with_request(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -201,7 +201,7 @@ pub(crate) async fn memory_store_backend_with_request(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) async fn memory_search_backend(
+pub async fn memory_search_backend(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -224,7 +224,7 @@ pub(crate) async fn memory_search_backend(
     .await
 }
 
-pub(crate) async fn memory_search_backend_with_request(
+pub async fn memory_search_backend_with_request(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -273,7 +273,7 @@ pub(crate) async fn memory_search_backend_with_request(
     Ok(combined)
 }
 
-pub(crate) async fn memory_feedback_backend_with_request(
+pub async fn memory_feedback_backend_with_request(
     manager: &StoreManager,
     selector: &ContextSelector,
     memory_id: &str,
@@ -300,7 +300,7 @@ pub(crate) async fn memory_feedback_backend_with_request(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn memory_correct_backend_with_request(
+pub async fn memory_correct_backend_with_request(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -330,7 +330,7 @@ pub(crate) async fn memory_correct_backend_with_request(
         .await
 }
 
-pub(crate) async fn memory_purge_backend_with_request(
+pub async fn memory_purge_backend_with_request(
     manager: &StoreManager,
     selector: &ContextSelector,
     request: &MemoryPurgeRequest,

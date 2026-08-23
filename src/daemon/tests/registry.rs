@@ -7,7 +7,7 @@ use tempfile::tempdir;
 use crate::kernel::config::TurinConfig;
 
 fn scan_registry_with_default(config: &TurinConfig, root: &Path) -> Result<RegistryLoad> {
-    let adapter = crate::kernel::harness_runtime::default_script_adapter_factory()?;
+    let adapter = crate::kernel::harness_runtime::test_script_adapter_factory();
     scan_registry(config, root, Some(&adapter))
 }
 

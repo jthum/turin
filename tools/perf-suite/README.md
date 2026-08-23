@@ -253,7 +253,7 @@ For heap attribution when aggregate counters are not enough, build a temporary
 profiling daemon:
 
 ```bash
-CARGO_TARGET_DIR=target cargo build --profile profiling -p turin --bin turin --features heap-profile
+CARGO_TARGET_DIR=target cargo build --profile profiling -p turin-cli --bin turin --features heap-profile
 ```
 
 Then run a black-box scenario against `target/profiling/turin`. The

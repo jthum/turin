@@ -3,7 +3,7 @@ use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
 
 use super::{open_state_store, selector_scope_ref};
 
-pub(crate) async fn kv_get_backend(
+pub async fn kv_get_backend(
     manager: &StoreManager,
     selector: &ContextSelector,
     key: &str,
@@ -15,7 +15,7 @@ pub(crate) async fn kv_get_backend(
     store.kv_get(&scope.scope_kind, &scope.scope_key, key).await
 }
 
-pub(crate) async fn kv_set_backend(
+pub async fn kv_set_backend(
     manager: &StoreManager,
     selector: &ContextSelector,
     key: &str,
@@ -30,7 +30,7 @@ pub(crate) async fn kv_set_backend(
         .await
 }
 
-pub(crate) async fn kv_delete_backend(
+pub async fn kv_delete_backend(
     manager: &StoreManager,
     selector: &ContextSelector,
     key: &str,

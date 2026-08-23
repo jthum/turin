@@ -8,25 +8,25 @@ This file is security-sensitive because it defines how harness code loads other 
 
 ## Files
 
-- `src/harness/stdlib/system_globals.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/system_globals.rs`
   - Facade for Lua globals: `try`, `hash`, `json`, `time`, `log`, and subsystem registration.
   - Shared safe-path and capability helpers used by child modules.
-- `src/harness/stdlib/system_globals/imports.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/system_globals/imports.rs`
   - Lua globals: `import`, `import_scoped`, `use`, `use_scoped`, and `watch`.
   - Import/use policy enforcement and scoped capability delegation.
-- `src/harness/stdlib/system_globals/imports/delegation.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/system_globals/imports/delegation.rs`
   - Imported module proxy wrapping, active module/root context restoration, and delegated import capability parsing/ceiling checks.
-- `src/harness/stdlib/system_globals/fs.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/system_globals/fs.rs`
   - Lua global: `fs`.
   - File path safety and `fs.stat` session hash tracking.
-- `src/harness/engine.rs`
+- `crates/turin-harness-lua/src/harness/engine.rs`
   - Module loading, loaded-module registry, load phase, and watch roots.
-- `src/harness/engine/hook_dispatch.rs`
+- `crates/turin-harness-lua/src/harness/engine/hook_dispatch.rs`
   - Hook dispatch using the loaded-module registry, including temporary module/root and
     delegated-capability context restoration.
 - `src/harness/source.rs`
   - In-memory source overlay used to validate a complete unsaved harness candidate.
-- `src/harness/stdlib/governance_support.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/governance_support.rs`
   - Active subject and capability enforcement.
 - `src/tools.rs`
   - Safe path resolution used by filesystem globals.

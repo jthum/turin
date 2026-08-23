@@ -30,11 +30,8 @@ struct HarnessLoadedState {
 pub struct HarnessDefinition {
     harness_id: String,
     directory: PathBuf,
-    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     pub fs_root: PathBuf,
-    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     pub workspace_root: PathBuf,
-    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
     pub spawn_depth: u32,
     loaded_state: std::sync::Mutex<HarnessLoadedState>,
     generation: AtomicU64,

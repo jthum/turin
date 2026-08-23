@@ -8,7 +8,6 @@ use turin::inference::provider::{
     InferenceContent, InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream,
     ProviderClient, RequestOptions, SdkError,
 };
-use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, ContextPersistenceConfig, EmbeddingConfig, GovernanceConfig,
     GovernanceGrantsConfig, HarnessConfig, InferenceConfig, InferenceContextConfig, KernelConfig,
@@ -345,7 +344,7 @@ async fn test_harness_rejection() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
 
     // Inject custom provider
@@ -483,7 +482,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
     let seen_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
     let stage = Arc::new(std::sync::Mutex::new(0));
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -627,7 +626,7 @@ also answering the user normally. Do not mention the title operation.]]
 
     let seen_tools = Arc::new(std::sync::Mutex::new(Vec::new()));
     let request_count = Arc::new(std::sync::Mutex::new(0));
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -754,7 +753,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -876,7 +875,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1004,7 +1003,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1132,7 +1131,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1257,7 +1256,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1388,7 +1387,7 @@ tool.declare("tool_9", {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1516,7 +1515,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.add_client(
         "mock".to_string(),
@@ -1627,7 +1626,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
 
     let mock_provider = Arc::new(ToolMockProvider {
@@ -1874,7 +1873,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -2060,7 +2059,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -2215,7 +2214,7 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -2306,7 +2305,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2419,7 +2418,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -2661,7 +2660,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -2810,7 +2809,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3005,7 +3004,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3189,7 +3188,7 @@ async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3293,7 +3292,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3701,7 +3700,7 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(cfg).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(cfg).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3908,7 +3907,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4034,7 +4033,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4199,7 +4198,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4341,7 +4340,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4461,7 +4460,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4588,7 +4587,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4691,7 +4690,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     let err = kernel.init_harness().await.unwrap_err();
@@ -4810,7 +4809,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -4929,7 +4928,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5123,7 +5122,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5317,7 +5316,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5492,7 +5491,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5643,7 +5642,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5794,7 +5793,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -5945,7 +5944,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6062,7 +6061,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6200,7 +6199,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6340,7 +6339,7 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6478,7 +6477,7 @@ async fn test_graph_dx_helpers_create_link_and_materialize_paths() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6680,7 +6679,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -6904,7 +6903,7 @@ async fn test_runtime_agent_sidestep_runs_on_peer_sibling_branch() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -7053,7 +7052,7 @@ async fn test_runtime_agent_can_promote_detached_sidestep_result() -> Result<()>
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -7153,7 +7152,7 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -7314,7 +7313,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -7504,7 +7503,7 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(cfg).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(cfg).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -7753,7 +7752,7 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(cfg).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(cfg).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

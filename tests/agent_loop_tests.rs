@@ -9,7 +9,6 @@ use turin::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
     RequestOptions, SdkError,
 };
-use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
@@ -161,7 +160,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
 
     // Setup multi-turn sequence:
@@ -368,7 +367,7 @@ async fn test_harness_observation() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
 
     let responses = vec![vec![
@@ -487,7 +486,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
 
     let responses = vec![
@@ -616,7 +615,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -713,7 +712,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -864,7 +863,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -1031,7 +1030,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -1259,7 +1258,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 

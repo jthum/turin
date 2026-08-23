@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use tempfile::tempdir;
-use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
@@ -64,7 +63,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

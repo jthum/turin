@@ -28,7 +28,7 @@ This subsystem should preserve two guarantees:
   - Interactive escalation prompts and `on_tool_result` harness policy.
 - `src/kernel/harness_hooks.rs`
   - Harness `on_tool_call` verdict evaluation used before execution.
-- `src/harness/stdlib/tool_bindings.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/tool_bindings.rs`
   - Lua declarations and invocation plumbing for harness-defined virtual tools.
 
 ## Data Flow

@@ -31,3 +31,4 @@ reqwest = { version = "0.13", default-features = false, features = ["brotli", "d
 tempfile = "3.10"
 turin = { path = "../.." }
 turin-daemon-client = { path = "../turin-daemon-client" }
+turin-harness-lua = { path = "../turin-harness-lua" }

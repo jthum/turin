@@ -1,60 +1,7 @@
-#[cfg(feature = "lua")]
-pub mod action_bindings;
-#[cfg(feature = "lua")]
-pub mod agent_bindings;
-#[cfg(feature = "lua")]
-pub mod binding_common;
-#[cfg(feature = "lua")]
-pub mod context_selectors;
-#[cfg(feature = "lua")]
-pub mod db_support;
-#[cfg(feature = "lua")]
-pub mod event_bindings;
-#[cfg(feature = "lua")]
-pub mod governance_support;
-#[cfg(feature = "lua")]
-pub mod identity_support;
-#[cfg(feature = "lua")]
-pub mod memory_kv_bindings;
-#[cfg(feature = "lua")]
-pub mod object_refs;
-#[cfg(feature = "lua")]
-pub mod policy_support;
-#[cfg(feature = "lua")]
-pub mod runtime_agent;
-#[cfg(feature = "lua")]
-pub mod runtime_bindings;
-#[cfg(feature = "lua")]
-pub mod runtime_code;
-#[cfg(feature = "lua")]
-pub mod runtime_context;
-#[cfg(feature = "lua")]
-pub mod runtime_data;
-#[cfg(feature = "lua")]
-pub mod runtime_db;
-#[cfg(feature = "lua")]
-pub mod runtime_governance;
-#[cfg(feature = "lua")]
-pub mod runtime_graph;
-#[cfg(feature = "lua")]
-pub mod runtime_inference;
-#[cfg(feature = "lua")]
-pub mod runtime_policy;
-#[cfg(feature = "lua")]
-pub mod runtime_schedule;
-#[cfg(feature = "lua")]
-pub mod runtime_signal;
-#[cfg(feature = "lua")]
-pub mod runtime_worklist;
-#[cfg(feature = "lua")]
-mod runtime_worklist_selection;
-#[cfg_attr(not(feature = "lua"), allow(dead_code, unused_imports))]
 pub mod scoped_data_backend;
-#[cfg(feature = "lua")]
-pub mod session_user_aliases;
-#[cfg(feature = "lua")]
-pub mod system_globals;
-#[cfg(feature = "lua")]
-pub mod tool_bindings;
-#[cfg(feature = "lua")]
-pub mod ui_bindings;
+
+#[cfg(test)]
+#[path = "../../../crates/turin-harness-lua/src/harness/stdlib/mod.rs"]
+mod lua;
+#[cfg(test)]
+pub use lua::*;

@@ -310,9 +310,8 @@ async fn agents_can_bind_to_distinct_rust_harnesses_without_lua() -> Result<()> 
     Ok(())
 }
 
-#[cfg(not(feature = "lua"))]
 #[test]
-fn named_harness_without_rust_factory_fails_without_lua() -> Result<()> {
+fn named_harness_without_registered_implementation_fails() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = TurinConfig::default();
     config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
@@ -329,13 +328,13 @@ fn named_harness_without_rust_factory_fails_without_lua() -> Result<()> {
         .with_default_harness(factory)
         .build();
     let error = match result {
-        Ok(_) => anyhow::bail!("missing Rust harness factory unexpectedly succeeded"),
+        Ok(_) => anyhow::bail!("missing harness implementation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert!(
         error
             .to_string()
-            .contains("Harness 'missing' has no Rust factory")
+            .contains("Harness 'missing' has no registered implementation")
     );
     Ok(())
 }

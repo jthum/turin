@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use anyhow::Result;
-
 use crate::kernel::harness::HarnessFactory;
 
 mod contract;
 mod definition;
-#[cfg(feature = "lua")]
-mod lua_adapter;
 mod resolver;
 mod rust_adapter;
+#[cfg(test)]
+#[path = "../../crates/turin-harness-lua/src/runtime.rs"]
+mod test_lua_adapter;
 
 pub use contract::{HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext};
 #[doc(hidden)]
@@ -20,12 +19,15 @@ fn rust_adapter_factory(factory: Arc<dyn HarnessFactory>) -> Arc<dyn HarnessAdap
     rust_adapter::factory(factory)
 }
 
-#[cfg(feature = "lua")]
-pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
-    Ok(lua_adapter::factory())
+#[cfg(test)]
+pub(crate) fn test_script_adapter_factory() -> Arc<dyn HarnessAdapterFactory> {
+    Arc::new(test_lua_adapter::LuaHarnessAdapterFactory)
 }
 
-#[cfg(not(feature = "lua"))]
-pub(crate) fn default_script_adapter_factory() -> Result<Arc<dyn HarnessAdapterFactory>> {
-    anyhow::bail!("No script harness adapter is enabled in this Turin build")
+#[cfg(test)]
+pub(crate) fn test_runtime_builder(
+    config: crate::kernel::config::TurinConfig,
+) -> crate::kernel::builder::RuntimeBuilder {
+    crate::kernel::builder::RuntimeBuilder::new(config)
+        .with_harness_adapter(test_script_adapter_factory())
 }

@@ -18,8 +18,8 @@ pub(crate) struct HarnessManager {
 impl HarnessManager {
     #[cfg(test)]
     pub(crate) fn from_config(config: &TurinConfig) -> Result<Self> {
-        let adapter = super::harness_runtime::default_script_adapter_factory().ok();
-        Self::from_config_with_harnesses(config, &RustHarnessFactories::new(), adapter.as_ref())
+        let adapter = super::harness_runtime::test_script_adapter_factory();
+        Self::from_config_with_harnesses(config, &RustHarnessFactories::new(), Some(&adapter))
     }
 
     pub(crate) fn from_config_with_harnesses(

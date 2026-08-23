@@ -161,11 +161,11 @@ The tool execution path is split into dedicated `kernel::turn` submodules and in
 
 ### Harness
 
-- `src/harness/engine.rs`
+- `crates/turin-harness-lua/src/harness/engine.rs`
   - script loading, module metadata, hook evaluation, hot reload
-- `src/harness/globals.rs`
+- `crates/turin-harness-lua/src/harness/globals.rs`
   - thin registration entrypoint + shared app state (`HarnessAppData`)
-- `src/harness/context.rs`
+- `crates/turin-harness-lua/src/harness/context.rs`
   - `on_turn_prepare(turn)` userdata wrapper and request overrides
 - `src/harness/stdlib/*`
   - canonical stdlib modules and shared binding helpers

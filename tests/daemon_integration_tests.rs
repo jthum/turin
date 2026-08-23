@@ -89,7 +89,7 @@ bind = "127.0.0.1:0"
 
         let serve_config_path = config_path.clone();
         let join =
-            tokio::spawn(async move { turin::daemon::server::serve(&serve_config_path).await });
+            tokio::spawn(async move { turin_harness_lua::serve_daemon(&serve_config_path).await });
 
         let deadline = Instant::now() + Duration::from_secs(15);
         let client = turin_daemon_client::DaemonClient::new(&endpoint);

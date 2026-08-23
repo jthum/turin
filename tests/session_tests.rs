@@ -87,7 +87,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
 
 async fn make_kernel(tmp: &std::path::Path) -> Result<Kernel> {
     let config = make_config(tmp);
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -597,7 +597,7 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
 async fn test_cancelling_stalled_inference_does_not_append_assistant_output() -> Result<()> {
     let tmp = tempdir()?;
     let config = make_config(tmp.path());
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -628,7 +628,7 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
     let mut config = make_config(tmp.path());
     config.tools.selection.allow = Some(vec!["shell_exec".to_string()]);
     config.agent.tools.selection.allow = Some(vec!["shell_exec".to_string()]);
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(
@@ -835,7 +835,7 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
     let mut config = make_config(tmp.path());
     config.harness.directory = harness_dir.to_string_lossy().to_string();
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -1518,7 +1518,7 @@ async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Re
         provider.context_window_tokens = Some(2048);
     }
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -1570,7 +1570,7 @@ async fn test_on_turn_prepare_structured_output_uses_native_response_format() ->
 
     let mut config = make_config(tmp.path());
     config.harness.directory = harness_dir.to_string_lossy().to_string();
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -1651,7 +1651,7 @@ async fn test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validat
 
     let mut config = make_config(tmp.path());
     config.harness.directory = harness_dir.to_string_lossy().to_string();
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -1713,7 +1713,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -1800,7 +1800,7 @@ async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_contex
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -1877,7 +1877,7 @@ async fn test_complete_current_resident_history_bypasses_context_rematerializati
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -1946,7 +1946,7 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2051,7 +2051,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2355,7 +2355,7 @@ async fn test_multimodal_task_content_respects_relative_layout_root() -> Result<
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2433,7 +2433,7 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2550,7 +2550,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
 
@@ -2953,7 +2953,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3112,7 +3112,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3263,7 +3263,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3370,7 +3370,7 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
     config.governance.audit.mode = turin::kernel::config::GovernanceAuditMode::Immutable;
     config.governance.enforcement_enabled = false;
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3399,7 +3399,7 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_governance_grant_audit_events_persisted() -> Result<()> {
     let tmp = tempdir()?;
     let mut config = make_config(tmp.path());
@@ -3442,7 +3442,7 @@ async fn test_governance_grant_audit_events_persisted() -> Result<()> {
     config.governance.grants.max_ttl_ms = Some(10_000);
     config.governance.grants.require_audit_reason = true;
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3544,7 +3544,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         remote: Default::default(),
     };
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     // Deliberately skip init_state
     kernel.init_clients()?;
     kernel.init_harness().await?;
@@ -3806,7 +3806,7 @@ async fn test_token_usage_and_task_complete_include_task_budget_metrics() -> Res
         },
     );
 
-    let mut kernel = Kernel::builder(config).build()?;
+    let mut kernel = turin_harness_lua::runtime_builder(config).build()?;
     kernel.init_state().await?;
     kernel.init_harness().await?;
     kernel.add_client(

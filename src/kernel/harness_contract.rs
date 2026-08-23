@@ -67,7 +67,6 @@ impl ToolExposure {
 pub type SessionQueue = Arc<Mutex<VecDeque<QueuedTask>>>;
 
 #[derive(Clone)]
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub struct HarnessEventContext {
     pub json: bool,
     pub internal_id: Option<i64>,
@@ -77,7 +76,6 @@ pub struct HarnessEventContext {
 }
 
 #[derive(Clone)]
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub struct HarnessExecutionMetadata {
     pub execution_id: String,
     pub context_target: ExecutionContextTarget,
@@ -88,7 +86,6 @@ pub struct HarnessExecutionMetadata {
 }
 
 #[derive(Clone)]
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub struct HarnessExecutionBinding {
     pub agent_id: String,
     pub session_id: String,
@@ -155,7 +152,6 @@ pub struct HarnessActionRequest<'a> {
     pub params: Value,
 }
 
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub struct HarnessTurnServices<'a> {
     pub clients: &'a HashMap<String, ProviderClient>,
     pub config: &'a Arc<TurinConfig>,

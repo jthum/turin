@@ -1,13 +1,16 @@
-#[cfg(feature = "lua")]
+#[cfg(test)]
+#[path = "../../crates/turin-harness-lua/src/harness/context.rs"]
 pub mod context;
-#[cfg(feature = "lua")]
+#[cfg(test)]
+#[path = "../../crates/turin-harness-lua/src/harness/dx/mod.rs"]
 pub mod dx;
-#[cfg(feature = "lua")]
+#[cfg(test)]
+#[path = "../../crates/turin-harness-lua/src/harness/engine.rs"]
 pub mod engine;
-#[cfg(feature = "lua")]
+#[cfg(test)]
+#[path = "../../crates/turin-harness-lua/src/harness/globals.rs"]
 pub mod globals;
 pub mod scheduler;
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 #[doc(hidden)]
 pub mod source;
 pub mod stdlib;

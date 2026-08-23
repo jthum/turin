@@ -1,4 +1,3 @@
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 mod capabilities;
 mod grants;
 

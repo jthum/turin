@@ -31,7 +31,7 @@ resolver = "2"
 name = "turin"
 version = "0.30.1"
 edition = "2024"
-description = "An event-driven LLM execution runtime with composable Lua harness scripts and auto-managed channel sidecars"
+description = "An event-driven runtime kernel for agentic applications"
 autobins = false
 
 [lib]
@@ -39,15 +39,10 @@ name = "turin"
 path = "src/lib.rs"
 
 [features]
-default = ["lua"]
-lua = ["dep:mlua"]
-heap-profile = ["dep:dhat"]
+default = []
 perf-diagnostics = []
 
 [dependencies]
-# CLI
-clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
-
 # Config
 toml = "1.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -87,21 +82,14 @@ uuid = { version = "1.0", features = ["v4", "v7"] }
 notify = "8.2"
 dotenvy = "0.15"
 
-# REPL
-rustyline = "18.0"
-
-
 # Database (Turso — pure Rust SQLite rewrite)
 turso = { version = "0.7.2", default-features = false }
 turso_core = { version = "0.7.2", features = ["fts"] }
 
-# Lua harness engine (Luau dialect with sandboxing)
-mlua = { version = "0.12", optional = true, features = ["luau", "serialize", "async", "macros", "send"] }
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter", "ansi", "json"] }
 tracing-appender = "0.2.4"
 libc = "0.2"
-dhat = { version = "0.3", optional = true }
 base64 = "0.23"
 bytes = "1.0"
 http = "1.0"
@@ -128,6 +116,8 @@ turin-channel-fs = { path = "crates/turin-channel-fs" }
 turin-channel-discord = { path = "crates/turin-channel-discord" }
 turin-channel-telegram = { path = "crates/turin-channel-telegram" }
 turin-code-index-writer = { path = "crates/turin-code-index-writer" }
+mlua = { version = "0.12", features = ["luau", "serialize", "async", "macros", "send"] }
+turin-harness-lua = { path = "crates/turin-harness-lua" }
 
 [profile.dev]
 debug = 0         # Lower compile memory and artifact size during normal iteration

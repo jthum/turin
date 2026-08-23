@@ -19,17 +19,17 @@ This subsystem should preserve four guarantees:
   - Canonical memory store/search/feedback/correct/purge behavior.
 - `src/harness/stdlib/scoped_data_backend/kv.rs`
   - Canonical scoped KV get/set/delete behavior.
-- `src/harness/stdlib/binding_common.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/binding_common.rs`
   - Lua option parsing, search-source parsing, store selector resolution, and Lua row conversion.
-- `src/harness/stdlib/memory_kv_bindings/mod.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/memory_kv_bindings/mod.rs`
   - Shared Lua bridge/result adapters for memory and KV backends.
-- `src/harness/stdlib/memory_kv_bindings/memory.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/memory_kv_bindings/memory.rs`
   - Global `memory.*` and `memory.as(ctx).*` APIs.
-- `src/harness/stdlib/memory_kv_bindings/kv.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/memory_kv_bindings/kv.rs`
   - Global `kv.*` and `kv.as(ctx).*` APIs.
-- `src/harness/stdlib/runtime_data.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/runtime_data.rs`
   - Canonical `runtime.memory.*` and `runtime.kv.*` APIs that require explicit context selectors.
-- `src/harness/stdlib/session_user_aliases.rs`
+- `crates/turin-harness-lua/src/harness/stdlib/session_user_aliases.rs`
   - Convenience `session.memory`, `session.kv`, `user.memory`, and `user.kv` aliases.
 - `src/tools/builtins/memory_tools.rs`
   - Native `remember` and `recall` tools backed by the same memory backend.

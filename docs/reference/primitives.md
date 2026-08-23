@@ -45,7 +45,7 @@ so failures abort loudly.
 
 ## DX Language Layer
 
-Turin also ships a first-party DX layer in `src/harness/dx/`.
+Turin also ships a first-party DX layer in `crates/turin-harness-lua/src/harness/dx/`.
 
 Important:
 

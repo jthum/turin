@@ -25,7 +25,6 @@ use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
 #[derive(Clone)]
-#[cfg_attr(not(feature = "lua"), allow(dead_code))]
 pub struct HarnessRuntimeInitContext {
     pub config: Arc<TurinConfig>,
     pub clients: HashMap<String, ProviderClient>,
