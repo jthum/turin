@@ -1,4 +1,4 @@
-//! Cognitive memory storage and lexical/vector/hybrid search.
+//! Cognitive memory storage, lifecycle, inspection, and retrieval.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;

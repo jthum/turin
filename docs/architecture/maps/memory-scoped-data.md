@@ -33,8 +33,8 @@ This subsystem should preserve four guarantees:
   - Convenience `session.memory`, `session.kv`, `user.memory`, and `user.kv` aliases.
 - `src/tools/builtins/memory_tools.rs`
   - Native `remember` and `recall` tools backed by the same memory backend.
-- `src/persistence/search.rs`
-  - Memory search plus bounded, read-only memory inspection used by operator clients.
+- `src/persistence/memory.rs`
+  - Memory storage, feedback, correction, purge, search, and bounded read-only inspection.
 - `src/daemon/state/memories.rs`
   - Maps inspection rows into the typed daemon `memory.list` response.
 
@@ -117,7 +117,7 @@ Change native memory tools:
 
 Change operator memory inspection:
 
-1. Keep the persistence query bounded and observational in `src/persistence/search.rs`.
+1. Keep the persistence query bounded and observational in `src/persistence/memory.rs`.
 2. Update the typed daemon projection in `src/daemon/state/memories.rs`.
 3. Run `cargo test -p turin memory_inspection_is_bounded_filtered_and_does_not_record_retrieval`.
 

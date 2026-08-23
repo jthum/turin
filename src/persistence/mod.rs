@@ -1,4 +1,4 @@
 pub mod manager;
+mod memory;
 pub mod schema;
-mod search;
 pub mod state;
