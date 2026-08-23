@@ -32,6 +32,9 @@ This subsystem should preserve three guarantees:
 - `src/daemon/state/source_revision.rs`
   - Compact revision of bootstrap configuration, registry shape, registry configs,
     and Lua sources used to suppress redundant watcher-triggered kernel rebuilds.
+- `src/daemon/state/mod.rs`
+  - Owns the selected script-harness adapter for the daemon lifetime and reuses it
+    for registry validation, catalog reconciliation, and full kernel replacement.
 - `src/daemon/server/dispatch/task.rs`
   - Daemon task request handlers.
 - `src/daemon/server/dispatch/session.rs`
@@ -210,6 +213,8 @@ Persisted session deletion:
   retire only idle slots and reject while that agent has active, queued, or awaiting work.
 - Bootstrap config changes and explicit runtime reloads retain full-kernel replacement
   and therefore require all runtime work to be idle.
+- Full kernel replacement must reuse the adapter supplied when the daemon was loaded;
+  daemon lifecycle code must not infer or instantiate a scripting engine.
 - Daemon restart does not durably replay task submissions. Completed transcript state can
   be resumed after an unclean exit, while queued or in-flight request ids and waiters are
   intentionally lost to avoid duplicating unknown provider or tool side effects.

@@ -19,6 +19,7 @@ use turin_local_ipc::{
 
 use crate::daemon::protocol::{DaemonRequest, ErrorCode, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::DaemonState;
+use crate::kernel::harness_runtime::HarnessAdapterFactory;
 
 #[derive(Clone)]
 struct ClientContext {
@@ -31,7 +32,20 @@ struct ClientContext {
 }
 
 pub async fn serve(config_path: &Path) -> Result<()> {
-    let state = Arc::new(RwLock::new(DaemonState::load(config_path).await?));
+    serve_with_harness_adapter(
+        config_path,
+        crate::kernel::harness_runtime::default_script_adapter_factory()?,
+    )
+    .await
+}
+
+pub async fn serve_with_harness_adapter(
+    config_path: &Path,
+    script_harness_adapter: Arc<dyn HarnessAdapterFactory>,
+) -> Result<()> {
+    let state = Arc::new(RwLock::new(
+        DaemonState::load_with_harness_adapter(config_path, script_harness_adapter).await?,
+    ));
     let endpoint = {
         let guard = state.read().await;
         guard.endpoint().to_path_buf()

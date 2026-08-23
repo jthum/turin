@@ -28,6 +28,7 @@ use crate::daemon::registry::{
 use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
+use crate::kernel::harness_runtime::HarnessAdapterFactory;
 use crate::persistence::state::StateStore;
 use source_revision::{SourceRevision, calculate_bootstrap_revision, calculate_source_revision};
 
@@ -85,6 +86,7 @@ pub struct DaemonState {
     pub(super) kernel: Kernel,
     pub(super) runtime_store: Arc<StateStore>,
     pub(super) scheduler_wake: Option<Arc<Notify>>,
+    script_harness_adapter: Arc<dyn HarnessAdapterFactory>,
     bootstrap_revision: SourceRevision,
     source_revision: SourceRevision,
 }
@@ -114,6 +116,17 @@ pub struct UpdateAgentInput {
 
 impl DaemonState {
     pub async fn load(config_path: &Path) -> Result<Self> {
+        Self::load_with_harness_adapter(
+            config_path,
+            crate::kernel::harness_runtime::default_script_adapter_factory()?,
+        )
+        .await
+    }
+
+    pub async fn load_with_harness_adapter(
+        config_path: &Path,
+        script_harness_adapter: Arc<dyn HarnessAdapterFactory>,
+    ) -> Result<Self> {
         let config_path = config_path.to_path_buf();
         let config_base = config_path
             .parent()
@@ -124,14 +137,20 @@ impl DaemonState {
             .with_context(|| format!("Failed to load '{}'", config_path.display()))?;
         helpers::normalize_bootstrap_paths(&mut bootstrap_config, &config_base);
 
-        let registry_load = scan_registry(&bootstrap_config, &config_base)?;
+        let registry_load = scan_registry(
+            &bootstrap_config,
+            &config_base,
+            Some(&script_harness_adapter),
+        )?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
         let endpoint = bootstrap_config.resolve_daemon_endpoint(&config_base);
         let runtime_db_path = bootstrap_config.resolve_daemon_runtime_db(&config_base);
         let runtime_store =
             Arc::new(StateStore::open(&runtime_db_path.display().to_string()).await?);
 
-        let mut kernel = Kernel::builder(effective_config).build()?;
+        let mut kernel = Kernel::builder(effective_config)
+            .with_harness_adapter(Arc::clone(&script_harness_adapter))
+            .build()?;
         kernel.init_state().await?;
         kernel.init_clients()?;
         kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
@@ -161,6 +180,7 @@ impl DaemonState {
             kernel,
             runtime_store,
             scheduler_wake: None,
+            script_harness_adapter,
             bootstrap_revision,
             source_revision,
         })
@@ -211,7 +231,11 @@ impl DaemonState {
         &mut self,
         forced_agents: &std::collections::HashSet<String>,
     ) -> Result<DaemonStatus> {
-        let registry_load = scan_registry(&self.bootstrap_config, &self.config_base)?;
+        let registry_load = scan_registry(
+            &self.bootstrap_config,
+            &self.config_base,
+            Some(&self.script_harness_adapter),
+        )?;
         let effective_config = build_effective_config(&self.bootstrap_config, &registry_load)?;
         let current_agents = &self.kernel.config().agents;
         let mut affected_agents = std::collections::HashSet::new();
@@ -242,13 +266,19 @@ impl DaemonState {
             .with_context(|| format!("Failed to load '{}'", self.config_path.display()))?;
         helpers::normalize_bootstrap_paths(&mut bootstrap_config, &self.config_base);
 
-        let registry_load = scan_registry(&bootstrap_config, &self.config_base)?;
+        let registry_load = scan_registry(
+            &bootstrap_config,
+            &self.config_base,
+            Some(&self.script_harness_adapter),
+        )?;
         let effective_config = build_effective_config(&bootstrap_config, &registry_load)?;
         let runtime_db_path = bootstrap_config.resolve_daemon_runtime_db(&self.config_base);
         let runtime_store =
             Arc::new(StateStore::open(&runtime_db_path.display().to_string()).await?);
 
-        let mut new_kernel = Kernel::builder(effective_config).build()?;
+        let mut new_kernel = Kernel::builder(effective_config)
+            .with_harness_adapter(Arc::clone(&self.script_harness_adapter))
+            .build()?;
         new_kernel.init_state().await?;
         new_kernel.init_clients()?;
         new_kernel.host.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(

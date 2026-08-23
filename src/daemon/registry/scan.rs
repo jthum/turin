@@ -12,19 +12,23 @@ use crate::kernel::agent_manager::AgentManager;
 use crate::kernel::config::{AgentConfig, TurinConfig};
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness_runtime::{
-    HarnessAdapterResolver, HarnessDefinition, HarnessRuntimeInitContext,
+    HarnessAdapterFactory, HarnessAdapterResolver, HarnessDefinition, HarnessRuntimeInitContext,
 };
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
 
-pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<RegistryLoad> {
+pub fn scan_registry(
+    config: &TurinConfig,
+    config_base: &Path,
+    script_harness_adapter: Option<&Arc<dyn HarnessAdapterFactory>>,
+) -> Result<RegistryLoad> {
     let agents_dir = config.resolve_daemon_agents_dir(config_base);
     let harnesses_dir = config.resolve_daemon_harnesses_dir(config_base);
 
     let mut issues = Vec::new();
     let mut shared_harness_map = scan_shared_harnesses(&harnesses_dir)?;
-    shared_harness_map.retain(
-        |id, directory| match validate_harness_dir(config, id, directory) {
+    shared_harness_map.retain(|id, directory| {
+        match validate_harness_dir(config, id, directory, script_harness_adapter) {
             Ok(()) => true,
             Err(err) => {
                 issues.push(RegistryIssue {
@@ -33,10 +37,16 @@ pub fn scan_registry(config: &TurinConfig, config_base: &Path) -> Result<Registr
                 });
                 false
             }
-        },
-    );
+        }
+    });
 
-    let mut agents = scan_agents(config, &agents_dir, &shared_harness_map, &mut issues)?;
+    let mut agents = scan_agents(
+        config,
+        &agents_dir,
+        &shared_harness_map,
+        &mut issues,
+        script_harness_adapter,
+    )?;
     let mut shared_harnesses: Vec<_> = shared_harness_map
         .into_iter()
         .map(|(id, directory)| SharedHarness { id, directory })
@@ -60,6 +70,7 @@ fn scan_agents(
     agents_dir: &Path,
     shared_harnesses: &HashMap<String, PathBuf>,
     issues: &mut Vec<RegistryIssue>,
+    script_harness_adapter: Option<&Arc<dyn HarnessAdapterFactory>>,
 ) -> Result<Vec<DiscoveredAgent>> {
     let mut agents = Vec::new();
 
@@ -86,7 +97,7 @@ fn scan_agents(
             continue;
         }
 
-        match scan_agent_dir(bootstrap, &path, shared_harnesses) {
+        match scan_agent_dir(bootstrap, &path, shared_harnesses, script_harness_adapter) {
             Ok(Some(agent)) => agents.push(agent),
             Ok(None) => {}
             Err(err) => issues.push(RegistryIssue {
@@ -132,6 +143,7 @@ fn scan_agent_dir(
     bootstrap: &TurinConfig,
     agent_dir: &Path,
     shared_harnesses: &HashMap<String, PathBuf>,
+    script_harness_adapter: Option<&Arc<dyn HarnessAdapterFactory>>,
 ) -> Result<Option<DiscoveredAgent>> {
     let agent_id = directory_name(agent_dir, "Agent")?;
 
@@ -182,6 +194,7 @@ fn scan_agent_dir(
             bootstrap,
             &format!("agent::{}", agent_id),
             &local_harness_dir,
+            script_harness_adapter,
         )
         .with_context(|| format!("Failed to validate local harness for agent '{}'", agent_id))?;
         (
@@ -228,6 +241,7 @@ fn validate_harness_dir(
     bootstrap: &TurinConfig,
     harness_id: &str,
     harness_dir: &Path,
+    script_harness_adapter: Option<&Arc<dyn HarnessAdapterFactory>>,
 ) -> Result<()> {
     let workspace_root = PathBuf::from(&bootstrap.kernel.workspace_root);
     let fs_root = if bootstrap.harness.fs_root == "." {
@@ -243,11 +257,10 @@ fn validate_harness_dir(
     ));
     let agent_manager = Arc::new(AgentManager::new(config.clone(), store_manager.clone()));
     let rust_harness_factories = crate::kernel::harness::RustHarnessFactories::new();
-    let script_adapter = crate::kernel::harness_runtime::default_script_adapter_factory().ok();
     let adapters = HarnessAdapterResolver::new(
         config.as_ref(),
         &rust_harness_factories,
-        script_adapter.as_ref(),
+        script_harness_adapter,
     )?;
     let runtime = HarnessDefinition::new(
         harness_id.to_string(),

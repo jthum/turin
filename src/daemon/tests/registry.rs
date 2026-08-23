@@ -6,6 +6,11 @@ use tempfile::tempdir;
 
 use crate::kernel::config::TurinConfig;
 
+fn scan_registry_with_default(config: &TurinConfig, root: &Path) -> Result<RegistryLoad> {
+    let adapter = crate::kernel::harness_runtime::default_script_adapter_factory()?;
+    scan_registry(config, root, Some(&adapter))
+}
+
 fn bootstrap_config(root: &Path) -> TurinConfig {
     let mut config = TurinConfig::default();
     config.agent.model = "mock-model".to_string();
@@ -39,7 +44,7 @@ system_prompt = "Docs reviewer"
     )?;
 
     let bootstrap = bootstrap_config(root);
-    let load = scan_registry(&bootstrap, root)?;
+    let load = scan_registry_with_default(&bootstrap, root)?;
     assert_eq!(load.agents.len(), 1);
     assert_eq!(load.issues.len(), 0);
     assert_eq!(load.agents[0].harness_kind, HarnessKind::Local);
@@ -71,7 +76,7 @@ provider = "mock"
     )?;
 
     let bootstrap = bootstrap_config(root);
-    let load = scan_registry(&bootstrap, root)?;
+    let load = scan_registry_with_default(&bootstrap, root)?;
     assert_eq!(load.agents.len(), 1);
     assert_eq!(load.agents[0].id, "good");
     assert_eq!(load.issues.len(), 1);
@@ -109,7 +114,7 @@ provider = "mock"
     )?;
 
     let bootstrap = bootstrap_config(root);
-    let load = scan_registry(&bootstrap, root)?;
+    let load = scan_registry_with_default(&bootstrap, root)?;
     assert_eq!(load.agents.len(), 1);
     assert_eq!(load.agents[0].id, "good");
     assert_eq!(load.issues.len(), 1);
@@ -134,7 +139,7 @@ harness = "reviewer"
     )?;
 
     let bootstrap = bootstrap_config(root);
-    let load = scan_registry(&bootstrap, root)?;
+    let load = scan_registry_with_default(&bootstrap, root)?;
     assert_eq!(load.shared_harnesses.len(), 1);
     assert_eq!(load.agents[0].harness_kind, HarnessKind::Shared);
     assert_eq!(load.agents[0].harness_id, "reviewer");
