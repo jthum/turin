@@ -12,7 +12,8 @@ mod resolver;
 mod rust_adapter;
 
 pub use contract::{HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext};
-pub(crate) use definition::HarnessDefinition;
+#[doc(hidden)]
+pub use definition::HarnessDefinition;
 pub(crate) use resolver::HarnessAdapterResolver;
 
 fn rust_adapter_factory(factory: Arc<dyn HarnessFactory>) -> Arc<dyn HarnessAdapterFactory> {

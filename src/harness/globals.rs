@@ -54,7 +54,7 @@ pub struct HarnessExecutionContext {
     pub harness_root: Option<String>,
     pub import_capabilities: Option<BTreeMap<String, bool>>,
     pub governance_grant: Option<String>,
-    pub(crate) event_context: Option<HarnessEventContext>,
+    pub event_context: Option<HarnessEventContext>,
     pub completed_task_results: Option<CompletedLocalTaskResultsHandle>,
     pub cancel_token: Option<CancellationToken>,
 }
@@ -80,10 +80,10 @@ pub struct HarnessAppData {
     pub active_modules: ActiveHarnessModuleList,
     pub watch_roots: ExplicitWatchRoots,
     pub loading_phase: HarnessLoadPhase,
-    pub(crate) source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    pub source_overlay: Option<Arc<HarnessSourceOverlay>>,
 }
 
-pub(crate) fn block_on_current<F>(fut: F) -> F::Output
+pub fn block_on_current<F>(fut: F) -> F::Output
 where
     F: Future,
 {

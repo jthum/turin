@@ -19,7 +19,7 @@ use crate::kernel::session_lifecycle::materialization::{
     MaterializedExecutionTarget, TokenContextBounds, materialize_execution_target,
     materialize_token_bounded_messages, rebuild_history,
 };
-pub(crate) use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
+pub use crate::kernel::session_lifecycle::sidestep::prepare_persisted_session_sidestep;
 use crate::kernel::session_metadata::session_default_store_selector_from_metadata;
 use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,

@@ -16,9 +16,12 @@ use crate::harness::virtual_tools::{
     DeclaredVirtualTool, VirtualToolFollowUp, VirtualToolResultResolution,
 };
 
+#[path = "engine/hook_dispatch.rs"]
 mod hook_dispatch;
+#[path = "engine/loader.rs"]
 mod loader;
 #[cfg(test)]
+#[path = "engine/tests.rs"]
 mod tests;
 
 pub(crate) use loader::{
@@ -217,7 +220,7 @@ impl HarnessEngine {
     }
 
     /// Bind the full active execution context for the current task.
-    pub(crate) fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
+    pub fn bind_execution_context(&self, binding: HarnessExecutionBinding) {
         if let Some(app_data) = self.lua.app_data_ref::<HarnessAppData>()
             && let Ok(mut lock) = app_data.execution_ctx.lock()
         {

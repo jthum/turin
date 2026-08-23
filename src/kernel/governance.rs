@@ -13,8 +13,8 @@ use crate::kernel::config::{
 };
 
 pub(crate) use capabilities::tool_capability_name;
-#[cfg(feature = "lua")]
-pub(crate) use capabilities::{capability_allowed_by_bool_rules, intersect_capability_bool_rules};
+#[doc(hidden)]
+pub use capabilities::{capability_allowed_by_bool_rules, intersect_capability_bool_rules};
 use capabilities::{
     capability_ceiling_denial_reason_bool_map, capability_ceiling_denial_reason_json_map,
     match_capability_rule,

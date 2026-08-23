@@ -41,7 +41,8 @@ pub struct PromotedTaskBranch {
     pub created_at: String,
 }
 
-pub(crate) async fn promote_task_result(
+#[doc(hidden)]
+pub async fn promote_task_result(
     store_manager: &Arc<StoreManager>,
     promotion: &TaskPromotionCandidate,
     input_content: &[TaskInputContent],

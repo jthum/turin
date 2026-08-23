@@ -16,7 +16,7 @@ pub struct RequestOptionsOverride {
     pub total_timeout_seconds: Option<u64>,
 }
 
-pub(crate) fn build_merged_request_options(
+pub fn build_merged_request_options(
     provider_config: &ProviderConfig,
     current: &RequestOptionsOverride,
     override_opts: Option<&RequestOptionsOverride>,

@@ -12,7 +12,7 @@ use crate::persistence::manager::{StoreManager, StoreSelector};
 use crate::persistence::schema::{BranchHeadRow, BranchProvenance, SessionRow};
 use crate::persistence::state::StateStore;
 
-pub(crate) async fn prepare_persisted_session_sidestep(
+pub async fn prepare_persisted_session_sidestep(
     store_manager: &Arc<StoreManager>,
     session_id: &str,
     default_target: &ExecutionContextTarget,

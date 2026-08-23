@@ -22,7 +22,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/turn/preflight.rs`
   - Builds the normal provider request stream, applies harness `on_turn_prepare` mutations, and filters the per-inference tool surface.
 - `src/kernel/harness_runtime.rs`
-  - Composes the runtime adapter modules and owns default adapter selection.
+  - Composes the engine-neutral runtime adapter contract, definition, resolver, and
+    compiled Rust adapter. Product composition, rather than kernel behavior, selects a
+    scripting adapter.
 - `src/kernel/harness_runtime/contract.rs`
   - Owns the object-safe adapter-factory and session-instance contracts plus the
     adapter initialization context. Kernel and daemon code must not select engines or
@@ -35,11 +37,15 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
   - Owns construction-time adapter registration validation and implementation selection.
     `HarnessManager` consumes resolved adapters without knowing whether they came from
     Rust, Lua, or a future scripting engine.
-- `src/kernel/harness_runtime/lua_adapter.rs`
-  - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction, and
-    implements Lua-only source, UI-intent, execution-context, and virtual-tool surfaces.
-    Source overlay validation and direct script execution are adapter-factory capabilities;
-    they must not leak into the normal session-local `HarnessInstance` contract.
+- `crates/turin-harness-lua/src/runtime.rs`
+  - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction and
+    hook payload conversion, and implements Lua-only source, UI-intent,
+    execution-context, and virtual-tool surfaces. Source overlay validation and direct
+    script execution are adapter-factory capabilities; they must not leak into the
+    normal session-local `HarnessInstance` contract.
+- `crates/turin-harness-lua/src/harness.rs`
+  - Hosts the Lua VM, context, DX, globals, and standard-library implementation while
+    reusing engine-neutral harness types from Turin.
 - `src/harness/engine.rs`
   - Lua VM construction, source loading, execution binding, and adapter-facing capabilities.
 - `src/harness/engine/hook_dispatch.rs`
@@ -62,9 +68,10 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/kernel/builder.rs`
   - Owns the construction-time Rust harness registry. `with_default_harness` registers
     `default`; `with_harness` registers a configured harness ID.
-- `Cargo.toml`
-  - The default `lua` feature includes `mlua`. Rust-only embedders can use
-    `default-features = false` and must install a Rust harness factory.
+- `crates/turin-harness-lua/Cargo.toml`
+  - Owns `mlua` and Lua-only dependencies. Its Turin dependency disables default
+    features, making accidental Lua coupling in the engine-neutral contract a
+    compile-time failure.
 - `src/inference/structured.rs`
   - Response-format construction, fallback prompt construction, and JSON validation for structured output.
 
@@ -131,6 +138,9 @@ Structured inference:
 - Adapter selection happens once during harness catalog construction. Runtime methods
   must delegate through `HarnessAdapterFactory`, not branch on Lua, Rust, or future
   scripting-engine variants.
+- Adapter-support exports are deliberately `#[doc(hidden)]`: they let an adapter crate
+  implement Turin's complete harness semantics without exposing scripting-engine types
+  to the kernel. They are not general application-authoring APIs.
 - Engine-neutral call sites ask whether an instance `prepares_turn`; string hook names
   remain an implementation detail of scripting adapters.
 - A build without the `lua` feature must fail clearly if no Rust factory is installed;
@@ -184,19 +194,21 @@ no-Lua build proves turn-preparation mutations reach the provider request.
 Basic checks:
 
 ```sh
-cargo check -p turin --lib
+cargo clippy -p turin --lib --no-default-features -- -D warnings
+cargo test -p turin-harness-lua
 cargo fmt --all -- --check
 git diff --check
 ```
 
 ## Current Shape
 
-The current shape keeps Lua property and message mutation in `context.rs`, current-turn
-tool filtering in `context/tool_exposure.rs`, engine-neutral
+The current shape keeps Lua property and message mutation in the Lua adapter's
+`context.rs`, current-turn tool filtering in `context/tool_exposure.rs`, engine-neutral
 request-option layering in `kernel/harness_contract/request_options.rs`, and structured inference in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
-contract sits between session execution and private Rust and Lua adapters.
+contract sits between session execution and compiled Rust or externally supplied
+scripting adapters.
 `engine.rs` owns VM lifecycle and adapter-facing capabilities, while
 `engine/hook_dispatch.rs` owns Lua-specific callback dispatch and temporary callback context.
 Lifecycle and policy hooks use the typed borrowed `HarnessHook` contract, and only the
@@ -206,5 +218,7 @@ detail. Execution bindings and session queues are kernel-owned DTOs rather than 
 globals. Native tools are the compiled operational surface rather than a translation of
 Lua virtual tools. Runtime builder factories are keyed by the same harness IDs used by
 agent configuration, with the existing default-factory method retained as shorthand.
-Lua remains the default Cargo feature, while `--no-default-features` excludes `mlua`
-and all Lua VM, context, DX, globals, and standard-library binding modules.
+The `turin-harness-lua` crate compiles against Turin with default features disabled,
+which verifies that the adapter contract itself has no `mlua` dependency. Product
+composition still installs Lua by default; Rust embedders may omit the adapter and use
+`with_default_harness` or `with_harness` exclusively.

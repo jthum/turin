@@ -74,10 +74,7 @@ pub(crate) fn effective_input_budget_tokens(
     context_window_tokens.saturating_sub(bounded_reserve)
 }
 
-pub(crate) fn estimate_history_input_tokens(
-    system_prompt: &str,
-    messages: &[InferenceMessage],
-) -> u32 {
+pub fn estimate_history_input_tokens(system_prompt: &str, messages: &[InferenceMessage]) -> u32 {
     estimate_support_tokens(system_prompt, &[]) + estimate_messages_tokens(messages)
 }
 

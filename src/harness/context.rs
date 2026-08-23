@@ -9,7 +9,9 @@ use crate::kernel::config::{InferenceOverrideConfig, TurinConfig};
 use crate::kernel::estimate_history_input_tokens;
 use crate::kernel::harness_contract::{HarnessTurnRequest, HarnessTurnServices};
 
+#[path = "context/structured_call.rs"]
 mod structured_call;
+#[path = "context/tool_exposure.rs"]
 mod tool_exposure;
 
 use tool_exposure::ToolExposureProxy;
@@ -77,7 +79,7 @@ pub struct ContextInit {
 }
 
 impl ContextWrapper {
-    pub(crate) fn from_harness_request(
+    pub fn from_harness_request(
         request: &mut HarnessTurnRequest,
         services: HarnessTurnServices<'_>,
     ) -> Self {
@@ -108,7 +110,7 @@ impl ContextWrapper {
         context
     }
 
-    pub(crate) fn apply_to_harness_request(self, request: &mut HarnessTurnRequest) {
+    pub fn apply_to_harness_request(self, request: &mut HarnessTurnRequest) {
         let state = self.into_state();
         request.inference = state.inference;
         request.model = state.model;

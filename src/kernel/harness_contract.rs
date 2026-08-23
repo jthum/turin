@@ -19,7 +19,7 @@ use crate::persistence::manager::StoreSelector;
 
 mod request_options;
 pub use request_options::RequestOptionsOverride;
-pub(crate) use request_options::build_merged_request_options;
+pub use request_options::build_merged_request_options;
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolExposure {
@@ -278,8 +278,7 @@ pub enum HarnessHook<'a> {
 }
 
 impl HarnessHook<'_> {
-    #[cfg(feature = "lua")]
-    pub(crate) fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::SessionStart { .. } => "on_session_start",
             Self::SessionEnd { .. } => "on_session_end",

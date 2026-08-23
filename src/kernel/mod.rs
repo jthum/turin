@@ -10,7 +10,8 @@ pub mod harness;
 pub mod harness_contract;
 mod harness_hooks;
 mod harness_manager;
-pub(crate) mod harness_runtime;
+#[doc(hidden)]
+pub mod harness_runtime;
 mod hot_history;
 pub mod identity;
 mod init;
@@ -27,9 +28,10 @@ mod task_planning;
 pub mod task_promotion;
 mod turn;
 
-pub(crate) use session_lifecycle::prepare_persisted_session_sidestep;
-#[cfg(feature = "lua")]
-pub(crate) use turn::context_window::estimate_history_input_tokens;
+#[doc(hidden)]
+pub use session_lifecycle::prepare_persisted_session_sidestep;
+#[doc(hidden)]
+pub use turn::context_window::estimate_history_input_tokens;
 pub(crate) use turn::context_window::estimate_persisted_message_input_tokens;
 
 use crate::inference::provider::ProviderClient;

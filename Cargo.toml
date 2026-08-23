@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/turin-harness-lua",
     "crates/turin-types",
     "crates/turin-local-ipc",
     "crates/turin-daemon-protocol",

@@ -6,12 +6,12 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::kernel::session::{ExecutionConflictPolicy, QueuedTask};
 use crate::persistence::schema::WorkItemRow;
 
-pub(crate) enum WorkItemParentId<'a> {
+pub enum WorkItemParentId<'a> {
     DatabaseId,
     PublicId(&'a HashMap<i64, String>),
 }
 
-pub(crate) fn public_id_string(bytes: &[u8]) -> String {
+pub fn public_id_string(bytes: &[u8]) -> String {
     uuid::Uuid::from_slice(bytes)
         .map(|uuid| uuid.to_string())
         .unwrap_or_else(|_| {
@@ -24,17 +24,17 @@ pub(crate) fn public_id_string(bytes: &[u8]) -> String {
         })
 }
 
-pub(crate) fn work_item_metadata(row: &WorkItemRow) -> Option<JsonValue> {
+pub fn work_item_metadata(row: &WorkItemRow) -> Option<JsonValue> {
     row.metadata
         .as_deref()
         .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
 }
 
-pub(crate) fn work_item_paused(row: &WorkItemRow) -> bool {
+pub fn work_item_paused(row: &WorkItemRow) -> bool {
     row.status == "paused"
 }
 
-pub(crate) fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
+pub fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<String> {
     let Some(JsonValue::Object(map)) = metadata else {
         return None;
     };
@@ -43,7 +43,7 @@ pub(crate) fn work_item_pause_reason(metadata: Option<&JsonValue>) -> Option<Str
         .map(ToString::to_string)
 }
 
-pub(crate) fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
+pub fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Option<i64> {
     let Some(JsonValue::Object(map)) = metadata else {
         return None;
     };
@@ -51,7 +51,7 @@ pub(crate) fn work_item_pause_until_unix_ms(metadata: Option<&JsonValue>) -> Opt
         .and_then(|value| value.as_i64())
 }
 
-pub(crate) fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+pub fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     if !work_item_paused(row) {
         return false;
     }
@@ -59,7 +59,7 @@ pub(crate) fn work_item_pause_due(row: &WorkItemRow, now_unix_ms: i64) -> bool {
         .is_some_and(|pause_until_unix_ms| pause_until_unix_ms <= now_unix_ms)
 }
 
-pub(crate) fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
+pub fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bool {
     match row.status.as_str() {
         "pending" => true,
         "paused" => work_item_pause_due(row, now_unix_ms),
@@ -67,7 +67,7 @@ pub(crate) fn work_item_claimable_now(row: &WorkItemRow, now_unix_ms: i64) -> bo
     }
 }
 
-pub(crate) fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
+pub fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64) -> bool {
     row.status == "active"
         && match row.claim_heartbeat_unix_ms {
             Some(heartbeat) => heartbeat <= stale_before_unix_ms,
@@ -75,7 +75,7 @@ pub(crate) fn work_item_is_orphaned(row: &WorkItemRow, stale_before_unix_ms: i64
         }
 }
 
-pub(crate) fn work_item_dependencies_satisfied(
+pub fn work_item_dependencies_satisfied(
     row: &WorkItemRow,
     status_map: &HashMap<String, String>,
 ) -> bool {
@@ -87,7 +87,7 @@ pub(crate) fn work_item_dependencies_satisfied(
         .all(|dep| status_map.get(&dep).is_some_and(|status| status == "done"))
 }
 
-pub(crate) fn work_item_next_candidates<'a>(
+pub fn work_item_next_candidates<'a>(
     rows: &'a [WorkItemRow],
     parent_item_id: Option<i64>,
     where_map: Option<&'a JsonMap<String, JsonValue>>,
@@ -103,7 +103,7 @@ pub(crate) fn work_item_next_candidates<'a>(
         .collect()
 }
 
-pub(crate) fn work_item_status_map<'a>(
+pub fn work_item_status_map<'a>(
     rows: impl IntoIterator<Item = &'a WorkItemRow>,
 ) -> HashMap<String, String> {
     rows.into_iter()
@@ -111,7 +111,7 @@ pub(crate) fn work_item_status_map<'a>(
         .collect()
 }
 
-pub(crate) fn work_item_prompt_task(
+pub fn work_item_prompt_task(
     row: &WorkItemRow,
     inherited_trace_id: Option<&str>,
 ) -> Result<QueuedTask> {
@@ -133,7 +133,7 @@ pub(crate) fn work_item_prompt_task(
     Ok(task)
 }
 
-pub(crate) fn work_item_matches_where(
+pub fn work_item_matches_where(
     row: &WorkItemRow,
     where_map: Option<&JsonMap<String, JsonValue>>,
     parent_id: WorkItemParentId<'_>,

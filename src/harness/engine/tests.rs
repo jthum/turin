@@ -331,7 +331,13 @@ fn test_ui_load_time_intents_are_collected() {
 
 #[test]
 fn test_ui_contract_fixture_loads() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/harnesses/ui_contract");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture_root = if manifest_dir.join("tests/fixtures").is_dir() {
+        manifest_dir.to_path_buf()
+    } else {
+        manifest_dir.join("../..")
+    };
+    let dir = fixture_root.join("tests/fixtures/harnesses/ui_contract");
     let mut engine = HarnessEngine::new(test_app_data()).unwrap();
     engine.load_dir(&dir).unwrap();
 

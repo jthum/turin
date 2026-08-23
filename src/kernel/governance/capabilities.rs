@@ -80,17 +80,14 @@ where
     }
 }
 
-pub(crate) fn capability_allowed_by_bool_rules(
-    caps: &BTreeMap<String, bool>,
-    capability: &str,
-) -> bool {
+pub fn capability_allowed_by_bool_rules(caps: &BTreeMap<String, bool>, capability: &str) -> bool {
     match_capability_rule_bool_map(caps, capability)
         .allowed
         .unwrap_or(false)
 }
 
 /// Compose two default-deny capability ceilings without widening either side.
-pub(crate) fn intersect_capability_bool_rules(
+pub fn intersect_capability_bool_rules(
     inherited: &BTreeMap<String, bool>,
     requested: &BTreeMap<String, bool>,
 ) -> BTreeMap<String, bool> {

@@ -8,7 +8,8 @@ pub mod engine;
 pub mod globals;
 pub mod scheduler;
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) mod source;
+#[doc(hidden)]
+pub mod source;
 pub mod stdlib;
 pub mod verdict;
 pub mod virtual_tools;

@@ -484,7 +484,8 @@ impl StateStore {
         Ok(turns)
     }
 
-    pub(crate) async fn get_turn_row(&self, turn_id: i64) -> Result<Option<TurnRow>> {
+    #[doc(hidden)]
+    pub async fn get_turn_row(&self, turn_id: i64) -> Result<Option<TurnRow>> {
         let conn = self.connect().await?;
         self.get_turn_row_with_conn(&conn, turn_id).await
     }

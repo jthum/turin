@@ -1,5 +1,5 @@
 #[cfg_attr(not(feature = "lua"), allow(dead_code))]
-pub(crate) fn validate_signal_topic_pattern(topic: &str) -> Result<(), String> {
+pub fn validate_signal_topic_pattern(topic: &str) -> Result<(), String> {
     if topic.trim().is_empty() {
         return Err("signal topic must not be empty".to_string());
     }
@@ -21,7 +21,7 @@ pub(crate) fn validate_signal_topic_pattern(topic: &str) -> Result<(), String> {
     )
 }
 
-pub(crate) fn signal_topic_subscription_candidates(topic: &str) -> Vec<String> {
+pub fn signal_topic_subscription_candidates(topic: &str) -> Vec<String> {
     let mut out = vec![topic.to_string()];
     let mut cursor = topic;
     while let Some(index) = cursor.rfind('.') {
