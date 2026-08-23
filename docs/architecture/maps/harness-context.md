@@ -11,6 +11,9 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
 - `src/harness/context.rs`
   - `ContextWrapper`, named `ContextInit`, `ContextState`, Lua property accessors,
     message mutation helpers, and summarization.
+- `src/harness/context/tool_exposure.rs`
+  - Lua `ctx.tools` proxy, tool-name input normalization, availability validation,
+    and exposed-tool inspection.
 - `src/kernel/harness_contract/request_options.rs`
   - Engine-neutral `RequestOptionsOverride` and shared provider request-option layering.
 - `src/harness/context/structured_call.rs`
@@ -186,7 +189,8 @@ git diff --check
 
 ## Current Shape
 
-The current shape keeps Lua property and message mutation in `context.rs`, engine-neutral
+The current shape keeps Lua property and message mutation in `context.rs`, current-turn
+tool filtering in `context/tool_exposure.rs`, engine-neutral
 request-option layering in `kernel/harness_contract/request_options.rs`, and structured inference in
 `structured_call.rs`. Normal inference and structured harness inference use the same
 header/retry/timeout override policy. The object-safe `HarnessInstance` capability
