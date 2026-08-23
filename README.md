@@ -255,6 +255,7 @@ Minimal example:
 
 # Optional global tool behavior settings.
 # [tools.web_fetch]
+# max_response_bytes = 16777216 # bounds the decoded response body; raise deliberately for large files
 # user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 #
 # [tools.web_search]

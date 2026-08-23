@@ -10,6 +10,7 @@
 
 # Optional global tool behavior settings.
 # [tools.web_fetch]
+# max_response_bytes = 16777216 # raise deliberately when a harness must parse larger files
 # user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 # accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 # accept_language = "en-US,en;q=0.5"

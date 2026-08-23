@@ -183,6 +183,7 @@ fn merge_web_fetch_tools(
     child: &WebFetchToolSettings,
 ) -> WebFetchToolSettings {
     WebFetchToolSettings {
+        max_response_bytes: child.max_response_bytes.or(parent.max_response_bytes),
         user_agent: child
             .user_agent
             .clone()

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderValue, USER_AGENT};
 use reqwest::redirect::Policy;
 use reqwest::{Client, RequestBuilder};
@@ -36,6 +37,7 @@ const DEFAULT_BROWSER_ACCEPT: &str =
     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const DEFAULT_BROWSER_ACCEPT_LANGUAGE: &str = "en-US,en;q=0.5";
 const DEFAULT_BROWSER_ACCEPT_ENCODING: &str = "gzip, deflate, br";
+const DEFAULT_FETCH_MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct WebFetchArgs {
@@ -44,6 +46,8 @@ struct WebFetchArgs {
     timeout_seconds: u64,
     #[serde(default = "default_fetch_max_chars")]
     max_chars: usize,
+    #[serde(default)]
+    max_bytes: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +72,9 @@ fn default_search_limit() -> usize {
 }
 
 pub fn validate_tools_config(settings: &ToolsConfig) -> Result<()> {
+    if settings.web_fetch.max_response_bytes == Some(0) {
+        bail!("tools.web_fetch.max_response_bytes must be greater than zero");
+    }
     validate_optional_header_value(
         settings.web_fetch.user_agent.as_deref(),
         "tools.web_fetch.user_agent",
@@ -189,6 +196,52 @@ fn fetch_user_agent(settings: &WebFetchToolSettings) -> &str {
         .unwrap_or(DEFAULT_BROWSER_USER_AGENT)
 }
 
+fn configured_fetch_max_response_bytes(settings: &WebFetchToolSettings) -> usize {
+    settings
+        .max_response_bytes
+        .unwrap_or(DEFAULT_FETCH_MAX_RESPONSE_BYTES)
+}
+
+fn effective_fetch_max_response_bytes(
+    args: &WebFetchArgs,
+    settings: &WebFetchToolSettings,
+) -> usize {
+    let configured = configured_fetch_max_response_bytes(settings);
+    args.max_bytes.unwrap_or(configured).clamp(1, configured)
+}
+
+fn append_bounded_body_chunk(body: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) -> bool {
+    let remaining = max_bytes.saturating_sub(body.len());
+    if chunk.len() > remaining {
+        body.extend_from_slice(&chunk[..remaining]);
+        return true;
+    }
+    body.extend_from_slice(chunk);
+    false
+}
+
+async fn read_bounded_response_body(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, bool), ToolError> {
+    let initial_capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(max_bytes);
+    let mut body = Vec::with_capacity(initial_capacity);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            ToolError::ExecutionError(format!("web_fetch body read failed: {error}"))
+        })?;
+        if append_bounded_body_chunk(&mut body, &chunk, max_bytes) {
+            return Ok((body, true));
+        }
+    }
+    Ok((body, false))
+}
+
 fn search_user_agent(settings: &WebSearchToolSettings) -> &str {
     settings
         .user_agent
@@ -284,6 +337,11 @@ impl Tool for WebFetchTool {
                     "type": "integer",
                     "description": "Maximum number of characters to return",
                     "default": 12000
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Optional response read limit; cannot exceed the configured web_fetch ceiling",
+                    "minimum": 1
                 }
             },
             "required": ["url"]
@@ -301,16 +359,16 @@ impl Tool for WebFetchTool {
             .map_err(|e| ToolError::ExecutionError(format!("web_fetch request failed: {e}")))?;
         let status = response.status();
         let final_url = response.url().to_string();
+        let content_length = response.content_length();
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("application/octet-stream")
             .to_string();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| ToolError::ExecutionError(format!("web_fetch body read failed: {e}")))?;
+        let max_response_bytes = effective_fetch_max_response_bytes(&args, &ctx.tools.web_fetch);
+        let (body, response_truncated) =
+            read_bounded_response_body(response, max_response_bytes).await?;
         let raw_body = String::from_utf8_lossy(&body).into_owned();
         let extracted = if content_type.contains("html") {
             extract_html_text(&raw_body)
@@ -326,6 +384,11 @@ impl Tool for WebFetchTool {
         let body_text = truncate_chars(&extracted, args.max_chars.max(200));
         let mut content = format!("Fetched {} {}", status.as_u16(), final_url);
         content.push_str(&format!("\nContent-Type: {}", content_type));
+        if response_truncated {
+            content.push_str(&format!(
+                "\nResponse-Truncated: true (read limit: {max_response_bytes} bytes)"
+            ));
+        }
         if let Some(title) = &title {
             content.push_str(&format!("\nTitle: {}", title));
         }
@@ -340,6 +403,9 @@ impl Tool for WebFetchTool {
                 "content_type": content_type,
                 "title": title,
                 "bytes": body.len(),
+                "content_length": content_length,
+                "max_response_bytes": max_response_bytes,
+                "response_truncated": response_truncated,
                 "user_agent": fetch_user_agent(&ctx.tools.web_fetch),
             }),
         }))

@@ -6,7 +6,10 @@ use super::search::{
     BraveSearchResponse, SearxngSearchResponse, TavilySearchResponse, brave_hits_from_response,
     searxng_hits_from_response, tavily_hits_from_response,
 };
-use super::validate_tools_config;
+use super::{
+    WebFetchArgs, append_bounded_body_chunk, effective_fetch_max_response_bytes,
+    validate_tools_config,
+};
 use scraper::Html;
 use turin_types::ToolsConfig;
 
@@ -130,5 +133,51 @@ fn validate_tools_config_requires_tavily_api_key_env_when_selected() {
     assert!(
         err.to_string()
             .contains("tools.web_search.tavily.api_key_env")
+    );
+}
+
+#[test]
+fn validate_tools_config_rejects_zero_fetch_response_limit() {
+    let mut settings = ToolsConfig::default();
+    settings.web_fetch.max_response_bytes = Some(0);
+    let err = validate_tools_config(&settings).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("tools.web_fetch.max_response_bytes")
+    );
+}
+
+#[test]
+fn bounded_fetch_body_detects_only_bytes_beyond_the_ceiling() {
+    let mut body = b"abc".to_vec();
+    assert!(!append_bounded_body_chunk(&mut body, b"de", 5));
+    assert_eq!(body, b"abcde");
+
+    assert!(append_bounded_body_chunk(&mut body, b"fgh", 5));
+    assert_eq!(body, b"abcde");
+}
+
+#[test]
+fn fetch_call_can_narrow_but_not_widen_configured_response_limit() {
+    let mut settings = turin_types::WebFetchToolSettings {
+        max_response_bytes: Some(1024),
+        ..Default::default()
+    };
+    let mut args = WebFetchArgs {
+        url: "http://localhost".to_string(),
+        timeout_seconds: 20,
+        max_chars: 12_000,
+        max_bytes: Some(256),
+    };
+    assert_eq!(effective_fetch_max_response_bytes(&args, &settings), 256);
+
+    args.max_bytes = Some(2048);
+    assert_eq!(effective_fetch_max_response_bytes(&args, &settings), 1024);
+
+    settings.max_response_bytes = None;
+    args.max_bytes = None;
+    assert_eq!(
+        effective_fetch_max_response_bytes(&args, &settings),
+        16 * 1024 * 1024
     );
 }

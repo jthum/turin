@@ -31,7 +31,9 @@ The built-in web tools provide constrained HTTP retrieval and web search for age
 2. Validate the URL is `http` or `https`.
 3. Build a bounded redirect/timeout client.
 4. Apply configured browser-like headers.
-5. Read the response body, extract readable HTML body text when applicable, collapse whitespace, truncate to the requested limit, and return metadata.
+5. Stream the response through the configured byte ceiling, extract readable HTML body
+   text when applicable, collapse whitespace, truncate to the requested character limit,
+   and return truncation metadata.
 
 `web_search`:
 
@@ -44,6 +46,12 @@ The built-in web tools provide constrained HTTP retrieval and web search for age
 ## Invariants
 
 - Only `http` and `https` URLs are accepted.
+- Loopback and private-network URLs remain valid because coding harnesses commonly fetch
+  local development services. Network authority belongs to tool governance and deployment
+  policy rather than a hard-coded SSRF denylist in the HTTP parser.
+- Response buffering is bounded by `[tools.web_fetch].max_response_bytes`, defaulting to
+  16 MiB. A tool call may request a smaller `max_bytes` value but cannot widen that ceiling.
+- `max_chars` bounds model-visible extracted text independently of response-byte buffering.
 - Search providers are tried in configured order; duplicates are collapsed while preserving first occurrence.
 - Brave and Tavily require configured API-key environment variable names when selected.
 - SearXNG requires a configured HTTP(S) base URL when selected.

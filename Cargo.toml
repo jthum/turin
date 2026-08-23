@@ -99,7 +99,7 @@ hyper-util = { version = "0.1", features = ["server", "http1", "tokio"] }
 sha1 = "0.11"
 tokio-tungstenite = { version = "0.30", default-features = false }
 url = "2.5"
-reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["brotli", "deflate", "gzip", "json", "query", "rustls", "stream"] }
 scraper = "0.27"
 time = { version = "0.3", features = ["formatting", "local-offset", "parsing"] }
 

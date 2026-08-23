@@ -44,6 +44,8 @@ impl ToolsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
 pub struct WebFetchToolSettings {
     #[serde(default)]
+    pub max_response_bytes: Option<usize>,
+    #[serde(default)]
     pub user_agent: Option<String>,
     #[serde(default)]
     pub accept: Option<String>,

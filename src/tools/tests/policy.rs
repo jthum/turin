@@ -103,6 +103,7 @@ fn effective_tools_merge_root_agent_and_request_behavior() {
         ToolSelectionConfig::default(),
     );
     config.tools.web_fetch.user_agent = Some("root-agent".into());
+    config.tools.web_fetch.max_response_bytes = Some(32 * 1024 * 1024);
     config.tools.web_search.brave.api_key_env = Some("BRAVE_KEY".into());
     config.agent.tools.web_fetch.user_agent = Some("agent-agent".into());
     config.agent.tools.web_search.providers = Some(vec!["brave".into()]);
@@ -118,6 +119,10 @@ fn effective_tools_merge_root_agent_and_request_behavior() {
     assert_eq!(
         resolved.web_fetch.accept_language.as_deref(),
         Some("fr-FR,fr;q=0.9")
+    );
+    assert_eq!(
+        resolved.web_fetch.max_response_bytes,
+        Some(32 * 1024 * 1024)
     );
     assert_eq!(
         resolved.web_search.brave.api_key_env.as_deref(),
