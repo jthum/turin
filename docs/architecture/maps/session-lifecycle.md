@@ -238,7 +238,8 @@ Delete persisted session:
 - Provider timeout failures must remain distinguishable from cancellation and generic runtime errors.
 - Kernel shutdown must reject new runtime creation and cannot wait indefinitely for stalled peer work or MCP clients.
 - Cooperative shutdown records queued work as `cancelled`; only work that exceeds the grace period is `killed`.
-- Deleting a session must never race an open runtime or leave a partial graph.
+- Deleting a session must never race an open runtime or leave a partial graph. A linked-session
+  family is deleted in one transaction so a descendant cannot disappear if a later deletion fails.
 - Session deletion owns session-scoped KV and memory, including namespaced scope
   keys, but must not delete agent/user/global memory or worklist records.
 - Fork-sibling sidesteps must not mutate the persisted active head.
@@ -265,6 +266,7 @@ cargo test -p turin --test daemon_integration_tests daemon_task_sidestep_can_for
 cargo test -p turin competing_branch_advances_commit_exactly_one_turn --lib
 cargo test -p turin concurrent_linked_session_creation_never_leaves_duplicates_or_partial_rows --lib
 cargo test -p turin concurrent_session_deletion_and_link_creation_never_leave_an_orphan --lib
+cargo test -p turin linked_session_family_deletion_rolls_back_as_one_unit --lib
 ```
 
 Basic checks:

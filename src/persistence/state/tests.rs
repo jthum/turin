@@ -1656,6 +1656,55 @@ async fn concurrent_session_deletion_and_link_creation_never_leave_an_orphan() {
 }
 
 #[tokio::test]
+async fn linked_session_family_deletion_rolls_back_as_one_unit() {
+    let store = StateStore::open_memory().await.unwrap();
+    let root_public_id = uuid::Uuid::now_v7();
+    let root = store
+        .create_session(root_public_id, "primary", None)
+        .await
+        .unwrap();
+    let child_public_id = uuid::Uuid::now_v7();
+    let child = store
+        .create_linked_session(
+            child_public_id,
+            "reviewer",
+            None,
+            &LinkedSessionCreate {
+                parent_session_id: root,
+                origin_turn_id: None,
+                relation_kind: "delegated".to_string(),
+                thread_key: "architecture".to_string(),
+                visibility: "contextual".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let conn = store.get_connection().await.unwrap();
+    conn.execute_batch(&format!(
+        r#"
+        CREATE TRIGGER fail_root_session_deletion
+        BEFORE DELETE ON sessions
+        WHEN OLD.id = {root}
+        BEGIN
+            SELECT RAISE(FAIL, 'injected root deletion failure');
+        END;
+        "#
+    ))
+    .await
+    .unwrap();
+
+    store
+        .delete_session_by_public_id(root_public_id)
+        .await
+        .expect_err("a root deletion failure must abort the entire family deletion");
+    assert!(store.get_session_row(root).await.unwrap().is_some());
+    assert!(
+        store.get_session_row(child).await.unwrap().is_some(),
+        "a descendant must not be committed as deleted before its root"
+    );
+}
+
+#[tokio::test]
 async fn session_origin_is_filterable_and_inherited_by_linked_sessions() {
     let store = StateStore::open_memory().await.unwrap();
     let root_public_id = uuid::Uuid::now_v7();

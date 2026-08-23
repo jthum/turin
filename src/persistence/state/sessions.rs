@@ -481,45 +481,65 @@ WHERE public_id = ?2
         let Some(session) = self.get_session_row_by_public_id(public_id).await? else {
             return Ok(false);
         };
+        let mut family_public_ids = Vec::new();
         for descendant in self.list_linked_session_descendants(session.id).await? {
             let descendant_public_id = uuid::Uuid::from_slice(&descendant.public_id)
                 .context("Linked session has an invalid public id")?;
-            self.delete_single_session_by_public_id(descendant_public_id)
-                .await?;
+            family_public_ids.push(descendant_public_id);
         }
-        self.delete_single_session_by_public_id(public_id).await
-    }
+        family_public_ids.push(public_id);
 
-    async fn delete_single_session_by_public_id(&self, public_id: uuid::Uuid) -> Result<bool> {
         let mut conn = self.connect().await?;
         let tx = conn
             .transaction()
             .await
-            .context("Failed to start session deletion transaction")?;
-        let public_id_bytes = public_id.into_bytes().to_vec();
-        let mut rows = tx
-            .query(
-                "SELECT id FROM sessions WHERE public_id = ?1",
-                turso::params![public_id_bytes.clone()],
-            )
-            .await?;
-        let Some(row) = rows.next().await? else {
-            tx.rollback().await?;
-            return Ok(false);
-        };
-        let session_id = row.get::<i64>(0)?;
-        drop(rows);
+            .context("Failed to start session family deletion transaction")?;
+        let mut root_deleted = false;
+        for family_public_id in family_public_ids {
+            match delete_single_session_in_transaction(&tx, family_public_id).await {
+                Ok(deleted) => root_deleted = deleted,
+                Err(error) => {
+                    tx.rollback()
+                        .await
+                        .context("Failed to roll back session family deletion")?;
+                    return Err(error);
+                }
+            }
+        }
+        tx.commit()
+            .await
+            .context("Failed to commit session family deletion transaction")?;
+        Ok(root_deleted)
+    }
+}
 
-        let bare_id = public_id.simple().to_string();
-        let hyphenated_id = public_id.to_string();
-        let scoped_data_predicate = r#"
+async fn delete_single_session_in_transaction(
+    tx: &turso::transaction::Transaction<'_>,
+    public_id: uuid::Uuid,
+) -> Result<bool> {
+    let public_id_bytes = public_id.into_bytes().to_vec();
+    let mut rows = tx
+        .query(
+            "SELECT id FROM sessions WHERE public_id = ?1",
+            turso::params![public_id_bytes.clone()],
+        )
+        .await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(false);
+    };
+    let session_id = row.get::<i64>(0)?;
+    drop(rows);
+
+    let bare_id = public_id.simple().to_string();
+    let hyphenated_id = public_id.to_string();
+    let scoped_data_predicate = r#"
 scope_kind = 'session' AND (
     scope_key = ?1 OR scope_key = ?2 OR
     (json_valid(scope_key) AND json_extract(scope_key, '$.key') IN (?1, ?2))
 )"#;
 
-        tx.execute(
-            r#"
+    tx.execute(
+        r#"
             UPDATE work_items
             SET status = 'pending',
                 claim_agent_id = NULL,
@@ -534,80 +554,76 @@ scope_kind = 'session' AND (
                OR claim_session_id LIKE ?3
                OR claim_session_id LIKE ?4
             "#,
-            turso::params![
-                bare_id.clone(),
-                hyphenated_id.clone(),
-                format!("{}@%", bare_id),
-                format!("{}@%", hyphenated_id),
-            ],
-        )
-        .await?;
-        tx.execute(
+        turso::params![
+            bare_id.clone(),
+            hyphenated_id.clone(),
+            format!("{}@%", bare_id),
+            format!("{}@%", hyphenated_id),
+        ],
+    )
+    .await?;
+    tx.execute(
             &format!(
                 "DELETE FROM memory_feedback_events WHERE memory_id IN (SELECT id FROM memories WHERE {scoped_data_predicate})"
             ),
             turso::params![bare_id.clone(), hyphenated_id.clone()],
         )
         .await?;
-        tx.execute(
+    tx.execute(
             &format!(
                 "UPDATE memories SET superseded_by_memory_id = NULL WHERE superseded_by_memory_id IN (SELECT id FROM memories WHERE {scoped_data_predicate})"
             ),
             turso::params![bare_id.clone(), hyphenated_id.clone()],
         )
         .await?;
-        tx.execute(
-            &format!("DELETE FROM memories WHERE {scoped_data_predicate}"),
-            turso::params![bare_id.clone(), hyphenated_id.clone()],
-        )
-        .await?;
-        tx.execute(
-            &format!("DELETE FROM kv WHERE {scoped_data_predicate}"),
-            turso::params![bare_id, hyphenated_id],
-        )
-        .await?;
+    tx.execute(
+        &format!("DELETE FROM memories WHERE {scoped_data_predicate}"),
+        turso::params![bare_id.clone(), hyphenated_id.clone()],
+    )
+    .await?;
+    tx.execute(
+        &format!("DELETE FROM kv WHERE {scoped_data_predicate}"),
+        turso::params![bare_id, hyphenated_id],
+    )
+    .await?;
 
-        tx.execute(
-            "UPDATE sessions SET active_branch_head_id = NULL WHERE id = ?1",
-            [session_id],
-        )
+    tx.execute(
+        "UPDATE sessions SET active_branch_head_id = NULL WHERE id = ?1",
+        [session_id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM messages WHERE turn_id IN (SELECT id FROM turns WHERE session_id = ?1)",
+        [session_id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM tool_executions WHERE turn_id IN (SELECT id FROM turns WHERE session_id = ?1)",
+        [session_id],
+    )
+    .await?;
+    tx.execute("DELETE FROM events WHERE session_id = ?1", [session_id])
         .await?;
-        tx.execute(
-            "DELETE FROM messages WHERE turn_id IN (SELECT id FROM turns WHERE session_id = ?1)",
-            [session_id],
-        )
+    tx.execute(
+        "DELETE FROM graph_edges WHERE session_id = ?1",
+        [session_id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM graph_nodes WHERE session_id = ?1",
+        [session_id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM branch_heads WHERE session_id = ?1",
+        [session_id],
+    )
+    .await?;
+    tx.execute("DELETE FROM turns WHERE session_id = ?1", [session_id])
         .await?;
-        tx.execute(
-            "DELETE FROM tool_executions WHERE turn_id IN (SELECT id FROM turns WHERE session_id = ?1)",
-            [session_id],
-        )
+    tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
         .await?;
-        tx.execute("DELETE FROM events WHERE session_id = ?1", [session_id])
-            .await?;
-        tx.execute(
-            "DELETE FROM graph_edges WHERE session_id = ?1",
-            [session_id],
-        )
-        .await?;
-        tx.execute(
-            "DELETE FROM graph_nodes WHERE session_id = ?1",
-            [session_id],
-        )
-        .await?;
-        tx.execute(
-            "DELETE FROM branch_heads WHERE session_id = ?1",
-            [session_id],
-        )
-        .await?;
-        tx.execute("DELETE FROM turns WHERE session_id = ?1", [session_id])
-            .await?;
-        tx.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .await?;
-        tx.commit()
-            .await
-            .context("Failed to commit session deletion")?;
-        Ok(true)
-    }
+    Ok(true)
 }
 
 pub(super) fn map_session_row(row: &turso::Row) -> Result<SessionRow> {
