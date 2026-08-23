@@ -34,7 +34,11 @@ This subsystem should preserve four guarantees:
 - `src/tools/builtins/memory_tools.rs`
   - Native `remember` and `recall` tools backed by the same memory backend.
 - `src/persistence/memory.rs`
-  - Memory storage, feedback, correction, purge, search, and bounded read-only inspection.
+  - Memory storage, feedback, correction, purge, and shared vector encoding.
+- `src/persistence/memory/retrieval.rs`
+  - Lexical, semantic, and hybrid retrieval plus retrieval-stat updates.
+- `src/persistence/memory/inspection.rs`
+  - Bounded, read-only operator inspection and scope summaries.
 - `src/daemon/state/memories.rs`
   - Maps inspection rows into the typed daemon `memory.list` response.
 
@@ -156,5 +160,9 @@ The current pass made two deliberate changes:
 
 - `scoped_data_backend::memory` now centralizes embedding policy, search-mode fallback, public memory ID parsing, and feedback delta calculation.
 - Lua memory/KV namespaces now share bridge/result helpers instead of duplicating async backend invocation blocks across `runtime.memory`, global `memory`, `session.memory`, `user.memory`, and KV aliases.
+
+Persistence ownership follows the operation semantics: `memory.rs` owns lifecycle mutations,
+`memory/retrieval.rs` owns ranked retrieval, and `memory/inspection.rs` owns observational
+operator queries that must not affect retrieval metadata.
 
 This reduced source duplication while keeping public APIs and behavior intact. The remaining larger cleanup opportunity is API registration ergonomics: the namespace registration code still repeats similar option-resolution shapes, but extracting that further should only happen if it keeps argument order and session-specific checks obvious.
