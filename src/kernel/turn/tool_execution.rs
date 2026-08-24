@@ -77,6 +77,9 @@ impl ExecutionHost {
         let (immediate_records, validated_calls) = self
             .evaluate_pending_tool_calls(session, &pending_tool_calls, Some(exposed_tool_names))
             .await;
+        if session.cancel_token.is_cancelled() {
+            return Ok(TurnOutcome::Cancelled);
+        }
         let (immediate_records, validated_calls) =
             self.apply_tool_rate_limit(session, immediate_records, validated_calls);
         let final_by_id = self
@@ -112,6 +115,9 @@ impl ExecutionHost {
             let (immediate_records, validated_calls) = self
                 .evaluate_pending_tool_calls(session, &pending_tool_calls, None)
                 .await;
+            if session.cancel_token.is_cancelled() {
+                return Ok(Vec::new());
+            }
             let (immediate_records, validated_calls) =
                 self.apply_tool_rate_limit(session, immediate_records, validated_calls);
             let final_by_id = self

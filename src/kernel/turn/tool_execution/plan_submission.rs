@@ -43,6 +43,9 @@ impl ExecutionHost {
                 ) {
                     return ("Plan authorization denied".to_string(), true);
                 }
+                if session.cancel_token.is_cancelled() {
+                    return ("Plan authorization cancelled".to_string(), true);
+                }
             }
             Some(Ok(Verdict::Modify(new_val))) => {
                 if let Some(obj) = new_val.as_object() {
