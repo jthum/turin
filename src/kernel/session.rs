@@ -128,6 +128,7 @@ impl PlanProgress {
 pub enum SessionStatus {
     Inactive,
     Active,
+    Ended,
 }
 
 #[derive(Debug, Clone)]

@@ -78,6 +78,10 @@ Audit checkpoint:
 - Resolved in `0.30.1` development: direct session teardown now bounds the background
   persistence-task join. A permanently stalled writer is aborted after the shutdown
   timeout and reported as an error instead of hanging an embedded caller indefinitely.
+- Resolved in `0.30.1` development: session objects now distinguish `inactive`,
+  `active`, and terminal `ended` states. Ending a never-started session closes its
+  persistence lane, while restarting an ended session fails instead of producing an
+  active session backed by a cancelled token and removed durability state.
 
 Verify with focused tests before changing semantics:
 

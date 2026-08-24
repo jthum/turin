@@ -538,7 +538,7 @@ async fn test_session_start_activates() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_session_end_deactivates() -> Result<()> {
+async fn test_session_end_is_terminal() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
@@ -547,7 +547,7 @@ async fn test_session_end_deactivates() -> Result<()> {
     assert_eq!(session.status, SessionStatus::Active);
 
     kernel.end_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Inactive);
+    assert_eq!(session.status, SessionStatus::Ended);
 
     Ok(())
 }
@@ -563,7 +563,53 @@ async fn test_session_end_idempotent() -> Result<()> {
     // End twice — should not panic or error
     kernel.end_session(&mut session).await?;
     kernel.end_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Inactive);
+    assert_eq!(session.status, SessionStatus::Ended);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_never_started_session_can_be_ended_cleanly() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session().await;
+    kernel.end_session(&mut session).await?;
+
+    assert_eq!(session.status, SessionStatus::Ended);
+    assert!(session.cancel_token.is_cancelled());
+    assert!(session.durability_tx.is_none());
+    assert!(
+        session
+            .event_task
+            .as_ref()
+            .expect("event task slot")
+            .lock()
+            .await
+            .is_none()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ended_session_cannot_be_restarted() -> Result<()> {
+    let tmp = tempdir()?;
+    let kernel = make_kernel(tmp.path()).await?;
+
+    let mut session = kernel.create_session().await;
+    kernel.start_session(&mut session).await?;
+    kernel.end_session(&mut session).await?;
+
+    let error = kernel
+        .start_session(&mut session)
+        .await
+        .expect_err("ended session must remain terminal");
+    assert!(
+        error
+            .to_string()
+            .contains("Ended sessions cannot be restarted")
+    );
 
     Ok(())
 }

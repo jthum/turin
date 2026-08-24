@@ -131,12 +131,15 @@ Local context selection:
 
 End session:
 
-1. Persist a session-end event.
-2. Run harness `on_session_end`.
-3. Close the durability channel and await the background persistence task.
+1. Persist a session-end event for an active session.
+2. Run harness `on_session_end` for an active session.
+3. Close the durability channel and await the background persistence task, including
+   for a never-started session.
    A stalled persistence task is aborted after a bounded shutdown wait and returned
    to the caller as an error; direct embedded-session teardown must not hang forever.
-4. Cancel the session token and clear the harness engine.
+4. Cancel the session token, clear the harness engine, and mark the session `ended`.
+   Ended session objects are terminal; callers resume persisted state into a new
+   session object rather than restarting one with a cancelled token.
 
 Delete persisted session:
 

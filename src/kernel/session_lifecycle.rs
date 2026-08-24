@@ -548,6 +548,11 @@ impl ExecutionHost {
         if session.status == SessionStatus::Active {
             return Ok(());
         }
+        if session.status == SessionStatus::Ended {
+            anyhow::bail!(
+                "Ended sessions cannot be restarted; resume the persisted session instead"
+            );
+        }
 
         let session_id = self.session_reference(session);
         info!(
@@ -601,7 +606,7 @@ impl ExecutionHost {
 
     /// End the session and emit SessionEnd event.
     pub async fn end_session(&self, session: &mut SessionState) -> Result<()> {
-        if session.status == SessionStatus::Inactive {
+        if session.status == SessionStatus::Ended {
             return Ok(());
         }
 
@@ -612,30 +617,32 @@ impl ExecutionHost {
             "Ending session"
         );
 
-        self.persist_event(
-            session,
-            &KernelEvent::Lifecycle(LifecycleEvent::SessionEnd {
-                identity: session.identity.clone(),
-                turn_count: session.turn_index,
-                total_input_tokens: session.total_input_tokens,
-                total_output_tokens: session.total_output_tokens,
-            }),
-        )
-        .await;
+        if session.status == SessionStatus::Active {
+            self.persist_event(
+                session,
+                &KernelEvent::Lifecycle(LifecycleEvent::SessionEnd {
+                    identity: session.identity.clone(),
+                    turn_count: session.turn_index,
+                    total_input_tokens: session.total_input_tokens,
+                    total_output_tokens: session.total_output_tokens,
+                }),
+            )
+            .await;
 
-        if let Some(harness) = self.session_harness_engine(session) {
-            let engine = harness.lock().expect("session harness mutex poisoned");
-            let session_id = self.session_reference(session);
-            if let Err(e) = engine.evaluate_hook(HarnessHook::SessionEnd {
-                identity: &session.identity,
-                session_id: &session_id,
-                turn_count: session.turn_index,
-                total_input_tokens: session.total_input_tokens,
-                total_output_tokens: session.total_output_tokens,
-            }) {
-                warn!(error = %e, "Harness on_session_end failed");
+            if let Some(harness) = self.session_harness_engine(session) {
+                let engine = harness.lock().expect("session harness mutex poisoned");
+                let session_id = self.session_reference(session);
+                if let Err(e) = engine.evaluate_hook(HarnessHook::SessionEnd {
+                    identity: &session.identity,
+                    session_id: &session_id,
+                    turn_count: session.turn_index,
+                    total_input_tokens: session.total_input_tokens,
+                    total_output_tokens: session.total_output_tokens,
+                }) {
+                    warn!(error = %e, "Harness on_session_end failed");
+                }
+                engine.set_active_queue(None);
             }
-            engine.set_active_queue(None);
         }
 
         let mut durability_error = self.wait_for_session_durability(session).await.err();
@@ -652,7 +659,7 @@ impl ExecutionHost {
         }
         session.cancel_token.cancel();
 
-        session.status = SessionStatus::Inactive;
+        session.status = SessionStatus::Ended;
         self.clear_session_harness_engine(session);
         durability_error.map_or(Ok(()), Err)
     }
