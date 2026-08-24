@@ -7212,17 +7212,16 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
     std::fs::create_dir(&harness_dir)?;
 
     let harness = r#"
-        local sidestep_id = nil
-        local task_count = 0
+        local promotion_prefix = "promote local sidestep:"
 
         function on_turn_prepare(ctx)
-            task_count = task_count + 1
-            if task_count == 1 then
-                sidestep_id, err = agent.sidestep("explore detached", "ephemeral")
+            if ctx.prompt == "exercise local sidestep promotion" then
+                local sidestep_id, err = agent.sidestep("explore detached", "ephemeral")
                 if sidestep_id == nil then error("agent.sidestep failed: " .. tostring(err)) end
-                local queued, queue_err = agent.session.queue("promote local sidestep")
+                local queued, queue_err = agent.session.queue(promotion_prefix .. sidestep_id)
                 if not queued then error("agent.session.queue failed: " .. tostring(queue_err)) end
-            elseif task_count == 3 then
+            elseif string.sub(ctx.prompt, 1, #promotion_prefix) == promotion_prefix then
+                local sidestep_id = string.sub(ctx.prompt, #promotion_prefix + 1)
                 local task, task_err = agent.task(sidestep_id)
                 if task == nil then error("agent.task failed: " .. tostring(task_err)) end
                 if task.status ~= "success" then
