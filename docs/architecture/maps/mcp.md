@@ -76,6 +76,8 @@ Shutdown:
 - A failed new attach should not leave a live MCP client in `mcp_clients`.
 - Reusing an existing client may skip already-registered tools but must still reject empty or duplicate names from the server response.
 - MCP proxies belong to the native tool registry; normal native-tool permission checks still apply when tools are called.
+- MCP process arguments remain available in memory for exact client reuse but must not be
+  written to ordinary logs because they may contain credentials or private configuration.
 
 ## Common Changes
 

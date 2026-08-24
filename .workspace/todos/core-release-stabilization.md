@@ -154,6 +154,8 @@ Audit checkpoint:
 - Human authorization is asynchronous, fail-closed when unavailable, cancellation
   aware, and backed by bounded best-effort notifications plus an authoritative
   pending-request map.
+- Ordinary task, shell, and MCP lifecycle logs retain identifiers and size/count
+  metadata without recording full prompts, shell commands, or subprocess arguments.
 - Full inspection APIs and deliberately unresolved authorization waits can retain
   caller-requested state; these are explicit operations rather than default turn-path
   growth.

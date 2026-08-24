@@ -25,7 +25,7 @@ pub(crate) struct McpAttachReport {
 
 impl ExecutionHost {
     /// Connect to an MCP server, initialize it, and register its tools.
-    #[instrument(skip(self, args), fields(command = %command, args = ?args))]
+    #[instrument(skip(self, args), fields(command = %command, arg_count = args.len()))]
     pub(crate) async fn spawn_mcp_server(
         &mut self,
         command: &str,
@@ -94,7 +94,7 @@ impl ExecutionHost {
                 if let Err(err) = entry.client.shutdown().await {
                     warn!(
                         command = %entry.command,
-                        args = ?entry.args,
+                        arg_count = entry.args.len(),
                         error = %err,
                         "Failed to shutdown MCP client cleanly"
                     );

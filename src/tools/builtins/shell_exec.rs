@@ -55,14 +55,17 @@ impl Tool for ShellExecTool {
         })
     }
 
-    #[tracing::instrument(skip(self, params, ctx), fields(command = %params["command"].as_str().unwrap_or("unknown")))]
+    #[tracing::instrument(
+        skip(self, params, ctx),
+        fields(command_bytes = params["command"].as_str().map_or(0, str::len))
+    )]
     async fn execute(
         &self,
         params: Value,
         ctx: &ToolContext,
     ) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ShellExecArgs = parse_args(params)?;
-        tracing::info!(command = %args.command, "Executing shell command");
+        tracing::info!(command_bytes = args.command.len(), "Executing shell command");
 
         // Resolve working directory
         let cwd = if let Some(ref dir) = args.cwd {

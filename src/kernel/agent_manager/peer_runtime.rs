@@ -287,7 +287,12 @@ impl PeerRuntime {
                 Verdict::Allow => {}
             }
 
-            info!(task_id = %task.task_id, trace_id = %task.trace_id, prompt = %task.prompt, "Running peer task");
+            info!(
+                task_id = %task.task_id,
+                trace_id = %task.trace_id,
+                prompt_bytes = task.prompt.len(),
+                "Running peer task"
+            );
 
             let run_result: TaskExecutionResult = match self
                 .host

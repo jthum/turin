@@ -76,7 +76,7 @@ impl ExecutionHost {
                 task_id = %task.task_id,
                 trace_id = %task.trace_id,
                 store = %describe_store_selector(&session.store_selector),
-                prompt = %task.prompt,
+                prompt_bytes = task.prompt.len(),
                 "Running task"
             );
 
