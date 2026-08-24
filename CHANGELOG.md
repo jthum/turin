@@ -9,9 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Focus**: Release entries summarize user-visible capabilities, breaking changes, migrations, security changes, and important fixes. Ordinary refactors, internal cleanups, and test suite additions belong in Git history.
 - **Brevity**: Keep each release concise, targeting 10–20 meaningful bullets grouped by theme.
-- **Archives**: Historical entries are archived under [`docs/changelog/`](docs/changelog/) to keep this file concise (retaining `[Unreleased]` plus the latest 3–5 releases).
+- **Archives**: Historical entries are archived under [`docs/changelog/`](docs/changelog/) to keep this file concise while retaining the latest 3–5 releases.
 
-## [Unreleased]
+## [0.31.0] - 2026-08-24
+
+### Added
+- Added a public native Rust harness contract with runtime signals, action dispatch, per-session factories, harness registration by id, governed application tool registries, and an engine-neutral scripting-adapter boundary.
+- Added linked agent sessions with durable origin provenance, bounded delegation families, configurable pooled lanes, fair scheduling, session-addressed signals, family inspection and archival, and promotion of selected child results into parent branches.
+- Added bounded, token-budgeted context retrieval with chunked ancestry reads, resident-history reuse, compaction-aware coverage, and reduced inference-request copying.
+- Added asynchronous, cancellation-aware tool authorization after governance evaluation and before side effects.
+- Added durable session deletion, turn-topology inspection, branch comparison, live retrieval diagnostics, per-task inference routing, and exploratory Web consoles for harnesses, agents, work operations, and session graphs.
+
+### Changed
+- Extracted Lua execution into the optional `turin-harness-lua` adapter crate; the kernel now owns engine-neutral harness semantics and can run native harnesses without linking Lua.
+- Extracted messaging channels from the daemon into independent channel clients with shared channel contracts and normalized client-origin provenance.
+- Replaced implicit `Kernel` access through `Deref` with an explicit embedding API and tightened adapter-facing visibility.
+- Upgraded the state schema to version `34`; pre-`0.31.0` state databases must be recreated because Turin does not provide in-place schema migrations.
+- Reworked peer-agent execution around linked durable sessions rather than globally shared agent runtimes, allowing isolated reusable or fresh contexts under bounded per-agent and global concurrency.
+- Updated dependency baselines, including Turso `0.7.2`, while retaining Turso as Turin's concrete persistence implementation.
+
+### Fixed
+- Made turn allocation, lifecycle writes, memory updates, worklist claims, linked-family deletion, target switches, and linked-result promotion atomic under their persistence invariants.
+- Added deterministic integrity failures for malformed persisted state, invalid numeric domains, missing or cross-session ancestry, and orphaned branch heads while keeping optional derived-record corruption recoverable.
+- Made session termination terminal, bounded persistence-worker shutdown, normalized cancellation and timeout outcomes, prevented late task publication, and closed queue/runtime lifecycle races.
+- Made source-backed harness reload atomic: failed Lua edits preserve the last valid generation for existing and new sessions, including imported source overlays.
+- Bounded and coalesced streamed event durability, bounded web response buffering, reclaimed transient session/run policy, and prevented unbounded resident context growth.
+
+### Security
+- Restricted trusted local IPC endpoints, preserved monotonic delegated-governance ceilings, and made authorization fail closed when unavailable or cancelled.
+- Removed full prompts, shell commands, and MCP arguments from ordinary lifecycle logs while retaining identifiers and size/count diagnostics.
+
+### Breaking
+- Rust embedders must use explicit `Kernel` methods instead of dereferencing into internal execution state, and Lua composition now occurs through `turin-harness-lua` at the product boundary.
+- Ended sessions cannot be restarted, channel processes own channel-specific configuration/state, and existing state databases must be recreated for schema version `34`.
 
 ## [0.30.1] - 2026-05-24
 

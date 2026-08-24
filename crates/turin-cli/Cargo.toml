@@ -1,6 +1,6 @@
 [package]
 name = "turin-cli"
-version = "0.30.1"
+version = "0.31.0"
 edition = "2024"
 description = "Command-line product composition for Turin"
 
