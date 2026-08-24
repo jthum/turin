@@ -16,6 +16,7 @@ Key rules:
 
 Important maps:
 
+- Kernel API: `docs/architecture/maps/kernel-api.md`
 - Actions: `docs/architecture/maps/actions.md`
 - Agent session bindings: `docs/architecture/maps/agent-session-bindings.md`
 - Harness system globals: `docs/architecture/maps/harness-system-globals.md`

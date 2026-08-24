@@ -64,7 +64,7 @@ impl SessionPersistenceCoordinator {
 }
 
 /// Shared runtime execution state used by both the top-level kernel and peer runtimes.
-pub struct ExecutionHost {
+pub(crate) struct ExecutionHost {
     pub(crate) config: Arc<TurinConfig>,
     pub(crate) json: bool,
     pub(crate) tool_registry: ToolRegistry,

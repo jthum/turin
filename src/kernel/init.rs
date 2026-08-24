@@ -211,7 +211,8 @@ impl Kernel {
         config: crate::kernel::config::TurinConfig,
         affected_agents: &HashSet<String>,
     ) -> Result<()> {
-        self.agent_manager
+        self.host
+            .agent_manager
             .ensure_agents_reconfigurable(affected_agents)
             .await?;
         let config = Arc::new(config);
@@ -228,13 +229,14 @@ impl Kernel {
                 self.host.script_harness_adapter.as_ref(),
             )?,
         );
-        let mut init_context = self.harness_init_context();
+        let mut init_context = self.host.harness_init_context();
         init_context.config = Arc::clone(&config);
         for definition in harness_manager.definitions() {
             definition.init(init_context.clone())?;
         }
 
-        self.agent_manager
+        self.host
+            .agent_manager
             .reconcile_runtime_catalog(
                 Arc::clone(&config),
                 Arc::clone(&harness_manager),
@@ -243,7 +245,7 @@ impl Kernel {
             .await?;
         self.host.config = config;
         self.host.harness_manager = harness_manager;
-        if let Err(err) = self.sync_runtime_signal_subscriptions().await {
+        if let Err(err) = self.host.sync_runtime_signal_subscriptions().await {
             warn!(error = %err, "Failed to reconcile runtime signal subscriptions after agent catalog update");
         }
         if let Err(err) = self.start_watcher() {
@@ -257,10 +259,10 @@ impl Kernel {
     pub fn start_watcher(&mut self) -> Result<()> {
         use std::time::Duration;
 
-        let definitions: Vec<_> = self.harness_manager.definitions().cloned().collect();
+        let definitions: Vec<_> = self.host.harness_manager.definitions().cloned().collect();
         let task_definitions = definitions.clone();
-        let init_ctx = self.harness_init_context();
-        let harness_manager = Arc::clone(&self.harness_manager);
+        let init_ctx = self.host.harness_init_context();
+        let harness_manager = Arc::clone(&self.host.harness_manager);
         let watcher_slot = Arc::clone(&self.check_watcher);
 
         // We use an async channel to debounce events

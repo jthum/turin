@@ -39,6 +39,7 @@ use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::persistence::manager::StoreManager;
+use crate::persistence::manager::StoreSelector;
 use anyhow::Result;
 use builder::RuntimeBuilder;
 use config::TurinConfig;
@@ -102,6 +103,196 @@ impl Kernel {
         RuntimeBuilder::new(config)
     }
 
+    pub(crate) fn harness_init_context(&self) -> harness_runtime::HarnessRuntimeInitContext {
+        self.host.harness_init_context()
+    }
+
+    pub(crate) fn harness_definition_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Arc<harness_runtime::HarnessDefinition> {
+        self.host.harness_definition_for_agent(agent_id)
+    }
+
+    pub(crate) fn harness_definition_by_id(
+        &self,
+        harness_id: &str,
+    ) -> Option<Arc<harness_runtime::HarnessDefinition>> {
+        self.host.harness_definition_by_id(harness_id)
+    }
+
+    pub(crate) fn agent_config_for(&self, agent_id: &str) -> Result<&config::AgentConfig> {
+        self.host.agent_config_for(agent_id)
+    }
+
+    pub(crate) fn validate_named_harness_sources(
+        &self,
+        harness_id: &str,
+        source_overlay: crate::harness::source::HarnessSourceOverlay,
+    ) -> Result<usize> {
+        self.host
+            .validate_named_harness_sources(harness_id, source_overlay)
+    }
+
+    /// Initialize configured provider and embedding clients.
+    pub fn init_clients(&mut self) -> Result<()> {
+        self.host.init_clients()
+    }
+
+    /// Initialize configured persistent state stores.
+    pub async fn init_state(&mut self) -> Result<()> {
+        self.host.init_state().await
+    }
+
+    /// Initialize all configured harness definitions.
+    pub async fn init_harness(&mut self) -> Result<()> {
+        self.host.init_harness().await
+    }
+
+    /// Atomically reload all configured harness definitions.
+    pub async fn reload_harness(&mut self) -> Result<()> {
+        self.host.reload_harness().await
+    }
+
+    /// Atomically reload one configured harness definition.
+    pub async fn reload_named_harness(&mut self, harness_id: &str) -> Result<()> {
+        self.host.reload_named_harness(harness_id).await
+    }
+
+    /// Validate one configured harness without activating it.
+    pub fn validate_named_harness(&self, harness_id: &str) -> Result<usize> {
+        self.host.validate_named_harness(harness_id)
+    }
+
+    /// Create a session for the primary configured agent.
+    pub async fn create_session(&self) -> session::SessionState {
+        self.host.create_session().await
+    }
+
+    /// Create a session for a configured agent.
+    pub async fn create_session_for_agent(&self, agent_id: &str) -> session::SessionState {
+        self.host.create_session_for_agent(agent_id).await
+    }
+
+    /// Create a session for an agent using explicit state and default-store selectors.
+    pub async fn create_session_for_agent_in_store(
+        &self,
+        agent_id: &str,
+        state_selector: Option<StoreSelector>,
+        default_store_selector: Option<StoreSelector>,
+    ) -> session::SessionState {
+        self.host
+            .create_session_for_agent_in_store(agent_id, state_selector, default_store_selector)
+            .await
+    }
+
+    /// Create a session with explicit storage, provenance, and inference context.
+    pub async fn create_session_for_agent_with_context(
+        &self,
+        agent_id: &str,
+        state_selector: Option<StoreSelector>,
+        default_store_selector: Option<StoreSelector>,
+        origin_id: Option<String>,
+        inference: config::InferenceOverrideConfig,
+    ) -> session::SessionState {
+        self.host
+            .create_session_for_agent_with_context(
+                agent_id,
+                state_selector,
+                default_store_selector,
+                origin_id,
+                inference,
+            )
+            .await
+    }
+
+    /// Resume a persisted session for a configured agent.
+    pub async fn resume_session_for_agent(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+    ) -> Result<session::SessionState> {
+        self.host
+            .resume_session_for_agent(agent_id, session_id)
+            .await
+    }
+
+    /// Resume a persisted session with explicit provenance and inference context.
+    pub async fn resume_session_for_agent_with_context(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+        origin_id: Option<String>,
+        inference: config::InferenceOverrideConfig,
+    ) -> Result<session::SessionState> {
+        self.host
+            .resume_session_for_agent_with_context(agent_id, session_id, origin_id, inference)
+            .await
+    }
+
+    /// Refresh a live session from its persisted execution target.
+    pub async fn refresh_session_from_persistence(
+        &self,
+        session: &mut session::SessionState,
+    ) -> Result<()> {
+        self.host.refresh_session_from_persistence(session).await
+    }
+
+    /// Select a named branch in a directly managed session.
+    pub async fn select_session_branch_by_name_local(
+        &self,
+        session: &mut session::SessionState,
+        branch_name: &str,
+    ) -> Result<bool> {
+        self.host
+            .select_session_branch_by_name_local(session, branch_name)
+            .await
+    }
+
+    /// Select an exact turn in a directly managed session.
+    pub async fn select_session_turn_local(
+        &self,
+        session: &mut session::SessionState,
+        turn_id: i64,
+    ) -> Result<bool> {
+        self.host.select_session_turn_local(session, turn_id).await
+    }
+
+    /// Select an external persisted session reference as read context.
+    pub async fn select_session_external_reference_local(
+        &self,
+        session: &mut session::SessionState,
+        reference: &str,
+    ) -> Result<bool> {
+        self.host
+            .select_session_external_reference_local(session, reference)
+            .await
+    }
+
+    /// Start a directly managed session if it is not already active.
+    pub async fn start_session(&self, session: &mut session::SessionState) -> Result<()> {
+        self.host.start_session(session).await
+    }
+
+    /// Run queued work for a directly managed session.
+    pub async fn run(
+        &mut self,
+        session: &mut session::SessionState,
+        prompt: Option<String>,
+    ) -> Result<()> {
+        self.host.run(session, prompt).await
+    }
+
+    /// Queue a prompt without starting the run loop.
+    pub async fn queue_prompt(&self, session: &mut session::SessionState, prompt: String) {
+        self.host.queue_prompt(session, prompt).await;
+    }
+
+    /// End a directly managed session and flush its required durability records.
+    pub async fn end_session(&self, session: &mut session::SessionState) -> Result<()> {
+        self.host.end_session(session).await
+    }
+
     /// Cooperatively stop peer runtimes and release external runtime resources.
     pub async fn shutdown(&mut self) {
         *self
@@ -114,37 +305,43 @@ impl Kernel {
 
     /// Access the store manager.
     pub fn store_manager(&self) -> &Arc<StoreManager> {
-        &self.store_manager
+        &self.host.store_manager
     }
 
     /// Access the agent manager.
     pub fn agent_manager(&self) -> &Arc<crate::kernel::agent_manager::AgentManager> {
-        &self.agent_manager
+        &self.host.agent_manager
     }
 
     /// Access the runtime policy manager.
     pub fn policy_manager(&self) -> &Arc<RuntimePolicyManager> {
-        &self.policy_manager
+        &self.host.policy_manager
     }
 
     /// Access the governance manager (profile/capability observability, G1).
     pub fn governance_manager(&self) -> &Arc<GovernanceManager> {
-        &self.governance_manager
+        &self.host.governance_manager
     }
 
     /// Access the configuration.
     pub fn config(&self) -> &TurinConfig {
-        &self.config
+        &self.host.config
     }
 
     /// Get names of all loaded harness scripts.
     pub fn loaded_scripts(&self) -> Vec<String> {
-        self.harness_manager.default_definition().loaded_scripts()
+        self.host
+            .harness_manager
+            .default_definition()
+            .loaded_scripts()
     }
 
     pub fn loaded_scripts_for_agent(&self, agent_id: &str) -> Result<Vec<String>> {
-        self.agent_config_for(agent_id)?;
-        Ok(self.harness_definition_for_agent(agent_id).loaded_scripts())
+        self.host.agent_config_for(agent_id)?;
+        Ok(self
+            .host
+            .harness_definition_for_agent(agent_id)
+            .loaded_scripts())
     }
 
     pub fn harness_snapshot(&self, harness_id: &str) -> Option<HarnessRuntimeSnapshot> {
@@ -155,7 +352,7 @@ impl Kernel {
 
     pub fn harness_snapshots(&self) -> Vec<HarnessRuntimeSnapshot> {
         let mut bound_agents: HashMap<String, Vec<String>> = HashMap::new();
-        for (agent_id, harness_id) in self.harness_manager.agent_bindings() {
+        for (agent_id, harness_id) in self.host.harness_manager.agent_bindings() {
             bound_agents
                 .entry(harness_id.clone())
                 .or_default()
@@ -163,6 +360,7 @@ impl Kernel {
         }
 
         let mut snapshots: Vec<_> = self
+            .host
             .harness_manager
             .definition_entries()
             .map(|(harness_id, runtime)| {
@@ -203,27 +401,14 @@ impl Kernel {
 
     /// Add a provider client manually (e.g. for testing).
     pub fn add_client(&mut self, name: String, client: ProviderClient) {
-        self.clients.insert(name, client);
+        self.host.clients.insert(name, client);
     }
 
     /// Run a Lua script directly in the harness (for testing/verification).
     pub fn run_script(&self, script: &str) -> Result<()> {
-        self.harness_manager
+        self.host
+            .harness_manager
             .default_definition()
-            .run_source(self.harness_init_context(), script)
-    }
-}
-
-impl std::ops::Deref for Kernel {
-    type Target = ExecutionHost;
-
-    fn deref(&self) -> &Self::Target {
-        &self.host
-    }
-}
-
-impl std::ops::DerefMut for Kernel {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.host
+            .run_source(self.host.harness_init_context(), script)
     }
 }

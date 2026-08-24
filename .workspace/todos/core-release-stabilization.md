@@ -46,10 +46,11 @@ Confirmed boundary concerns:
    `daemon`, `remote`, and tool internals). This makes internal movement look like a
    public API break. Introduce a curated facade before narrowing modules; do not add
    compatibility re-exports for APIs that were never intentionally supported.
-2. `Kernel` implements `Deref<Target = ExecutionHost>`. This exposes host methods
-   implicitly, hides the actual supported `Kernel` contract, and couples workspace
-   consumers to an internal orchestration type. Inventory and migrate every required
-   operation to explicit `Kernel` methods before removing the dereference.
+2. Resolved in `0.30.1` development: `Kernel` no longer implements
+   `Deref<Target = ExecutionHost>`. Supported embedding operations are explicit
+   `Kernel` methods, daemon-only harness operations use private delegates, and
+   `ExecutionHost` is crate-private. The migration preserved the existing root and
+   peer execution implementation without introducing another runtime object.
 3. Configuration now contains private loaded state. Programmatic construction must
    remain possible through defaults/builders rather than exhaustive struct literals.
 4. Persistence currently exposes both useful application operations and low-level row/
