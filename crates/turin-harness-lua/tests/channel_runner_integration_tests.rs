@@ -525,31 +525,28 @@ async fn channel_runner_parallelizes_only_different_conversations() -> Result<()
         sample_telegram_event("thread-par-b", "user-b", "msg-par-b"),
     ]);
     let parallel_sent = Arc::clone(&parallel_driver.sent);
-    let parallel_started_at = Instant::now();
     runner
         .run_driver("default", &mut parallel_driver, Some(5_000))
         .await?;
-    let parallel_elapsed = parallel_started_at.elapsed();
-    {
+    let parallel_completion_gap = {
         let sent = parallel_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert!(
             sent.iter().all(|(_, text, _)| text.contains("PONG")),
             "parallel conversations should both succeed, sent={sent:?}"
         );
-    }
+        sent[1].2.duration_since(sent[0].2)
+    };
 
     let mut serial_driver = RecordingDriver::new(vec![
         sample_telegram_event("thread-serial", "user-a", "msg-ser-a"),
         sample_telegram_event("thread-serial", "user-a", "msg-ser-b"),
     ]);
     let serial_sent = Arc::clone(&serial_driver.sent);
-    let serial_started_at = Instant::now();
     runner
         .run_driver("default", &mut serial_driver, Some(5_000))
         .await?;
-    let serial_elapsed = serial_started_at.elapsed();
-    {
+    let serial_completion_gap = {
         let sent = serial_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0].0, "msg-ser-a");
@@ -558,11 +555,16 @@ async fn channel_runner_parallelizes_only_different_conversations() -> Result<()
             sent.iter().all(|(_, text, _)| text.contains("PONG")),
             "serialized conversation should still succeed, sent={sent:?}"
         );
-    }
+        sent[1].2.duration_since(sent[0].2)
+    };
 
     assert!(
-        serial_elapsed > parallel_elapsed + Duration::from_millis(300),
-        "same-conversation work should take materially longer than different-conversation work; parallel={parallel_elapsed:?}, serial={serial_elapsed:?}"
+        serial_completion_gap >= Duration::from_millis(550),
+        "the second same-conversation response must wait for a fresh delayed inference after the first response; gap={serial_completion_gap:?}"
+    );
+    assert!(
+        serial_completion_gap > parallel_completion_gap + Duration::from_millis(300),
+        "different conversations should overlap while same-conversation responses remain serialized; parallel_gap={parallel_completion_gap:?}, serial_gap={serial_completion_gap:?}"
     );
 
     daemon.stop().await
