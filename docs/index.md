@@ -37,6 +37,7 @@ This is the documentation landing page for Turin.
 - `docs/reference/` — stable harness API and hook contracts
 - `docs/operations/` — daemon operations, testing, and live validation
 - `docs/adr/` — architecture decision records
+- `docs/changelog/` — historical release archives
 
 ## Recommended Reading Order
 
