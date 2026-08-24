@@ -36,7 +36,7 @@ struct MockDriver {
 
 struct RecordingDriver {
     events: VecDeque<InboundEvent>,
-    sent: Arc<Mutex<Vec<(String, String, Instant)>>>,
+    sent: Arc<Mutex<Vec<(String, String)>>>,
     shutdown_called: Arc<Mutex<bool>>,
 }
 
@@ -257,7 +257,7 @@ impl ChannelDriver for RecordingDriver {
         self.sent
             .lock()
             .expect("sent lock poisoned")
-            .push((reply_to, text, Instant::now()));
+            .push((reply_to, text));
         Ok(())
     }
 
@@ -517,54 +517,80 @@ async fn channel_runner_emits_progress_updates_for_opted_in_driver() -> Result<(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn channel_runner_parallelizes_only_different_conversations() -> Result<()> {
-    let daemon = DaemonHarness::start_with_mock_response("delay_ms=600;PONG").await?;
+    let daemon = DaemonHarness::start_with_mock_response("delay_ms=3000;PONG").await?;
     let runner = daemon.runner();
+    let daemon_client = turin_daemon_client::DaemonClient::new(&daemon.endpoint);
 
     let mut parallel_driver = RecordingDriver::new(vec![
         sample_telegram_event("thread-par-a", "user-a", "msg-par-a"),
         sample_telegram_event("thread-par-b", "user-b", "msg-par-b"),
     ]);
     let parallel_sent = Arc::clone(&parallel_driver.sent);
-    runner
-        .run_driver("default", &mut parallel_driver, Some(5_000))
-        .await?;
-    let parallel_completion_gap = {
+    let parallel_runner = runner.clone();
+    let parallel_run = tokio::spawn(async move {
+        parallel_runner
+            .run_driver("default", &mut parallel_driver, Some(10_000))
+            .await
+    });
+    let parallel_deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let health = daemon_client.health().await?;
+        if health.active_task_count >= 2 {
+            break;
+        }
+        assert!(
+            !parallel_run.is_finished(),
+            "different-conversation run completed without exposing two concurrent active tasks"
+        );
+        assert!(
+            Instant::now() < parallel_deadline,
+            "timed out waiting for different conversations to execute concurrently"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
+    parallel_run
+        .await
+        .context("parallel runner task failed")??;
+    {
         let sent = parallel_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert!(
-            sent.iter().all(|(_, text, _)| text.contains("PONG")),
+            sent.iter().all(|(_, text)| text.contains("PONG")),
             "parallel conversations should both succeed, sent={sent:?}"
         );
-        sent[1].2.duration_since(sent[0].2)
-    };
+    }
 
     let mut serial_driver = RecordingDriver::new(vec![
         sample_telegram_event("thread-serial", "user-a", "msg-ser-a"),
         sample_telegram_event("thread-serial", "user-a", "msg-ser-b"),
     ]);
     let serial_sent = Arc::clone(&serial_driver.sent);
-    runner
-        .run_driver("default", &mut serial_driver, Some(5_000))
-        .await?;
-    let serial_completion_gap = {
+    let serial_run = tokio::spawn(async move {
+        runner
+            .run_driver("default", &mut serial_driver, Some(10_000))
+            .await
+    });
+    let mut max_serial_active_tasks = 0;
+    while !serial_run.is_finished() {
+        max_serial_active_tasks =
+            max_serial_active_tasks.max(daemon_client.health().await?.active_task_count);
+        sleep(Duration::from_millis(100)).await;
+    }
+    serial_run.await.context("serial runner task failed")??;
+    {
         let sent = serial_sent.lock().expect("sent lock poisoned");
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0].0, "msg-ser-a");
         assert_eq!(sent[1].0, "msg-ser-b");
         assert!(
-            sent.iter().all(|(_, text, _)| text.contains("PONG")),
+            sent.iter().all(|(_, text)| text.contains("PONG")),
             "serialized conversation should still succeed, sent={sent:?}"
         );
-        sent[1].2.duration_since(sent[0].2)
-    };
+    }
 
-    assert!(
-        serial_completion_gap >= Duration::from_millis(550),
-        "the second same-conversation response must wait for a fresh delayed inference after the first response; gap={serial_completion_gap:?}"
-    );
-    assert!(
-        serial_completion_gap > parallel_completion_gap + Duration::from_millis(300),
-        "different conversations should overlap while same-conversation responses remain serialized; parallel_gap={parallel_completion_gap:?}, serial_gap={serial_completion_gap:?}"
+    assert_eq!(
+        max_serial_active_tasks, 1,
+        "same-conversation work must admit only one active daemon task at a time"
     );
 
     daemon.stop().await
