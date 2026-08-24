@@ -196,19 +196,21 @@ impl PeerRuntime {
         }
         self.sync_control_execution_state();
         let outcome = async {
-            self.host.persist_event(
-                &self.session,
-                &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
-                    identity: self.session.identity.clone(),
-                    task_id: task.task_id.clone(),
-                    trace_id: task.trace_id.clone(),
-                    plan_id: task.plan_id.clone(),
-                    title: task.title.clone(),
-                    prompt: task.prompt.clone(),
-                    queue_depth: 0,
-                    execution: ExecutionStatusSnapshot::from_session(&self.session),
-                }),
-            ).await;
+            self.host
+                .persist_event(
+                    &self.session,
+                    &KernelEvent::Lifecycle(LifecycleEvent::TaskStart {
+                        identity: self.session.identity.clone(),
+                        task_id: task.task_id.clone(),
+                        trace_id: task.trace_id.clone(),
+                        plan_id: task.plan_id.clone(),
+                        title: task.title.clone(),
+                        prompt: task.prompt.clone(),
+                        queue_depth: 0,
+                        execution: ExecutionStatusSnapshot::from_session(&self.session),
+                    }),
+                )
+                .await;
 
             let task_start_verdict = {
                 if let Some(harness) = self.host.session_harness_engine(&self.session) {

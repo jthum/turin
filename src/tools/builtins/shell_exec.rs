@@ -65,7 +65,10 @@ impl Tool for ShellExecTool {
         ctx: &ToolContext,
     ) -> Result<crate::tools::ToolEffect, ToolError> {
         let args: ShellExecArgs = parse_args(params)?;
-        tracing::info!(command_bytes = args.command.len(), "Executing shell command");
+        tracing::info!(
+            command_bytes = args.command.len(),
+            "Executing shell command"
+        );
 
         // Resolve working directory
         let cwd = if let Some(ref dir) = args.cwd {

@@ -27,7 +27,7 @@ Deferred unless a missing core primitive is proven:
 
 ## Release Boundary Audit
 
-Status: explicit kernel boundary complete; facade/visibility review remains.
+Status: complete for the 0.x supported boundary; namespace narrowing remains pre-1.0 work.
 
 The intended supported embedding surface is:
 
@@ -57,7 +57,7 @@ Confirmed boundary concerns:
    connection details. Do not invent a storage adapter, but classify which access is a
    supported advanced API and which is implementation-only.
 
-Boundary exit criteria:
+Pre-1.0 boundary criteria:
 
 - A small documented facade covers every supported embedded use case.
 - Product crates compile without relying on accidental internal visibility.
@@ -173,7 +173,23 @@ Audit checkpoint:
 
 ## Structural Review
 
-Status: pending until semantics settle.
+Status: complete; no broad ownership refactor recommended.
+
+Audit checkpoint:
+
+- The largest source files are primarily test suites, schema declarations, or cohesive
+  domain modules. Session lifecycle, configuration, governance, persistence domains,
+  and agent management already delegate distinct ownership to child modules.
+- Production panic sites are predominantly poisoned-lock assertions or states proven
+  inside one synchronous critical section. Persisted/external state paths return errors.
+- No remaining god object justifies a release-delaying split. Further extraction would
+  mostly scatter state transitions without reducing coupling or runtime cost.
+- `Kernel` has an explicit embedded API and outside-in Rust embedding coverage. Root
+  namespaces remain broadly public because product and adapter crates still consume
+  advanced contracts directly; narrowing them should be a deliberate pre-1.0 API
+  chapter, not compatibility aliases added during this release.
+- Sensitive execution payloads are no longer written to normal task, shell, peer, or
+  MCP lifecycle logs.
 
 - Audit public visibility and naming consistency.
 - Review large production modules for mixed ownership, not raw line count.
@@ -185,7 +201,19 @@ Status: pending until semantics settle.
 
 ## Release Qualification
 
-Status: pending.
+Status: core and Lua adapter gates green; release-profile measurements deferred.
+
+Completed gates:
+
+- `cargo test -p turin --all-features`: 339 unit tests plus capability, property,
+  Rust embedding, Rust harness API, tool, and filesystem security suites passed.
+- `cargo test -p turin-harness-lua`: all adapter unit and integration suites passed,
+  including daemon, channels, examples, governance, reload, and session lifecycle.
+- Strict all-target/all-feature Clippy passed across `turin`, `turin-harness-lua`, and
+  `turin-cli` during the stabilization checkpoints.
+- Formatting and diff checks passed at each committed checkpoint.
+- Release-profile binary/RSS/performance measurements remain deferred while disk space
+  is constrained. No release build or target cleanup was performed in this chapter.
 
 - Formatting and strict Clippy across core and its adapter/product consumers.
 - Full unit and integration suite.
