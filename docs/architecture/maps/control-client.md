@@ -24,6 +24,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
     creation, branch listing, checkout, and durable deletion.
 - `crates/turin-control-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
+- `crates/turin-control-client/src/authorizations.rs`
+  - Pending tool-authorization listing and approve/deny convenience methods.
 - `crates/turin-control-client/src/harnesses.rs`
   - Harness detail, UI intent, source inspection/candidate validation/hash-guarded saves, and action invocation convenience methods.
 - `crates/turin-control-client/src/worklists.rs`
@@ -70,6 +72,7 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   client provenance without defining client identity, authentication, or
   ownership in this crate.
 - Local and remote behavior should stay symmetric unless a transport limitation is explicit.
+- Tool authorization denial reasons are optional; clients must not add friction by requiring one.
 - Harness source editing must go through daemon protocol operations so local and remote clients share path, conflict, validation, and persistence semantics.
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - `ControlHealth::agent_count` counts effective configured runtime agents, including

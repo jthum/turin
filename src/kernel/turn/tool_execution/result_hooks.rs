@@ -1,32 +1,53 @@
-use std::io::{self, BufRead, Write};
-
 use tracing::warn;
 
-use crate::display;
 use crate::harness::verdict::Verdict;
+use crate::kernel::PendingToolCall;
+use crate::kernel::event::{AuditEvent, KernelEvent};
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::SessionState;
+use crate::kernel::tool_authorization::{ToolAuthorizationDecision, ToolAuthorizationRequest};
 
 impl ExecutionHost {
-    pub(super) fn prompt_for_approval(&self, reason: &str) -> bool {
-        warn!(reason = %reason, "Escalation requires user approval");
-        let ansi_stderr = display::stderr_ansi();
-        eprint!(
-            "{} {} Allow? (y/n): ",
-            display::approval_prompt_prefix(ansi_stderr),
-            reason
+    pub(super) async fn authorize_tool_call(
+        &self,
+        session: &SessionState,
+        tool_call: &PendingToolCall,
+        reason: String,
+    ) -> ToolAuthorizationDecision {
+        let request = ToolAuthorizationRequest::new(
+            session.identity.clone(),
+            session.runtime_slot_id.clone(),
+            tool_call.id.clone(),
+            tool_call.name.clone(),
+            tool_call.args.clone(),
+            reason,
         );
-        io::stderr().flush().ok();
-
-        tokio::task::block_in_place(|| {
-            let mut input = String::new();
-            io::stdin().lock().read_line(&mut input).is_ok()
-                && input.trim().eq_ignore_ascii_case("y")
-        })
+        self.persist_event(
+            session,
+            &KernelEvent::Audit(AuditEvent::ToolAuthorizationRequested {
+                request: request.clone(),
+            }),
+        )
+        .await;
+        let request_id = request.id.clone();
+        let decision = self
+            .tool_authorizer
+            .authorize(request, session.cancel_token.clone())
+            .await;
+        let decision = decision.normalized();
+        self.persist_event(
+            session,
+            &KernelEvent::Audit(AuditEvent::ToolAuthorizationResolved {
+                request_id,
+                decision: decision.clone(),
+            }),
+        )
+        .await;
+        decision
     }
 
-    pub(super) fn apply_tool_result_hook(
+    pub(super) async fn apply_tool_result_hook(
         &self,
         session: &SessionState,
         id: &str,
@@ -38,15 +59,18 @@ impl ExecutionHost {
         let Some(harness) = self.session_harness_engine(session) else {
             return (content, is_error);
         };
-        let engine = harness.lock().expect("session harness mutex poisoned");
+        let verdict = {
+            let engine = harness.lock().expect("session harness mutex poisoned");
+            engine.evaluate_hook(HarnessHook::ToolResult {
+                id,
+                name,
+                args,
+                output: &content,
+                is_error,
+            })
+        };
 
-        match engine.evaluate_hook(HarnessHook::ToolResult {
-            id,
-            name,
-            args,
-            output: &content,
-            is_error,
-        }) {
+        match verdict {
             Ok(Verdict::Allow) => (content, is_error),
             Ok(Verdict::Reject(reason)) => (
                 format!(
@@ -56,14 +80,19 @@ impl ExecutionHost {
                 true,
             ),
             Ok(Verdict::Escalate(reason)) => {
-                if self.prompt_for_approval(&reason) {
+                let call = PendingToolCall {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    args: args.clone(),
+                };
+                if matches!(
+                    self.authorize_tool_call(session, &call, reason).await,
+                    ToolAuthorizationDecision::Approve
+                ) {
                     (content, is_error)
                 } else {
                     (
-                        format!(
-                            "[ESCALATION DENIED] Tool '{}' result denied by user: {}",
-                            name, reason
-                        ),
+                        format!("[AUTHORIZATION DENIED] Tool '{}' result denied", name),
                         true,
                     )
                 }

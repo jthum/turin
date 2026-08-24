@@ -37,5 +37,6 @@ Important maps:
 - Turin app: `docs/architecture/maps/turin-app.md`
 - Turin TUI: `docs/architecture/maps/tui.md`
 - Turin UI Core: `docs/architecture/maps/turin-ui-core.md`
+- Tool authorization: `docs/architecture/maps/tool-authorization.md`
 - Turin web: `docs/architecture/maps/turin-web.md`
 - Web tools: `docs/architecture/maps/web-tools.md`

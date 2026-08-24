@@ -16,11 +16,25 @@ use turin::kernel::config::{
     PersistenceConfig, ProviderConfig, TurinConfig,
 };
 use turin::kernel::harness::{Harness, Verdict};
-use turin::kernel::harness_contract::HarnessTurnRequest;
+use turin::kernel::harness_contract::{HarnessHook, HarnessTurnRequest};
+use turin::kernel::tool_authorization::{ToolAuthorizationBroker, ToolAuthorizationDecision};
 use turin::tools::registry::ToolRegistry;
 use turin::tools::{Tool, ToolContext, ToolEffect, ToolError, ToolOutput};
 
 struct PromptHarness(&'static str);
+
+struct EscalatingHarness;
+
+impl Harness for EscalatingHarness {
+    fn on_hook(&mut self, hook: HarnessHook<'_>) -> Result<Verdict> {
+        Ok(match hook {
+            HarnessHook::ToolCall { .. } => {
+                Verdict::Escalate("Confirm fixture tool execution".to_string())
+            }
+            _ => Verdict::Allow,
+        })
+    }
+}
 
 impl Harness for PromptHarness {
     fn on_turn_prepare(&mut self, request: &mut HarnessTurnRequest) -> Result<Verdict> {
@@ -94,6 +108,72 @@ impl Tool for RecordFactTool {
 }
 
 struct ForbiddenTool;
+
+struct CountingTool(Arc<AtomicUsize>);
+
+#[async_trait]
+impl Tool for CountingTool {
+    fn name(&self) -> &str {
+        "counted"
+    }
+
+    fn description(&self) -> &str {
+        "Records that authorized execution occurred"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object" })
+    }
+
+    async fn execute(
+        &self,
+        _params: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolEffect, ToolError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok(ToolEffect::Output(ToolOutput::new("counted".into())))
+    }
+}
+
+struct AuthorizationFixtureProvider(AtomicUsize);
+
+impl InferenceProvider for AuthorizationFixtureProvider {
+    fn stream<'a>(
+        &'a self,
+        _request: InferenceRequest,
+        _options: Option<RequestOptions>,
+    ) -> BoxFuture<'a, Result<InferenceStream, SdkError>> {
+        let call = self.0.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async move {
+            let mut events = vec![Ok(InferenceEvent::MessageStart {
+                role: "assistant".into(),
+                model: "authorization-fixture".into(),
+                provider_id: "fixture".into(),
+            })];
+            if call == 0 {
+                events.extend([
+                    Ok(InferenceEvent::ToolCallStart {
+                        id: "count-call".into(),
+                        name: "counted".into(),
+                    }),
+                    Ok(InferenceEvent::ToolCallDelta { delta: "{}".into() }),
+                ]);
+            } else {
+                events.push(Ok(InferenceEvent::MessageDelta {
+                    content: "Authorized.".into(),
+                }));
+            }
+            events.push(Ok(InferenceEvent::MessageEnd {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
+                stop_reason: None,
+            }));
+            Ok(Box::pin(futures::stream::iter(events)) as InferenceStream)
+        })
+    }
+}
 
 #[async_trait]
 impl Tool for ForbiddenTool {
@@ -323,5 +403,68 @@ async fn public_embedding_path_supports_harnesses_tools_governance_and_persisten
         .expect("custom tool should persist a fact");
     assert_eq!(row.get::<String>(0)?, "adapter boundary verified");
     assert_eq!(row.get::<String>(1)?, "default");
+    Ok(())
+}
+
+#[tokio::test]
+async fn escalated_tool_waits_for_external_authorization_before_execution() -> Result<()> {
+    let tmp = tempdir()?;
+    let mut config = TurinConfig::default();
+    config.kernel.workspace_root = tmp.path().to_string_lossy().into_owned();
+    config.persistence = PersistenceConfig::with_state_path(
+        tmp.path().join("state.db").to_string_lossy().into_owned(),
+    );
+    config.embeddings = Some(EmbeddingConfig::noop());
+    config.agent = AgentConfig {
+        id: "default".into(),
+        model: "authorization-fixture".into(),
+        provider: "fixture".into(),
+        ..AgentConfig::default()
+    };
+    config.providers = HashMap::from([(
+        "fixture".into(),
+        ProviderConfig {
+            kind: "fixture".into(),
+            ..ProviderConfig::default()
+        },
+    )]);
+    config.tools.selection.allow = Some(vec!["counted".into()]);
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(CountingTool(Arc::clone(&executions))))?;
+    let authorizations = Arc::new(ToolAuthorizationBroker::new());
+    let mut requests = authorizations.subscribe_requests();
+    let mut kernel = Kernel::builder(config)
+        .with_tool_registry(tools)
+        .with_default_harness(|| Ok(Box::new(EscalatingHarness) as Box<dyn Harness>))
+        .with_tool_authorizer(authorizations.clone())
+        .build()?;
+    kernel.init_state().await?;
+    kernel.init_harness().await?;
+    kernel.add_client(
+        "fixture".into(),
+        ProviderClient::new(
+            "fixture",
+            Arc::new(AuthorizationFixtureProvider(AtomicUsize::new(0))),
+        ),
+    );
+
+    let run = tokio::spawn(async move {
+        let mut session = kernel.create_session().await;
+        kernel
+            .run(&mut session, Some("Use the counted tool.".into()))
+            .await
+    });
+    let request = requests.recv().await?;
+    assert_eq!(request.tool_name, "counted");
+    assert_eq!(executions.load(Ordering::Relaxed), 0);
+    assert!(
+        authorizations
+            .resolve(&request.id, ToolAuthorizationDecision::Approve)
+            .await
+    );
+    run.await??;
+    assert_eq!(executions.load(Ordering::Relaxed), 1);
     Ok(())
 }

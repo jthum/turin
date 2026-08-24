@@ -1,3 +1,4 @@
+mod authorizations;
 mod client;
 mod harnesses;
 mod health;
@@ -16,6 +17,7 @@ pub use models::*;
 pub use turin_daemon_protocol::{
     HarnessSourceEntry, HarnessSourceFile, HarnessSourceListResult, HarnessSourceOverlay,
     HarnessSourceSaveChange, HarnessSourceSaveResult, HarnessSourceValidationResult,
+    ToolAuthorizationRequestDetail, ToolAuthorizationResolution, ToolAuthorizationResolveResult,
 };
 
 #[cfg(test)]

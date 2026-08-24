@@ -33,6 +33,7 @@ use crate::kernel::policy::RuntimePolicyManager;
 pub use crate::kernel::session::ExecutionStatusSnapshot;
 use crate::kernel::session::{ExecutionConflictPolicy, SessionState};
 pub use crate::kernel::task_promotion::{PromotedTaskBranch, TaskPromotionCandidate};
+use crate::kernel::tool_authorization::ToolAuthorizer;
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Mutex as AsyncMutex, RwLock, oneshot};
@@ -221,6 +222,7 @@ pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) persistence_locks: Arc<SessionPersistenceCoordinator>,
     pub(crate) script_harness_adapter:
         Option<Arc<dyn crate::kernel::harness_runtime::HarnessAdapterFactory>>,
+    pub(crate) tool_authorizer: Arc<dyn ToolAuthorizer>,
 }
 
 #[derive(Clone, Default)]

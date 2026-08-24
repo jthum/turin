@@ -40,6 +40,34 @@ fn request_envelope_round_trips_typed_shape() {
 }
 
 #[test]
+fn tool_authorization_requests_support_reasonless_denial() {
+    let request = RequestEnvelope::new(
+        Some("req_authorize".to_string()),
+        DaemonRequest::ToolAuthorizationResolve(ToolAuthorizationResolveParams {
+            request_id: "auth_1".to_string(),
+            decision: ToolAuthorizationResolution::Deny,
+            reason: None,
+        }),
+    );
+
+    let value = serde_json::to_value(&request).expect("serialize authorization resolution");
+    assert_eq!(value["op"], "tool_authorization.resolve");
+    assert_eq!(value["params"]["decision"], "deny");
+    assert!(value["params"].get("reason").is_none());
+
+    let decoded: RequestEnvelope =
+        serde_json::from_value(value).expect("deserialize authorization resolution");
+    match decoded.request {
+        DaemonRequest::ToolAuthorizationResolve(params) => {
+            assert_eq!(params.request_id, "auth_1");
+            assert_eq!(params.decision, ToolAuthorizationResolution::Deny);
+            assert!(params.reason.is_none());
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+}
+
+#[test]
 fn harness_source_candidate_and_save_requests_round_trip() {
     let validate = RequestEnvelope::new(
         Some("req_validate_source".to_string()),

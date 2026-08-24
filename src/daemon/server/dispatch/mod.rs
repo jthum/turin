@@ -18,6 +18,7 @@ mod runtime;
 mod schedule;
 mod session;
 mod task;
+mod tool_authorization;
 mod worklist;
 
 pub(super) struct DispatchContext {
@@ -58,6 +59,12 @@ pub(super) async fn dispatch(
             "runtime.events.subscribe must be handled by the event stream path",
             None,
         ),
+        DaemonRequest::ToolAuthorizationList(params) => {
+            tool_authorization::list(id, params, &context).await
+        }
+        DaemonRequest::ToolAuthorizationResolve(params) => {
+            tool_authorization::resolve(id, params, &context).await
+        }
         DaemonRequest::AgentList(params) => agent::list(id, params, &context).await,
         DaemonRequest::AgentGet(params) => agent::get(id, params, &context).await,
         DaemonRequest::AgentStatus(params) => agent::status(id, params, &context).await,

@@ -48,14 +48,16 @@ impl ExecutionHost {
                 .await;
             }
 
-            let (content, is_error) = self.apply_tool_result_hook(
-                session,
-                &record.id,
-                &record.name,
-                &record.args,
-                record.content,
-                record.is_error,
-            );
+            let (content, is_error) = self
+                .apply_tool_result_hook(
+                    session,
+                    &record.id,
+                    &record.name,
+                    &record.args,
+                    record.content,
+                    record.is_error,
+                )
+                .await;
             record.content = content;
             record.is_error = is_error;
 

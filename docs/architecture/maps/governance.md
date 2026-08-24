@@ -4,6 +4,10 @@
 
 Governance decides whether harness/runtime code may use a capability, call a child agent, or enter a temporary grant.
 
+Human authorization is a separate boundary. Governance decides whether an operation is permitted
+at all; `docs/architecture/maps/tool-authorization.md` covers harness-requested approval within
+that authority.
+
 This subsystem is security-sensitive. Refactors here should be small, test-backed, and behavior-preserving unless the policy model is being deliberately redesigned.
 
 ## Files

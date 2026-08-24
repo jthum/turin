@@ -66,6 +66,10 @@ pub async fn serve_with_harness_adapter(
     #[cfg(feature = "perf-diagnostics")]
     crate::perf_diagnostics::install_event_sink(event_tx.clone());
     let watcher_slot = Arc::new(std::sync::Mutex::new(None));
+    let authorization_requests = {
+        let guard = state.read().await;
+        guard.tool_authorization_broker().subscribe_requests()
+    };
     let daemon_watcher_tx = watch::start_daemon_watcher(
         Arc::clone(&state),
         Arc::clone(&watcher_slot),
@@ -73,6 +77,11 @@ pub async fn serve_with_harness_adapter(
     )
     .await?;
     events::start_task_event_poller(Arc::clone(&state), event_tx.clone(), shutdown_rx.clone());
+    events::start_tool_authorization_events(
+        authorization_requests,
+        event_tx.clone(),
+        shutdown_rx.clone(),
+    );
     scheduler::start_internal_scheduler(Arc::clone(&state), shutdown_rx.clone());
     let client_ctx = ClientContext {
         state: Arc::clone(&state),

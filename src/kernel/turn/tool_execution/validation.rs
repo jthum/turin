@@ -15,7 +15,7 @@ const MAX_TOOL_CALLS_PER_WINDOW: usize = 32;
 const TOOL_CALL_WINDOW: Duration = Duration::from_secs(10);
 
 impl ExecutionHost {
-    pub(super) fn evaluate_pending_tool_calls(
+    pub(super) async fn evaluate_pending_tool_calls(
         &self,
         session: &SessionState,
         pending_tool_calls: &[PendingToolCall],
@@ -69,17 +69,46 @@ impl ExecutionHost {
                 }
                 Verdict::Escalate(reason) => {
                     warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
-                    if !self.prompt_for_approval(reason) {
-                        if !self.json {
-                            println!("{}", display::approval_line(false, ansi_stdout));
-                        }
-                        let msg =
-                            format!("[ESCALATION DENIED] Tool '{}' denied: {}", tc.name, reason);
+                    if let Some(decision) =
+                        self.native_tool_governance_decision(session.identity.agent_id(), &tc.name)
+                        && !decision.allowed
+                    {
+                        let detail = decision
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| format!("Governance denied tool '{}'", tc.name));
                         immediate_records.push(FinalToolRecord {
                             id: tc.id.clone(),
                             name: tc.name.clone(),
                             args: tc.args.clone(),
-                            verdict: "escalate_denied".to_string(),
+                            verdict: "governance_denied".to_string(),
+                            duration_ms: 0,
+                            content: format!(
+                                "[GOVERNANCE DENIED] Tool '{}' blocked: {}",
+                                tc.name, detail
+                            ),
+                            is_error: true,
+                            emit_exec_start: true,
+                            governance_denial: Some(decision),
+                        });
+                        continue;
+                    }
+                    let decision = self.authorize_tool_call(session, tc, reason.clone()).await;
+                    if let crate::kernel::tool_authorization::ToolAuthorizationDecision::Deny {
+                        reason: denial_reason,
+                    } = decision
+                    {
+                        let detail = denial_reason
+                            .as_deref()
+                            .map(|reason| format!(": {reason}"))
+                            .unwrap_or_default();
+                        let msg =
+                            format!("[AUTHORIZATION DENIED] Tool '{}' denied{}", tc.name, detail);
+                        immediate_records.push(FinalToolRecord {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            args: tc.args.clone(),
+                            verdict: "authorization_denied".to_string(),
                             duration_ms: 0,
                             content: msg,
                             is_error: true,
@@ -87,9 +116,6 @@ impl ExecutionHost {
                             governance_denial: None,
                         });
                     } else {
-                        if !self.json {
-                            println!("{}", display::approval_line(true, ansi_stdout));
-                        }
                         validated_calls.push((tc.clone(), Verdict::Allow));
                     }
                 }

@@ -19,6 +19,7 @@ use crate::kernel::session::{
     QueuedTask, SessionHarnessEngine, SessionState,
 };
 use crate::kernel::task_promotion::TaskPromotionCandidate;
+use crate::kernel::tool_authorization::ToolAuthorizer;
 use crate::persistence::manager::{StoreManager, StorePathScope};
 use crate::tools::registry::ToolRegistry;
 use tracing::{error, warn};
@@ -79,6 +80,7 @@ pub struct ExecutionHost {
     pub(crate) rust_harness_factories: Option<Arc<crate::kernel::harness::RustHarnessFactories>>,
     pub(crate) script_harness_adapter:
         Option<Arc<dyn crate::kernel::harness_runtime::HarnessAdapterFactory>>,
+    pub(crate) tool_authorizer: Arc<dyn ToolAuthorizer>,
     pub(crate) mcp_clients: Vec<McpClientEntry>,
 }
 

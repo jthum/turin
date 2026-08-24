@@ -11,6 +11,7 @@ mod scheduled_worklist_actions;
 mod source_revision;
 #[cfg(test)]
 mod tests;
+mod tool_authorizations;
 mod types;
 mod worklists;
 
@@ -29,6 +30,7 @@ use crate::harness::scheduler::HarnessSchedulerAccess;
 use crate::kernel::Kernel;
 use crate::kernel::config::{ThinkingConfig, TurinConfig};
 use crate::kernel::harness_runtime::HarnessAdapterFactory;
+use crate::kernel::tool_authorization::ToolAuthorizationBroker;
 use crate::persistence::state::StateStore;
 use source_revision::{SourceRevision, calculate_bootstrap_revision, calculate_source_revision};
 
@@ -89,6 +91,7 @@ pub struct DaemonState {
     script_harness_adapter: Arc<dyn HarnessAdapterFactory>,
     bootstrap_revision: SourceRevision,
     source_revision: SourceRevision,
+    tool_authorization_broker: Arc<ToolAuthorizationBroker>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,8 +152,10 @@ impl DaemonState {
         let runtime_store =
             Arc::new(StateStore::open(&runtime_db_path.display().to_string()).await?);
 
+        let tool_authorization_broker = Arc::new(ToolAuthorizationBroker::new());
         let mut kernel = Kernel::builder(effective_config)
             .with_harness_adapter(Arc::clone(&script_harness_adapter))
+            .with_tool_authorizer(tool_authorization_broker.clone())
             .build()?;
         kernel.init_state().await?;
         kernel.init_clients()?;
@@ -184,11 +189,16 @@ impl DaemonState {
             script_harness_adapter,
             bootstrap_revision,
             source_revision,
+            tool_authorization_broker,
         })
     }
 
     pub fn endpoint(&self) -> &Path {
         &self.endpoint
+    }
+
+    pub fn tool_authorization_broker(&self) -> Arc<ToolAuthorizationBroker> {
+        Arc::clone(&self.tool_authorization_broker)
     }
 
     pub async fn status(&self) -> DaemonStatus {
@@ -279,6 +289,7 @@ impl DaemonState {
 
         let mut new_kernel = Kernel::builder(effective_config)
             .with_harness_adapter(Arc::clone(&self.script_harness_adapter))
+            .with_tool_authorizer(self.tool_authorization_broker.clone())
             .build()?;
         new_kernel.init_state().await?;
         new_kernel.init_clients()?;

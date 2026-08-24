@@ -5,6 +5,7 @@ use crate::kernel::governance::GovernanceGrantSnapshot;
 use crate::kernel::governance::GovernanceSnapshot;
 use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::{ContextCompactionCheckpoint, ExecutionStatusSnapshot};
+use crate::kernel::tool_authorization::{ToolAuthorizationDecision, ToolAuthorizationRequest};
 use turin_daemon_protocol::UiIntentMessage;
 
 /// Describes durable branch changes caused by a completed task.
@@ -205,6 +206,13 @@ pub enum AuditEvent {
     ToolExecStart { id: String, name: String },
     /// Tool execution completes
     ToolExecEnd { id: String, success: bool },
+    /// A harness paused a tool call pending an external authorization decision.
+    ToolAuthorizationRequested { request: ToolAuthorizationRequest },
+    /// An external authorizer resolved a pending tool call.
+    ToolAuthorizationResolved {
+        request_id: String,
+        decision: ToolAuthorizationDecision,
+    },
     /// Token/cost accounting update
     TokenUsage {
         input_tokens: u64,
@@ -285,6 +293,8 @@ impl KernelEvent {
                 AuditEvent::ToolResult { .. } => "tool_result",
                 AuditEvent::ToolExecStart { .. } => "tool_exec_start",
                 AuditEvent::ToolExecEnd { .. } => "tool_exec_end",
+                AuditEvent::ToolAuthorizationRequested { .. } => "tool_authorization_requested",
+                AuditEvent::ToolAuthorizationResolved { .. } => "tool_authorization_resolved",
                 AuditEvent::TokenUsage { .. } => "token_usage",
                 AuditEvent::HarnessRejection { .. } => "harness_rejection",
                 AuditEvent::GovernanceSnapshot { .. } => "governance_snapshot",

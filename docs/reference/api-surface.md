@@ -154,6 +154,8 @@ Current typed daemon/control-plane surfaces include:
 - `daemon.ping`
 - `daemon.status`
 - `runtime.events.subscribe`
+- `tool_authorization.list`
+- `tool_authorization.resolve`
 - `agent.*`
 - `task.*`
 - `schedule.create`
@@ -170,7 +172,6 @@ Current typed daemon/control-plane surfaces include:
 - `workitem.get`
 - `session.*`
 - `harness.*`
-- `channel.*`
 
 Notes:
 

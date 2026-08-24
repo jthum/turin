@@ -1,4 +1,5 @@
 mod agents;
+mod authorizations;
 mod common;
 mod envelopes;
 mod handshake;
@@ -12,6 +13,7 @@ mod ui;
 mod worklists;
 
 pub use agents::*;
+pub use authorizations::*;
 pub use common::*;
 pub use envelopes::*;
 pub use handshake::*;

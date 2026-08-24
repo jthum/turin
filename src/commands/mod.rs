@@ -5,3 +5,4 @@ pub mod harness;
 pub mod init;
 pub mod repl;
 pub mod scaffold;
+pub mod tool_authorization;

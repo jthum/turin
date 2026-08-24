@@ -5,6 +5,9 @@ use super::worklists::WorklistItemsQuery;
 use super::*;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::session_refs::parse_session_reference;
+use crate::kernel::tool_authorization::{
+    ToolAuthorizationDecision, ToolAuthorizationRequest, ToolAuthorizer,
+};
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::schema::LinkedSessionCreate;
 use crate::persistence::state::SessionReadTarget;
@@ -15,6 +18,7 @@ use turin_daemon_protocol::{
     ContextPersistenceParams, HarnessActionRunParams, HarnessSourceOverlay,
     HarnessSourceSaveChange, PromoteTaskParams, ScheduleActionParams, SessionSearchScope,
     SidestepContextTargetParams, SidestepModeParams, SidestepTaskParams, StoreTargetParams,
+    ToolAuthorizationResolution, ToolAuthorizationResolveParams,
 };
 use turin_types::{TaskInputContent, ToolSelectionConfig, ToolsConfig};
 
@@ -3544,5 +3548,64 @@ async fn agent_runtime_status_reflects_live_runtime_state() -> Result<()> {
         "agent runtime status never transitioned to running"
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn daemon_lists_and_resolves_tool_authorization_without_denial_reason() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let broker = state.tool_authorization_broker();
+    let mut requests = broker.subscribe_requests();
+    let authorize = tokio::spawn({
+        let broker = Arc::clone(&broker);
+        async move {
+            broker
+                .authorize(
+                    ToolAuthorizationRequest::new(
+                        crate::kernel::identity::RuntimeIdentity::new("session", "default"),
+                        Some("slot".to_string()),
+                        "call".to_string(),
+                        "web_fetch".to_string(),
+                        json!({ "url": "https://example.com" }),
+                        "Fetch an external URL".to_string(),
+                    ),
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+        }
+    });
+
+    let pending = requests.recv().await?;
+    let listed = state.list_tool_authorizations().await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, pending.id);
+    assert_eq!(listed[0].tool_name, "web_fetch");
+
+    let resolved = state
+        .resolve_tool_authorization(ToolAuthorizationResolveParams {
+            request_id: pending.id.clone(),
+            decision: ToolAuthorizationResolution::Deny,
+            reason: None,
+        })
+        .await
+        .expect("pending authorization should resolve");
+    assert_eq!(resolved.decision, ToolAuthorizationResolution::Deny);
+    assert_eq!(
+        authorize.await?,
+        ToolAuthorizationDecision::Deny { reason: None }
+    );
+    assert!(state.list_tool_authorizations().await.is_empty());
+    assert!(
+        state
+            .resolve_tool_authorization(ToolAuthorizationResolveParams {
+                request_id: pending.id,
+                decision: ToolAuthorizationResolution::Approve,
+                reason: None,
+            })
+            .await
+            .is_none()
+    );
     Ok(())
 }

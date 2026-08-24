@@ -26,6 +26,7 @@ mod task_execution;
 mod task_lifecycle;
 mod task_planning;
 pub mod task_promotion;
+pub mod tool_authorization;
 mod turn;
 
 #[doc(hidden)]

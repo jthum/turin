@@ -46,6 +46,22 @@ enum ExecutionArtifact {
 }
 
 impl ExecutionHost {
+    fn native_tool_governance_decision(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+    ) -> Option<CapabilityDecision> {
+        let tool = self.tool_registry.get(tool_name)?;
+        let capability = tool
+            .capability()
+            .or_else(|| tool_capability_name(tool_name))?;
+        let subject = GovernanceSubject::for_agent(agent_id);
+        Some(
+            self.governance_manager
+                .capability_decision_for_subject(&subject, capability),
+        )
+    }
+
     /// Phase 1-3 of tool execution: verdict evaluation, parallel execution, side effects, and result collection.
     pub(super) async fn execute_tool_calls(
         &mut self,
@@ -58,11 +74,9 @@ impl ExecutionHost {
             return Ok(TurnOutcome::Cancelled);
         }
 
-        let (immediate_records, validated_calls) = self.evaluate_pending_tool_calls(
-            session,
-            &pending_tool_calls,
-            Some(exposed_tool_names),
-        );
+        let (immediate_records, validated_calls) = self
+            .evaluate_pending_tool_calls(session, &pending_tool_calls, Some(exposed_tool_names))
+            .await;
         let (immediate_records, validated_calls) =
             self.apply_tool_rate_limit(session, immediate_records, validated_calls);
         let final_by_id = self
@@ -95,8 +109,9 @@ impl ExecutionHost {
                 return Ok(Vec::new());
             }
 
-            let (immediate_records, validated_calls) =
-                self.evaluate_pending_tool_calls(session, &pending_tool_calls, None);
+            let (immediate_records, validated_calls) = self
+                .evaluate_pending_tool_calls(session, &pending_tool_calls, None)
+                .await;
             let (immediate_records, validated_calls) =
                 self.apply_tool_rate_limit(session, immediate_records, validated_calls);
             let final_by_id = self
@@ -155,14 +170,10 @@ impl ExecutionHost {
 
                 let start = Instant::now();
                 let mut governance_denial = None;
-                let effect_res = if let Some(tool) = kernel.tool_registry.get(&tc.name) {
-                    if let Some(capability) =
-                        tool.capability().or_else(|| tool_capability_name(&tc.name))
+                let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
+                    if let Some(decision) =
+                        kernel.native_tool_governance_decision(active_agent_id.as_str(), &tc.name)
                     {
-                        let subject = GovernanceSubject::for_agent(active_agent_id.as_str());
-                        let decision = kernel
-                            .governance_manager
-                            .capability_decision_for_subject(&subject, capability);
                         match decision.allowed {
                             true => kernel
                                 .tool_registry
@@ -172,7 +183,7 @@ impl ExecutionHost {
                             false => {
                                 governance_denial = Some(decision.clone());
                                 Err(ToolError::PermissionDenied(decision.reason.unwrap_or_else(
-                                    || format!("Governance denial for capability '{}'", capability),
+                                    || format!("Governance denied tool '{}'", tc.name),
                                 )))
                             }
                         }
@@ -263,8 +274,19 @@ impl ExecutionHost {
                         tasks,
                         clear_existing,
                     } => {
+                        let plan_call = PendingToolCall {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            args: final_args.clone(),
+                        };
                         let (plan_content, plan_error) = self
-                            .handle_plan_submission(session, &title, tasks, clear_existing)
+                            .handle_plan_submission(
+                                session,
+                                &title,
+                                tasks,
+                                clear_existing,
+                                &plan_call,
+                            )
                             .await;
                         content = plan_content;
                         is_error = is_error || plan_error;

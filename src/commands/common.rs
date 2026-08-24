@@ -82,9 +82,13 @@ pub(crate) async fn run_prompt_once(
         "Config loaded"
     );
 
-    let mut kernel = crate::composition::kernel_builder(config)
-        .json_mode(json)
-        .build()?;
+    let builder = crate::composition::kernel_builder(config).json_mode(json);
+    let builder = if json {
+        builder
+    } else {
+        crate::commands::tool_authorization::with_interactive_authorization(builder)
+    };
+    let mut kernel = builder.build()?;
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

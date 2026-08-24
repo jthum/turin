@@ -7,8 +7,9 @@ use crate::{
     ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams, ScheduleUpdateParams,
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
     SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
-    SidestepTaskParams, SubmitTaskParams, TaskIdParams, UpdateAgentParams, WaitTaskParams,
-    WorkItemTargetParams, WorklistItemsParams, WorklistListParams, WorklistTargetParams,
+    SidestepTaskParams, SubmitTaskParams, TaskIdParams, ToolAuthorizationResolveParams,
+    UpdateAgentParams, WaitTaskParams, WorkItemTargetParams, WorklistItemsParams,
+    WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -28,6 +29,10 @@ pub enum DaemonRequest {
     RuntimeErrors(NoParams),
     #[serde(rename = "runtime.events.subscribe")]
     RuntimeEventsSubscribe(RuntimeEventsSubscribeParams),
+    #[serde(rename = "tool_authorization.list")]
+    ToolAuthorizationList(NoParams),
+    #[serde(rename = "tool_authorization.resolve")]
+    ToolAuthorizationResolve(ToolAuthorizationResolveParams),
     #[serde(rename = "agent.list")]
     AgentList(NoParams),
     #[serde(rename = "agent.get")]

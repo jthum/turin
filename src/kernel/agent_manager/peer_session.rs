@@ -274,6 +274,7 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
         embedding_provider: inference.embedding_provider,
         rust_harness_factories: None,
         script_harness_adapter: shared.script_harness_adapter.clone(),
+        tool_authorizer: Arc::clone(&shared.tool_authorizer),
         mcp_clients: Vec::new(),
     }
 }

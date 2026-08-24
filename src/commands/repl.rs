@@ -33,7 +33,10 @@ pub(crate) async fn run_repl(
         "Config loaded (REPL mode)"
     );
 
-    let mut kernel = crate::composition::kernel_builder(config).build()?; // JSON not supported in REPL yet
+    let mut kernel = crate::commands::tool_authorization::with_interactive_authorization(
+        crate::composition::kernel_builder(config),
+    )
+    .build()?; // JSON not supported in REPL yet
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;

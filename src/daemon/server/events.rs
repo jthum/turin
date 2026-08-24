@@ -15,6 +15,7 @@ use crate::daemon::protocol::{EventEnvelope, RequestEnvelope, ResponseEnvelope};
 use crate::daemon::state::{DaemonState, DaemonStatus};
 use crate::kernel::agent_manager::SessionEventReceiver;
 use crate::kernel::event::{KernelEvent, UiEvent};
+use crate::kernel::tool_authorization::ToolAuthorizationRequest;
 
 use super::dispatch::{build_runtime_snapshot, classify_registry_issue, emit_event};
 use filter::EventFilter;
@@ -233,6 +234,41 @@ pub(super) fn start_task_event_poller(
                         };
                         emit_event(&event_tx, "task.updated", value);
                         seen.insert(fingerprint.request_id.clone(), fingerprint);
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub(super) fn start_tool_authorization_events(
+    mut requests: broadcast::Receiver<ToolAuthorizationRequest>,
+    event_tx: broadcast::Sender<EventEnvelope>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+                request = requests.recv() => {
+                    match request {
+                        Ok(request) => {
+                            let detail: turin_daemon_protocol::ToolAuthorizationRequestDetail =
+                                request.into();
+                            emit_event(
+                                &event_tx,
+                                "tool_authorization.requested",
+                                serde_json::to_value(detail).unwrap_or_else(|_| json!({})),
+                            );
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Clients recover the authoritative state through list.
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
             }

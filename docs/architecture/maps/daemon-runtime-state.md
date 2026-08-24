@@ -32,6 +32,8 @@ This subsystem should preserve three guarantees:
 - `src/daemon/state/source_revision.rs`
   - Compact revision of bootstrap configuration, registry shape, registry configs,
     and Lua sources used to suppress redundant watcher-triggered kernel rebuilds.
+- `src/daemon/state/tool_authorizations.rs`
+  - Pending asynchronous tool-authorization projection and one-shot resolution.
 - `src/daemon/state/mod.rs`
   - Owns the selected script-harness adapter for the daemon lifetime and reuses it
     for registry validation, catalog reconciliation, and full kernel replacement.
@@ -78,6 +80,14 @@ Harness action execution:
 2. An explicit `agent_id` supplies execution and governance identity after binding validation.
 3. Without an explicit agent, Turin uses the sole bound agent or the primary agent identity for an unbound shared harness.
 4. Harnesses bound to multiple agents require the caller to choose an agent.
+
+Tool authorization:
+
+1. The daemon installs one process-local broker into the root and peer execution hosts.
+2. Pending requests survive safe kernel catalog replacement because the broker is shared.
+3. Clients list pending requests and approve or deny them through typed daemon operations.
+4. A full daemon restart fails outstanding waits closed; it does not attempt to resume a partial
+   Rust execution future.
 
 Harness source editing:
 
@@ -208,6 +218,8 @@ Persisted session deletion:
   operator's conversation list.
 - Filesystem notifications for an already-loaded source revision must not replace
   the kernel or terminate idle live sessions. Explicit runtime reload remains forced.
+- Pending authorization notifications are best-effort; the broker list is authoritative.
+- A denial reason is optional and must not be required by daemon or client APIs.
 - Registry-only rescans publish a prepared agent/harness catalog without replacing
   the kernel. Added agents do not wait for unrelated work; changed or removed agents
   retire only idle slots and reject while that agent has active, queued, or awaiting work.

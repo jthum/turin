@@ -1,9 +1,11 @@
 use tracing::error;
 
 use crate::harness::verdict::Verdict;
+use crate::kernel::PendingToolCall;
 use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::harness_contract::HarnessHook;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState};
+use crate::kernel::tool_authorization::ToolAuthorizationDecision;
 
 impl ExecutionHost {
     pub(super) async fn handle_plan_submission(
@@ -12,6 +14,7 @@ impl ExecutionHost {
         title: &str,
         tasks: Vec<String>,
         clear_existing: bool,
+        tool_call: &PendingToolCall,
     ) -> (String, bool) {
         let mut plan_title = title.to_string();
         let mut plan_tasks = tasks;
@@ -34,8 +37,11 @@ impl ExecutionHost {
                 return (format!("Plan rejected by harness: {}", reason), true);
             }
             Some(Ok(Verdict::Escalate(reason))) => {
-                if !self.prompt_for_approval(&reason) {
-                    return (format!("Plan escalation denied by user: {}", reason), true);
+                if !matches!(
+                    self.authorize_tool_call(session, tool_call, reason).await,
+                    ToolAuthorizationDecision::Approve
+                ) {
+                    return ("Plan authorization denied".to_string(), true);
                 }
             }
             Some(Ok(Verdict::Modify(new_val))) => {

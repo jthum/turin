@@ -7,6 +7,7 @@ use crate::kernel::governance::GovernanceManager;
 use crate::kernel::harness::RustHarnessFactories;
 use crate::kernel::harness_runtime::HarnessAdapterFactory;
 use crate::kernel::policy::RuntimePolicyManager;
+use crate::kernel::tool_authorization::{DenyUnavailableToolAuthorizer, ToolAuthorizer};
 use crate::kernel::{
     Kernel, TurinConfig,
     agent_manager::{AgentManager, SharedPeerRuntimeContext},
@@ -26,6 +27,7 @@ pub struct RuntimeBuilder {
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     rust_harness_factories: RustHarnessFactories,
     script_harness_adapter: Option<Arc<dyn HarnessAdapterFactory>>,
+    tool_authorizer: Arc<dyn ToolAuthorizer>,
 }
 
 impl RuntimeBuilder {
@@ -39,6 +41,7 @@ impl RuntimeBuilder {
             embedding_provider: None,
             rust_harness_factories: HashMap::new(),
             script_harness_adapter: None,
+            tool_authorizer: Arc::new(DenyUnavailableToolAuthorizer),
         }
     }
 
@@ -75,6 +78,12 @@ impl RuntimeBuilder {
     /// Use a script/runtime adapter for harness IDs without a Rust factory.
     pub fn with_harness_adapter(mut self, adapter: Arc<dyn HarnessAdapterFactory>) -> Self {
         self.script_harness_adapter = Some(adapter);
+        self
+    }
+
+    /// Install the handler for harness-requested asynchronous tool authorization.
+    pub fn with_tool_authorizer(mut self, authorizer: Arc<dyn ToolAuthorizer>) -> Self {
+        self.tool_authorizer = authorizer;
         self
     }
 
@@ -118,6 +127,7 @@ impl RuntimeBuilder {
             harness_manager: shared_harness_manager,
             persistence_locks: Arc::clone(&persistence_locks),
             script_harness_adapter: self.script_harness_adapter.clone(),
+            tool_authorizer: Arc::clone(&self.tool_authorizer),
         });
         Ok(Kernel {
             host: ExecutionHost {
@@ -135,6 +145,7 @@ impl RuntimeBuilder {
                 embedding_provider: self.embedding_provider,
                 rust_harness_factories: Some(rust_harness_factories),
                 script_harness_adapter: self.script_harness_adapter,
+                tool_authorizer: self.tool_authorizer,
                 mcp_clients: Vec::new(),
             },
             check_watcher: Arc::new(std::sync::Mutex::new(None)),
