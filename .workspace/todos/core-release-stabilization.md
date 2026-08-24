@@ -67,7 +67,17 @@ Boundary exit criteria:
 
 ## Lifecycle And Concurrency Audit
 
-Status: pending.
+Status: in progress.
+
+Audit checkpoint:
+
+- Existing coverage already exercises cooperative and forced manager shutdown,
+  queued/running/family cancellation, cancellation during activation, pooled-lane
+  isolation, stale branch conflicts, partial-turn resume, transcript write failure,
+  event durability failure, bounded context retrieval, and targeted harness reload.
+- Resolved in `0.30.1` development: direct session teardown now bounds the background
+  persistence-task join. A permanently stalled writer is aborted after the shutdown
+  timeout and reported as an error instead of hanging an embedded caller indefinitely.
 
 Verify with focused tests before changing semantics:
 

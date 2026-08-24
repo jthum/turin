@@ -134,6 +134,8 @@ End session:
 1. Persist a session-end event.
 2. Run harness `on_session_end`.
 3. Close the durability channel and await the background persistence task.
+   A stalled persistence task is aborted after a bounded shutdown wait and returned
+   to the caller as an error; direct embedded-session teardown must not hang forever.
 4. Cancel the session token and clear the harness engine.
 
 Delete persisted session:

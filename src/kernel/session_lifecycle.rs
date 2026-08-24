@@ -15,6 +15,8 @@ use crate::kernel::identity::RuntimeIdentity;
 use crate::kernel::session::{
     ExecutionContextTarget, ExecutionWritePolicy, SessionState, SessionStatus,
 };
+
+const SESSION_PERSISTENCE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 use crate::kernel::session_lifecycle::materialization::{
     MaterializedExecutionTarget, TokenContextBounds, materialize_execution_target,
     materialize_token_bounded_messages, rebuild_history,
@@ -642,17 +644,34 @@ impl ExecutionHost {
         session.durability_tx.take();
         if let Some(task_slot) = &session.event_task
             && let Some(handle) = task_slot.lock().await.take()
-            && let Err(e) = handle.await
+            && let Err(e) =
+                finish_session_persistence_task(handle, SESSION_PERSISTENCE_SHUTDOWN_TIMEOUT).await
         {
-            warn!(error = %e, "Background persistence task join error");
-            durability_error
-                .get_or_insert_with(|| anyhow!("Background persistence task failed: {e}"));
+            warn!(error = %e, "Background persistence task shutdown error");
+            durability_error.get_or_insert(e);
         }
         session.cancel_token.cancel();
 
         session.status = SessionStatus::Inactive;
         self.clear_session_harness_engine(session);
         durability_error.map_or(Ok(()), Err)
+    }
+}
+
+async fn finish_session_persistence_task(
+    mut handle: tokio::task::JoinHandle<()>,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    match tokio::time::timeout(timeout, &mut handle).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(anyhow!("Background persistence task failed: {error}")),
+        Err(_) => {
+            handle.abort();
+            let _ = handle.await;
+            Err(anyhow!(
+                "Timed out waiting for background persistence task shutdown"
+            ))
+        }
     }
 }
 
@@ -702,5 +721,24 @@ fn resolved_execution_context_target(
             branch_head_id: row.active_branch_head_id,
         },
         _ => current.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finish_session_persistence_task;
+
+    #[tokio::test]
+    async fn stalled_persistence_task_shutdown_is_bounded() {
+        let handle = tokio::spawn(std::future::pending());
+        let error = finish_session_persistence_task(handle, std::time::Duration::from_millis(10))
+            .await
+            .expect_err("stalled task should time out");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Timed out waiting for background persistence task shutdown")
+        );
     }
 }
