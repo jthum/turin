@@ -137,7 +137,8 @@ End session:
    for a never-started session.
    A stalled persistence task is aborted after a bounded shutdown wait and returned
    to the caller as an error; direct embedded-session teardown must not hang forever.
-4. Cancel the session token, clear the harness engine, and mark the session `ended`.
+4. Cancel the session token and release process-local session/run policy overrides.
+5. Clear the harness engine and mark the session `ended`.
    Ended session objects are terminal; callers resume persisted state into a new
    session object rather than restarting one with a cancelled token.
 
@@ -228,6 +229,8 @@ Delete persisted session:
 - External references must be normalized with an explicit store selector before being stored in the execution target.
 - Hot-history pruning only applies to persisted branch-head sessions with `AdvanceBranchHead` write policy.
 - Ending a session must drain the durability lane before marking the session inactive.
+- Ending a session must remove process-local policy overrides keyed to that session and
+  its identity-bound run. Global and agent policy remain process-scoped.
 - The durability lane is bounded. Producers apply backpressure rather than dropping lifecycle,
   audit, tool, completed-stream, or barrier records when persistence falls behind.
 - Turn insertion and branch-head advancement must commit or roll back together. The head update

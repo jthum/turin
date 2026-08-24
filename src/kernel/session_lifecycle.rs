@@ -658,6 +658,9 @@ impl ExecutionHost {
             durability_error.get_or_insert(e);
         }
         session.cancel_token.cancel();
+        self.policy_manager
+            .clear_transient_scopes(session.identity.session_id(), session.identity.run_id())
+            .await;
 
         session.status = SessionStatus::Ended;
         self.clear_session_harness_engine(session);

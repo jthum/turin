@@ -27,7 +27,7 @@ Deferred unless a missing core primitive is proven:
 
 ## Release Boundary Audit
 
-Status: in progress.
+Status: explicit kernel boundary complete; facade/visibility review remains.
 
 The intended supported embedding surface is:
 
@@ -67,7 +67,7 @@ Boundary exit criteria:
 
 ## Lifecycle And Concurrency Audit
 
-Status: in progress.
+Status: complete for the audited lifecycle contract.
 
 Audit checkpoint:
 
@@ -112,7 +112,20 @@ Lifecycle exit criteria:
 
 ## Persistence Integrity
 
-Status: pending.
+Status: audited; no remaining release blocker identified.
+
+Audit checkpoint:
+
+- Schema bootstrap, FTS initialization, and version recording commit together.
+- Every `StateStore` connection enables foreign keys and a bounded busy timeout.
+- Session/main-branch creation, turn/head advancement, branch creation, promotion,
+  and linked-family deletion use explicit transactions for their invariants.
+- Checked row mapping rejects negative counters/depths, missing or cross-session
+  ancestry, and orphaned branch heads as typed persistence-integrity errors.
+- Resume uses bounded ancestry/message materialization and treats malformed compaction
+  checkpoints as recoverable derived hints rather than corrupting the transcript.
+- Full event/transcript reads remain explicit inspection/export operations. Their
+  semantics should become paginated only through a deliberate client API change.
 
 - Review schema bootstrap and migrations as one pre-user baseline.
 - Verify atomic turn allocation and branch-head advancement.
@@ -126,7 +139,24 @@ Status: pending.
 
 ## Boundedness And Security
 
-Status: pending.
+Status: audited; one transient-policy retention issue resolved.
+
+Audit checkpoint:
+
+- Inference history, tool-result retention, durability queues, watcher queues,
+  runtime lanes, child admission, completed task results, web response bodies, Lua
+  heaps, and observer channels have bounded defaults or explicit policy knobs.
+- Session teardown now removes process-local session policy and identity-bound run
+  policy overrides. Global and per-agent policy remain intentionally process-scoped.
+- Filesystem tools canonicalize paths against configured roots; web fetch permits
+  loopback/private targets deliberately for coding workflows while governance and
+  tool authorization remain the authority boundary.
+- Human authorization is asynchronous, fail-closed when unavailable, cancellation
+  aware, and backed by bounded best-effort notifications plus an authoritative
+  pending-request map.
+- Full inspection APIs and deliberately unresolved authorization waits can retain
+  caller-requested state; these are explicit operations rather than default turn-path
+  growth.
 
 - Inventory every queue, cache, retained transcript, stream, tool result, HTTP body,
   child family, runtime pool, and scripting-runtime allocation.

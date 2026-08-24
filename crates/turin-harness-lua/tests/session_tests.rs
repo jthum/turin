@@ -545,9 +545,25 @@ async fn test_session_end_is_terminal() -> Result<()> {
     let mut session = kernel.create_session().await;
     kernel.start_session(&mut session).await?;
     assert_eq!(session.status, SessionStatus::Active);
+    let policy_scope = PolicyScope {
+        scope: Some("session".to_string()),
+        session_id: Some(session.identity.session_id().to_string()),
+        ..PolicyScope::default()
+    };
+    kernel
+        .policy_manager()
+        .set("spawn.max_depth", serde_json::Value::from(1), &policy_scope)
+        .await?;
 
     kernel.end_session(&mut session).await?;
     assert_eq!(session.status, SessionStatus::Ended);
+    assert_eq!(
+        kernel
+            .policy_manager()
+            .get("spawn.max_depth", &policy_scope)
+            .await?,
+        Some(serde_json::Value::from(3))
+    );
 
     Ok(())
 }

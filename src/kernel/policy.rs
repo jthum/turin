@@ -220,6 +220,14 @@ impl RuntimePolicyManager {
 
         Ok(())
     }
+
+    pub(crate) async fn clear_transient_scopes(&self, session_id: &str, run_id: Option<&str>) {
+        let mut state = self.state.write().await;
+        state.per_session.remove(session_id);
+        if let Some(run_id) = run_id {
+            state.per_run.remove(run_id);
+        }
+    }
 }
 
 impl Default for RuntimePolicyManager {
@@ -428,6 +436,50 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("informational, enforce_task, enforce_session")
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_transient_policy_scopes_preserves_agent_policy() {
+        let mgr = RuntimePolicyManager::new();
+        let agent_scope = PolicyScope {
+            scope: Some("agent".to_string()),
+            agent_id: Some("coder".to_string()),
+            ..PolicyScope::default()
+        };
+        let session_scope = PolicyScope {
+            scope: Some("session".to_string()),
+            session_id: Some("session-1".to_string()),
+            ..PolicyScope::default()
+        };
+        let run_scope = PolicyScope {
+            scope: Some("run".to_string()),
+            run_id: Some("run-1".to_string()),
+            ..PolicyScope::default()
+        };
+
+        mgr.set("spawn.max_depth", Value::from(7), &agent_scope)
+            .await
+            .unwrap();
+        mgr.set("spawn.max_depth", Value::from(2), &session_scope)
+            .await
+            .unwrap();
+        mgr.set("spawn.max_depth", Value::from(1), &run_scope)
+            .await
+            .unwrap();
+
+        mgr.clear_transient_scopes("session-1", Some("run-1")).await;
+
+        assert_eq!(
+            mgr.snapshot(&PolicyScope {
+                agent_id: Some("coder".to_string()),
+                session_id: Some("session-1".to_string()),
+                run_id: Some("run-1".to_string()),
+                ..PolicyScope::default()
+            })
+            .await
+            .get("spawn.max_depth"),
+            Some(&Value::from(7))
         );
     }
 }
