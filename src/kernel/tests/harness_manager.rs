@@ -24,6 +24,7 @@ fn shared_harness_bindings_resolve_to_same_runtime() -> Result<()> {
     );
 
     let config = TurinConfig {
+        environment: Default::default(),
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

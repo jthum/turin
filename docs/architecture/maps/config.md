@@ -12,6 +12,8 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
   - Top-level `TurinConfig`, core runtime/agent/provider/harness/daemon/remote schema, config loading, layout/path normalization, and inference route entry points.
 - `src/kernel/config/defaults.rs`
   - Default values used by serde and manual defaults.
+- `src/kernel/config/environment.rs`
+  - Immutable values captured from the configured workspace env file without mutating process state.
 - `src/kernel/config/inference.rs`
   - Inference contexts, overrides, route resolution, hot-history, and compaction config.
 - `src/kernel/config/layout.rs`
@@ -32,6 +34,8 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - `from_file` captures the adjacent env file without mutating process state, then normalizes
   runtime paths before validation. Process environment values take precedence when credentials
   are resolved.
+- Captured environment is loaded configuration state owned by `TurinConfig`; `LayoutConfig`
+  declares only the location of the env file and must not retain loaded values.
 - `from_str` parses and validates without filesystem path normalization.
 - Plain daemon filesystem paths share one normalization helper; the daemon endpoint stays separate because local IPC endpoint resolution has different semantics.
 - `runtime.linked_runtime_lanes` is a positive startup-stable global default; an

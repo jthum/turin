@@ -925,6 +925,13 @@ api_key_env = "{key}"
     );
     assert!(std::env::var(key).is_err());
 
+    let cloned_config = config.clone();
+    std::fs::remove_file(&env_path).expect("remove env");
+    assert_eq!(
+        cloned_config.environment_value(key).as_deref(),
+        Some("from-dotenv")
+    );
+
     unsafe {
         std::env::set_var(key, "from-env");
     }

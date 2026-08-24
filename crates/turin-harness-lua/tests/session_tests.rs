@@ -3,6 +3,10 @@
 //! Tests for session creation, start, end, token accounting,
 //! harness hot-reload, and max_turns enforcement.
 
+#[macro_use]
+#[path = "support/config_fixture.rs"]
+mod config_fixture;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
@@ -45,7 +49,7 @@ fn make_config(tmp: &std::path::Path) -> TurinConfig {
         },
     );
 
-    TurinConfig {
+    config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2916,7 +2920,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3075,7 +3079,7 @@ async fn test_hot_reload_only_reloads_affected_harness_runtime() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3226,7 +3230,7 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3511,7 +3515,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

@@ -1,3 +1,7 @@
+#[macro_use]
+#[path = "support/config_fixture.rs"]
+mod config_fixture;
+
 use anyhow::Result;
 use futures::StreamExt;
 use futures::future::BoxFuture;
@@ -121,7 +125,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -328,7 +332,7 @@ async fn test_harness_observation() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -447,7 +451,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -576,7 +580,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -673,7 +677,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -824,7 +828,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -991,7 +995,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1219,7 +1223,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

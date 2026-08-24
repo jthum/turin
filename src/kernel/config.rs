@@ -7,6 +7,7 @@ use turin_types::layout::config_workspace_anchor;
 pub use turin_types::{ThinkingConfig, ToolSelectionConfig, ToolsConfig};
 
 mod defaults;
+mod environment;
 mod inference;
 mod layout;
 mod persistence;
@@ -15,6 +16,7 @@ mod tests;
 mod validation;
 
 use defaults::*;
+use environment::EnvironmentSnapshot;
 pub use inference::{
     HotHistoryConfig, HotHistoryProfile, InferenceCompactionConfig, InferenceCompactionMode,
     InferenceConfig, InferenceContextConfig, InferenceContextOverrideConfig,
@@ -27,8 +29,14 @@ pub use persistence::{
 };
 
 /// Top-level Turin configuration, parsed from the workspace config file.
+///
+/// Programmatic callers should start from [`TurinConfig::default`] and assign the
+/// fields they need. Loaded source state is deliberately kept private.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct TurinConfig {
+    /// Values loaded from the workspace env file without mutating process state.
+    #[serde(skip)]
+    pub(crate) environment: EnvironmentSnapshot,
     #[serde(default)]
     pub tools: ToolsConfig,
     pub agent: AgentConfig,
@@ -467,9 +475,7 @@ impl TurinConfig {
         let mut config: TurinConfig =
             toml::from_str(&contents).with_context(|| "Failed to parse Turin config")?;
         let config_dir = turin_types::layout::config_dir(path);
-        config
-            .layout
-            .load_environment(&config.layout.resolve(path).env_file)?;
+        config.environment = EnvironmentSnapshot::from_file(&config.layout.resolve(path).env_file)?;
         config.normalize_runtime_paths(&config_dir);
         config.validate()?;
         Ok(config)
@@ -489,7 +495,7 @@ impl TurinConfig {
     pub fn environment_value(&self, key: &str) -> Option<String> {
         std::env::var(key)
             .ok()
-            .or_else(|| self.layout.environment_value(key))
+            .or_else(|| self.environment.get(key))
     }
 
     pub fn harness_id_for_agent<'a>(&self, agent: &'a AgentConfig) -> &'a str {

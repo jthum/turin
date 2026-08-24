@@ -1,3 +1,7 @@
+#[macro_use]
+#[path = "support/config_fixture.rs"]
+mod config_fixture;
+
 use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use futures::stream;
@@ -16,6 +20,7 @@ use turin_core::kernel::config::{
 };
 use turin_core::kernel::policy::PolicyScope;
 use turin_core::persistence::manager::StoreSelector;
+
 struct ToolMockProvider {
     tool_name: String,
     tool_args: serde_json::Value,
@@ -305,7 +310,7 @@ async fn test_harness_rejection() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -440,7 +445,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -585,7 +590,7 @@ also answering the user normally. Do not mention the title operation.]]
             ..ProviderConfig::default()
         },
     );
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -714,7 +719,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -836,7 +841,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -964,7 +969,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1092,7 +1097,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1217,7 +1222,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1348,7 +1353,7 @@ tool.declare("tool_9", {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1476,7 +1481,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1583,7 +1588,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -1813,7 +1818,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2008,7 +2013,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2164,7 +2169,7 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2266,7 +2271,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2375,7 +2380,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2621,7 +2626,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2770,7 +2775,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -2950,7 +2955,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3140,7 +3145,7 @@ async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3253,7 +3258,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3654,7 +3659,7 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
         },
     );
 
-    let cfg = TurinConfig {
+    let cfg = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3868,7 +3873,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -3994,7 +3999,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4136,7 +4141,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         )]),
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4296,7 +4301,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4411,7 +4416,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4538,7 +4543,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4646,7 +4651,7 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4765,7 +4770,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -4884,7 +4889,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5070,7 +5075,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5268,7 +5273,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5436,7 +5441,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5593,7 +5598,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5744,7 +5749,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -5895,7 +5900,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6018,7 +6023,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6160,7 +6165,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6300,7 +6305,7 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6438,7 +6443,7 @@ async fn test_graph_dx_helpers_create_link_and_materialize_paths() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6633,7 +6638,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -6857,7 +6862,7 @@ async fn test_runtime_agent_sidestep_runs_on_peer_sibling_branch() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -7006,7 +7011,7 @@ async fn test_runtime_agent_can_promote_detached_sidestep_result() -> Result<()>
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -7113,7 +7118,7 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -7274,7 +7279,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -7448,7 +7453,7 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
         },
     );
 
-    let cfg = TurinConfig {
+    let cfg = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
@@ -7697,7 +7702,7 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
         },
     );
 
-    let cfg = TurinConfig {
+    let cfg = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

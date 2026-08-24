@@ -218,6 +218,7 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
     );
 
     TurinConfig {
+        environment: Default::default(),
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

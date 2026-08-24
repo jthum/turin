@@ -106,13 +106,12 @@ fn test_app_data() -> HarnessAppData {
 
 async fn test_app_data_with_scheduler(root: PathBuf) -> HarnessAppData {
     let mut app_data = test_app_data_for_root(root);
-    app_data.config = std::sync::Arc::new(crate::kernel::config::TurinConfig {
-        agent: crate::kernel::config::AgentConfig {
-            id: "test-agent".to_string(),
-            ..crate::kernel::config::AgentConfig::default()
-        },
-        ..crate::kernel::config::TurinConfig::default()
-    });
+    let mut config = crate::kernel::config::TurinConfig::default();
+    config.agent = crate::kernel::config::AgentConfig {
+        id: "test-agent".to_string(),
+        ..crate::kernel::config::AgentConfig::default()
+    };
+    app_data.config = std::sync::Arc::new(config);
     let runtime_store = Arc::new(StateStore::open_memory().await.expect("open runtime store"));
     app_data.scheduler = Some(Arc::new(HarnessSchedulerAccess::new(
         runtime_store,

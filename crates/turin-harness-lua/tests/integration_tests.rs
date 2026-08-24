@@ -1,3 +1,7 @@
+#[macro_use]
+#[path = "support/config_fixture.rs"]
+mod config_fixture;
+
 use anyhow::Result;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -24,7 +28,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         },
     );
 
-    let config = TurinConfig {
+    let config = config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),

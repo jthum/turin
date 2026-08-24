@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[macro_use]
+mod config_fixture;
+
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
@@ -155,7 +158,7 @@ pub fn base_config(
     default_provider: &str,
     providers: HashMap<String, ProviderConfig>,
 ) -> TurinConfig {
-    TurinConfig {
+    config_fixture! {
         tools: Default::default(),
         agent: AgentConfig {
             tools: Default::default(),
