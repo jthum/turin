@@ -93,6 +93,7 @@ fn test_app_data_for_root_and_session(root: PathBuf, session_id: &str) -> Harnes
         watch_roots: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         loading_phase: std::sync::Arc::new(std::sync::Mutex::new(true)),
         source_overlay: None,
+        source_capture: None,
     }
 }
 

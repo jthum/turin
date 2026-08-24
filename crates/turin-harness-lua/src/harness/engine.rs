@@ -107,7 +107,11 @@ impl HarnessEngine {
         clear_active_modules(&self.lua);
 
         let mut paths = BTreeSet::new();
-        if dir.exists() {
+        if dir.exists()
+            && !source_overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.is_authoritative())
+        {
             for entry in std::fs::read_dir(dir)
                 .with_context(|| format!("Failed to read harness directory: {}", dir.display()))?
                 .filter_map(|entry| entry.ok())
@@ -141,6 +145,20 @@ impl HarnessEngine {
                 None => std::fs::read_to_string(&path),
             }
             .with_context(|| format!("Failed to read harness script: {}", path.display()))?;
+
+            if let Some(capture) = self
+                .lua
+                .app_data_ref::<HarnessAppData>()
+                .and_then(|app_data| app_data.source_capture.clone())
+            {
+                let relative_path = path.strip_prefix(dir).with_context(|| {
+                    format!("Harness source escaped its root: {}", path.display())
+                })?;
+                capture
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Harness source capture mutex poisoned"))?
+                    .insert(relative_path.to_path_buf(), Some(source.clone()));
+            }
 
             self.load_script(&name, &source, &path)?;
         }

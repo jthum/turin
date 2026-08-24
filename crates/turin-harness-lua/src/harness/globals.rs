@@ -79,6 +79,7 @@ pub struct HarnessAppData {
     pub watch_roots: ExplicitWatchRoots,
     pub loading_phase: HarnessLoadPhase,
     pub source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    pub source_capture: Option<Arc<std::sync::Mutex<HarnessSourceOverlay>>>,
 }
 
 pub fn block_on_current<F>(fut: F) -> F::Output

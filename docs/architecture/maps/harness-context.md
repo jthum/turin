@@ -27,19 +27,22 @@ Keep this module focused on the Lua-facing context contract. Shared provider req
     scripting adapter.
 - `src/kernel/harness_runtime/contract.rs`
   - Owns the object-safe adapter-factory and session-instance contracts plus the
-    adapter initialization context. Kernel and daemon code must not select engines or
-    reach through an adapter into its implementation.
+    adapter initialization context. Source-backed adapters may prepare an immutable
+    generation used to create session instances. Kernel and daemon code must not select
+    engines or reach through an adapter into its implementation.
 - `src/kernel/harness_runtime/definition.rs`
   - Owns `HarnessDefinition`, loaded metadata, generation tracking, source watches,
     source validation delegation, and session-instance creation. Each definition stores
-    one private `HarnessAdapterFactory`; live sessions receive fresh instances.
+    one private `HarnessAdapterFactory` and the last successfully prepared generation;
+    live sessions receive fresh instances from that immutable generation.
 - `src/kernel/harness_runtime/resolver.rs`
   - Owns construction-time adapter registration validation and implementation selection.
     `HarnessManager` consumes resolved adapters without knowing whether they came from
     Rust, Lua, or a future scripting engine.
 - `crates/turin-harness-lua/src/runtime.rs`
   - Adapts the neutral contract to `HarnessEngine`, owns Lua app-data construction and
-    hook payload conversion, and implements Lua-only source, UI-intent,
+    hook payload conversion, snapshots Lua sources for atomic generation activation,
+    and implements Lua-only source, UI-intent,
     execution-context, and virtual-tool surfaces. Source overlay validation and direct
     script execution are adapter-factory capabilities; they must not leak into the
     normal session-local `HarnessInstance` contract.

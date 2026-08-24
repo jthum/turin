@@ -10,7 +10,10 @@ mod rust_adapter;
 #[cfg(test)]
 mod test_adapter;
 
-pub use contract::{HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext};
+pub use contract::{
+    HarnessAdapterFactory, HarnessGeneration, HarnessInstance, HarnessLoadMetadata,
+    HarnessRuntimeInitContext,
+};
 #[doc(hidden)]
 pub use definition::HarnessDefinition;
 pub(crate) use resolver::HarnessAdapterResolver;

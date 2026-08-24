@@ -2729,6 +2729,82 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_failed_harness_reload_preserves_last_valid_generation_for_new_sessions() -> Result<()>
+{
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harnesses");
+    let script_path = harness_dir.join("main.lua");
+    let marker_path = tmp.path().join("reload-generation-marker.txt");
+    std::fs::create_dir_all(&harness_dir)?;
+    std::fs::write(
+        &script_path,
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("reload-generation-marker.txt", "v1")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+
+    let mut kernel = make_kernel(tmp.path()).await?;
+    assert_eq!(kernel.loaded_scripts(), vec!["main"]);
+    let mut first = kernel.create_session().await;
+    kernel.run(&mut first, Some("run v1".to_string())).await?;
+    kernel.end_session(&mut first).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
+
+    std::fs::write(&script_path, "function on_turn_prepare(")?;
+    kernel
+        .validate_named_harness("default")
+        .expect_err("invalid candidate source must fail validation");
+    kernel
+        .reload_harness()
+        .await
+        .expect_err("invalid source must reject reload");
+
+    let mut after_failure = kernel.create_session().await;
+    kernel
+        .run(&mut after_failure, Some("still run v1".to_string()))
+        .await?;
+    kernel.end_session(&mut after_failure).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
+
+    std::fs::write(
+        &script_path,
+        r#"
+            function on_turn_prepare(ctx)
+                local ok, err = fs.write("reload-generation-marker.txt", "v2")
+                if not ok then error(err) end
+                return ALLOW
+            end
+        "#,
+    )?;
+    assert_eq!(kernel.validate_named_harness("default")?, 1);
+
+    let mut after_validation = kernel.create_session().await;
+    kernel
+        .run(
+            &mut after_validation,
+            Some("validation must not activate v2".to_string()),
+        )
+        .await?;
+    kernel.end_session(&mut after_validation).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
+
+    kernel.reload_harness().await?;
+
+    let mut after_success = kernel.create_session().await;
+    kernel
+        .run(&mut after_success, Some("run v2".to_string()))
+        .await?;
+    kernel.end_session(&mut after_success).await?;
+    assert_eq!(std::fs::read_to_string(&marker_path)?, "v2");
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
     let tmp = tempdir()?;

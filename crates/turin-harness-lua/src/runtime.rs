@@ -16,8 +16,8 @@ use turin_core::kernel::harness_contract::{
     HarnessTurnServices, SessionQueue,
 };
 use turin_core::kernel::harness_runtime::{
-    HarnessAdapterFactory, HarnessDefinition, HarnessInstance, HarnessRuntimeInitContext,
-    HarnessSourceOverlay,
+    HarnessAdapterFactory, HarnessDefinition, HarnessGeneration, HarnessInstance,
+    HarnessLoadMetadata, HarnessRuntimeInitContext, HarnessSourceOverlay,
 };
 
 /// Factory for session-scoped Lua harness instances.
@@ -32,13 +32,37 @@ impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
         true
     }
 
+    fn prepare_generation(
+        &self,
+        definition: &HarnessDefinition,
+        ctx: HarnessRuntimeInitContext,
+    ) -> Result<Option<Arc<dyn HarnessGeneration>>> {
+        let source_capture = Arc::new(std::sync::Mutex::new(HarnessSourceOverlay::default()));
+        let probe = build_engine(definition, ctx, None, Some(Arc::clone(&source_capture)))?;
+        let metadata = HarnessLoadMetadata {
+            loaded_scripts: probe.loaded_scripts(),
+            explicit_watch_roots: probe.explicit_watch_roots(),
+            runtime_signal_topics: probe.runtime_signal_topics()?,
+            ui_intents: probe.ui_intents()?,
+        };
+        let mut source_overlay = source_capture
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Harness source capture mutex poisoned"))?
+            .clone();
+        source_overlay.make_authoritative();
+        Ok(Some(Arc::new(LuaHarnessGeneration {
+            source_overlay: Arc::new(source_overlay),
+            metadata,
+        })))
+    }
+
     fn create(
         &self,
         definition: &HarnessDefinition,
         ctx: HarnessRuntimeInitContext,
     ) -> Result<Box<dyn HarnessInstance>> {
         Ok(Box::new(LuaHarnessInstance {
-            engine: build_engine(definition, ctx, None)?,
+            engine: build_engine(definition, ctx, None, None)?,
         }))
     }
 
@@ -48,7 +72,7 @@ impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
         ctx: HarnessRuntimeInitContext,
         source_overlay: Arc<HarnessSourceOverlay>,
     ) -> Result<usize> {
-        let engine = build_engine(definition, ctx, Some(source_overlay))?;
+        let engine = build_engine(definition, ctx, Some(source_overlay), None)?;
         Ok(engine.loaded_scripts().len())
     }
 
@@ -58,8 +82,34 @@ impl HarnessAdapterFactory for LuaHarnessAdapterFactory {
         ctx: HarnessRuntimeInitContext,
         source: &str,
     ) -> Result<()> {
-        let mut engine = build_engine(definition, ctx, None)?;
+        let mut engine = build_engine(definition, ctx, None, None)?;
         engine.load_script_str(source)
+    }
+}
+
+struct LuaHarnessGeneration {
+    source_overlay: Arc<HarnessSourceOverlay>,
+    metadata: HarnessLoadMetadata,
+}
+
+impl HarnessGeneration for LuaHarnessGeneration {
+    fn load_metadata(&self) -> HarnessLoadMetadata {
+        self.metadata.clone()
+    }
+
+    fn create(
+        &self,
+        definition: &HarnessDefinition,
+        ctx: HarnessRuntimeInitContext,
+    ) -> Result<Box<dyn HarnessInstance>> {
+        Ok(Box::new(LuaHarnessInstance {
+            engine: build_engine(
+                definition,
+                ctx,
+                Some(Arc::clone(&self.source_overlay)),
+                None,
+            )?,
+        }))
     }
 }
 
@@ -183,6 +233,7 @@ fn build_engine(
     definition: &HarnessDefinition,
     ctx: HarnessRuntimeInitContext,
     source_overlay: Option<Arc<HarnessSourceOverlay>>,
+    source_capture: Option<Arc<std::sync::Mutex<HarnessSourceOverlay>>>,
 ) -> Result<HarnessEngine> {
     let app_data = HarnessAppData {
         fs_root: definition.fs_root.clone(),
@@ -201,6 +252,7 @@ fn build_engine(
         watch_roots: Arc::new(std::sync::Mutex::new(Vec::new())),
         loading_phase: Arc::new(std::sync::Mutex::new(true)),
         source_overlay,
+        source_capture,
     };
     let mut engine = HarnessEngine::new(app_data).context("Failed to create harness engine")?;
     engine.load_dir(definition.directory()).with_context(|| {

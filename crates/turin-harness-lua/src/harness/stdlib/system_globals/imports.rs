@@ -304,21 +304,42 @@ fn source_path_exists(lua: &Lua, root: &Path, path: &Path) -> bool {
 }
 
 fn read_module_source(lua: &Lua, op_name: &str, path: &Path) -> LuaResult<String> {
-    let source = match lua.app_data_ref::<crate::harness::globals::HarnessAppData>() {
+    let app_data = lua.app_data_ref::<crate::harness::globals::HarnessAppData>();
+    let source = match &app_data {
         Some(app_data) => match &app_data.source_overlay {
             Some(overlay) => overlay.read_to_string(&app_data.harness_directory, path),
             None => std::fs::read_to_string(path),
         },
         None => std::fs::read_to_string(path),
     };
-    source.map_err(|e| {
+    let source = source.map_err(|e| {
         mlua::Error::runtime(format!(
             "{} failed: could not read '{}' ({})",
             op_name,
             path.display(),
             e
         ))
-    })
+    })?;
+
+    if let Some(app_data) = app_data
+        && let Some(capture) = &app_data.source_capture
+    {
+        let relative_path = path
+            .strip_prefix(&app_data.harness_directory)
+            .map_err(|_| {
+                mlua::Error::runtime(format!(
+                    "{} failed: source '{}' escaped the harness root",
+                    op_name,
+                    path.display()
+                ))
+            })?;
+        capture
+            .lock()
+            .map_err(|_| mlua::Error::runtime("harness source capture mutex poisoned"))?
+            .insert(relative_path.to_path_buf(), Some(source.clone()));
+    }
+
+    Ok(source)
 }
 
 fn next_used_module_name(lua: &Lua, spec: &str) -> LuaResult<String> {

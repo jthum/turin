@@ -52,6 +52,9 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
   fields solely to avoid writing a focused kernel operation.
 - Rust harnesses and scripting adapters compose through `RuntimeBuilder`; the kernel
   must not select a scripting engine.
+- A successful source-backed harness reload activates one immutable generation. Failed
+  preparation leaves both existing and newly created sessions on the last valid
+  generation.
 - New embedded operations should use domain inputs and outcomes rather than persistence
   rows or daemon protocol DTOs.
 - Initialization ordering remains explicit until a separate atomic startup API can

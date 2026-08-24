@@ -33,11 +33,33 @@ pub struct HarnessRuntimeInitContext {
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
 }
 
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct HarnessLoadMetadata {
+    pub loaded_scripts: Vec<String>,
+    pub explicit_watch_roots: Vec<PathBuf>,
+    pub runtime_signal_topics: Vec<String>,
+    pub ui_intents: Vec<UiIntentMessage>,
+}
+
 pub trait HarnessAdapterFactory: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn watches_sources(&self) -> bool {
         false
+    }
+
+    /// Prepare an immutable generation used for subsequently created instances.
+    ///
+    /// Static adapters may return `None` and continue creating directly. Source-backed
+    /// adapters should prepare a generation so failed reloads preserve last-known-good
+    /// behavior for new as well as existing sessions.
+    fn prepare_generation(
+        &self,
+        _definition: &HarnessDefinition,
+        _ctx: HarnessRuntimeInitContext,
+    ) -> Result<Option<Arc<dyn HarnessGeneration>>> {
+        Ok(None)
     }
 
     fn create(
@@ -63,6 +85,16 @@ pub trait HarnessAdapterFactory: Send + Sync {
     ) -> Result<()> {
         anyhow::bail!("this harness adapter does not support direct source execution")
     }
+}
+
+pub trait HarnessGeneration: Send + Sync {
+    fn load_metadata(&self) -> HarnessLoadMetadata;
+
+    fn create(
+        &self,
+        definition: &HarnessDefinition,
+        ctx: HarnessRuntimeInitContext,
+    ) -> Result<Box<dyn HarnessInstance>>;
 }
 
 pub trait HarnessInstance: Send {

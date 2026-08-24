@@ -82,6 +82,9 @@ Audit checkpoint:
   `active`, and terminal `ended` states. Ending a never-started session closes its
   persistence lane, while restarting an ended session fails instead of producing an
   active session backed by a cancelled token and removed durability state.
+- Resolved in `0.30.1` development: source-backed harness reload now activates an
+  immutable prepared generation. Invalid Lua edits leave both existing and newly
+  created sessions on the last valid source snapshot until a later reload succeeds.
 
 Verify with focused tests before changing semantics:
 

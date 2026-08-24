@@ -7,7 +7,8 @@ use tracing::{debug, info, warn};
 use turin_daemon_protocol::UiIntentMessage;
 
 use super::{
-    HarnessAdapterFactory, HarnessInstance, HarnessRuntimeInitContext, HarnessSourceOverlay,
+    HarnessAdapterFactory, HarnessGeneration, HarnessInstance, HarnessLoadMetadata,
+    HarnessRuntimeInitContext, HarnessSourceOverlay,
 };
 use crate::kernel::config::TurinConfig;
 
@@ -23,6 +24,12 @@ struct HarnessLoadedState {
     explicit_watch_roots: Vec<PathBuf>,
     runtime_signal_topics: Vec<String>,
     ui_intents: Vec<UiIntentMessage>,
+    generation: Option<Arc<dyn HarnessGeneration>>,
+}
+
+struct PreparedHarnessLoad {
+    generation: Option<Arc<dyn HarnessGeneration>>,
+    metadata: HarnessLoadMetadata,
 }
 
 /// Shared harness configuration, adapter factory, and loaded metadata.
@@ -159,11 +166,16 @@ impl HarnessDefinition {
     }
 
     pub(crate) fn init(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
-        let instance = self.create_instance(ctx)?;
-        let loaded_scripts = instance.loaded_scripts();
-        let explicit_watch_roots = instance.explicit_watch_roots();
-        let runtime_signal_topics = instance.runtime_signal_topics();
-        let ui_intents = instance.ui_intents();
+        let PreparedHarnessLoad {
+            generation,
+            metadata:
+                HarnessLoadMetadata {
+                    loaded_scripts,
+                    explicit_watch_roots,
+                    runtime_signal_topics,
+                    ui_intents,
+                },
+        } = self.prepare_load(ctx)?;
         let script_count = loaded_scripts.len();
         if script_count > 0 {
             info!(
@@ -199,6 +211,7 @@ impl HarnessDefinition {
         state.explicit_watch_roots = explicit_watch_roots;
         state.runtime_signal_topics = runtime_signal_topics;
         state.ui_intents = ui_intents;
+        state.generation = generation;
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(script_count)
     }
@@ -208,8 +221,7 @@ impl HarnessDefinition {
     }
 
     pub(crate) fn validate(&self, ctx: HarnessRuntimeInitContext) -> Result<usize> {
-        let instance = self.create_instance(ctx)?;
-        Ok(instance.loaded_scripts().len())
+        Ok(self.prepare_load(ctx)?.metadata.loaded_scripts.len())
     }
 
     pub(crate) fn validate_sources(
@@ -229,7 +241,36 @@ impl HarnessDefinition {
         &self,
         ctx: HarnessRuntimeInitContext,
     ) -> Result<Box<dyn HarnessInstance>> {
-        self.adapter.create(self, ctx)
+        let generation = self
+            .loaded_state
+            .lock()
+            .expect("harness loaded-state mutex poisoned")
+            .generation
+            .clone();
+        match generation {
+            Some(generation) => generation.create(self, ctx),
+            None => self.adapter.create(self, ctx),
+        }
+    }
+
+    fn prepare_load(&self, ctx: HarnessRuntimeInitContext) -> Result<PreparedHarnessLoad> {
+        let generation = self.adapter.prepare_generation(self, ctx.clone())?;
+        let metadata = match generation.as_ref() {
+            Some(generation) => generation.load_metadata(),
+            None => {
+                let instance = self.adapter.create(self, ctx)?;
+                HarnessLoadMetadata {
+                    loaded_scripts: instance.loaded_scripts(),
+                    explicit_watch_roots: instance.explicit_watch_roots(),
+                    runtime_signal_topics: instance.runtime_signal_topics(),
+                    ui_intents: instance.ui_intents(),
+                }
+            }
+        };
+        Ok(PreparedHarnessLoad {
+            generation,
+            metadata,
+        })
     }
 }
 
