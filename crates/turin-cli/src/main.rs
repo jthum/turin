@@ -3,12 +3,9 @@ use clap::Parser;
 #[cfg(feature = "heap-profile")]
 use std::path::PathBuf;
 
-#[path = "../../../src/cli.rs"]
 mod cli;
-#[path = "../../../src/commands/mod.rs"]
 mod commands;
 mod composition;
-#[path = "../../../src/dispatch.rs"]
 mod dispatch;
 
 use cli::Cli;

@@ -1,4 +1,3 @@
-#[path = "dispatch/daemon.rs"]
 mod daemon;
 
 use anyhow::{Context, Result};

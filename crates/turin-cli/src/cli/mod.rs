@@ -1,4 +1,3 @@
-#[path = "cli/daemon.rs"]
 mod daemon;
 
 use std::path::PathBuf;

@@ -2,25 +2,25 @@
 
 ## Purpose
 
-`src/commands/daemon/render` owns human-readable CLI output for daemon commands. It does not own daemon protocol semantics, request dispatch, or runtime state. Keep this layer presentation-only: decode response payloads, shape tables/details, and preserve existing JSON passthrough behavior.
+`crates/turin-cli/src/commands/daemon/render` owns human-readable CLI output for daemon commands. It does not own daemon protocol semantics, request dispatch, or runtime state. Keep this layer presentation-only: decode response payloads, shape tables/details, and preserve existing JSON passthrough behavior.
 
 ## Files
 
-- `src/commands/daemon/render.rs`
+- `crates/turin-cli/src/commands/daemon/render.rs`
   - Facade that re-exports renderer functions to sibling command modules.
-- `src/commands/daemon/render/common.rs`
+- `crates/turin-cli/src/commands/daemon/render/common.rs`
   - Response decoding, JSON passthrough/error handling, shared table/indent/snippet helpers, and execution-target formatting.
-- `src/commands/daemon/render/types.rs`
+- `crates/turin-cli/src/commands/daemon/render/types.rs`
   - Local re-exports of daemon CLI view DTOs so child render modules do not reach through nested parent paths.
-- `src/commands/daemon/render/agents.rs`
+- `crates/turin-cli/src/commands/daemon/render/agents.rs`
   - Daemon status, agents, agent runtime status, harness list/detail, and issue summary rendering.
-- `src/commands/daemon/render/tasks.rs`
+- `crates/turin-cli/src/commands/daemon/render/tasks.rs`
   - Task status/list and live-session rendering.
-- `src/commands/daemon/render/sessions.rs`
+- `crates/turin-cli/src/commands/daemon/render/sessions.rs`
   - Persisted session list/detail and branch rendering.
-- `src/commands/daemon/render/control.rs`
+- `crates/turin-cli/src/commands/daemon/render/control.rs`
   - Daemon health/start report rendering.
-- `src/commands/daemon/*.rs`
+- `crates/turin-cli/src/commands/daemon/*.rs`
   - Command handlers that call these renderers after sending daemon requests.
 
 ## Data Flow

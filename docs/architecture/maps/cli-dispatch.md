@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The CLI dispatch layer maps parsed `clap` commands to command implementations. It should stay thin: parse-time shape belongs in `src/cli.rs`, runtime behavior belongs in `src/commands/*`, and dispatch only translates command variants into those calls.
+The CLI dispatch layer maps parsed `clap` commands to command implementations. It should stay thin: parse-time shape belongs in `crates/turin-cli/src/cli/`, runtime behavior belongs in `crates/turin-cli/src/commands/*`, and dispatch only translates command variants into those calls.
 
 This subsystem should preserve three guarantees:
 
@@ -20,17 +20,17 @@ This subsystem should preserve three guarantees:
     construction and daemon startup.
 - `crates/turin-cli/src/main.rs`
   - Executable entry point and CLI module assembly.
-- `src/cli.rs`
+- `crates/turin-cli/src/cli/mod.rs`
   - Top-level `Cli`, root commands, harness commands, and root command argument groups.
-- `src/cli/daemon.rs`
+- `crates/turin-cli/src/cli/daemon.rs`
   - Daemon command shape, daemon subcommands, and shared daemon argument groups.
-- `src/dispatch.rs`
+- `crates/turin-cli/src/dispatch/mod.rs`
   - Top-level command routing: run/script/init/quickstart/check/doctor/harness/daemon.
-- `src/dispatch/daemon.rs`
+- `crates/turin-cli/src/dispatch/daemon.rs`
   - Daemon command routing for control, agents, tasks, harnesses, and sessions.
-- `src/commands/*`
+- `crates/turin-cli/src/commands/*`
   - Actual command behavior, IO, daemon client calls, rendering, and runtime interactions.
-- `src/commands/check.rs`
+- `crates/turin-cli/src/commands/check.rs`
   - Aggregated project validation and local readiness diagnostics for `turin check`
     and `turin doctor`.
 
@@ -39,7 +39,7 @@ This subsystem should preserve three guarantees:
 1. `crates/turin-cli/src/main.rs` parses `Cli` with `clap`.
 2. `dispatch::run` routes root commands.
 3. `dispatch/daemon.rs` routes daemon subcommands and converts CLI-only convenience values into daemon command payloads.
-4. `src/commands/*` performs the operation and rendering.
+4. `crates/turin-cli/src/commands/*` performs the operation and rendering.
 
 ## Invariants
 
@@ -65,14 +65,14 @@ This subsystem should preserve three guarantees:
 
 Add a root command:
 
-1. Add the shape in `src/cli.rs`.
-2. Add top-level routing in `src/dispatch.rs`.
-3. Put behavior in `src/commands/*`.
+1. Add the shape in `crates/turin-cli/src/cli/mod.rs`.
+2. Add top-level routing in `crates/turin-cli/src/dispatch/mod.rs`.
+3. Put behavior in `crates/turin-cli/src/commands/*`.
 
 Add a daemon subcommand:
 
-1. Add the shape in `src/cli/daemon.rs`.
-2. Add routing in `src/dispatch/daemon.rs`.
+1. Add the shape in `crates/turin-cli/src/cli/daemon.rs`.
+2. Add routing in `crates/turin-cli/src/dispatch/daemon.rs`.
 3. Prefer an existing `commands::daemon::*` helper or add one there.
 
 ## Tests

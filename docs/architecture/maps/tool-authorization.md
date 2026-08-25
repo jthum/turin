@@ -26,7 +26,7 @@ Ordinary allowed tool calls do not enter this subsystem.
   - Implements `tool_authorization.list` and `tool_authorization.resolve`.
 - `crates/turin-client/src/authorizations.rs`
   - Typed local/remote client helpers.
-- `src/commands/tool_authorization.rs`
+- `crates/turin-cli/src/commands/tool_authorization.rs`
   - Explicit interactive-terminal composition for direct CLI runs.
 
 ## Data Flow
