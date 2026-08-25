@@ -22,6 +22,7 @@ Important maps:
 - Harness system globals: `docs/architecture/maps/harness-system-globals.md`
 - Scheduler and worklists: `docs/architecture/maps/scheduler-worklists.md`
 - Channels: `docs/architecture/maps/channels.md`
+- CLI dispatch: `docs/architecture/maps/cli-dispatch.md`
 - Code search: `docs/architecture/maps/code-search.md`
 - Config: `docs/architecture/maps/config.md`
 - Turin client: `docs/architecture/maps/client.md`

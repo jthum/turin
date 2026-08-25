@@ -114,8 +114,12 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Check { config } => {
-            commands::check::run_check(&config).await?;
+        Commands::Check { config, json } => {
+            commands::check::run_check(&config, json).await?;
+            Ok(())
+        }
+        Commands::Doctor { config, json } => {
+            commands::check::run_doctor(&config, json).await?;
             Ok(())
         }
         Commands::Harness { command } => handle_harness_command(command).await,

@@ -153,6 +153,19 @@ pub(crate) enum Commands {
         /// Path to Turin config file
         #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
         config: PathBuf,
+        /// Output a machine-readable diagnostic report
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Check project validity and local daemon readiness
+    Doctor {
+        /// Path to Turin config file
+        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
+        config: PathBuf,
+        /// Output a machine-readable diagnostic report
+        #[arg(long)]
+        json: bool,
     },
 
     /// Scaffold and validate harness scripts
@@ -203,4 +216,29 @@ pub(crate) enum HarnessCommands {
         #[arg(long, default_value = "Harness test OK.")]
         response: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_reference_diagnostic_commands() {
+        let check = Cli::try_parse_from(["turin", "check", "--config", "project.toml", "--json"])
+            .expect("check command should parse");
+        assert!(matches!(
+            check.command,
+            Commands::Check { config, json }
+                if config.as_path() == std::path::Path::new("project.toml") && json
+        ));
+
+        let doctor = Cli::try_parse_from(["turin", "doctor", "--config", "project.toml", "--json"])
+            .expect("doctor command should parse");
+        assert!(matches!(
+            doctor.command,
+            Commands::Doctor { config, json }
+                if config.as_path() == std::path::Path::new("project.toml") && json
+        ));
+    }
 }

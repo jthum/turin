@@ -378,6 +378,8 @@ target/release/turin run --prompt "List the files in this project and summarize 
 - `turin harness new ...` — generate a starter harness template
 - `turin harness test ...` — run a harness against the mock provider
 - `turin check` — validate config + harness scripts
+- `turin check --json` — emit the same validation as a machine-readable report
+- `turin doctor` — validate the project and inspect local daemon readiness
 
 Global options:
 - `--log-level error|warn|info|debug|trace`
@@ -420,6 +422,11 @@ For local wrappers and desktop apps:
 - `turin daemon wait` blocks until the daemon is ready
 - `turin daemon health --json` returns a compact readiness snapshot
 - `turin daemon logs` resolves the background daemon log path and shows recent lines
+
+Use `turin doctor` for one consolidated local diagnostic. It validates the
+configuration, active provider credentials, harness directories and scripts,
+state database location, and daemon health. An offline daemon is reported as a
+warning because `turin run` and `turin repl` can execute directly.
 
 See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavior, and command surface.
 

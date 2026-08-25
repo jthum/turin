@@ -233,7 +233,20 @@ Static validation of config + harness scripts:
 target/release/turin check --config .turin/config.toml
 ```
 
-Use this before live runs when editing harness scripts heavily.
+Use this before live runs when editing harness scripts heavily. Invalid config
+or harness code returns a failing exit status; missing optional credentials are
+reported as warnings. Add `--json` for automation.
+
+For a consolidated local readiness report, including a non-mutating daemon
+probe, run:
+
+```bash
+target/release/turin doctor --config .turin/config.toml
+```
+
+The daemon does not need to be running for direct CLI use, so an offline daemon
+is a warning with the appropriate `turin daemon ensure` command rather than a
+project-validation failure.
 
 ## Hook and Harness Regression Testing
 

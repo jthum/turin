@@ -25,11 +25,14 @@ This subsystem should preserve three guarantees:
 - `src/cli/daemon.rs`
   - Daemon command shape, daemon subcommands, and shared daemon argument groups.
 - `src/dispatch.rs`
-  - Top-level command routing: run/repl/script/init/quickstart/check/harness/daemon.
+  - Top-level command routing: run/repl/script/init/quickstart/check/doctor/harness/daemon.
 - `src/dispatch/daemon.rs`
   - Daemon command routing for control, agents, tasks, harnesses, and sessions.
 - `src/commands/*`
   - Actual command behavior, IO, daemon client calls, rendering, and runtime interactions.
+- `src/commands/check.rs`
+  - Aggregated project validation and local readiness diagnostics for `turin check`
+    and `turin doctor`.
 
 ## Data Flow
 
@@ -45,6 +48,12 @@ This subsystem should preserve three guarantees:
 - CLI-only JSON payload construction should be small and visible near the subcommand it supports.
 - Kernel and daemon construction must go through `composition.rs`; command modules
   must not select or instantiate a scripting engine themselves.
+- `turin check` treats invalid config and harness runtimes as blocking failures,
+  but missing optional credentials and directories as explicit warnings.
+- `turin doctor` extends the same report with a non-mutating daemon probe. An
+  offline daemon is a warning because direct CLI execution remains supported;
+  incompatible or otherwise invalid daemon responses are failures.
+- JSON diagnostics must retain the same severity and exit behavior as human output.
 
 ## Common Changes
 
@@ -65,7 +74,8 @@ Add a daemon subcommand:
 Focused tests:
 
 ```sh
-cargo test -p turin-cli --bin turin parse_cli_settings
+cargo test -p turin-cli --bin turin parse_reference_diagnostic_commands
+cargo test -p turin-cli --bin turin commands::check::tests
 ```
 
 Basic checks:
