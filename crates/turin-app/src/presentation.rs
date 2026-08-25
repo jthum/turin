@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32, RichText, ScrollArea};
-use turin_control_client::SessionDetail;
+use turin_client::SessionDetail;
 use turin_ui_core::{
     ConnectionPreflightOutcome, ConnectionProfileAuth, ConnectionProfileDraftAuthMode,
     ConnectionProfileKind, DashboardFreshness, DashboardNoticeLevel, UiAppRecord,
@@ -172,10 +172,10 @@ pub(super) fn yes_no(value: bool) -> &'static str {
     if value { "Yes" } else { "No" }
 }
 
-pub(super) fn connection_kind_label(kind: turin_control_client::ConnectionKind) -> &'static str {
+pub(super) fn connection_kind_label(kind: turin_client::ConnectionKind) -> &'static str {
     match kind {
-        turin_control_client::ConnectionKind::Local => "local",
-        turin_control_client::ConnectionKind::Remote => "remote",
+        turin_client::ConnectionKind::Local => "local",
+        turin_client::ConnectionKind::Remote => "remote",
     }
 }
 

@@ -14,10 +14,10 @@ use hyper::body::{Frame, Incoming};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::time::{MissedTickBehavior, interval};
-use turin_control_client::{
-    ControlClient, DaemonStatus, HarnessDetail, HarnessRuntime, HarnessValidation, Issue,
-    LiveSession, ManagedEventStream, SessionBranchDetail, SessionDetail, SessionGraphDetail,
-    SessionSummary, TaskStatus,
+use turin_client::{
+    Client, DaemonStatus, HarnessDetail, HarnessRuntime, HarnessValidation, Issue, LiveSession,
+    ManagedEventStream, SessionBranchDetail, SessionDetail, SessionGraphDetail, SessionSummary,
+    TaskStatus,
 };
 use turin_daemon_protocol::{
     DaemonRequest, EventEnvelope, HarnessActionRunParams, HarnessActionRunResult,
@@ -50,7 +50,7 @@ pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 #[derive(Clone)]
 pub(crate) struct WebState {
     pub(crate) bind: String,
-    pub(crate) client: ControlClient,
+    pub(crate) client: Client,
 }
 
 #[derive(Debug, Clone)]
@@ -79,7 +79,7 @@ struct WebRuntimeReport {
     ready: bool,
     version: String,
     bind: String,
-    connection_kind: turin_control_client::ConnectionKind,
+    connection_kind: turin_client::ConnectionKind,
     connection_target: String,
 }
 
@@ -1225,7 +1225,7 @@ async fn handle_sse_events(
         .expect("SSE response builds"))
 }
 
-async fn load_ui_registry(client: &ControlClient) -> std::result::Result<UiRegistry, WebError> {
+async fn load_ui_registry(client: &Client) -> std::result::Result<UiRegistry, WebError> {
     let status = client
         .status()
         .await
@@ -1243,7 +1243,7 @@ fn ui_registry_from_status(status: &DaemonStatus) -> UiRegistry {
 }
 
 async fn load_ui_list(
-    client: &ControlClient,
+    client: &Client,
     request: &UiListRequest,
 ) -> std::result::Result<WorkItemList, WebError> {
     let worklist_name = worklist_name_from_source(&request.source)?;

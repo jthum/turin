@@ -6,12 +6,12 @@ use turin_daemon_protocol::{
     HarnessSourceValidateParams, HarnessSourceValidationResult, NoParams, UiIntentMessage,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 use crate::models::{
     HarnessDetail, HarnessRuntime, HarnessRuntimeList, HarnessValidation, Issue, IssueList,
 };
 
-impl ControlClient {
+impl Client {
     pub async fn list_harnesses(&self) -> Result<Vec<HarnessRuntime>> {
         let response: HarnessRuntimeList = self
             .request_ok(None, DaemonRequest::HarnessList(NoParams::default()))

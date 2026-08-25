@@ -3,9 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use turin_control_client::{
-    AgentSummary, ConnectionKind, ControlClient, ControlHealth, DaemonStatus, LiveSession,
-    SessionDetail, SessionSummary, TaskStatus,
+use turin_client::{
+    AgentSummary, Client, ConnectionKind, ControlHealth, DaemonStatus, LiveSession, SessionDetail,
+    SessionSummary, TaskStatus,
 };
 use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiIntentMessage};
 
@@ -146,7 +146,7 @@ impl DefaultOperatorConsoleSummary {
 }
 
 impl DashboardState {
-    pub async fn load(client: &ControlClient) -> Result<Self> {
+    pub async fn load(client: &Client) -> Result<Self> {
         let snapshot = Self::snapshot(client).await?;
         let now = now_unix_ms();
         let ui = UiRegistry::from_messages(ui_intents_from_status(&snapshot.status));
@@ -175,7 +175,7 @@ impl DashboardState {
         })
     }
 
-    pub async fn snapshot(client: &ControlClient) -> Result<DashboardSnapshot> {
+    pub async fn snapshot(client: &Client) -> Result<DashboardSnapshot> {
         let (health, status) = client.health_and_status().await?;
         let live_sessions = client.list_live_sessions().await?;
         let sessions = client.list_sessions(DEFAULT_SESSION_LIMIT, 0).await?;
@@ -493,7 +493,7 @@ mod tests {
         MAX_RECENT_NOTICES, format_relative_age, freshness_at,
     };
     use serde_json::json;
-    use turin_control_client::ConnectionKind;
+    use turin_client::ConnectionKind;
     use turin_daemon_protocol::{
         EventEnvelope, HarnessActionRunResult, UI_INTENT_EVENT, UiIntent, UiIntentMessage,
         UiRefreshIntent,

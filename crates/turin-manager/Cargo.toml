@@ -23,7 +23,7 @@ toml = "1.1"
 toml_edit = "0.25"
 turin-channel-core = { path = "../turin-channel-core" }
 turin-channel-host = { path = "../turin-channel-host" }
-turin-control-client = { path = "../turin-control-client" }
+turin-client = { path = "../turin-client" }
 turin-types = { path = "../turin-types" }
 
 [dev-dependencies]

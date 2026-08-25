@@ -24,7 +24,7 @@ Ordinary allowed tool calls do not enter this subsystem.
   - Projects pending broker requests and resolves daemon decisions.
 - `src/daemon/server/dispatch/tool_authorization.rs`
   - Implements `tool_authorization.list` and `tool_authorization.resolve`.
-- `crates/turin-control-client/src/authorizations.rs`
+- `crates/turin-client/src/authorizations.rs`
   - Typed local/remote client helpers.
 - `src/commands/tool_authorization.rs`
   - Explicit interactive-terminal composition for direct CLI runs.
@@ -64,5 +64,5 @@ cargo test -p turin --lib kernel::tool_authorization
 cargo test -p turin --lib daemon::state::tests::daemon_lists_and_resolves_tool_authorization_without_denial_reason
 cargo test -p turin --test rust_embedding escalated_tool_waits_for_external_authorization_before_execution
 cargo test -p turin-daemon-protocol tool_authorization_requests_support_reasonless_denial
-cargo test -p turin-control-client
+cargo test -p turin-client
 ```

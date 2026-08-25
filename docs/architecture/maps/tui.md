@@ -9,7 +9,7 @@ field focus, and shown pane overlays are also TUI-local state.
 
 Keep this crate as a lean Ratatui client. Runtime semantics, daemon transport,
 shared operator commands, and stateless target lookup belong in
-`turin-ui-core`, `turin-control-client`, and `turin-daemon-protocol`.
+`turin-ui-core`, `turin-client`, and `turin-daemon-protocol`.
 
 ## Files
 

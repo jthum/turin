@@ -257,7 +257,7 @@ Change persisted session deletion:
 
 1. Update `runtime_sessions.rs` and the persistence session transaction.
 2. Preserve live-runtime rejection and release rather than delete work claims.
-3. Run `cargo test -p turin --lib deleting_session` and the control-client
+3. Run `cargo test -p turin --lib deleting_session` and the client
    connectivity tests.
 
 ## Tests

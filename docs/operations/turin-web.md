@@ -32,7 +32,7 @@ It should not provide:
 Initial layering should stay thin:
 
 1. Turin daemon remains the source of truth.
-2. `turin-control-client` remains the typed Rust facade.
+2. `turin-client` remains the typed Rust facade.
 3. `turin-web` exposes web-oriented endpoints and event streams.
 4. The Svelte client talks through a typed `TurinClient` interface. The HTTP
    implementation uses same-origin JSON and SSE; a desktop host can later
@@ -76,7 +76,7 @@ Start with a small API that mirrors what the current clients already need.
 | `GET /assets/app.js` | Implemented. First-party shell behavior. |
 
 The current version proxies typed daemon operations through
-`turin-control-client` rather than implementing runtime or filesystem semantics
+`turin-client` rather than implementing runtime or filesystem semantics
 inside the web process.
 
 Harness source paths are relative to the registered harness root, including
@@ -566,7 +566,7 @@ dominant memory cost of running Turin.
 The first useful slice is complete:
 
 1. `crates/turin-web` provides a small Hyper HTTP/1 server and CLI.
-2. It connects through `turin-control-client` using local config, explicit local
+2. It connects through `turin-client` using local config, explicit local
    endpoint, or `turin-remote`.
 3. It exposes status, apps, one app, semantic list loading, action execution,
    and liveness routes.

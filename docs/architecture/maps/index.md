@@ -14,7 +14,7 @@ Maps:
 - [Agent Session Bindings](./agent-session-bindings.md)
 - [Code Search](./code-search.md)
 - [Config](./config.md)
-- [Control Client](./control-client.md)
+- [Turin Client](./client.md)
 - [Daemon CLI Render](./daemon-render.md)
 - [Daemon Protocol](./daemon-protocol.md)
 - [Daemon Registry](./daemon-registry.md)

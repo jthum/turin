@@ -46,7 +46,7 @@ This crate is wire-shape sensitive. Internal organization can change, but serial
   client identity or delegated authority.
 - Response error codes serialize as snake_case.
 - Default values must stay explicit where they affect wire behavior.
-- Domain DTO modules should not depend on daemon server, manager, or control-client code.
+- Domain DTO modules should not depend on daemon server, manager, or client code.
 - Channels use generic session/task/event operations; the daemon protocol must
   not grow channel configuration, access, binding, presence, or
   lifecycle operations.
@@ -61,13 +61,13 @@ Add a daemon operation:
 1. Add or reuse a params DTO in the relevant domain module.
 2. Add a `DaemonRequest` variant in `request.rs` with an explicit `serde(rename = "...")`.
 3. Add a round-trip test in `tests.rs`.
-4. Update daemon dispatch and control-client call sites separately.
+4. Update daemon dispatch and client call sites separately.
 
 Change an existing DTO:
 
 1. Treat it as a protocol change unless the serialized shape is provably unchanged.
 2. Add or update a wire-shape test.
-3. Check manager, control-client, and independent channel call sites.
+3. Check manager, client, and independent channel call sites.
 
 ## Tests
 
@@ -80,7 +80,7 @@ cargo test -p turin-daemon-protocol
 Downstream compile checks:
 
 ```sh
-cargo check -p turin-control-client
+cargo check -p turin-client
 cargo check -p turin --lib
 cargo fmt --all -- --check
 git diff --check

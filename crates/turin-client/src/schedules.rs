@@ -4,9 +4,9 @@ use turin_daemon_protocol::{
     ScheduleJobList, ScheduleJobRunList, ScheduleRunsParams, ScheduleUpdateParams,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 
-impl ControlClient {
+impl Client {
     pub async fn create_schedule(&self, params: ScheduleCreateParams) -> Result<ScheduleJobDetail> {
         self.request_ok(None, DaemonRequest::ScheduleCreate(params))
             .await

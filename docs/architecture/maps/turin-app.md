@@ -7,7 +7,7 @@ layout, Cast/egui rendering, connection profile editing, local harness UI
 navigation, modal state, selected worklist rows, form drafts, and graphical
 degradation of semantic harness UI intent.
 
-Keep this crate as a client over `turin-ui-core` and `turin-control-client`.
+Keep this crate as a client over `turin-ui-core` and `turin-client`.
 Runtime semantics, daemon transport, harness UI indexing, and shared
 worklist/default-screen/node-target derivation belong outside this crate.
 

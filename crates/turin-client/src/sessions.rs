@@ -6,14 +6,14 @@ use turin_daemon_protocol::{
     SessionTitleParams,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 use crate::models::{
     LiveSession, LiveSessionList, SessionActionResult, SessionBranchDetail, SessionBranchList,
     SessionDetail, SessionFamilyDetail, SessionGraphDetail, SessionList, SessionSearchHit,
     SessionSearchResultList, SessionSummary,
 };
 
-impl ControlClient {
+impl Client {
     pub async fn get_session_graph(&self, session_id: &str) -> Result<SessionGraphDetail> {
         self.request_ok(
             None,

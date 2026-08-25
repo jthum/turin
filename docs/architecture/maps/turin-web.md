@@ -8,7 +8,7 @@ UI intent as `turin-app` and `turin-tui`.
 
 Keep this crate thin. It should not host a second runtime, own durable UI
 session state, invent renderer-specific harness APIs, or bypass
-`turin-control-client` for daemon operations that already have typed helpers.
+`turin-client` for daemon operations that already have typed helpers.
 
 ## Files
 
@@ -35,8 +35,8 @@ session state, invent renderer-specific harness APIs, or bypass
 ## Data Flow
 
 1. CLI or caller builds a `WebServeOptions`.
-2. `turin-web` connects through `turin-control-client`.
-3. HTTP routes call typed control-client helpers.
+2. `turin-web` connects through `turin-client`.
+3. HTTP routes call typed client helpers.
 4. UI app responses derive a `UiRegistry` from harness UI intent in daemon
    status.
 5. UI list responses resolve semantic sources such as `worklists.release` into
@@ -136,7 +136,7 @@ session state, invent renderer-specific harness APIs, or bypass
 37. Harness Studio and Work Operations are deterministic lazy-loaded chunks.
     Rust embeds and serves those explicit chunk paths while ordinary assistant
     startup loads only the main browser bootstrap.
-38. Harness source APIs remain thin control-client adapters. They expose recursive Lua source inspection, whole-candidate validation, and hash-guarded batch saves without making `turin-web` a filesystem owner.
+38. Harness source APIs remain thin client adapters. They expose recursive Lua source inspection, whole-candidate validation, and hash-guarded batch saves without making `turin-web` a filesystem owner.
 39. Harness Studio presents source authoring, runtime overview, and API reference
     as separate views. Its multi-file editor lazily reads source, keeps additions,
     replacements, and deletions in browser-local buffers, and enables batch save
@@ -310,7 +310,7 @@ session state, invent renderer-specific harness APIs, or bypass
 
 Add a new UI data endpoint:
 
-1. Check whether the control client already has a typed helper.
+1. Check whether the client already has a typed helper.
 2. Add the route in `routes.rs` and keep request/response structs serializable.
 3. Prefer semantic UI requests over raw daemon protocol shapes for harness UI
    client routes.

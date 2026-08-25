@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use serde_json::Value;
-use turin_control_client::TaskStatus;
+use turin_client::TaskStatus;
 use turin_daemon_protocol::{EventEnvelope, HarnessActionRunResult, UiFormNode, WorkItemList};
 use turin_ui_core::{
     ConnectionOptions, DashboardFreshness, DashboardState, DefaultOperatorConsoleSummary,
@@ -2652,10 +2652,10 @@ fn selection_edge_for_key(code: KeyCode) -> Option<SelectionEdge> {
     }
 }
 
-fn connection_kind_label(kind: turin_control_client::ConnectionKind) -> &'static str {
+fn connection_kind_label(kind: turin_client::ConnectionKind) -> &'static str {
     match kind {
-        turin_control_client::ConnectionKind::Local => "local",
-        turin_control_client::ConnectionKind::Remote => "remote",
+        turin_client::ConnectionKind::Local => "local",
+        turin_client::ConnectionKind::Remote => "remote",
     }
 }
 
@@ -2674,7 +2674,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use serde_json::json;
-    use turin_control_client::ConnectionKind;
+    use turin_client::ConnectionKind;
     use turin_daemon_protocol::{
         ScheduleActionParams, UiActionNode, UiFormField, UiIntentSource, UiListNode, UiNode,
         UiPaneIntent, UiScreenIntent, WorkItemDetail,

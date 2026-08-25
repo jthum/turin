@@ -54,7 +54,7 @@ impl Default for ManagedSubscribeOptions {
 }
 
 #[derive(Debug, Clone)]
-pub enum ControlClient {
+pub enum Client {
     Local(DaemonClient),
     Remote(RemoteClient),
 }
@@ -72,7 +72,7 @@ impl ConnectionSpec {
     }
 }
 
-impl ControlClient {
+impl Client {
     pub async fn connect(spec: &ConnectionSpec) -> Result<Self> {
         match spec {
             ConnectionSpec::LocalConfig { config_path } => Ok(Self::Local(

@@ -4,9 +4,9 @@ use turin_daemon_protocol::{
     ToolAuthorizationResolution, ToolAuthorizationResolveParams, ToolAuthorizationResolveResult,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 
-impl ControlClient {
+impl Client {
     pub async fn list_tool_authorizations(&self) -> Result<Vec<ToolAuthorizationRequestDetail>> {
         let result: ToolAuthorizationListResult = self
             .request_ok(

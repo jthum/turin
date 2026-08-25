@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use turin_control_client::{
+use turin_client::{
     AgentRuntime, ConnectionKind, LiveSession, SessionBranchDetail, SessionDetail,
     SessionMessageWindow, SessionSummary, TaskStatus,
 };
@@ -5152,7 +5152,7 @@ mod tests {
             active_tasks: 0,
             queued_tasks: 0,
             current_request_id: None,
-            execution: turin_control_client::LiveExecution {
+            execution: turin_client::LiveExecution {
                 execution_id: "execution-1".to_string(),
                 context_target: serde_json::Value::Null,
                 visibility: "client".to_string(),
@@ -5194,7 +5194,7 @@ mod tests {
             active_tasks: 0,
             queued_tasks: 0,
             current_request_id: None,
-            execution: turin_control_client::LiveExecution {
+            execution: turin_client::LiveExecution {
                 execution_id: "execution-live".to_string(),
                 context_target: serde_json::Value::Null,
                 visibility: "client".to_string(),
@@ -5286,7 +5286,7 @@ mod tests {
             active_tasks: 0,
             queued_tasks: 0,
             current_request_id: None,
-            execution: turin_control_client::LiveExecution {
+            execution: turin_client::LiveExecution {
                 execution_id: format!("execution-{session_id}"),
                 context_target: serde_json::Value::Null,
                 visibility: "client".to_string(),

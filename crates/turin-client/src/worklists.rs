@@ -4,9 +4,9 @@ use turin_daemon_protocol::{
     WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 
-impl ControlClient {
+impl Client {
     pub async fn list_worklists(&self, params: WorklistListParams) -> Result<Vec<WorklistDetail>> {
         let response: WorklistList = self
             .request_ok(None, DaemonRequest::WorklistList(params))

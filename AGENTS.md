@@ -24,7 +24,7 @@ Important maps:
 - Channels: `docs/architecture/maps/channels.md`
 - Code search: `docs/architecture/maps/code-search.md`
 - Config: `docs/architecture/maps/config.md`
-- Control client: `docs/architecture/maps/control-client.md`
+- Turin client: `docs/architecture/maps/client.md`
 - Daemon CLI render: `docs/architecture/maps/daemon-render.md`
 - Daemon runtime state: `docs/architecture/maps/daemon-runtime-state.md`
 - Governance: `docs/architecture/maps/governance.md`

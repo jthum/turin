@@ -1,5 +1,5 @@
 [package]
-name = "turin-control-client"
+name = "turin-client"
 version = "0.27.0"
 edition = "2024"
 

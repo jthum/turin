@@ -10,7 +10,7 @@ mod tasks;
 mod worklists;
 
 pub use client::{
-    ConnectionKind, ConnectionSpec, ControlClient, ManagedEventStream, ManagedSubscribeOptions,
+    Client, ConnectionKind, ConnectionSpec, ManagedEventStream, ManagedSubscribeOptions,
 };
 pub use health::ControlHealth;
 pub use models::*;
@@ -28,9 +28,9 @@ mod tests {
     async fn remote_env_requires_set_variable() {
         let spec = ConnectionSpec::RemoteEnv {
             base_url: "http://127.0.0.1:9324".into(),
-            auth_token_env: "TURIN_CONTROL_CLIENT_TEST_TOKEN_MISSING".into(),
+            auth_token_env: "TURIN_CLIENT_TEST_TOKEN_MISSING".into(),
         };
-        let err = ControlClient::connect(&spec)
+        let err = Client::connect(&spec)
             .await
             .expect_err("missing env rejected");
         assert!(err.to_string().contains("is not set"));

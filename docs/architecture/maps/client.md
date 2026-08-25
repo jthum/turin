@@ -1,52 +1,52 @@
-# Control Client Map
+# Turin Client Map
 
 ## Purpose
 
-`turin-control-client` is the shared Rust client facade for operator-facing code. It hides whether requests go through the local daemon socket or the remote HTTP bridge, exposes typed convenience methods, and re-exports DTOs used by manager, TUI, app, and UI-core code.
+`turin-client` is the shared Rust client facade for operator-facing code. It hides whether requests go through the local daemon socket or the remote HTTP bridge, exposes typed convenience methods, and re-exports DTOs used by manager, TUI, app, and UI-core code.
 
 Keep this crate as a thin transport/domain facade. It should not own daemon semantics, UI presentation, config generation, or business rules that belong in the daemon/runtime.
 
 ## Files
 
-- `crates/turin-control-client/src/lib.rs`
+- `crates/turin-client/src/lib.rs`
   - Public facade and crate-root re-exports.
-- `crates/turin-control-client/src/client.rs`
-  - `ConnectionSpec`, `ConnectionKind`, `ControlClient`, local/remote connection setup, request helpers, managed event subscription, and daemon status/health entry points.
-- `crates/turin-control-client/src/models.rs`
+- `crates/turin-client/src/client.rs`
+  - `ConnectionSpec`, `ConnectionKind`, `Client`, local/remote connection setup, request helpers, managed event subscription, and daemon status/health entry points.
+- `crates/turin-client/src/models.rs`
   - Public DTOs decoded from daemon responses and small private response wrapper structs.
-- `crates/turin-control-client/src/health.rs`
+- `crates/turin-client/src/health.rs`
   - `ControlHealth` and status-to-health summarization.
-- `crates/turin-control-client/src/schedules.rs`
+- `crates/turin-client/src/schedules.rs`
   - Schedule convenience methods.
-- `crates/turin-control-client/src/sessions.rs`
+- `crates/turin-client/src/sessions.rs`
   - Live and persisted session convenience methods, on-demand turn topology,
     direct linked-session discovery, family topology/archive, exact-turn branch
     creation, branch listing, checkout, and durable deletion.
-- `crates/turin-control-client/src/tasks.rs`
+- `crates/turin-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
-- `crates/turin-control-client/src/authorizations.rs`
+- `crates/turin-client/src/authorizations.rs`
   - Pending tool-authorization listing and approve/deny convenience methods.
-- `crates/turin-control-client/src/harnesses.rs`
+- `crates/turin-client/src/harnesses.rs`
   - Harness detail, UI intent, source inspection/candidate validation/hash-guarded saves, and action invocation convenience methods.
-- `crates/turin-control-client/src/worklists.rs`
+- `crates/turin-client/src/worklists.rs`
   - Worklist and work-item convenience methods.
-- `crates/turin-control-client/src/memories.rs`
+- `crates/turin-client/src/memories.rs`
   - Bounded memory inspection convenience method.
-- `crates/turin-control-client/tests/connectivity.rs`
+- `crates/turin-client/tests/connectivity.rs`
   - Local/remote connectivity and workflow coverage, including the Release
     Operator harness UI fixture and dynamic UI side effects from actions.
 
 ## Data Flow
 
 1. Caller builds a `ConnectionSpec`.
-2. `ControlClient::connect` resolves either a local daemon endpoint or remote client.
+2. `Client::connect` resolves either a local daemon endpoint or remote client.
 3. Domain helpers build a `DaemonRequest`.
 4. `request_ok` delegates to `turin-daemon-client` or `turin-remote-client`.
 5. Responses decode into daemon protocol DTOs or client DTOs re-exported from the crate root.
 
 ## Invariants
 
-- Public types should remain importable from `turin_control_client::TypeName`.
+- Public types should remain importable from `turin_client::TypeName`.
 - Domain helper modules should stay thin: build protocol params, send the request, and unwrap list wrappers when helpful.
 - Task status preserves the daemon's bounded title/prompt description so
   clients can identify runtime work without opening every owning session.
@@ -67,7 +67,7 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   persisted session reference and preserves live-session rejection semantics.
 - Persisted session listing returns roots by default. `list_linked_sessions`
   requests only direct children of an explicit parent; it must not turn the
-  control client into a generic session-relationship query layer.
+  client into a generic session-relationship query layer.
 - `open_session_with_origin` and `list_sessions_for_origin` expose opaque
   client provenance without defining client identity, authentication, or
   ownership in this crate.
@@ -77,8 +77,9 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `ControlHealth` is a derived summary; daemon status remains the source of truth.
 - `ControlHealth::agent_count` counts effective configured runtime agents, including
   the bootstrap agent; the filesystem registry alone is not a complete inventory.
-- Channels use this generic client facade. Channel configuration, access
-  policy, bindings, and process health must not become control-client domains.
+- Operator-facing applications use this generic facade. Local-only channel
+  binaries may use `turin-daemon-client` directly; channel configuration,
+  access policy, bindings, and process health must not become client domains.
 - UI/manager presentation formatting does not belong in this crate.
 - Daemon wire-shape changes should be made in `turin-daemon-protocol` first, then reflected here.
 
@@ -89,7 +90,7 @@ Add a daemon request helper:
 1. Add the request/response shape in `turin-daemon-protocol`.
 2. Add the thin convenience method to the matching domain file in this crate.
 3. Keep the method return type typed and avoid leaking `serde_json::Value` unless the daemon surface is intentionally dynamic.
-4. Run the focused control-client checks.
+4. Run the focused client checks.
 
 Change connection behavior:
 
@@ -102,7 +103,7 @@ Change connection behavior:
 Focused checks:
 
 ```sh
-cargo test -p turin-control-client
+cargo test -p turin-client
 cargo check -p turin-manager
 cargo check -p turin-ui-core
 ```

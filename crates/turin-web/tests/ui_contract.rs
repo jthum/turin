@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 use turin::remote::{RemoteServeOptions, start as start_remote};
-use turin_control_client::ConnectionSpec;
+use turin_client::ConnectionSpec;
 use turin_daemon_protocol::{DaemonRequest, NoParams};
 use turin_web::{WebServeOptions, start as start_web};
 

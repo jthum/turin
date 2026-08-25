@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use turin_control_client::ConnectionSpec;
+use turin_client::ConnectionSpec;
 use turin_types::layout::DEFAULT_BOOTSTRAP_CONFIG_PATH;
 use turin_web::{DEFAULT_WEB_BIND, WebServeOptions, serve};
 

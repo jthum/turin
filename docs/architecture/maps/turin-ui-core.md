@@ -52,7 +52,7 @@ runtime-owned UI session store, or a second daemon implementation.
 ## Data Flow
 
 1. A client builds `ConnectionOptions` or a `ConnectionSpec`.
-2. `connect_dashboard` connects through `turin-control-client` and loads a
+2. `connect_dashboard` connects through `turin-client` and loads a
    bounded `DashboardState`.
 3. `spawn_controller` starts refresh, event, focused-session-event, and command
    tasks.
@@ -66,7 +66,7 @@ runtime-owned UI session store, or a second daemon implementation.
    events and completed harness action results can both carry these dynamic
    intents.
 8. `OperatorCommand::LoadUiList` resolves semantic `UiListRequest` values. Today
-   only `worklists.<name>` sources load, through typed control-client worklist
+   only `worklists.<name>` sources load, through typed client worklist
    helpers. A named worklist that has not been created yet reads as an empty
    collection; transport and query failures emit request-scoped `UiListFailed`
    updates so clients can clear local loading state and render retryable copy.
@@ -98,7 +98,7 @@ runtime-owned UI session store, or a second daemon implementation.
   still lives behind daemon primitives such as sessions, tasks,
   worklists, events, memory, and KV.
 - Keep local and remote transport behavior symmetric by going through
-  `turin-control-client`.
+  `turin-client`.
 - UI list requests should stay semantic. Do not expose raw daemon queries from
   this crate unless the UI contract explicitly grows that escape hatch.
 - UI list load failures should stay request-scoped. The shared controller can
@@ -124,7 +124,7 @@ runtime-owned UI session store, or a second daemon implementation.
 Add a new operator command:
 
 1. Add a typed `OperatorCommand` variant.
-2. Use existing `turin-control-client` helpers or add a thin helper there first.
+2. Use existing `turin-client` helpers or add a thin helper there first.
 3. Emit a focused `UiUpdate` when the result should be handled specially.
 4. Emit a snapshot refresh only when the command changes overview state.
 5. Add focused tests for pure validation/mapping logic when possible.
@@ -132,7 +132,7 @@ Add a new operator command:
 Add a new semantic UI list source:
 
 1. Extend `UiListRequest` handling in `controller.rs`.
-2. Prefer typed control-client helpers over raw protocol values.
+2. Prefer typed client helpers over raw protocol values.
 3. Return explicit unsupported-source errors until the loader exists.
 4. Update at least one client smoke path if the new source is user-visible.
 

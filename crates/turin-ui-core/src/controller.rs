@@ -10,7 +10,7 @@ use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, watch};
 use tokio::time;
-use turin_control_client::{ConnectionSpec, ControlClient, SessionDetail, SessionSearchHit};
+use turin_client::{Client, ConnectionSpec, SessionDetail, SessionSearchHit};
 use turin_daemon_protocol::{
     EventEnvelope, HarnessActionRunParams, HarnessActionRunResult, RuntimeEventsSubscribeParams,
     SessionSearchScope, WorkItemList, WorklistItemsParams, WorklistListParams,
@@ -1075,7 +1075,7 @@ fn preflight_env_error_report(
     ))
 }
 
-fn blocking_connect_dashboard(spec: ConnectionSpec) -> Result<(ControlClient, DashboardState)> {
+fn blocking_connect_dashboard(spec: ConnectionSpec) -> Result<(Client, DashboardState)> {
     std::thread::spawn(move || {
         let runtime = Builder::new_current_thread().enable_all().build()?;
         runtime.block_on(async move { connect_dashboard(&spec).await })
@@ -1241,19 +1241,19 @@ fn validate_remote_auth(
     }
 }
 
-pub async fn connect_dashboard(spec: &ConnectionSpec) -> Result<(ControlClient, DashboardState)> {
-    let client = ControlClient::connect(spec).await?;
+pub async fn connect_dashboard(spec: &ConnectionSpec) -> Result<(Client, DashboardState)> {
+    let client = Client::connect(spec).await?;
     let dashboard = DashboardState::load(&client).await?;
     Ok((client, dashboard))
 }
 
-pub fn spawn_controller(handle: &Handle, client: ControlClient) -> UiController {
+pub fn spawn_controller(handle: &Handle, client: Client) -> UiController {
     spawn_controller_with_interval(handle, client, DEFAULT_REFRESH_INTERVAL)
 }
 
 pub fn spawn_controller_with_interval(
     handle: &Handle,
-    client: ControlClient,
+    client: Client,
     refresh_interval: Duration,
 ) -> UiController {
     let (update_tx, update_rx) = mpsc::unbounded_channel::<UiUpdate>();
@@ -1360,7 +1360,7 @@ impl ConnectionProfileCatalog {
 
 fn spawn_event_task(
     handle: &Handle,
-    client: ControlClient,
+    client: Client,
     tx: mpsc::UnboundedSender<UiUpdate>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -1400,7 +1400,7 @@ fn spawn_event_task(
 
 fn spawn_focused_session_event_task(
     handle: &Handle,
-    client: ControlClient,
+    client: Client,
     tx: mpsc::UnboundedSender<UiUpdate>,
     mut focused_session_rx: watch::Receiver<Option<String>>,
     mut shutdown_rx: watch::Receiver<bool>,
@@ -1488,7 +1488,7 @@ fn spawn_focused_session_event_task(
 
 fn spawn_refresh_task(
     handle: &Handle,
-    client: ControlClient,
+    client: Client,
     tx: mpsc::UnboundedSender<UiUpdate>,
     refresh_interval: Duration,
     mut shutdown_rx: watch::Receiver<bool>,
@@ -1541,7 +1541,7 @@ fn spawn_refresh_task(
 
 fn spawn_command_task(
     handle: &Handle,
-    client: ControlClient,
+    client: Client,
     mut command_rx: mpsc::UnboundedReceiver<OperatorCommand>,
     tx: mpsc::UnboundedSender<UiUpdate>,
     focused_session_tx: watch::Sender<Option<String>>,
@@ -1845,7 +1845,7 @@ fn spawn_command_task(
     });
 }
 
-async fn load_ui_list(client: &ControlClient, request: &UiListRequest) -> Result<WorkItemList> {
+async fn load_ui_list(client: &Client, request: &UiListRequest) -> Result<WorkItemList> {
     let worklist_name = ui_worklist_name_from_source(&request.source).map_err(|err| match err {
         UiWorklistSourceError::Unsupported => {
             anyhow!("unsupported UI list source '{}'", request.source)
@@ -1891,10 +1891,7 @@ fn empty_ui_worklist(worklist_name: &str) -> WorkItemList {
     }
 }
 
-pub async fn execute_operator_command(
-    client: &ControlClient,
-    command: OperatorCommand,
-) -> Result<String> {
+pub async fn execute_operator_command(client: &Client, command: OperatorCommand) -> Result<String> {
     match command {
         OperatorCommand::Refresh => Ok("Refreshed Turin state".to_string()),
         OperatorCommand::FocusSessionStream { .. } => {

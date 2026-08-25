@@ -12,7 +12,7 @@ eframe = { version = "0.36.1", default-features = false, features = ["default_fo
 egui = "0.36.1"
 serde_json = "1.0"
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
-turin-control-client = { path = "../turin-control-client" }
+turin-client = { path = "../turin-client" }
 turin-daemon-protocol = { path = "../turin-daemon-protocol" }
 turin-types = { path = "../turin-types" }
 turin-ui-core = { path = "../turin-ui-core" }

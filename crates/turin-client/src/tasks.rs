@@ -4,10 +4,10 @@ use turin_daemon_protocol::{
     SidestepTaskParams, SubmitTaskParams, TaskIdParams, WaitTaskParams,
 };
 
-use crate::client::ControlClient;
+use crate::client::Client;
 use crate::models::{SessionBranchDetail, TaskList, TaskStatus};
 
-impl ControlClient {
+impl Client {
     pub async fn list_tasks(&self) -> Result<Vec<TaskStatus>> {
         let response: TaskList = self
             .request_ok(None, DaemonRequest::TaskList(Default::default()))

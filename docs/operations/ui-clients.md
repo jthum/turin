@@ -14,7 +14,7 @@ consoles and app-like harness UI, see
 Current layering:
 
 - daemon / remote protocol: shared wire surface
-- `turin-control-client`: typed local/remote control client
+- `turin-client`: typed local/remote client
 - `turin-ui-core`: shared connection options, profile loading, controller loop,
   dashboard state, UI intent registry, and stateless semantic UI data helpers
 - `turin-tui`: lean Ratatui terminal client

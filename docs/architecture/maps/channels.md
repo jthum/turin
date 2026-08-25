@@ -92,7 +92,7 @@ Channel state management:
 
 ## Invariants
 
-- No production crate in Turin core, daemon protocol, control client, or shared
+- No production crate in Turin core, daemon protocol, client, or shared
   UI may depend on channel DTOs or channel process state.
 - Access checks happen before task submission and remain channel-owned.
 - Binding keys are stable serialized `ChannelConversationKey` values.

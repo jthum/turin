@@ -4,7 +4,7 @@
 
 `turin-manager` is the operator setup and troubleshooting CLI. It owns first-run config generation, local environment file updates, generic channel setup flows driven by adapter manifests, channel inventory views, and doctor checks.
 
-Keep this crate as an operator-facing orchestration layer. It should not duplicate daemon runtime behavior, adapter internals, or control-client transport details.
+Keep this crate as an operator-facing orchestration layer. It should not duplicate daemon runtime behavior, adapter internals, or client transport details.
 
 ## Files
 
@@ -98,11 +98,11 @@ cargo test -p turin-manager
 cargo check -p turin-manager
 ```
 
-Related checks when touching runner discovery or control-client behavior:
+Related checks when touching runner discovery or client behavior:
 
 ```sh
 cargo test -p turin-channel-host
-cargo test -p turin-control-client
+cargo test -p turin-client
 ```
 
 Basic checks:

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use dotenvy::from_path_iter;
-use turin_control_client::{ConnectionSpec, ControlClient};
+use turin_client::{Client, ConnectionSpec};
 
 use crate::files::{config_dir, load_configured_channels};
 use crate::runner::describe_external_runner;
@@ -74,7 +74,7 @@ pub(crate) async fn run_doctor(args: DoctorArgs) -> Result<()> {
         }
     }
 
-    match ControlClient::connect(&ConnectionSpec::LocalConfig {
+    match Client::connect(&ConnectionSpec::LocalConfig {
         config_path: config_path.clone(),
     })
     .await

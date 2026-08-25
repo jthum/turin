@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
-use turin_control_client::{ConnectionSpec, ControlClient};
+use turin_client::{Client, ConnectionSpec};
 
 use crate::routes::{WebState, handle_http};
 
@@ -47,7 +47,7 @@ impl RunningWebServer {
 }
 
 pub async fn start(options: WebServeOptions) -> Result<RunningWebServer> {
-    let client = ControlClient::connect(&options.connection)
+    let client = Client::connect(&options.connection)
         .await
         .context("Failed to connect turin-web to Turin control endpoint")?;
     let listener = TcpListener::bind(&options.bind)
