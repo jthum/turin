@@ -37,6 +37,13 @@ impl StorePathScope {
             _ => Self::WorkspaceOnly,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AllowAny => "allow_any",
+            Self::WorkspaceOnly => "workspace_only",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

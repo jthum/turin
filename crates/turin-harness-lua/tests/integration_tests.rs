@@ -80,12 +80,12 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
         .await?;
 
     // Verify turn index increased
-    assert!(session.turn_index > 0);
+    assert!(session.turn_index() > 0);
 
     // Verify results in history
-    assert!(!session.history.is_empty());
+    assert!(!session.history().is_empty());
 
-    let last_msg = session.history.last().unwrap();
+    let last_msg = session.history().last().unwrap();
     assert_eq!(
         last_msg.role,
         turin_core::inference::provider::InferenceRole::Assistant

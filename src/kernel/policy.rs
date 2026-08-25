@@ -5,6 +5,8 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
+use crate::persistence::manager::StorePathScope;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PolicyScope {
     pub scope: Option<String>,
@@ -23,7 +25,7 @@ pub struct RuntimePolicy {
     pub spawn_root_max_duration_ms: Option<u64>,
     pub spawn_root_max_tool_calls: Option<u64>,
     pub db_allow_dynamic_open: bool,
-    pub db_path_scope: String,
+    pub db_path_scope: StorePathScope,
     pub db_max_open_handles: usize,
     pub db_idle_close_seconds: u64,
     pub queue_max_depth: usize,
@@ -43,7 +45,7 @@ impl Default for RuntimePolicy {
             spawn_root_max_duration_ms: None,
             spawn_root_max_tool_calls: None,
             db_allow_dynamic_open: true,
-            db_path_scope: "workspace_only".to_string(),
+            db_path_scope: StorePathScope::WorkspaceOnly,
             db_max_open_handles: 128,
             db_idle_close_seconds: 300,
             queue_max_depth: 1024,
@@ -91,7 +93,7 @@ impl RuntimePolicy {
         );
         map.insert(
             "db.path_scope".to_string(),
-            Value::String(self.db_path_scope.clone()),
+            Value::String(self.db_path_scope.as_str().to_string()),
         );
         map.insert(
             "db.max_open_handles".to_string(),
@@ -167,7 +169,11 @@ impl RuntimePolicy {
                 "db.allow_dynamic_open",
                 defaults.db_allow_dynamic_open,
             ),
-            db_path_scope: string_val(map, "db.path_scope", &defaults.db_path_scope),
+            db_path_scope: StorePathScope::from_policy(
+                map.get("db.path_scope")
+                    .and_then(Value::as_str)
+                    .unwrap_or(defaults.db_path_scope.as_str()),
+            ),
             db_max_open_handles: usize_val(
                 map,
                 "db.max_open_handles",
@@ -436,6 +442,24 @@ mod tests {
         assert_eq!(
             mgr.get("spawn.enabled", &base_scope).await.unwrap(),
             Some(Value::Bool(false))
+        );
+
+        let typed = mgr.typed_snapshot(&base_scope).await;
+        assert_eq!(typed.db_path_scope, StorePathScope::WorkspaceOnly);
+        assert!(typed.tool_exec_enabled);
+        mgr.set(
+            "db.path_scope",
+            Value::String("allow_any".to_string()),
+            &PolicyScope {
+                scope: Some("global".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            mgr.typed_snapshot(&base_scope).await.db_path_scope,
+            StorePathScope::AllowAny
         );
 
         let agent_scope = PolicyScope {

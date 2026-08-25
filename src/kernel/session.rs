@@ -167,35 +167,32 @@ pub struct SessionState {
     pub store_selector: StoreSelector,
     pub default_store_selector: Option<StoreSelector>,
     pub inference: InferenceOverrideConfig,
-    pub context_checkpoint: Option<ContextCompactionCheckpoint>,
-    pub history: ResidentHistory,
-    pub execution: ExecutionContext,
-    pub active_task: ActiveTaskState,
-    pub selected_branch_head_cursor: Option<BranchHeadCursor>,
+    pub(crate) context_checkpoint: Option<ContextCompactionCheckpoint>,
+    pub(crate) history: ResidentHistory,
+    pub(crate) execution: ExecutionContext,
+    pub(crate) active_task: ActiveTaskState,
+    pub(crate) selected_branch_head_cursor: Option<BranchHeadCursor>,
     pub(crate) harness_engine: Option<SessionHarnessEngine>,
     pub(crate) harness_generation: u64,
-    pub queue: Arc<Mutex<VecDeque<QueuedTask>>>,
+    pub(crate) queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub completed_task_results: CompletedLocalTaskResultsHandle,
-    pub plans: HashMap<String, PlanProgress>,
-    pub turn_index: u32,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    // Event channel for this session
-    pub event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
+    pub(crate) plans: HashMap<String, PlanProgress>,
+    pub(crate) turn_index: u32,
+    pub(crate) total_input_tokens: u64,
+    pub(crate) total_output_tokens: u64,
+    pub(crate) event_tx: broadcast::Sender<(Option<i64>, KernelEvent)>,
     /// Reliable durability lane (separate from observer fanout).
-    pub durability_tx: Option<mpsc::Sender<PersistedKernelRecord>>,
+    pub(crate) durability_tx: Option<mpsc::Sender<PersistedKernelRecord>>,
     /// Serializes branch-scoped persistence so turn creation stays consistent.
-    pub persistence_lock: Arc<Mutex<()>>,
-    pub event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
-    /// Token to cooperatively cancel the currently running task/turn.
-    pub cancel_token: CancellationToken,
-    // Internal counters for task scheduling
-    pub next_task_id: u32,
-    pub next_plan_id: u32,
-    pub status: SessionStatus,
-    pub stop_requested: bool,
+    pub(crate) persistence_lock: Arc<Mutex<()>>,
+    pub(crate) event_task: Option<Arc<Mutex<Option<JoinHandle<()>>>>>,
+    pub(crate) cancel_token: CancellationToken,
+    pub(crate) next_task_id: u32,
+    pub(crate) next_plan_id: u32,
+    pub(crate) status: SessionStatus,
+    pub(crate) stop_requested: bool,
     pub restored_from_persistence: bool,
-    pub tool_rate_limit: ToolRateLimitState,
+    pub(crate) tool_rate_limit: ToolRateLimitState,
 }
 
 impl Default for SessionState {
@@ -299,6 +296,69 @@ impl SessionState {
             task_total_tokens: task_input_tokens + task_output_tokens,
             task_turn_count,
         }
+    }
+
+    pub fn history(&self) -> &ResidentHistory {
+        &self.history
+    }
+
+    pub fn history_mut(&mut self) -> &mut ResidentHistory {
+        &mut self.history
+    }
+
+    pub fn context_checkpoint(&self) -> Option<&ContextCompactionCheckpoint> {
+        self.context_checkpoint.as_ref()
+    }
+
+    pub fn execution(&self) -> &ExecutionContext {
+        &self.execution
+    }
+
+    pub fn status(&self) -> SessionStatus {
+        self.status
+    }
+
+    pub fn stop_requested(&self) -> bool {
+        self.stop_requested
+    }
+
+    pub fn turn_index(&self) -> u32 {
+        self.turn_index
+    }
+
+    pub fn total_input_tokens(&self) -> u64 {
+        self.total_input_tokens
+    }
+
+    pub fn total_output_tokens(&self) -> u64 {
+        self.total_output_tokens
+    }
+
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<(Option<i64>, KernelEvent)> {
+        self.event_tx.subscribe()
+    }
+
+    pub fn has_durability_lane(&self) -> bool {
+        self.durability_tx.is_some()
+    }
+
+    pub fn persistence_lock(&self) -> &Arc<Mutex<()>> {
+        &self.persistence_lock
+    }
+
+    pub async fn event_task_slot_is_empty(&self) -> bool {
+        match &self.event_task {
+            Some(slot) => slot.lock().await.is_none(),
+            None => true,
+        }
+    }
+
+    pub async fn queued_is_empty(&self) -> bool {
+        self.queue.lock().await.is_empty()
     }
 
     pub fn history_is_pruned(&self) -> bool {

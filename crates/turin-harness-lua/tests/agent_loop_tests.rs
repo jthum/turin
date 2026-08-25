@@ -222,7 +222,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
     let mut session = kernel.create_session().await.unwrap();
 
     // Capture events from the session broadcast
-    let mut rx = session.event_tx.subscribe();
+    let mut rx = session.subscribe_events();
 
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
@@ -633,7 +633,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
         .run(&mut session, Some("trigger".to_string()))
         .await?;
 
-    let saw_recovered = session.history.iter().any(|msg| {
+    let saw_recovered = session.history().iter().any(|msg| {
         msg.content.iter().any(|content| {
             matches!(
                 content,
@@ -930,13 +930,13 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
 
     session.set_selected_branch_head_cursor(Some(first_turn_id), Some(0));
 
-    {
-        let mut queue = session.queue.lock().await;
-        queue.push_back(
+    kernel
+        .enqueue_task(
+            &mut session,
             QueuedTask::ad_hoc("trigger")
                 .with_conflict_policy(Some(ExecutionConflictPolicy::Detached)),
-        );
-    }
+        )
+        .await?;
 
     kernel.run(&mut session, None).await?;
 
@@ -964,7 +964,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         )
         .await?;
     assert_eq!(messages.len(), 1);
-    assert!(session.history.iter().any(|msg| {
+    assert!(session.history().iter().any(|msg| {
         msg.content.iter().any(|content| {
             matches!(
                 content,
@@ -1098,11 +1098,13 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
     session.set_selected_branch_head_cursor(Some(first_turn_id), Some(0));
 
     {
-        let mut queue = session.queue.lock().await;
-        queue.push_back(
+        kernel
+        .enqueue_task(
+            &mut session,
             QueuedTask::ad_hoc("trigger")
                 .with_conflict_policy(Some(ExecutionConflictPolicy::ForkSibling)),
-        );
+        )
+        .await?;
     }
 
     kernel.run(&mut session, None).await?;
@@ -1316,7 +1318,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         .await?;
 
     assert_eq!(
-        session.turn_index, 2,
+        session.turn_index(), 2,
         "Cold-after-request retention must not cut off the follow-up model turn after tools run"
     );
 

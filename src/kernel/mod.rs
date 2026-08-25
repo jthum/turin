@@ -292,6 +292,15 @@ impl Kernel {
         self.host.queue_prompt(session, prompt).await
     }
 
+    /// Enqueue a prepared task, assigning an id and honoring `queue.max_depth`.
+    pub async fn enqueue_task(
+        &self,
+        session: &mut session::SessionState,
+        task: session::QueuedTask,
+    ) -> Result<()> {
+        self.host.enqueue_session_task(session, task).await
+    }
+
     /// End a directly managed session and flush its required durability records.
     pub async fn end_session(&self, session: &mut session::SessionState) -> Result<()> {
         self.host.end_session(session).await

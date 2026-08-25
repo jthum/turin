@@ -80,3 +80,15 @@ fn delegated_tool_selection_cannot_expand_parent_scope() {
 
     assert!(err.to_string().contains("not granted"));
 }
+
+#[test]
+fn runtime_policy_defaults_use_typed_path_scope_and_exec_gate() {
+    use turin::kernel::policy::RuntimePolicy;
+    use turin::persistence::manager::StorePathScope;
+
+    let policy = RuntimePolicy::default();
+    assert_eq!(policy.db_path_scope, StorePathScope::WorkspaceOnly);
+    assert!(policy.tool_exec_enabled);
+    assert_eq!(policy.queue_max_depth, 1024);
+    assert_eq!(policy.to_map()["db.path_scope"], serde_json::json!("workspace_only"));
+}

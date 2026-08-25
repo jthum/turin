@@ -512,9 +512,9 @@ async fn test_session_create_starts_inactive() -> Result<()> {
     let kernel = make_kernel(tmp.path()).await?;
 
     let session = kernel.create_session().await.unwrap();
-    assert_eq!(session.status, SessionStatus::Inactive);
-    assert_eq!(session.turn_index, 0);
-    assert!(session.history.is_empty());
+    assert_eq!(session.status(), SessionStatus::Inactive);
+    assert_eq!(session.turn_index(), 0);
+    assert!(session.history().is_empty());
     assert!(
         !session.identity.session_id().is_empty(),
         "Session ID should be generated"
@@ -529,10 +529,10 @@ async fn test_session_start_activates() -> Result<()> {
     let kernel = make_kernel(tmp.path()).await?;
 
     let mut session = kernel.create_session().await.unwrap();
-    assert_eq!(session.status, SessionStatus::Inactive);
+    assert_eq!(session.status(), SessionStatus::Inactive);
 
     kernel.start_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Active);
+    assert_eq!(session.status(), SessionStatus::Active);
 
     Ok(())
 }
@@ -544,7 +544,7 @@ async fn test_session_end_is_terminal() -> Result<()> {
 
     let mut session = kernel.create_session().await.unwrap();
     kernel.start_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Active);
+    assert_eq!(session.status(), SessionStatus::Active);
     let policy_scope = PolicyScope {
         scope: Some("session".to_string()),
         session_id: Some(session.identity.session_id().to_string()),
@@ -556,7 +556,7 @@ async fn test_session_end_is_terminal() -> Result<()> {
         .await?;
 
     kernel.end_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Ended);
+    assert_eq!(session.status(), SessionStatus::Ended);
     assert_eq!(
         kernel
             .policy_manager()
@@ -579,7 +579,7 @@ async fn test_session_end_idempotent() -> Result<()> {
     // End twice — should not panic or error
     kernel.end_session(&mut session).await?;
     kernel.end_session(&mut session).await?;
-    assert_eq!(session.status, SessionStatus::Ended);
+    assert_eq!(session.status(), SessionStatus::Ended);
 
     Ok(())
 }
@@ -592,18 +592,10 @@ async fn test_never_started_session_can_be_ended_cleanly() -> Result<()> {
     let mut session = kernel.create_session().await.unwrap();
     kernel.end_session(&mut session).await?;
 
-    assert_eq!(session.status, SessionStatus::Ended);
-    assert!(session.cancel_token.is_cancelled());
-    assert!(session.durability_tx.is_none());
-    assert!(
-        session
-            .event_task
-            .as_ref()
-            .expect("event task slot")
-            .lock()
-            .await
-            .is_none()
-    );
+    assert_eq!(session.status(), SessionStatus::Ended);
+    assert!(session.cancel_token().is_cancelled());
+    assert!(!session.has_durability_lane());
+    assert!(session.event_task_slot_is_empty().await);
 
     Ok(())
 }
@@ -653,11 +645,11 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
     assert!(
-        session.turn_index > 0,
+        session.turn_index() > 0,
         "Turn index should increment after run"
     );
     assert!(
-        !session.history.is_empty(),
+        !session.history().is_empty(),
         "History should contain messages"
     );
 
@@ -677,7 +669,7 @@ async fn test_cancelling_stalled_inference_does_not_append_assistant_output() ->
         ProviderClient::new("mock", Arc::new(StalledStreamProvider)),
     );
     let mut session = kernel.create_session().await.unwrap();
-    let cancel_token = session.cancel_token.clone();
+    let cancel_token = session.cancel_token().clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         cancel_token.cancel();
@@ -686,9 +678,9 @@ async fn test_cancelling_stalled_inference_does_not_append_assistant_output() ->
     kernel
         .run(&mut session, Some("Wait for cancellation".to_string()))
         .await?;
-    assert_eq!(session.history.len(), 1);
+    assert_eq!(session.history().len(), 1);
     assert_eq!(
-        session.history.messages()[0].role,
+        session.history().messages()[0].role,
         turin_core::inference::provider::InferenceRole::User
     );
     Ok(())
@@ -708,7 +700,7 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
         ProviderClient::new("mock", Arc::new(ToolCallProvider)),
     );
     let mut session = kernel.create_session().await.unwrap();
-    let cancel_token = session.cancel_token.clone();
+    let cancel_token = session.cancel_token().clone();
     let started_path = tmp.path().join("tool-started");
     tokio::spawn(async move {
         for _ in 0..100 {
@@ -723,9 +715,9 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
     kernel
         .run(&mut session, Some("Run the stalled tool".to_string()))
         .await?;
-    assert_eq!(session.history.len(), 2);
+    assert_eq!(session.history().len(), 2);
     assert!(
-        session.history.messages().iter().all(|message| {
+        session.history().messages().iter().all(|message| {
             message.role != turin_core::inference::provider::InferenceRole::Tool
         })
     );
@@ -759,7 +751,7 @@ async fn test_run_stops_when_user_message_persistence_fails() -> Result<()> {
             .to_string()
             .contains("Failed to persist user turn message")
     );
-    assert!(session.history.is_empty());
+    assert!(session.history().is_empty());
 
     let messages = store
         .get_messages(
@@ -799,7 +791,7 @@ async fn test_run_stops_when_assistant_message_persistence_fails() -> Result<()>
             .to_string()
             .contains("Failed to persist assistant turn message")
     );
-    assert_eq!(session.history.len(), 1);
+    assert_eq!(session.history().len(), 1);
 
     let messages = store
         .get_messages(
@@ -830,21 +822,21 @@ async fn test_run_reports_background_event_persistence_failure() -> Result<()> {
     )
     .await?;
 
-    let original_execution = session.execution.clone();
+    let original_execution = session.execution().clone();
     let mut task = QueuedTask::ad_hoc("Persist transcript and events");
     task.task_id = "t_durability_failure".to_string();
     task.execution = Some(TaskExecutionOverrides {
         visibility: Some(ExecutionVisibility::Hidden),
         ..TaskExecutionOverrides::default()
     });
-    session.queue.lock().await.push_back(task);
+    kernel.enqueue_task(&mut session, task).await?;
 
     let error = kernel
         .run(&mut session, None)
         .await
         .expect_err("task barrier should report background event write failure");
     assert!(error.to_string().contains("Event durability write failed"));
-    assert_eq!(session.execution, original_execution);
+    assert_eq!(session.execution(), &original_execution);
 
     let messages = store
         .get_messages(
@@ -876,8 +868,8 @@ async fn test_run_populates_token_counts() -> Result<()> {
 
     // Mock provider may report 0 tokens — verify the fields are initialized
     // and accessible without panic (u64 is always >= 0, so we just read them).
-    let _input = session.total_input_tokens;
-    let _output = session.total_output_tokens;
+    let _input = session.total_input_tokens();
+    let _output = session.total_output_tokens();
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -1002,11 +994,11 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
     assert!(switched, "expected local branch selection to succeed");
     assert_eq!(session.selected_branch_head_id(), Some(alt_head.id));
     assert_eq!(
-        session.execution.write_policy,
+        session.execution().write_policy,
         ExecutionWritePolicy::AdvanceBranchHead
     );
 
-    let has_alt_message = session.history.iter().any(|message| {
+    let has_alt_message = session.history().iter().any(|message| {
         message.content.iter().any(|content| {
             matches!(
                 content,
@@ -1066,7 +1058,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
         summary: "MAIN PATH SUMMARY".to_string(),
         covered_through_turn_id: main_head,
         covered_through_turn_index: 1,
-        generated_at_turn_index: session.turn_index,
+        generated_at_turn_index: session.turn_index(),
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
@@ -1098,7 +1090,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
             .await?
     );
     assert!(
-        session.context_checkpoint.is_none(),
+        session.context_checkpoint().is_none(),
         "a sibling-path checkpoint must not compact the selected branch"
     );
 
@@ -1126,7 +1118,7 @@ async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid
         summary: "VALID SUMMARY".to_string(),
         covered_through_turn_id: head_turn_id,
         covered_through_turn_index: 0,
-        generated_at_turn_index: session.turn_index,
+        generated_at_turn_index: session.turn_index(),
         provider_name: "mock".to_string(),
         model: "mock-model".to_string(),
     };
@@ -1152,21 +1144,21 @@ async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid
         )
         .await?;
 
-    let original_history = format!("{:?}", session.history);
-    let original_has_prior_history = session.history.has_prior_history();
+    let original_history = format!("{:?}", session.history());
+    let original_has_prior_history = session.history().has_prior_history();
     let original_target = session.context_target().clone();
-    let original_turn_index = session.turn_index;
+    let original_turn_index = session.turn_index();
     kernel
         .refresh_session_from_persistence(&mut session)
         .await?;
-    assert_eq!(format!("{:?}", session.history), original_history);
+    assert_eq!(format!("{:?}", session.history()), original_history);
     assert_eq!(
-        session.history.has_prior_history(),
+        session.history().has_prior_history(),
         original_has_prior_history
     );
     assert_eq!(session.context_target(), &original_target);
-    assert_eq!(session.turn_index, original_turn_index);
-    assert_eq!(session.context_checkpoint.as_ref(), Some(&checkpoint));
+    assert_eq!(session.turn_index(), original_turn_index);
+    assert_eq!(session.context_checkpoint(), Some(&checkpoint));
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -1206,13 +1198,13 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
     assert_eq!(session.selected_turn_id(), Some(first_turn_id));
     assert_eq!(session.selected_branch_head_id(), None);
     assert_eq!(session.execution_id(), execution_id);
-    assert_eq!(session.turn_index, 1);
+    assert_eq!(session.turn_index(), 1);
     assert_eq!(
-        session.execution.write_policy,
+        session.execution().write_policy,
         ExecutionWritePolicy::Detached
     );
 
-    let seen_turn_zero = session.history.iter().any(|message| {
+    let seen_turn_zero = session.history().iter().any(|message| {
         message.content.iter().any(|content| {
             matches!(
                 content,
@@ -1221,7 +1213,7 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
             )
         })
     });
-    let seen_turn_one = session.history.iter().any(|message| {
+    let seen_turn_one = session.history().iter().any(|message| {
         message.content.iter().any(|content| {
             matches!(
                 content,
@@ -1274,7 +1266,7 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
     assert_eq!(session.execution_id(), execution_id);
     assert_eq!(session.selected_branch_head_id(), None);
     assert_eq!(
-        session.execution.write_policy,
+        session.execution().write_policy,
         ExecutionWritePolicy::Detached
     );
     let turin_core::kernel::session::ExecutionContextTarget::ExternalReference { reference } =
@@ -1286,7 +1278,7 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
     assert_eq!(parsed_reference.public_id, source_reference);
     assert!(
         session
-            .history
+            .history()
             .iter()
             .any(|message| message.content.iter().any(|content| {
                 matches!(
@@ -1382,10 +1374,7 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
             durability: None,
             write_policy: None,
         }));
-    {
-        let mut queue = session.queue.lock().await;
-        queue.push_back(queued_task);
-    }
+    kernel.enqueue_task(&mut session, queued_task).await?;
 
     kernel.run(&mut session, None).await?;
 
@@ -1410,10 +1399,10 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
     assert_eq!(session.execution_id(), original_execution_id);
     assert_eq!(session.context_target(), &original_target);
     assert_eq!(session.selected_branch_head_id(), original_branch_head_id);
-    assert_eq!(session.turn_index, 2);
+    assert_eq!(session.turn_index(), 2);
     assert!(
         session
-            .history
+            .history()
             .iter()
             .any(|message| message.content.iter().any(|content| {
                 matches!(
@@ -1426,7 +1415,7 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
     );
     assert!(
         !session
-            .history
+            .history()
             .iter()
             .any(|message| message.content.iter().any(|content| {
                 matches!(
@@ -1454,8 +1443,8 @@ async fn test_resumed_live_sessions_share_persistence_lock() -> Result<()> {
         .await?;
 
     assert!(std::sync::Arc::ptr_eq(
-        &session.persistence_lock,
-        &resumed.persistence_lock
+        session.persistence_lock(),
+        resumed.persistence_lock()
     ));
 
     Ok(())
@@ -1496,8 +1485,8 @@ async fn test_resume_advances_past_allocated_turn_without_messages() -> Result<(
     let resumed = kernel
         .resume_session_for_agent("default", &session_id)
         .await?;
-    assert!(resumed.history.is_empty());
-    assert_eq!(resumed.turn_index, 1);
+    assert!(resumed.history().is_empty());
+    assert_eq!(resumed.turn_index(), 1);
     Ok(())
 }
 
@@ -1522,9 +1511,9 @@ async fn test_resume_preserves_user_only_partial_turn_without_replay() -> Result
     let mut resumed = kernel
         .resume_session_for_agent("default", &session_id)
         .await?;
-    assert_eq!(resumed.turn_index, 1);
-    assert_eq!(resumed.history.len(), 1);
-    assert!(resumed.history.iter().any(|message| {
+    assert_eq!(resumed.turn_index(), 1);
+    assert_eq!(resumed.history().len(), 1);
+    assert!(resumed.history().iter().any(|message| {
         message.content.iter().any(|content| {
             matches!(
                 content,
@@ -1537,7 +1526,7 @@ async fn test_resume_preserves_user_only_partial_turn_without_replay() -> Result
     kernel
         .run(&mut resumed, Some("Continue after crash".to_string()))
         .await?;
-    assert_eq!(resumed.turn_index, 2);
+    assert_eq!(resumed.turn_index(), 2);
     let messages = store
         .get_messages(internal_id, &SessionReadTarget::ActiveBranch)
         .await?;
@@ -1800,7 +1789,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
 
     let mut session = kernel.create_session().await.unwrap();
     session
-        .history
+        .history_mut()
         .push(turin_core::inference::provider::InferenceMessage {
             role: turin_core::inference::provider::InferenceRole::User,
             content: vec![turin_core::inference::provider::InferenceContent::Text {
@@ -1809,7 +1798,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
             tool_call_id: None,
         });
     session
-        .history
+        .history_mut()
         .push(turin_core::inference::provider::InferenceMessage {
             role: turin_core::inference::provider::InferenceRole::Tool,
             content: vec![
@@ -1822,7 +1811,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
             tool_call_id: None,
         });
     session
-        .history
+        .history_mut()
         .push(turin_core::inference::provider::InferenceMessage {
             role: turin_core::inference::provider::InferenceRole::Assistant,
             content: vec![turin_core::inference::provider::InferenceContent::Text {
@@ -1842,7 +1831,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
     let rendered = format!("{seen:?}");
     assert!(
         rendered.contains("[tool result omitted to fit context window]")
-            || seen.len() < session.history.len(),
+            || seen.len() < session.history().len(),
         "expected preflight compaction to truncate tool results or drop old messages"
     );
     assert!(
@@ -1900,13 +1889,13 @@ async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_contex
     let mut resumed = kernel
         .resume_session_for_agent("default", &session_id)
         .await?;
-    assert!(resumed.history.has_prior_history());
+    assert!(resumed.history().has_prior_history());
     assert!(
-        resumed.history.len() <= 4,
+        resumed.history().len() <= 4,
         "resume should materialize only the configured resident history window"
     );
     assert!(
-        !format!("{:?}", resumed.history.messages()).contains("Persisted context 0"),
+        !format!("{:?}", resumed.history().messages()).contains("Persisted context 0"),
         "the oldest persisted turn should not remain resident"
     );
 
@@ -1971,7 +1960,7 @@ async fn test_complete_current_resident_history_bypasses_context_rematerializati
         .run(&mut session, Some("Persisted original".to_string()))
         .await?;
     let resident_text = session
-        .history
+        .history_mut()
         .iter_mut()
         .flat_map(|message| message.content.iter_mut())
         .find_map(|content| match content {
@@ -2057,8 +2046,8 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         .await?;
 
     let checkpoint = session
-        .context_checkpoint
-        .clone()
+        .context_checkpoint()
+        .cloned()
         .expect("expected context checkpoint to be generated");
     assert_eq!(checkpoint.summary, "CHECKPOINT SUMMARY");
     assert!(
@@ -2103,7 +2092,8 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         .resume_session_for_agent("default", &session_id)
         .await?;
     let resumed_checkpoint = resumed
-        .context_checkpoint
+        .context_checkpoint()
+        .cloned()
         .expect("expected context checkpoint to restore from persistence");
     assert_eq!(resumed_checkpoint.summary, "CHECKPOINT SUMMARY");
 
@@ -2167,7 +2157,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
             local_path: Some(source_file.display().to_string()),
         },
     ]);
-    session.queue.lock().await.push_back(task);
+    kernel.enqueue_task(&mut session, task).await?;
 
     kernel.run(&mut session, None).await?;
 
@@ -2226,7 +2216,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
         .resume_session_for_agent("default", &session_id)
         .await?;
     let resumed_user_message = resumed
-        .history
+        .history()
         .iter()
         .find(|message| message.role == turin_core::inference::provider::InferenceRole::User)
         .expect("resumed user message");
@@ -2237,7 +2227,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
             name: Some(name),
             local_path: Some(path),
             ..
-        } if name == "diagram.png" && path == &captured_image_path
+        } if name == "diagram.png" && *path == captured_image_path
     ));
     assert!(matches!(
         &resumed_user_message.content[2],
@@ -2245,7 +2235,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
             name: Some(name),
             local_path: Some(path),
             ..
-        } if name == "spec.pdf" && path == &captured_file_path
+        } if name == "spec.pdf" && *path == captured_file_path
     ));
 
     Ok(())
@@ -2333,7 +2323,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
         .await?;
 
     assert!(
-        session.history.iter().any(|message| {
+        session.history().iter().any(|message| {
             message.content.iter().any(|content| {
                 matches!(
                     content,
@@ -2345,7 +2335,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
         "initial run should record the assistant tool call in memory"
     );
     assert!(
-        session.history.iter().any(|message| {
+        session.history().iter().any(|message| {
             message.content.iter().any(|content| {
                 matches!(
                     content,
@@ -2364,7 +2354,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
         .await?;
     assert!(resumed.restored_from_persistence);
     assert!(
-        resumed.history.iter().any(|message| {
+        resumed.history().iter().any(|message| {
             message.content.iter().any(|content| {
                 matches!(
                     content,
@@ -2376,7 +2366,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
         "cold resume should restore the assistant tool call"
     );
     assert!(
-        resumed.history.iter().any(|message| {
+        resumed.history().iter().any(|message| {
             message.content.iter().any(|content| {
                 matches!(
                     content,
@@ -2456,7 +2446,7 @@ async fn test_multimodal_task_content_respects_relative_layout_root() -> Result<
         local_path: Some(source_image.display().to_string()),
         detail: None,
     }]);
-    session.queue.lock().await.push_back(task);
+    kernel.enqueue_task(&mut session, task).await?;
 
     kernel.run(&mut session, None).await?;
 
@@ -2530,7 +2520,7 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
     let mut session = kernel.create_session().await.unwrap();
     for i in 0..12 {
         session
-            .history
+            .history_mut()
             .push(turin_core::inference::provider::InferenceMessage {
                 role: turin_core::inference::provider::InferenceRole::User,
                 content: vec![turin_core::inference::provider::InferenceContent::Text {
@@ -2548,7 +2538,7 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
         .await?;
 
     assert!(
-        session.context_checkpoint.is_none(),
+        session.context_checkpoint().is_none(),
         "trim_only should not create semantic checkpoints"
     );
     assert_eq!(
@@ -2667,14 +2657,14 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
                 Some(format!("Compaction-route history {i}: {}", "x".repeat(240))),
             )
             .await?;
-        if session.context_checkpoint.is_some() {
+        if session.context_checkpoint().is_some() {
             break;
         }
     }
 
     let checkpoint = session
-        .context_checkpoint
-        .clone()
+        .context_checkpoint()
+        .cloned()
         .expect("expected context checkpoint");
     assert_eq!(checkpoint.provider_name, "summary");
     assert_eq!(checkpoint.model, "summary-model");
@@ -2739,7 +2729,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     kernel
         .run(&mut session2, Some("After reload".to_string()))
         .await?;
-    assert!(session2.turn_index > 0);
+    assert!(session2.turn_index() > 0);
 
     kernel.end_session(&mut session2).await?;
     Ok(())
@@ -3705,7 +3695,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
         .run(&mut session, Some("No persistence".to_string()))
         .await?;
 
-    assert!(session.turn_index > 0);
+    assert!(session.turn_index() > 0);
     kernel.end_session(&mut session).await?;
     Ok(())
 }
@@ -3719,11 +3709,12 @@ async fn test_multitask_workflow_execution() -> Result<()> {
 
     // Manually push 2 tasks
     // (We use a scope to drop the lock)
-    {
-        let mut q = session.queue.lock().await;
-        q.push_back(QueuedTask::ad_hoc("Task 1".to_string()));
-        q.push_back(QueuedTask::ad_hoc("Task 2".to_string()));
-    }
+    kernel
+        .enqueue_task(&mut session, QueuedTask::ad_hoc("Task 1".to_string()))
+        .await?;
+    kernel
+        .enqueue_task(&mut session, QueuedTask::ad_hoc("Task 2".to_string()))
+        .await?;
 
     // Run
     // Expected: Both tasks run.
@@ -3733,10 +3724,10 @@ async fn test_multitask_workflow_execution() -> Result<()> {
     // Each task adds: User (queue prompt) + Assistant (mock response) = 2 messages.
     // Total should be 4 messages.
     assert_eq!(
-        session.history.len(),
+        session.history().len(),
         4,
         "Expected 4 messages (2 tasks), got {}",
-        session.history.len()
+        session.history().len()
     );
 
     Ok(())
@@ -3828,7 +3819,7 @@ async fn test_token_usage_reject_can_enforce_task() -> Result<()> {
             "task should be rejected when hook.token_usage.reject_mode=enforce_task"
         );
     }
-    assert_eq!(session.turn_index, 1, "task should stop after first turn");
+    assert_eq!(session.turn_index(), 1, "task should stop after first turn");
 
     kernel.end_session(&mut session).await?;
     Ok(())
@@ -3863,13 +3854,12 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
 
     let mut session = kernel.create_session().await.unwrap();
     {
-        let mut q = session.queue.lock().await;
         let mut t1 = QueuedTask::ad_hoc("Task 1");
         t1.task_id = "t_1".to_string();
         let mut t2 = QueuedTask::ad_hoc("Task 2");
         t2.task_id = "t_2".to_string();
-        q.push_back(t1);
-        q.push_back(t2);
+        kernel.enqueue_task(&mut session, t1).await?;
+        kernel.enqueue_task(&mut session, t2).await?;
     }
 
     kernel.run(&mut session, None).await?;
@@ -3893,13 +3883,16 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
         );
     }
 
-    assert!(session.stop_requested, "session stop should be requested");
     assert!(
-        session.queue.lock().await.is_empty(),
+        session.stop_requested(),
+        "session stop should be requested"
+    );
+    assert!(
+        session.queued_is_empty().await,
         "queue should be cleared"
     );
     assert_eq!(
-        session.turn_index, 1,
+        session.turn_index(), 1,
         "session should stop after first turn"
     );
 

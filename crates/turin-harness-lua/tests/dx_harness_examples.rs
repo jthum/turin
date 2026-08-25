@@ -62,7 +62,7 @@ async fn test_dx_fixture_session_memory_assistant() -> Result<()> {
     kernel
         .run(&mut session, Some("Recall memory".to_string()))
         .await?;
-    assert!(session.turn_index > 0);
+    assert!(session.turn_index() > 0);
     kernel.end_session(&mut session).await?;
     Ok(())
 }

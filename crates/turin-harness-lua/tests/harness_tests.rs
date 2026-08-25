@@ -373,7 +373,7 @@ async fn test_harness_rejection() -> Result<()> {
         .await?;
 
     // Verify turn index incremented
-    assert!(session.turn_index > 0);
+    assert!(session.turn_index() > 0);
 
     // Verify that the assistant history contains the rejection message
     // Turn 0: User message
@@ -391,7 +391,7 @@ async fn test_harness_rejection() -> Result<()> {
 
     // Let's check history for the rejection string
     let mut found_rejection = false;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("Security policy: shell_exec is forbidden")
@@ -518,7 +518,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
     );
 
     let mut found_virtual_result = false;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("hello from virtual tool")
@@ -780,7 +780,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
         .await?;
 
     let mut aggregated_result = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("Call 1: read_file [ok]")
@@ -902,7 +902,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
         .await?;
 
     let mut shaped_result = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("Combined: first file | second file")
@@ -1030,7 +1030,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
         .await?;
 
     let mut wrapped_result = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("wrapped: hello from nested virtual tool")
@@ -1161,7 +1161,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
         .await?;
 
     let mut wrapped_result = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("wrapped later: hello from forward referenced virtual tool")
@@ -1283,7 +1283,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
         .await?;
 
     let mut recursion_error = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("virtual tool recursion detected")
@@ -1414,7 +1414,7 @@ tool.declare("tool_9", {
         .await?;
 
     let mut depth_error = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("virtual tool nesting depth exceeded")
@@ -1542,7 +1542,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
         .await?;
 
     let mut resolved_result = None;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("resolved through callback plan")
@@ -1651,7 +1651,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         .await?;
 
     let mut found_governance_denial = false;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::ToolResult { content, .. } = content
                 && content.contains("Governance denial")
@@ -2453,7 +2453,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
 
     let mut saw_secondary = false;
     let mut saw_primary = false;
-    for msg in &session.history {
+    for msg in session.history() {
         for content in &msg.content {
             if let InferenceContent::Text { text } = content {
                 if text.contains("SECONDARY") {

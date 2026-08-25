@@ -10,14 +10,14 @@ pub(crate) fn print_session_summary(session: &SessionState) {
     println!(
         "  {}  {} ({} in, {} out)",
         display::bold("Total Tokens:", ansi),
-        session.total_input_tokens + session.total_output_tokens,
-        session.total_input_tokens,
-        session.total_output_tokens
+        session.total_input_tokens() + session.total_output_tokens(),
+        session.total_input_tokens(),
+        session.total_output_tokens()
     );
     println!(
         "  {}         {}",
         display::bold("Turns:", ansi),
-        session.turn_index
+        session.turn_index()
     );
 }
 
