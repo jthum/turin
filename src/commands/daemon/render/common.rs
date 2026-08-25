@@ -11,7 +11,15 @@ pub(in crate::commands::daemon) fn print_response(
 ) -> Result<()> {
     if json_output {
         println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
+        if response.ok {
+            return Ok(());
+        }
+        let error = response.error.unwrap_or(ErrorEnvelope {
+            code: ErrorCode::InternalError,
+            message: "Unknown daemon error".to_string(),
+            details: None,
+        });
+        anyhow::bail!("{}: {}", error.code, error.message);
     }
 
     if response.ok {

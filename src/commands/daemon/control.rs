@@ -197,8 +197,22 @@ pub async fn run_events(config_path: &std::path::Path, json_output: bool) -> Res
     Ok(())
 }
 
-pub async fn run_stop(config_path: &std::path::Path, json_output: bool) -> Result<()> {
+pub async fn run_stop(
+    config_path: &std::path::Path,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+    json_output: bool,
+) -> Result<()> {
     let response = send_request(config_path, "daemon.stop", json!({})).await?;
+    if !response.ok {
+        return print_response(response, json_output);
+    }
+    wait_until_daemon_stopped(
+        config_path,
+        Duration::from_millis(timeout_ms),
+        Duration::from_millis(poll_interval_ms),
+    )
+    .await?;
     print_response(response, json_output)
 }
 

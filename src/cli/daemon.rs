@@ -52,7 +52,7 @@ pub(crate) enum DaemonCommands {
     /// Stop the daemon
     Stop {
         #[command(flatten)]
-        args: DaemonOutputArgs,
+        args: DaemonStopArgs,
     },
     /// Tail daemon runtime events
     Events {
@@ -203,7 +203,11 @@ pub(crate) enum DaemonTaskCommands {
     /// Submit a task to a daemon-managed agent
     Submit {
         /// Agent ID
-        #[arg(required_unless_present = "session_id")]
+        #[arg(
+            long = "agent",
+            required_unless_present = "session_id",
+            conflicts_with = "session_id"
+        )]
         agent_id: Option<String>,
         /// Existing live session ID to submit into
         #[arg(long)]
@@ -486,6 +490,21 @@ pub(crate) struct DaemonReadyArgs {
     #[arg(long, default_value_t = 5000)]
     pub(crate) timeout_ms: u64,
     /// Poll interval used while waiting for readiness
+    #[arg(long, default_value_t = 100)]
+    pub(crate) poll_interval_ms: u64,
+    /// Output JSON
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub(crate) struct DaemonStopArgs {
+    #[command(flatten)]
+    pub(crate) config: DaemonConfigArgs,
+    /// Maximum time to wait for daemon shutdown to complete
+    #[arg(long, default_value_t = 10000)]
+    pub(crate) timeout_ms: u64,
+    /// Poll interval used while waiting for the endpoint to close
     #[arg(long, default_value_t = 100)]
     pub(crate) poll_interval_ms: u64,
     /// Output JSON

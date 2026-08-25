@@ -241,4 +241,48 @@ mod tests {
                 if config.as_path() == std::path::Path::new("project.toml") && json
         ));
     }
+
+    #[test]
+    fn parse_daemon_task_and_bounded_stop_commands() {
+        let submit = Cli::try_parse_from([
+            "turin",
+            "daemon",
+            "task",
+            "submit",
+            "--agent",
+            "default",
+            "Review this",
+        ])
+        .expect("agent task submission should parse");
+        assert!(matches!(
+            submit.command,
+            Commands::Daemon {
+                command: DaemonCommands::Task {
+                    command: DaemonTaskCommands::Submit {
+                        agent_id: Some(agent_id),
+                        session_id: None,
+                        prompt,
+                        ..
+                    }
+                }
+            } if agent_id == "default" && prompt == "Review this"
+        ));
+
+        let stop = Cli::try_parse_from([
+            "turin",
+            "daemon",
+            "stop",
+            "--timeout-ms",
+            "2500",
+            "--poll-interval-ms",
+            "25",
+        ])
+        .expect("bounded stop should parse");
+        assert!(matches!(
+            stop.command,
+            Commands::Daemon {
+                command: DaemonCommands::Stop { args }
+            } if args.timeout_ms == 2500 && args.poll_interval_ms == 25
+        ));
+    }
 }

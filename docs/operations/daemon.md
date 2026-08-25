@@ -27,9 +27,6 @@ The daemon treats these paths as authoritative:
         config.toml
         harness/
           main.lua
-    channels/
-      discord/
-        config.toml
 ```
 
 Default dynamic shape:
@@ -82,7 +79,7 @@ path = ".turin/data/state.db"
 # path = ".turin/data/store.db"
 ```
 
-Agent and channel configs can override those targets locally:
+Agent configs can override those targets locally:
 
 ```toml
 # .turin/runtime/agents/<id>/config.toml
@@ -93,21 +90,10 @@ path = ".turin/data/states/reviewer.db"
 path = ".turin/data/stores/reviewer-store.db"
 ```
 
-```toml
-# .turin/runtime/channels/<id>/config.toml
-[persistence.state]
-path = ".turin/data/states/telegram.db"
-
-# Optional; if omitted, scoped data also uses the channel state DB
-# [persistence.store]
-# path = ".turin/data/stores/telegram-store.db"
-```
-
 Current implemented local override surfaces are:
 
 - `.turin/config.toml`
 - `.turin/runtime/agents/<id>/config.toml`
-- `.turin/runtime/channels/<id>/config.toml`
 
 Generic per-scope config files such as `.turin/scopes/<kind>/<id>/...` are still planned, not implemented.
 
@@ -118,7 +104,6 @@ The daemon owns a live `Kernel` plus a filesystem-backed registry scan.
 It:
 
 - scans `.turin/runtime/agents/` and `.turin/harnesses/`
-- scans `.turin/runtime/channels/`
 - synthesizes effective runtime config
 - rebuilds the live kernel on daemon-level rescan
 - watches the daemon registry roots for changes
@@ -127,7 +112,6 @@ It:
 Important distinction:
 
 - editing `.turin/runtime/agents/<id>/config.toml` or creating/removing agent directories is a **daemon registry** change
-- editing `.turin/runtime/channels/<id>/config.toml` or creating/removing channel directories is a **daemon registry** change
 - editing `.turin/runtime/agents/<id>/harness/*.lua` or `.turin/harnesses/<id>/*.lua` is a **harness runtime** change
 
 ## Session Scope Across Multiple State DBs
@@ -187,7 +171,6 @@ Current behavior:
 
 - invalid agent `config.toml` becomes a daemon runtime issue
 - invalid harness config/load only affects that harness
-- invalid channel `config.toml` only affects that channel
 - unrelated agents and harnesses keep running
 
 Use:
@@ -347,6 +330,7 @@ turin daemon rescan
 turin daemon errors
 turin daemon logs
 turin daemon stop
+turin daemon stop --timeout-ms 10000 --poll-interval-ms 100
 turin daemon events
 ```
 
@@ -354,8 +338,11 @@ Wrapper-oriented lifecycle notes:
 
 - `turin daemon start --background` spawns the daemon and waits for readiness
 - `turin daemon ensure` is single-instance friendly and only starts a new daemon if one is not already reachable at the configured endpoint
+- concurrent `turin daemon ensure` calls converge on the daemon that acquires the configured endpoint; callers wait for that daemon to become ready
+- `turin daemon stop` waits for the endpoint to disappear before succeeding, so a subsequent start cannot race graceful shutdown; its timeout and poll interval are bounded and configurable
 - `turin daemon health --json` returns a compact readiness/degradation/offline view for local wrappers
 - `turin daemon logs` uses the default background log path at `<workspace>/.turin/daemon.log` unless `--log-file` is explicitly supplied
+- daemon commands emit a nonzero process status for unsuccessful protocol responses; with `--json`, the error response envelope remains available as parseable stdout
 
 ### Agents
 
@@ -377,9 +364,9 @@ turin daemon agent delete <id>
 ### Tasks
 
 ```bash
-turin daemon task submit <agent_id> "prompt"
-turin daemon task submit <agent_id> "prompt" --wait
-turin daemon task submit --session <session_id> "prompt"
+turin daemon task submit --agent <agent_id> "prompt"
+turin daemon task submit --agent <agent_id> "prompt" --wait
+turin daemon task submit --session-id <session_id> "prompt"
 turin daemon task wait <request_id> --timeout-ms 30000
 turin daemon task cancel <request_id>
 turin daemon task get <request_id>

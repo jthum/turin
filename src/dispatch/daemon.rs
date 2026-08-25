@@ -62,7 +62,13 @@ pub(super) async fn handle_daemon_command(
             commands::daemon::run_runtime_errors(&args.config.config, args.json).await
         }
         DaemonCommands::Stop { args } => {
-            commands::daemon::run_stop(&args.config.config, args.json).await
+            commands::daemon::run_stop(
+                &args.config.config,
+                args.timeout_ms,
+                args.poll_interval_ms,
+                args.json,
+            )
+            .await
         }
         DaemonCommands::Events { args } => {
             commands::daemon::run_events(&args.config.config, args.json).await

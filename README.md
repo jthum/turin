@@ -412,7 +412,8 @@ turin daemon session resume <session-id>
 turin daemon session branch-list <session-id>
 turin daemon session branch-create <session-id> alt --from-turn 12 --activate
 turin daemon session branch-checkout <session-id> alt
-turin daemon task submit docs-reviewer "Review the docs" --wait
+turin daemon task submit --agent docs-reviewer "Review the docs" --wait
+turin daemon stop
 turin daemon events
 ```
 
@@ -420,6 +421,7 @@ For local wrappers and desktop apps:
 
 - `turin daemon ensure` starts the daemon in the background if needed
 - `turin daemon wait` blocks until the daemon is ready
+- `turin daemon stop` waits for graceful shutdown to complete, avoiding a stop/start race
 - `turin daemon health --json` returns a compact readiness snapshot
 - `turin daemon logs` resolves the background daemon log path and shows recent lines
 

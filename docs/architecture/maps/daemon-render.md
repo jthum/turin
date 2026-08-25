@@ -26,7 +26,8 @@
 ## Data Flow
 
 1. Command handlers send daemon requests and receive `ResponseEnvelope`.
-2. JSON mode calls `print_response` directly to preserve protocol-shaped output.
+2. JSON mode calls `print_response` directly to preserve protocol-shaped output
+   while still returning a process error for an unsuccessful response.
 3. Human mode decodes the response into local `*View` structs.
 4. Render modules print tables or detail sections.
 
@@ -34,6 +35,8 @@
 
 - Human rendering must not change daemon protocol response shapes.
 - JSON mode must keep returning daemon `ResponseEnvelope`/report shapes without table formatting.
+- An unsuccessful daemon response must exit nonzero in both human and JSON modes;
+  JSON mode still emits the parseable error envelope on stdout first.
 - Render modules should not send daemon requests or mutate runtime state.
 - Shared formatting helpers belong in `common.rs`; domain modules should stay table/detail focused.
 - Visibility should stay local to `crate::commands::daemon`.
@@ -43,7 +46,8 @@
 Focused checks:
 
 ```sh
-cargo check -p turin-cli --bin turin
+cargo test -p turin-cli --bin turin
+cargo test -p turin-cli --test daemon_cli_integration_tests -- --test-threads=1
 ```
 
 Basic checks:
@@ -55,4 +59,4 @@ git diff --check
 
 ## Current Shape
 
-The former single `render.rs` file has been split by output domain while preserving the same renderer function names used by command modules.
+The former single `render.rs` file has been split by output domain while preserving the same renderer function names used by command modules. Lifecycle control also preserves scriptable failure semantics: protocol failures are human-readable by default and remain machine-readable under `--json`, but neither path reports process success.

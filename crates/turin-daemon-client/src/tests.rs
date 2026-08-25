@@ -120,3 +120,25 @@ fn next_backoff_caps_at_maximum() {
         Duration::from_secs(1)
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn readiness_timeout_bounds_an_unresponsive_endpoint() {
+    let tempdir = tempdir().expect("tempdir");
+    let endpoint = tempdir.path().join("daemon.sock");
+    let listener = tokio::net::UnixListener::bind(&endpoint).expect("bind test endpoint");
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.expect("accept client");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+
+    let client = DaemonClient::new(&endpoint);
+    let started = tokio::time::Instant::now();
+    let error = client
+        .wait_until_ready(Duration::from_millis(50), Duration::from_millis(10))
+        .await
+        .expect_err("unresponsive endpoint should time out");
+    assert!(error.to_string().contains("Timed out after 50ms"));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    server.abort();
+}

@@ -342,17 +342,28 @@ impl DaemonClient {
         let poll_interval = poll_interval.max(Duration::from_millis(10));
 
         loop {
-            match self.handshake().await {
-                Ok(handshake) => return Ok(handshake),
-                Err(err) if is_recoverable_subscription_error(&err) => {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, self.handshake()).await {
+                Err(_) => {
+                    anyhow::bail!(
+                        "Timed out after {}ms waiting for daemon at '{}' to become ready",
+                        timeout.as_millis(),
+                        self.endpoint.display()
+                    );
+                }
+                Ok(Ok(handshake)) => return Ok(handshake),
+                Ok(Err(err)) if is_recoverable_subscription_error(&err) => {
                     if tokio::time::Instant::now() >= deadline {
                         return Err(err);
                     }
                 }
-                Err(err) => return Err(err),
+                Ok(Err(err)) => return Err(err),
             }
 
-            sleep(poll_interval).await;
+            sleep(
+                poll_interval.min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+            )
+            .await;
         }
     }
 

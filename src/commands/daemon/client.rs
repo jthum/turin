@@ -95,6 +95,37 @@ pub(super) async fn ensure_background_daemon(
     })
 }
 
+pub(super) async fn wait_until_daemon_stopped(
+    config_path: &Path,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let client = daemon_client_from_config(config_path)?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let poll_interval = poll_interval.max(Duration::from_millis(10));
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, client.health()).await {
+            Err(_) => {
+                anyhow::bail!(
+                    "Timed out after {}ms waiting for Turin daemon at '{}' to stop",
+                    timeout.as_millis(),
+                    client.endpoint().display()
+                );
+            }
+            Ok(Err(err)) if is_daemon_offline_error(&err) => return Ok(()),
+            Ok(Err(err)) => return Err(wrap_daemon_client_error(config_path, err)),
+            Ok(Ok(_)) => {
+                tokio::time::sleep(
+                    poll_interval
+                        .min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+                )
+                .await;
+            }
+        }
+    }
+}
+
 pub(super) fn resolve_daemon_log_path(
     config_path: &Path,
     log_file_override: Option<&Path>,

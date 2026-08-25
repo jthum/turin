@@ -54,6 +54,12 @@ This subsystem should preserve three guarantees:
   offline daemon is a warning because direct CLI execution remains supported;
   incompatible or otherwise invalid daemon responses are failures.
 - JSON diagnostics must retain the same severity and exit behavior as human output.
+- `daemon task submit` selects exactly one target: `--agent <id>` for a new
+  session or `--session-id <id>` for an existing live session. Keep this
+  relationship in `clap` rather than deferred runtime validation.
+- `daemon stop` is a bounded lifecycle operation: after accepting the stop
+  request, it waits for the configured endpoint to become unreachable before
+  reporting success.
 
 ## Common Changes
 
@@ -75,7 +81,9 @@ Focused tests:
 
 ```sh
 cargo test -p turin-cli --bin turin parse_reference_diagnostic_commands
+cargo test -p turin-cli --bin turin parse_daemon_task_and_bounded_stop_commands
 cargo test -p turin-cli --bin turin commands::check::tests
+cargo test -p turin-cli --test daemon_cli_integration_tests -- --test-threads=1
 ```
 
 Basic checks:
