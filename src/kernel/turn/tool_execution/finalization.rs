@@ -106,7 +106,7 @@ impl ExecutionHost {
             )
             .await;
 
-            if !self.json {
+            if self.paints_cli_text() {
                 println!(
                     "{}",
                     display::tool_status_line(&record.name, !record.is_error, ansi_stdout)

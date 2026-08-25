@@ -67,6 +67,7 @@ impl SessionPersistenceCoordinator {
 pub(crate) struct ExecutionHost {
     pub(crate) config: Arc<TurinConfig>,
     pub(crate) json: bool,
+    pub(crate) paint_stdout: bool,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) store_manager: Arc<StoreManager>,
     pub(crate) agent_manager: Arc<AgentManager>,
@@ -98,6 +99,14 @@ pub(crate) enum TaskRunAttempt {
 }
 
 impl ExecutionHost {
+    pub(crate) fn paints_cli_text(&self) -> bool {
+        self.paint_stdout && !self.json
+    }
+
+    pub(crate) fn paints_cli_json(&self) -> bool {
+        self.paint_stdout && self.json
+    }
+
     pub(crate) fn harness_definition_for_agent(
         &self,
         agent_id: &str,

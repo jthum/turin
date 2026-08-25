@@ -11,9 +11,6 @@ use crate::kernel::session::SessionState;
 
 use super::super::super::PendingToolCall;
 
-const MAX_TOOL_CALLS_PER_WINDOW: usize = 32;
-const TOOL_CALL_WINDOW: Duration = Duration::from_secs(10);
-
 impl ExecutionHost {
     pub(super) async fn evaluate_pending_tool_calls(
         &self,
@@ -71,7 +68,7 @@ impl ExecutionHost {
             let verdict = self.evaluate_tool_call(session, &tc.name, &tc.id, &tc.args);
             match &verdict {
                 Verdict::Reject(reason) => {
-                    if !self.json {
+                    if self.paints_cli_text() {
                         println!(
                             "{}",
                             display::rejection_line("✗ Rejected by harness:", reason, ansi_stdout,)
@@ -165,11 +162,9 @@ impl ExecutionHost {
             return (immediate_records, validated_calls);
         }
 
-        let allowed = session.reserve_tool_calls(
-            validated_calls.len(),
-            MAX_TOOL_CALLS_PER_WINDOW,
-            TOOL_CALL_WINDOW,
-        );
+        let max_calls = self.config.runtime.max_tool_calls_per_window.max(1);
+        let window = Duration::from_secs(self.config.runtime.tool_call_window_seconds.max(1));
+        let allowed = session.reserve_tool_calls(validated_calls.len(), max_calls, window);
         let allowed = allowed.min(session.reserve_delegation_tool_calls(allowed));
         if allowed >= validated_calls.len() {
             return (immediate_records, validated_calls);
@@ -180,8 +175,8 @@ impl ExecutionHost {
             session_id = %session.identity.session_id(),
             allowed,
             blocked,
-            limit = MAX_TOOL_CALLS_PER_WINDOW,
-            window_seconds = TOOL_CALL_WINDOW.as_secs(),
+            limit = max_calls,
+            window_seconds = window.as_secs(),
             "Tool rate limit exceeded; blocking excess tool calls",
         );
 
@@ -195,8 +190,8 @@ impl ExecutionHost {
             let msg = format!(
                 "[RATE LIMITED] Tool '{}' blocked: exceeded built-in safety limit of {} tool calls per {}s session window",
                 tc.name,
-                MAX_TOOL_CALLS_PER_WINDOW,
-                TOOL_CALL_WINDOW.as_secs()
+                max_calls,
+                window.as_secs()
             );
             immediate_records.push(FinalToolRecord {
                 id: tc.id,

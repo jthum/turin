@@ -136,8 +136,10 @@ impl ExecutionHost {
             .await
             .context("Failed to open state store for turn message persistence")?;
         let _guard = session.persistence_lock.lock().await;
+        let token_count = crate::kernel::estimate_persisted_message_input_tokens(role, content)
+            .map(|tokens| tokens as u64);
         store
-            .insert_message(internal_id, target, role, content, None)
+            .insert_message(internal_id, target, role, content, token_count)
             .await
             .with_context(|| format!("Failed to persist {role} turn message"))
     }

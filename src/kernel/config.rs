@@ -132,6 +132,10 @@ pub struct RuntimeConfig {
     pub max_parallel_tool_calls: usize,
     #[serde(default = "default_max_virtual_tool_depth")]
     pub max_virtual_tool_depth: usize,
+    #[serde(default = "default_max_tool_calls_per_window")]
+    pub max_tool_calls_per_window: usize,
+    #[serde(default = "default_tool_call_window_seconds")]
+    pub tool_call_window_seconds: u64,
 }
 
 fn default_max_parallel_tool_calls() -> usize {
@@ -142,12 +146,22 @@ fn default_max_virtual_tool_depth() -> usize {
     8
 }
 
+fn default_max_tool_calls_per_window() -> usize {
+    32
+}
+
+fn default_tool_call_window_seconds() -> u64 {
+    10
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             linked_runtime_lanes: default_linked_runtime_lanes(),
             max_parallel_tool_calls: default_max_parallel_tool_calls(),
             max_virtual_tool_depth: default_max_virtual_tool_depth(),
+            max_tool_calls_per_window: default_max_tool_calls_per_window(),
+            tool_call_window_seconds: default_tool_call_window_seconds(),
         }
     }
 }

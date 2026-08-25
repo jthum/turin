@@ -131,7 +131,7 @@ impl ExecutionHost {
         session: &SessionState,
         event: &KernelEvent,
     ) {
-        if self.json {
+        if self.paints_cli_json() {
             println!("{}", serde_json::to_string(event).unwrap_or_default());
         }
         if tx.send((session.internal_id, event.clone())).is_err() {

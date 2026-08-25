@@ -63,7 +63,7 @@ impl ExecutionHost {
             match &event {
                 KernelEvent::Stream(e) => match e {
                     StreamEvent::ThinkingDelta { .. } => {
-                        if !self.json && !is_thinking {
+                        if self.paints_cli_text() && !is_thinking {
                             print!("{}", display::thinking_label(ansi_stdout));
                             io::stdout().flush().ok();
                             is_thinking = true;
@@ -87,12 +87,12 @@ impl ExecutionHost {
                     }
                     StreamEvent::MessageDelta { content_delta } => {
                         if is_thinking {
-                            if !self.json {
+                            if self.paints_cli_text() {
                                 println!();
                             }
                             is_thinking = false;
                         }
-                        if !self.json {
+                        if self.paints_cli_text() {
                             print!("{}", content_delta);
                             io::stdout().flush().ok();
                         }
@@ -107,7 +107,7 @@ impl ExecutionHost {
                         ..
                     } => {
                         if is_thinking {
-                            if !self.json {
+                            if self.paints_cli_text() {
                                 println!();
                             }
                             is_thinking = false;
@@ -122,12 +122,12 @@ impl ExecutionHost {
                     }
                     StreamEvent::ToolCall { id, name, args } => {
                         if is_thinking {
-                            if !self.json {
+                            if self.paints_cli_text() {
                                 println!();
                             }
                             is_thinking = false;
                         }
-                        if !self.json {
+                        if self.paints_cli_text() {
                             println!("{}", display::tool_call_line(name, args, ansi_stdout));
                         }
                         if self.publish_ephemeral_event(session, &event) {
@@ -160,7 +160,7 @@ impl ExecutionHost {
             self.persist_published_event(session, &event).await;
         }
 
-        if !self.json && !output.response_text.is_empty() && !output.response_text.ends_with('\n') {
+        if self.paints_cli_text() && !output.response_text.is_empty() && !output.response_text.ends_with('\n') {
             println!();
         }
 

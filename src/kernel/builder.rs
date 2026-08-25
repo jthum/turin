@@ -22,6 +22,7 @@ use crate::tools::registry::ToolRegistry;
 pub struct RuntimeBuilder {
     config: TurinConfig,
     json: bool,
+    paint_stdout: bool,
     tool_registry: ToolRegistry,
 
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
@@ -36,6 +37,7 @@ impl RuntimeBuilder {
         Self {
             config,
             json: false,
+            paint_stdout: false,
             tool_registry: create_default_registry(),
 
             embedding_provider: None,
@@ -48,6 +50,12 @@ impl RuntimeBuilder {
     /// Enable JSON output mode (NDJSON).
     pub fn json_mode(mut self, json: bool) -> Self {
         self.json = json;
+        self
+    }
+
+    /// Print CLI-facing turn/tool text or NDJSON on stdout. Embedders leave this off.
+    pub fn paint_stdout(mut self, paint: bool) -> Self {
+        self.paint_stdout = paint;
         self
     }
 
@@ -121,6 +129,7 @@ impl RuntimeBuilder {
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
             json: self.json,
+            paint_stdout: self.paint_stdout,
             tool_registry: self.tool_registry.clone(),
             policy_manager: Arc::clone(&policy_manager),
             governance_manager: Arc::clone(&governance_manager),
@@ -133,6 +142,7 @@ impl RuntimeBuilder {
             host: ExecutionHost {
                 config: config_arc,
                 json: self.json,
+                paint_stdout: self.paint_stdout,
                 tool_registry: self.tool_registry,
                 store_manager,
                 agent_manager,

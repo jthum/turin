@@ -215,6 +215,7 @@ impl LinkedSessionMode {
 #[derive(Clone)]
 pub(crate) struct SharedPeerRuntimeContext {
     pub(crate) json: bool,
+    pub(crate) paint_stdout: bool,
     pub(crate) tool_registry: ToolRegistry,
     pub(crate) policy_manager: Arc<RuntimePolicyManager>,
     pub(crate) governance_manager: Arc<GovernanceManager>,

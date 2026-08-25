@@ -262,7 +262,7 @@ impl ExecutionHost {
         session: &mut SessionState,
         turn_ctx: &TurnContext,
     ) -> bool {
-        if !self.json {
+        if self.paints_cli_text() {
             println!(
                 "\n{}",
                 display::turn_header(session.turn_index + 1, display::stdout_ansi())

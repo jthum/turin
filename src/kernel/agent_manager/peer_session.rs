@@ -262,6 +262,7 @@ pub(super) fn fork_peer_kernel(manager: &Arc<AgentManager>) -> ExecutionHost {
     ExecutionHost {
         config,
         json: shared.json,
+        paint_stdout: shared.paint_stdout,
         tool_registry: shared.tool_registry.clone(),
         store_manager: Arc::clone(&manager.store_manager),
         agent_manager: Arc::clone(manager),

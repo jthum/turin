@@ -114,6 +114,22 @@ async fn query_sql_rows(
     Ok(out_rows)
 }
 
+fn rejects_kernel_schema_ddl(selector: &StoreSelector, sql: &str) -> bool {
+    if !matches!(selector, StoreSelector::Alias(alias) if alias == "state") {
+        return false;
+    }
+    let trimmed = sql.trim_start();
+    let head = trimmed
+        .get(..12)
+        .unwrap_or(trimmed)
+        .to_ascii_uppercase();
+    head.starts_with("CREATE")
+        || head.starts_with("DROP")
+        || head.starts_with("ALTER")
+        || head.starts_with("ATTACH")
+        || head.starts_with("DETACH")
+}
+
 async fn exec_sql(
     manager: Arc<StoreManager>,
     selector: StoreSelector,
@@ -121,6 +137,12 @@ async fn exec_sql(
     sql: String,
     sql_params: SqlParams,
 ) -> Result<u64, String> {
+    if rejects_kernel_schema_ddl(&selector, &sql) {
+        return Err(
+            "kernel state store does not allow DDL; open a harness-owned database instead"
+                .to_string(),
+        );
+    }
     let conn = open_connection_for_query_exec(manager, selector, settings).await?;
     match sql_params {
         SqlParams::None => conn.execute(&sql, ()).await.map_err(|e| e.to_string()),
