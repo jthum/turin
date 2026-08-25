@@ -72,9 +72,8 @@ impl ExecutionHost {
                     let new_tasks =
                         Self::parse_task_list(&new_tasks_val, None, None, Some(&task.trace_id));
                     if !new_tasks.is_empty() {
-                        let mut q = session.queue.lock().await;
                         for queued in new_tasks {
-                            q.push_back(queued);
+                            self.enqueue_session_task(session, queued).await?;
                         }
                         info!("on_task_complete queued additional tasks via MODIFY");
                     }
@@ -213,9 +212,8 @@ impl ExecutionHost {
                         Some(&task.trace_id),
                     );
                     if !new_tasks.is_empty() {
-                        let mut q = session.queue.lock().await;
                         for queued in new_tasks {
-                            q.push_back(queued);
+                            self.enqueue_session_task(session, queued).await?;
                         }
                         info!(
                             task_id = %task.task_id,

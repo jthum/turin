@@ -46,6 +46,10 @@ impl Tool for BridgeMcp {
         })
     }
 
+    fn capability(&self) -> Option<&str> {
+        Some("integration.mcp.bridge")
+    }
+
     async fn execute(
         &self,
         params: Value,
@@ -90,6 +94,10 @@ impl Tool for McpToolProxy {
 
     fn parameters_schema(&self) -> Value {
         self.def.input_schema.clone()
+    }
+
+    fn capability(&self) -> Option<&str> {
+        Some("integration.mcp.tool")
     }
 
     async fn execute(

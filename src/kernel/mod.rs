@@ -165,12 +165,12 @@ impl Kernel {
     }
 
     /// Create a session for the primary configured agent.
-    pub async fn create_session(&self) -> session::SessionState {
+    pub async fn create_session(&self) -> Result<session::SessionState> {
         self.host.create_session().await
     }
 
     /// Create a session for a configured agent.
-    pub async fn create_session_for_agent(&self, agent_id: &str) -> session::SessionState {
+    pub async fn create_session_for_agent(&self, agent_id: &str) -> Result<session::SessionState> {
         self.host.create_session_for_agent(agent_id).await
     }
 
@@ -180,7 +180,7 @@ impl Kernel {
         agent_id: &str,
         state_selector: Option<StoreSelector>,
         default_store_selector: Option<StoreSelector>,
-    ) -> session::SessionState {
+    ) -> Result<session::SessionState> {
         self.host
             .create_session_for_agent_in_store(agent_id, state_selector, default_store_selector)
             .await
@@ -194,7 +194,7 @@ impl Kernel {
         default_store_selector: Option<StoreSelector>,
         origin_id: Option<String>,
         inference: config::InferenceOverrideConfig,
-    ) -> session::SessionState {
+    ) -> Result<session::SessionState> {
         self.host
             .create_session_for_agent_with_context(
                 agent_id,
@@ -284,8 +284,12 @@ impl Kernel {
     }
 
     /// Queue a prompt without starting the run loop.
-    pub async fn queue_prompt(&self, session: &mut session::SessionState, prompt: String) {
-        self.host.queue_prompt(session, prompt).await;
+    pub async fn queue_prompt(
+        &self,
+        session: &mut session::SessionState,
+        prompt: String,
+    ) -> Result<()> {
+        self.host.queue_prompt(session, prompt).await
     }
 
     /// End a directly managed session and flush its required durability records.

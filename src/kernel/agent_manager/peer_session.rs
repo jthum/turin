@@ -63,7 +63,7 @@ impl PeerRuntime {
                 bootstrap.context.origin_id.clone(),
                 bootstrap.context.inference.clone(),
             )
-            .await
+            .await?
         };
         session.runtime_slot_id = Some(slot_id.to_string());
         host.start_session(&mut session).await?;
@@ -181,7 +181,7 @@ impl PeerRuntime {
                 context.origin_id.clone(),
                 context.inference.clone(),
             )
-            .await;
+            .await?;
         self.replace_session(session).await
     }
 

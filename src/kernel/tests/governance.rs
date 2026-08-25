@@ -107,7 +107,14 @@ fn tool_capability_mapping_covers_high_risk_builtins() {
         tool_capability_name("bridge_mcp"),
         Some("integration.mcp.bridge")
     );
-    assert_eq!(tool_capability_name("submit_plan"), None);
+    assert_eq!(
+        tool_capability_name("submit_plan"),
+        Some("runtime.plan.submit")
+    );
+    assert_eq!(tool_capability_name("web_fetch"), Some("web.fetch"));
+    assert_eq!(tool_capability_name("web_search"), Some("web.search"));
+    assert_eq!(tool_capability_name("remember"), Some("memory.write"));
+    assert_eq!(tool_capability_name("recall"), Some("memory.read"));
 }
 
 #[test]

@@ -119,10 +119,9 @@ impl ExecutionHost {
             .collect::<Vec<_>>();
 
         let queued_count = scheduled_tasks.len();
-        {
-            let mut q = session.queue.lock().await;
-            for task in scheduled_tasks {
-                q.push_back(task);
+        for task in scheduled_tasks {
+            if let Err(error) = self.enqueue_session_task(session, task).await {
+                return (error.to_string(), true);
             }
         }
 

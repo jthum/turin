@@ -211,7 +211,7 @@ async fn rust_harness_mutation_reaches_provider_without_lua() -> Result<()> {
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Exercise the Rust harness.".to_string()))
         .await?;
@@ -288,11 +288,11 @@ async fn agents_can_bind_to_distinct_rust_harnesses_without_lua() -> Result<()> 
         ),
     );
 
-    let mut default_session = kernel.create_session().await;
+    let mut default_session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut default_session, Some("Default task".to_string()))
         .await?;
-    let mut review_session = kernel.create_session_for_agent("reviewer").await;
+    let mut review_session = kernel.create_session_for_agent("reviewer").await.unwrap();
     kernel
         .run(&mut review_session, Some("Review task".to_string()))
         .await?;

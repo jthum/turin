@@ -56,9 +56,18 @@ impl Tool for EditFileTool {
         let args: EditFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Editing file");
 
-        // Security: validate path is within workspace using centralized logic
         let path =
             crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
+        const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+        if let Ok(meta) = tokio::fs::metadata(&path).await
+            && meta.len() > MAX_FILE_BYTES
+        {
+            return Err(ToolError::ExecutionError(format!(
+                "File {} is {} bytes; native edit_file cap is {MAX_FILE_BYTES} bytes",
+                path.display(),
+                meta.len()
+            )));
+        }
 
         let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
             ToolError::ExecutionError(format!("Failed to read {}: {}", path.display(), e))

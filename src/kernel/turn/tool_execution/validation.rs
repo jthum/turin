@@ -25,7 +25,31 @@ impl ExecutionHost {
         let mut validated_calls: Vec<(PendingToolCall, Verdict)> = Vec::new();
         let ansi_stdout = display::stdout_ansi();
 
+        let tool_exec_enabled = self
+            .policy_manager
+            .typed_snapshot(&crate::kernel::policy::PolicyScope {
+                agent_id: Some(session.identity.agent_id().to_string()),
+                session_id: Some(session.identity.session_id().to_string()),
+                ..crate::kernel::policy::PolicyScope::default()
+            })
+            .await
+            .tool_exec_enabled;
         for tc in pending_tool_calls {
+            if !tool_exec_enabled {
+                warn!(tool = %tc.name, "Tool call rejected because tool.exec_enabled is false");
+                immediate_records.push(FinalToolRecord {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    args: tc.args.clone(),
+                    verdict: "exec_disabled".to_string(),
+                    duration_ms: 0,
+                    content: "[POLICY DENIED] tool.exec_enabled is false".to_string(),
+                    is_error: true,
+                    emit_exec_start: true,
+                    governance_denial: None,
+                });
+                continue;
+            }
             if exposed_tool_names.is_some_and(|names| !names.contains(&tc.name)) {
                 warn!(tool = %tc.name, "Tool call rejected because it was not exposed for this inference");
                 immediate_records.push(FinalToolRecord {
@@ -69,8 +93,11 @@ impl ExecutionHost {
                 }
                 Verdict::Escalate(reason) => {
                     warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
-                    if let Some(decision) =
-                        self.native_tool_governance_decision(session.identity.agent_id(), &tc.name)
+                    if let Some(decision) = self.native_tool_governance_decision(
+                        session.identity.agent_id(),
+                        &self.session_reference(session),
+                        &tc.name,
+                    )
                         && !decision.allowed
                     {
                         let detail = decision

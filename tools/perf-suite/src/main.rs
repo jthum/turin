@@ -777,7 +777,7 @@ async fn run_hot_history(args: HotHistoryArgs) -> Result<()> {
     kernel.init_harness().await?;
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let start = Instant::now();
     let expected_tool_calls = tool_call_count(args.turns, args.tool_every);
     let mut snapshots = vec![hot_history_snapshot("start", start, &state_db_path, &session).await?];

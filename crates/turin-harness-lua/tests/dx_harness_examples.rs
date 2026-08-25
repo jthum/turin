@@ -58,7 +58,7 @@ async fn test_dx_fixture_session_memory_assistant() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Recall memory".to_string()))
         .await?;
@@ -84,7 +84,7 @@ async fn test_dx_fixture_code_cache_shortcuts() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Use DX shortcuts".to_string()))
         .await?;
@@ -109,7 +109,7 @@ async fn test_dx_fixture_code_search_fallback() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Use lexical fallback".to_string()))
         .await?;
@@ -134,7 +134,7 @@ async fn test_dx_fixture_workspace_review_assistant() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Review the workspace".to_string()))
         .await?;
@@ -163,7 +163,7 @@ async fn test_dx_fixture_config_driven_agent() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Touch config".to_string()))
         .await?;
@@ -189,7 +189,7 @@ async fn test_dx_fixture_db_journal() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Write journal".to_string()))
         .await?;
@@ -226,7 +226,7 @@ async fn test_dx_fixture_governed_capability_gate() -> Result<()> {
     };
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Check capabilities".to_string()))
         .await?;
@@ -288,7 +288,7 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Review the patch".to_string()))
         .await?;
@@ -327,7 +327,7 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
     };
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -401,7 +401,7 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -459,7 +459,7 @@ async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
     };
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -527,7 +527,7 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Exercise peer agent denial".to_string()))
         .await?;
@@ -592,7 +592,7 @@ async fn test_dx_fixture_peer_ask_delegated_caps() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,

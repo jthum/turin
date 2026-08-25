@@ -503,7 +503,7 @@ async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Resul
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
     let prompt = "Review src/main.rs for regressions and missing checks".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -576,7 +576,7 @@ async fn test_openclaw_style_personal_assistant_routes_planning_prompts() -> Res
     let mut fixture = build_openclaw_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
     let prompt = "Plan the next three steps for stabilizing the harness library".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -616,7 +616,7 @@ async fn test_full_coding_harness_workflow() -> Result<()> {
     let mut fixture = build_full_coding_harness_fixture("MAIN_OK", "PLAN_OK", "REVIEW_OK").await?;
     let prompt = "Implement a practical coding workflow for Turin's harness library".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -665,7 +665,7 @@ async fn test_bug_triage_desk_workflow() -> Result<()> {
     let mut fixture = build_bug_triage_fixture("MAIN_OK", "TRIAGE_OK", "RESPONSE_OK").await?;
     let prompt = "Bug: saving settings sometimes resets the theme after restart".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -714,7 +714,7 @@ async fn test_release_manager_workflow() -> Result<()> {
     let mut fixture = build_release_manager_fixture("MAIN_OK", "READY_OK", "CHANGELOG_OK").await?;
     let prompt = "Prepare the next Turin pre-release checkpoint".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -766,7 +766,7 @@ async fn test_docs_team_assistant_workflow() -> Result<()> {
     let mut fixture = build_docs_team_fixture("MAIN_OK", "DOCS_REVIEW_OK", "DOCS_DRAFT_OK").await?;
     let prompt = "Update the docs to reflect the latest harness library additions".to_string();
 
-    let mut session = fixture.kernel.create_session().await;
+    let mut session = fixture.kernel.create_session().await.unwrap();
     fixture
         .kernel
         .run(&mut session, Some(prompt.clone()))
@@ -861,7 +861,7 @@ async fn test_governed_peer_review_example() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Review the patch for race conditions".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -904,7 +904,7 @@ async fn test_durable_journal_example() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Deployment note: restart API after schema migration".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -945,7 +945,7 @@ async fn test_code_reviewer_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Review the patch for risky assumptions in the provider layer".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -990,7 +990,7 @@ async fn test_task_planner_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Break down the next phase of the harness library work".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1035,7 +1035,7 @@ async fn test_spec_writer_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Turn the rough idea into a concrete implementation spec".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1081,7 +1081,7 @@ async fn test_test_gap_finder_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Identify the likely missing tests for the governance refactor".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1127,7 +1127,7 @@ async fn test_repo_librarian_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Route this task according to the repository contracts".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1174,7 +1174,7 @@ async fn test_release_readiness_checker_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Assess whether the next release looks ready to ship".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1220,7 +1220,7 @@ async fn test_docs_maintainer_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt =
         "Identify the docs that need updating after the latest library changes".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
@@ -1267,7 +1267,7 @@ async fn test_changelog_writer_block() -> Result<()> {
     let config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Draft a concise changelog entry for the latest harness library work".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;
@@ -1351,7 +1351,7 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     );
 
     let mut kernel = build_kernel(config).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let prompt = "Review the request with constrained peer capabilities".to_string();
     kernel.run(&mut session, Some(prompt.clone())).await?;
     kernel.end_session(&mut session).await?;

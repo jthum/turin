@@ -93,7 +93,7 @@ pub(crate) async fn run_prompt_once(
     kernel.init_clients()?;
     kernel.init_harness().await?;
     kernel.start_watcher()?;
-    let mut session = kernel.create_session_for_agent(&selected_agent_id).await;
+    let mut session = kernel.create_session_for_agent(&selected_agent_id).await?;
     kernel.start_session(&mut session).await?;
     kernel.run(&mut session, Some(prompt)).await?;
     kernel.end_session(&mut session).await?;

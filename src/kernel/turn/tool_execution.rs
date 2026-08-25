@@ -23,8 +23,7 @@ use super::super::PendingToolCall;
 use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
 
-const MAX_VIRTUAL_TOOL_DEPTH: usize = 8;
-const MAX_PARALLEL_TOOL_CALLS: usize = 8;
+
 
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
@@ -49,13 +48,18 @@ impl ExecutionHost {
     fn native_tool_governance_decision(
         &self,
         agent_id: &str,
+        session_reference: &str,
         tool_name: &str,
     ) -> Option<CapabilityDecision> {
         let tool = self.tool_registry.get(tool_name)?;
         let capability = tool
             .capability()
             .or_else(|| tool_capability_name(tool_name))?;
-        let subject = GovernanceSubject::for_agent(agent_id);
+        let subject = GovernanceSubject {
+            agent_id: Some(agent_id.to_string()),
+            session_reference: Some(session_reference.to_string()),
+            ..GovernanceSubject::default()
+        };
         Some(
             self.governance_manager
                 .capability_decision_for_subject(&subject, capability),
@@ -159,10 +163,12 @@ impl ExecutionHost {
 
         let kernel = &*self;
         let active_agent_id = session.identity.agent_id().to_string();
+        let session_reference = self.session_reference(session);
         let harness_engine = self.session_harness_engine(session);
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
             let active_agent_id = active_agent_id.clone();
+            let session_reference = session_reference.clone();
             let harness_engine = harness_engine.clone();
             async move {
                 let verdict_str = verdict.to_string();
@@ -177,8 +183,11 @@ impl ExecutionHost {
                 let start = Instant::now();
                 let mut governance_denial = None;
                 let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
-                    if let Some(decision) =
-                        kernel.native_tool_governance_decision(active_agent_id.as_str(), &tc.name)
+                    if let Some(decision) = kernel.native_tool_governance_decision(
+                        active_agent_id.as_str(),
+                        &session_reference,
+                        &tc.name,
+                    )
                     {
                         match decision.allowed {
                             true => kernel
@@ -262,7 +271,13 @@ impl ExecutionHost {
                 return final_by_id;
             }
             results = stream::iter(futures)
-                .buffer_unordered(MAX_PARALLEL_TOOL_CALLS)
+                .buffer_unordered(
+                    self.config
+                        .runtime
+                        .max_parallel_tool_calls
+                        .max(1)
+                        .min(64),
+                )
                 .collect::<Vec<_>>() => results,
         };
 

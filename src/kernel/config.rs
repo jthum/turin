@@ -128,12 +128,26 @@ pub struct RuntimeConfig {
     /// Default number of hot linked-session runtime lanes per agent profile.
     #[serde(default = "default_linked_runtime_lanes")]
     pub linked_runtime_lanes: usize,
+    #[serde(default = "default_max_parallel_tool_calls")]
+    pub max_parallel_tool_calls: usize,
+    #[serde(default = "default_max_virtual_tool_depth")]
+    pub max_virtual_tool_depth: usize,
+}
+
+fn default_max_parallel_tool_calls() -> usize {
+    8
+}
+
+fn default_max_virtual_tool_depth() -> usize {
+    8
 }
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             linked_runtime_lanes: default_linked_runtime_lanes(),
+            max_parallel_tool_calls: default_max_parallel_tool_calls(),
+            max_virtual_tool_depth: default_max_virtual_tool_depth(),
         }
     }
 }
@@ -166,15 +180,19 @@ impl Default for KernelConfig {
 }
 
 impl TurinConfig {
-    pub fn linked_runtime_lanes_for_agent(&self, agent_id: &str) -> Result<usize> {
-        let agent = if agent_id == self.agent.id {
-            &self.agent
+    pub fn agent(&self, id: &str) -> Result<&AgentConfig> {
+        if id == self.agent.id {
+            Ok(&self.agent)
         } else {
             self.agents
-                .get(agent_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
-        };
-        Ok(agent
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", id))
+        }
+    }
+
+    pub fn linked_runtime_lanes_for_agent(&self, agent_id: &str) -> Result<usize> {
+        Ok(self
+            .agent(agent_id)?
             .linked_runtime_lanes
             .unwrap_or(self.runtime.linked_runtime_lanes))
     }
@@ -184,13 +202,7 @@ impl TurinConfig {
         agent_id: &str,
         session_override: Option<&InferenceOverrideConfig>,
     ) -> Result<InferenceConfig> {
-        let agent = if agent_id == self.agent.id {
-            &self.agent
-        } else {
-            self.agents
-                .get(agent_id)
-                .ok_or_else(|| anyhow::anyhow!("Unknown agent profile: {}", agent_id))?
-        };
+        let agent = self.agent(agent_id)?;
 
         let mut effective = self.inference.clone();
         if !agent.inference.is_empty() {

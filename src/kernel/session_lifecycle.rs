@@ -109,12 +109,12 @@ impl ExecutionHost {
     }
 
     /// Create a new session.
-    pub async fn create_session(&self) -> SessionState {
+    pub async fn create_session(&self) -> Result<SessionState> {
         self.create_session_for_agent(&self.config.agent.id).await
     }
 
     /// Create a new session bound to a specific configured agent profile.
-    pub async fn create_session_for_agent(&self, agent_id: &str) -> SessionState {
+    pub async fn create_session_for_agent(&self, agent_id: &str) -> Result<SessionState> {
         self.create_session_for_agent_in_store(agent_id, None, None)
             .await
     }
@@ -124,7 +124,7 @@ impl ExecutionHost {
         agent_id: &str,
         state_selector: Option<StoreSelector>,
         default_store_selector: Option<StoreSelector>,
-    ) -> SessionState {
+    ) -> Result<SessionState> {
         self.create_session_for_agent_with_context(
             agent_id,
             state_selector,
@@ -142,7 +142,7 @@ impl ExecutionHost {
         default_store_selector: Option<StoreSelector>,
         origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
-    ) -> SessionState {
+    ) -> Result<SessionState> {
         self.create_session_for_agent_with_context_and_link(
             agent_id,
             state_selector,
@@ -172,7 +172,7 @@ impl ExecutionHost {
                 inference,
                 Some(link),
             )
-            .await;
+            .await?;
         anyhow::ensure!(
             session.internal_id.is_some(),
             "Failed to create linked session in its parent state store"
@@ -188,7 +188,7 @@ impl ExecutionHost {
         origin_id: Option<String>,
         inference: crate::kernel::config::InferenceOverrideConfig,
         link: Option<LinkedSessionCreate>,
-    ) -> SessionState {
+    ) -> Result<SessionState> {
         let mut session = SessionState::new();
         session.identity.set_agent_id(agent_id.to_string());
         session.identity.set_origin_id(origin_id);
@@ -198,8 +198,8 @@ impl ExecutionHost {
             default_store_selector.or_else(|| self.resolve_agent_default_store_selector(agent_id));
         session.inference = inference;
         self.attach_session_persistence(&mut session, true, link.as_ref())
-            .await;
-        session
+            .await?;
+        Ok(session)
     }
 
     pub(crate) fn session_reference(&self, session: &SessionState) -> String {
@@ -295,7 +295,7 @@ impl ExecutionHost {
         session.restored_from_persistence = true;
         self.prune_session_hot_history(&mut session);
         self.attach_session_persistence(&mut session, false, None)
-            .await;
+            .await?;
         Ok(session)
     }
 

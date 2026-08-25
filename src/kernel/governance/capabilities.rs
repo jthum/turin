@@ -181,6 +181,11 @@ pub(crate) fn tool_capability_name(tool_name: &str) -> Option<&'static str> {
         "write_file" | "edit_file" | "apply_patch" => Some("fs.write"),
         "shell_exec" => Some("shell.exec"),
         "bridge_mcp" => Some("integration.mcp.bridge"),
+        "web_fetch" => Some("web.fetch"),
+        "web_search" => Some("web.search"),
+        "remember" => Some("memory.write"),
+        "recall" => Some("memory.read"),
+        "submit_plan" => Some("runtime.plan.submit"),
         _ => None,
     }
 }

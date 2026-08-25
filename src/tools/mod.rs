@@ -1,7 +1,6 @@
 pub mod builtins;
 pub mod mcp;
 pub mod policy;
-pub mod provider;
 pub mod registry;
 
 use async_trait::async_trait;

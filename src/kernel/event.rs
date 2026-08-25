@@ -361,7 +361,7 @@ mod tests {
                     import_allow_unscoped_in_open: true,
                     unmatched_capability:
                         crate::kernel::config::GovernanceUnmatchedCapability::Allow,
-                    capabilities_observability_only: true,
+                    capabilities_observability_only: true, // enforcement_enabled is false in this fixture
                     subject_agent_id: None,
                     roots: vec![],
                     agents: vec![],

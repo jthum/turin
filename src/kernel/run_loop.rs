@@ -23,7 +23,7 @@ impl ExecutionHost {
         self.start_session(session).await?;
 
         if let Some(p) = prompt {
-            self.enqueue_initial_run_prompt(session, p).await;
+            self.enqueue_initial_run_prompt(session, p).await?;
         }
 
         while let Some((mut task, queue_depth_after_pop)) = self.dequeue_next_task(session).await {
@@ -244,7 +244,7 @@ impl ExecutionHost {
         &self,
         session: &mut SessionState,
         prompt: String,
-    ) {
+    ) -> Result<()> {
         let plan_id = format!("p_{}", session.next_plan_id);
         session.next_plan_id += 1;
 
@@ -258,11 +258,8 @@ impl ExecutionHost {
             },
         );
 
-        let mut q = session.queue.lock().await;
-        let mut task = QueuedTask::with_plan(prompt, plan_id, Some("user_request".to_string()));
-        task.task_id = format!("t_{}", session.next_task_id);
-        session.next_task_id += 1;
-        q.push_back(task);
+        let task = QueuedTask::with_plan(prompt, plan_id, Some("user_request".to_string()));
+        self.enqueue_session_task(session, task).await
     }
 
     pub(super) async fn dequeue_next_task(
@@ -329,9 +326,11 @@ impl ExecutionHost {
         if let Some(Verdict::Modify(new_tasks_val)) = verdict {
             let new_tasks = ExecutionHost::parse_task_list(&new_tasks_val, None, None, None);
             if !new_tasks.is_empty() {
-                let mut q = session.queue.lock().await;
                 for task in new_tasks {
-                    q.push_back(task);
+                    if let Err(error) = self.enqueue_session_task(session, task).await {
+                        warn!(%error, "on_all_tasks_complete enqueue denied");
+                        break;
+                    }
                 }
                 return true;
             }
@@ -420,10 +419,7 @@ impl ExecutionHost {
                 queue_depth: queue_depth_after_pop,
             }) {
                 Ok(v) => v,
-                Err(e) => {
-                    warn!(error = %e, "Harness on_task_start error");
-                    Verdict::Allow
-                }
+                Err(e) => self.harness_eval_error_verdict("on_task_start", e)
             }
         } else {
             Verdict::Allow

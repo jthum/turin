@@ -11,7 +11,7 @@ use crate::kernel::execution_host::ExecutionHost;
 use crate::kernel::session::SessionState;
 use crate::tools::ToolContext;
 
-use super::{FinalToolRecord, MAX_VIRTUAL_TOOL_DEPTH};
+use super::FinalToolRecord;
 use crate::kernel::PendingToolCall;
 
 impl ExecutionHost {
@@ -43,12 +43,13 @@ impl ExecutionHost {
                     chain.push(call.name.clone());
                     anyhow::bail!("virtual tool recursion detected: {}", chain.join(" -> "));
                 }
-                if current_virtual_stack.len() >= MAX_VIRTUAL_TOOL_DEPTH {
+                let max_depth = self.config.runtime.max_virtual_tool_depth.max(1);
+                if current_virtual_stack.len() >= max_depth {
                     let mut chain = current_virtual_stack.to_vec();
                     chain.push(call.name.clone());
                     anyhow::bail!(
                         "virtual tool nesting depth exceeded (max {}): {}",
-                        MAX_VIRTUAL_TOOL_DEPTH,
+                        max_depth,
                         chain.join(" -> ")
                     );
                 }

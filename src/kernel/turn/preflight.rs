@@ -303,7 +303,12 @@ impl ExecutionHost {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    warn!(error = %e, "Harness on_turn_start error");
+                    if matches!(
+                        self.harness_eval_error_verdict("on_turn_start", e),
+                        crate::harness::verdict::Verdict::Reject(_)
+                    ) {
+                        return true;
+                    }
                 }
             }
         }
@@ -387,7 +392,12 @@ impl ExecutionHost {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    warn!(error = %e, "Harness on_turn_prepare error");
+                    if matches!(
+                        self.harness_eval_error_verdict("on_turn_prepare", e),
+                        crate::harness::verdict::Verdict::Reject(_)
+                    ) {
+                        return Ok(true);
+                    }
                 }
             }
 
@@ -525,6 +535,7 @@ impl ExecutionHost {
                     crate::kernel::config::InferenceCompactionMode::Hybrid => "hybrid",
                     crate::kernel::config::InferenceCompactionMode::TrimOnly => "trim_only",
                     crate::kernel::config::InferenceCompactionMode::SummaryOnly => "summary_only",
+                    crate::kernel::config::InferenceCompactionMode::Off => "off",
                 }
                 .to_string(),
                 estimated_input_tokens_before_compaction: prepared_request

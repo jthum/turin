@@ -21,6 +21,19 @@ enum TokenUsageRejectMode {
 }
 
 impl ExecutionHost {
+    pub(crate) fn harness_eval_error_verdict(
+        &self,
+        hook: &str,
+        error: impl std::fmt::Display,
+    ) -> Verdict {
+        warn!(error = %error, hook, "Harness hook evaluation error");
+        if self.governance_manager.config().enforcement_enabled {
+            Verdict::Reject(format!("Harness {hook} evaluation failed: {error}"))
+        } else {
+            Verdict::Allow
+        }
+    }
+
     /// Evaluate harness `on_tool_call` hook.
     ///
     /// Returns the composed verdict. If no harness is loaded, returns `Allow`.
@@ -40,11 +53,7 @@ impl ExecutionHost {
                     }
                     verdict
                 }
-                Err(e) => {
-                    // Harness evaluation errors are non-fatal; default to ALLOW.
-                    warn!(error = %e, "Harness on_tool_call error");
-                    Verdict::Allow
-                }
+                Err(e) => self.harness_eval_error_verdict("on_tool_call", e),
             }
         } else {
             Verdict::Allow

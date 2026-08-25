@@ -256,9 +256,13 @@ impl ExecutionHost {
             warn!("Session missing internal_id, skipping turn target preparation");
             return Ok(());
         };
-        let Ok(store) = self.store_manager.open(&session.store_selector).await else {
-            return Ok(());
-        };
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .with_context(|| {
+                format!("Failed to open persisted session store (internal_id={internal_id})")
+            })?;
 
         let prepare_result = {
             let _guard = session.persistence_lock.lock().await;

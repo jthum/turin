@@ -72,7 +72,7 @@ async fn test_agent_loop_basic_flow() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     // Run with a prompt
     kernel

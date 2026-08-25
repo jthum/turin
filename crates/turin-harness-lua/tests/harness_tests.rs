@@ -364,7 +364,7 @@ async fn test_harness_rejection() -> Result<()> {
 
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     // Run the agent. The mock provider will trigger 'shell_exec'.
     // The harness should reject it.
@@ -503,7 +503,7 @@ async fn test_virtual_tool_is_exposed_and_executes_native_call() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Read the note".to_string()))
         .await?;
@@ -645,7 +645,7 @@ also answering the user normally. Do not mention the title operation.]]
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -774,7 +774,7 @@ async fn test_virtual_tool_sequence_aggregates_multiple_native_calls() -> Result
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Read both files".to_string()))
         .await?;
@@ -896,7 +896,7 @@ async fn test_virtual_tool_sequence_callback_shapes_outer_result() -> Result<()>
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Summarize both files".to_string()))
         .await?;
@@ -1024,7 +1024,7 @@ async fn test_virtual_tool_can_call_another_virtual_tool() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Read the wrapped note".to_string()))
         .await?;
@@ -1152,7 +1152,7 @@ async fn test_virtual_tool_can_forward_reference_later_declaration() -> Result<(
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -1277,7 +1277,7 @@ async fn test_virtual_tool_recursion_is_rejected() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Trigger recursion".to_string()))
         .await?;
@@ -1408,7 +1408,7 @@ tool.declare("tool_9", {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Trigger depth overflow".to_string()))
         .await?;
@@ -1536,7 +1536,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Resolve the pointer".to_string()))
         .await?;
@@ -1645,7 +1645,7 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
 
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Try shell exec".to_string()))
         .await?;
@@ -1883,7 +1883,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -2069,7 +2069,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -2224,7 +2224,7 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -2318,7 +2318,7 @@ async fn test_harness_request_options_passthrough() -> Result<()> {
     let provider = Arc::new(HeaderCaptureProvider { seen: seen.clone() });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("emit headers".to_string()))
         .await?;
@@ -2445,7 +2445,7 @@ async fn test_harness_can_select_named_inference_context() -> Result<()> {
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("route via fast".to_string()))
         .await?;
@@ -2670,7 +2670,7 @@ async fn test_stdlib_context_api_kv_memory_and_tier2() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise stdlib".to_string()))
         .await?;
@@ -2819,7 +2819,7 @@ async fn test_runtime_memory_and_kv_support_explicit_store_targets() -> Result<(
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -3014,7 +3014,7 @@ async fn test_runtime_memory_and_kv_respect_scope_store_placements() -> Result<(
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise scope placement".to_string()))
         .await?;
@@ -3198,7 +3198,7 @@ async fn test_runtime_memory_search_supports_multi_source_queries() -> Result<()
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -3302,7 +3302,7 @@ async fn test_runtime_policy_api_round_trip() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise runtime policy".to_string()))
         .await?;
@@ -3710,7 +3710,7 @@ async fn test_agent_persistence_store_overrides_default_scoped_data_store() -> R
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let session_uuid = uuid::Uuid::parse_str(session.identity.session_id())?;
     kernel
         .run(
@@ -3917,7 +3917,7 @@ async fn test_runtime_code_search_api_round_trip() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -4043,7 +4043,7 @@ async fn test_runtime_code_search_falls_back_without_embedding_provider() -> Res
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -4208,7 +4208,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -4350,7 +4350,7 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise import_scoped".to_string()))
         .await?;
@@ -4470,7 +4470,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -4597,7 +4597,7 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise use_scoped".to_string()))
         .await?;
@@ -4819,7 +4819,7 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -4938,7 +4938,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5132,7 +5132,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5326,7 +5326,7 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5501,7 +5501,7 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5652,7 +5652,7 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5803,7 +5803,7 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -5954,7 +5954,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -6071,7 +6071,7 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -6209,7 +6209,7 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise runtime db api".to_string()))
         .await?;
@@ -6349,7 +6349,7 @@ async fn test_runtime_graph_api_records_sparse_relationships() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise runtime graph api".to_string()))
         .await?;
@@ -6487,7 +6487,7 @@ async fn test_graph_dx_helpers_create_link_and_materialize_paths() -> Result<()>
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise graph dx helpers".to_string()))
         .await?;
@@ -6693,7 +6693,7 @@ async fn test_runtime_agent_peer_submit_await_and_status() -> Result<()> {
         vec!["main"]
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -6913,7 +6913,7 @@ async fn test_runtime_agent_sidestep_runs_on_peer_sibling_branch() -> Result<()>
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise runtime sidestep".to_string()))
         .await?;
@@ -7062,7 +7062,7 @@ async fn test_runtime_agent_can_promote_detached_sidestep_result() -> Result<()>
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -7162,7 +7162,7 @@ async fn test_agent_sidestep_creates_hidden_sibling_branch_on_current_session() 
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("seed visible path".to_string()))
         .await?;
@@ -7330,7 +7330,7 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
     kernel.init_state().await?;
     kernel.init_clients()?;
     kernel.init_harness().await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -7521,7 +7521,7 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("exercise runtime agent ask".to_string()))
         .await?;
@@ -7770,7 +7770,7 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,

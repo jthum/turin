@@ -133,10 +133,10 @@ fn resolve_capability_baseline(config: &GovernanceConfig) -> CapabilityBaseline 
             capabilities: document.governance.capabilities,
             unmatched_capability: document.governance.unmatched_capability,
         },
-        Err(_) => CapabilityBaseline {
-            capabilities: BTreeMap::new(),
-            unmatched_capability: config.unmatched_capability.clone(),
-        },
+        Err(error) => panic!(
+            "built-in governance template '{}' failed to parse: {error}",
+            config.profile
+        ),
     }
 }
 
@@ -214,7 +214,7 @@ impl GovernanceManager {
             import_mode: self.config.import.mode.clone(),
             import_allow_unscoped_in_open: self.config.import.allow_unscoped_in_open,
             unmatched_capability: self.unmatched_capability.clone(),
-            capabilities_observability_only: true,
+            capabilities_observability_only: !self.config.enforcement_enabled,
             subject_agent_id: agent_id.map(str::to_string),
             roots,
             agents,
@@ -605,7 +605,10 @@ impl GovernanceManager {
         capability: &str,
     ) -> Option<String> {
         let now_ms = now_unix_ms().ok()?;
-        let mut grants = self.grants.lock().ok()?;
+        let mut grants = self
+            .grants
+            .lock()
+            .expect("governance grants mutex poisoned");
         let entry = match validate_grant_chain_locked(&mut grants, subject, grant_id, now_ms) {
             Ok(snapshot) => snapshot,
             Err(err) => return Some(format!("Governance denial: {}", err.into_message())),

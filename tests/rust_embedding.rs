@@ -332,7 +332,7 @@ async fn public_embedding_path_supports_harnesses_tools_governance_and_persisten
         ),
     );
 
-    let mut main_session = kernel.create_session().await;
+    let mut main_session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut main_session,
@@ -342,7 +342,7 @@ async fn public_embedding_path_supports_harnesses_tools_governance_and_persisten
     let main_session_id = uuid::Uuid::parse_str(main_session.identity.session_id())?;
     kernel.end_session(&mut main_session).await?;
 
-    let mut review_session = kernel.create_session_for_agent("reviewer").await;
+    let mut review_session = kernel.create_session_for_agent("reviewer").await.unwrap();
     kernel
         .run(
             &mut review_session,
@@ -451,7 +451,7 @@ async fn escalated_tool_waits_for_external_authorization_before_execution() -> R
     );
 
     let run = tokio::spawn(async move {
-        let mut session = kernel.create_session().await;
+        let mut session = kernel.create_session().await.unwrap();
         kernel
             .run(&mut session, Some("Use the counted tool.".into()))
             .await

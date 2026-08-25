@@ -50,9 +50,15 @@ impl Tool for WriteFileTool {
         let args: WriteFileArgs = parse_args(params)?;
         tracing::info!(path = %args.path, "Writing file");
 
-        // Security: validate path is within workspace using centralized logic
         let path =
             crate::tools::is_safe_path(&ctx.workspace_root, std::path::Path::new(&args.path))?;
+        const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+        if args.content.len() > MAX_FILE_BYTES {
+            return Err(ToolError::ExecutionError(format!(
+                "write_file content is {} bytes; native cap is {MAX_FILE_BYTES} bytes",
+                args.content.len()
+            )));
+        }
 
         // Create parent directories if needed
         if let Some(parent) = path.parent() {

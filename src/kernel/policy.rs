@@ -29,6 +29,7 @@ pub struct RuntimePolicy {
     pub queue_max_depth: usize,
     pub tool_exec_enabled: bool,
     pub hook_token_usage_reject_mode: String,
+    pub runtime_idle_timeout_seconds: Option<u64>,
 }
 
 impl Default for RuntimePolicy {
@@ -48,6 +49,7 @@ impl Default for RuntimePolicy {
             queue_max_depth: 1024,
             tool_exec_enabled: true,
             hook_token_usage_reject_mode: "informational".to_string(),
+            runtime_idle_timeout_seconds: None,
         }
     }
 }
@@ -111,7 +113,79 @@ impl RuntimePolicy {
             "hook.token_usage.reject_mode".to_string(),
             Value::String(self.hook_token_usage_reject_mode.clone()),
         );
+        map.insert(
+            "runtime.idle_timeout_seconds".to_string(),
+            self.runtime_idle_timeout_seconds
+                .map_or(Value::Null, Value::from),
+        );
         map
+    }
+
+    pub fn from_map(map: &HashMap<String, Value>) -> Self {
+        let defaults = Self::default();
+        fn bool_val(map: &HashMap<String, Value>, key: &str, default: bool) -> bool {
+            map.get(key).and_then(Value::as_bool).unwrap_or(default)
+        }
+        fn usize_val(map: &HashMap<String, Value>, key: &str, default: usize) -> usize {
+            map.get(key)
+                .and_then(Value::as_u64)
+                .map(|v| v as usize)
+                .unwrap_or(default)
+        }
+        fn u32_val(map: &HashMap<String, Value>, key: &str, default: u32) -> u32 {
+            map.get(key)
+                .and_then(Value::as_u64)
+                .map(|v| v as u32)
+                .unwrap_or(default)
+        }
+        fn opt_u64(map: &HashMap<String, Value>, key: &str) -> Option<u64> {
+            match map.get(key) {
+                None | Some(Value::Null) => None,
+                Some(v) => v.as_u64(),
+            }
+        }
+        fn string_val(map: &HashMap<String, Value>, key: &str, default: &str) -> String {
+            map.get(key)
+                .and_then(Value::as_str)
+                .unwrap_or(default)
+                .to_string()
+        }
+        Self {
+            spawn_enabled: bool_val(map, "spawn.enabled", defaults.spawn_enabled),
+            spawn_max_depth: u32_val(map, "spawn.max_depth", defaults.spawn_max_depth),
+            spawn_max_fan_out: usize_val(map, "spawn.max_fan_out", defaults.spawn_max_fan_out),
+            spawn_max_concurrent_children: usize_val(
+                map,
+                "spawn.max_concurrent_children",
+                defaults.spawn_max_concurrent_children,
+            ),
+            spawn_root_max_total_tokens: opt_u64(map, "spawn.root_max_total_tokens"),
+            spawn_root_max_duration_ms: opt_u64(map, "spawn.root_max_duration_ms"),
+            spawn_root_max_tool_calls: opt_u64(map, "spawn.root_max_tool_calls"),
+            db_allow_dynamic_open: bool_val(
+                map,
+                "db.allow_dynamic_open",
+                defaults.db_allow_dynamic_open,
+            ),
+            db_path_scope: string_val(map, "db.path_scope", &defaults.db_path_scope),
+            db_max_open_handles: usize_val(
+                map,
+                "db.max_open_handles",
+                defaults.db_max_open_handles,
+            ),
+            db_idle_close_seconds: map
+                .get("db.idle_close_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(defaults.db_idle_close_seconds),
+            queue_max_depth: usize_val(map, "queue.max_depth", defaults.queue_max_depth),
+            tool_exec_enabled: bool_val(map, "tool.exec_enabled", defaults.tool_exec_enabled),
+            hook_token_usage_reject_mode: string_val(
+                map,
+                "hook.token_usage.reject_mode",
+                &defaults.hook_token_usage_reject_mode,
+            ),
+            runtime_idle_timeout_seconds: opt_u64(map, "runtime.idle_timeout_seconds"),
+        }
     }
 }
 
@@ -135,6 +209,10 @@ impl RuntimePolicyManager {
             defaults: RuntimePolicy::default(),
             state: Arc::new(RwLock::new(PolicyState::default())),
         }
+    }
+
+    pub async fn typed_snapshot(&self, scope: &PolicyScope) -> RuntimePolicy {
+        RuntimePolicy::from_map(&self.snapshot(scope).await)
     }
 
     pub async fn snapshot(&self, scope: &PolicyScope) -> HashMap<String, Value> {

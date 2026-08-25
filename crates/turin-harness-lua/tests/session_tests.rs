@@ -511,7 +511,7 @@ async fn test_session_create_starts_inactive() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let session = kernel.create_session().await;
+    let session = kernel.create_session().await.unwrap();
     assert_eq!(session.status, SessionStatus::Inactive);
     assert_eq!(session.turn_index, 0);
     assert!(session.history.is_empty());
@@ -528,7 +528,7 @@ async fn test_session_start_activates() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     assert_eq!(session.status, SessionStatus::Inactive);
 
     kernel.start_session(&mut session).await?;
@@ -542,7 +542,7 @@ async fn test_session_end_is_terminal() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.start_session(&mut session).await?;
     assert_eq!(session.status, SessionStatus::Active);
     let policy_scope = PolicyScope {
@@ -573,7 +573,7 @@ async fn test_session_end_idempotent() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.start_session(&mut session).await?;
 
     // End twice — should not panic or error
@@ -589,7 +589,7 @@ async fn test_never_started_session_can_be_ended_cleanly() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.end_session(&mut session).await?;
 
     assert_eq!(session.status, SessionStatus::Ended);
@@ -613,7 +613,7 @@ async fn test_ended_session_cannot_be_restarted() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.start_session(&mut session).await?;
     kernel.end_session(&mut session).await?;
 
@@ -635,8 +635,8 @@ async fn test_sessions_have_unique_ids() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let s1 = kernel.create_session().await;
-    let s2 = kernel.create_session().await;
+    let s1 = kernel.create_session().await.unwrap();
+    let s2 = kernel.create_session().await.unwrap();
     assert_ne!(s1.identity.session_id(), s2.identity.session_id());
 
     Ok(())
@@ -649,7 +649,7 @@ async fn test_run_with_mock_increments_turns() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.run(&mut session, Some("Hello".to_string())).await?;
 
     assert!(
@@ -676,7 +676,7 @@ async fn test_cancelling_stalled_inference_does_not_append_assistant_output() ->
         "mock".to_string(),
         ProviderClient::new("mock", Arc::new(StalledStreamProvider)),
     );
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let cancel_token = session.cancel_token.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -707,7 +707,7 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
         "mock".to_string(),
         ProviderClient::new("mock", Arc::new(ToolCallProvider)),
     );
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let cancel_token = session.cancel_token.clone();
     let started_path = tmp.path().join("tool-started");
     tokio::spawn(async move {
@@ -736,7 +736,7 @@ async fn test_cancelling_stalled_tool_does_not_append_tool_result() -> Result<()
 async fn test_run_stops_when_user_message_persistence_fails() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let conn = store.get_connection().await?;
     conn.execute_batch(
@@ -775,7 +775,7 @@ async fn test_run_stops_when_user_message_persistence_fails() -> Result<()> {
 async fn test_run_stops_when_assistant_message_persistence_fails() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let conn = store.get_connection().await?;
     conn.execute_batch(
@@ -816,7 +816,7 @@ async fn test_run_stops_when_assistant_message_persistence_fails() -> Result<()>
 async fn test_run_reports_background_event_persistence_failure() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let conn = store.get_connection().await?;
     conn.execute_batch(
@@ -869,7 +869,7 @@ async fn test_run_populates_token_counts() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Count my tokens".to_string()))
         .await?;
@@ -921,7 +921,7 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
         ),
     );
 
-    let mut session1 = kernel.create_session().await;
+    let mut session1 = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session1, Some("Investigate alpha".to_string()))
         .await?;
@@ -941,7 +941,7 @@ async fn test_harness_module_locals_are_isolated_per_live_session() -> Result<()
         if text == "Investigate alpha [session_counter=1]"
     ));
 
-    let mut session2 = kernel.create_session().await;
+    let mut session2 = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session2, Some("Investigate beta".to_string()))
         .await?;
@@ -971,7 +971,7 @@ async fn test_local_branch_selection_does_not_mutate_persisted_active_head() -> 
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Investigate main line".to_string()))
         .await?;
@@ -1043,7 +1043,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Shared root".to_string()))
         .await?;
@@ -1110,7 +1110,7 @@ async fn test_local_branch_selection_rejects_checkpoint_from_sibling_path() -> R
 async fn test_refresh_skips_corrupted_compaction_event_and_restores_latest_valid() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Stable history".to_string()))
         .await?;
@@ -1177,7 +1177,7 @@ async fn test_local_turn_selection_materializes_prefix_without_new_execution() -
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Turn zero".to_string()))
         .await?;
@@ -1255,12 +1255,12 @@ async fn test_local_external_reference_selection_materializes_remote_context_det
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut source = kernel.create_session().await;
+    let mut source = kernel.create_session().await.unwrap();
     kernel
         .run(&mut source, Some("Remote context".to_string()))
         .await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let execution_id = session.execution_id().to_string();
     let source_reference = source.identity.session_id().to_string();
 
@@ -1352,7 +1352,7 @@ async fn test_task_execution_override_materializes_temp_context_and_restores_ses
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Turn zero".to_string()))
         .await?;
@@ -1447,7 +1447,7 @@ async fn test_resumed_live_sessions_share_persistence_lock() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let session = kernel.create_session().await;
+    let session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
     let resumed = kernel
         .resume_session_for_agent("default", &session_id)
@@ -1466,7 +1466,7 @@ async fn test_resumed_live_session_gets_distinct_execution_id() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
 
-    let session = kernel.create_session().await;
+    let session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
     let resumed = kernel
         .resume_session_for_agent("default", &session_id)
@@ -1482,7 +1482,7 @@ async fn test_resumed_live_session_gets_distinct_execution_id() -> Result<()> {
 async fn test_resume_advances_past_allocated_turn_without_messages() -> Result<()> {
     let tmp = tempdir()?;
     let kernel = make_kernel(tmp.path()).await?;
-    let session = kernel.create_session().await;
+    let session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
     let store = kernel.store_manager().open(&session.store_selector).await?;
     store
@@ -1505,7 +1505,7 @@ async fn test_resume_advances_past_allocated_turn_without_messages() -> Result<(
 async fn test_resume_preserves_user_only_partial_turn_without_replay() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
-    let session = kernel.create_session().await;
+    let session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
     let internal_id = session.internal_id.expect("persisted session");
     let store = kernel.store_manager().open(&session.store_selector).await?;
@@ -1593,7 +1593,7 @@ async fn test_on_turn_prepare_exposes_estimated_tokens_and_context_limit() -> Re
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Probe token estimates".to_string()))
         .await?;
@@ -1656,7 +1656,7 @@ async fn test_on_turn_prepare_structured_output_uses_native_response_format() ->
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Use structured output".to_string()))
         .await?;
@@ -1739,7 +1739,7 @@ async fn test_on_turn_prepare_structured_output_falls_back_to_prompt_and_validat
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Use structured output".to_string()))
         .await?;
@@ -1798,7 +1798,7 @@ async fn test_long_history_is_compacted_before_inference_request() -> Result<()>
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     session
         .history
         .push(turin_core::inference::provider::InferenceMessage {
@@ -1888,7 +1888,7 @@ async fn test_resume_keeps_bounded_history_while_inference_reads_a_larger_contex
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     for i in 0..8 {
         kernel
             .run(&mut session, Some(format!("Persisted context {i}")))
@@ -1966,7 +1966,7 @@ async fn test_complete_current_resident_history_bypasses_context_rematerializati
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Persisted original".to_string()))
         .await?;
@@ -2039,7 +2039,7 @@ async fn test_auto_compaction_creates_and_restores_context_checkpoint() -> Resul
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     for i in 0..12 {
         kernel
             .run(
@@ -2145,7 +2145,7 @@ async fn test_multimodal_task_content_persists_and_restores() -> Result<()> {
     std::fs::write(&source_image, [1_u8, 2, 3, 4])?;
     std::fs::write(&source_file, b"spec body")?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
 
     let mut task = QueuedTask::ad_hoc("[attachments]");
@@ -2326,7 +2326,7 @@ async fn test_tool_transcript_restores_and_continues_after_cold_resume() -> Resu
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let session_id = session.identity.session_id().to_string();
     kernel
         .run(&mut session, Some("Read test.txt".to_string()))
@@ -2447,7 +2447,7 @@ async fn test_multimodal_task_content_respects_relative_layout_root() -> Result<
     let source_image = tmp.path().join("diagram.png");
     std::fs::write(&source_image, [1_u8, 2, 3, 4])?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let mut task = QueuedTask::ad_hoc("[attachments]");
     task.content = Some(vec![TaskInputContent::Image {
         name: Some("diagram.png".to_string()),
@@ -2527,7 +2527,7 @@ async fn test_trim_only_compaction_skips_semantic_checkpoint_generation() -> Res
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     for i in 0..12 {
         session
             .history
@@ -2659,7 +2659,7 @@ async fn test_compaction_inference_uses_dedicated_inference_context() -> Result<
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     for i in 0..12 {
         kernel
             .run(
@@ -2714,7 +2714,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     let mut kernel = make_kernel(tmp.path()).await?;
 
     // Initially no harness scripts — should work fine
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Before reload".to_string()))
         .await?;
@@ -2735,7 +2735,7 @@ async fn test_harness_reload_picks_up_new_scripts() -> Result<()> {
     kernel.reload_harness().await?;
 
     // Run again with new harness active
-    let mut session2 = kernel.create_session().await;
+    let mut session2 = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session2, Some("After reload".to_string()))
         .await?;
@@ -2766,7 +2766,7 @@ async fn test_failed_harness_reload_preserves_last_valid_generation_for_new_sess
 
     let mut kernel = make_kernel(tmp.path()).await?;
     assert_eq!(kernel.loaded_scripts(), vec!["main"]);
-    let mut first = kernel.create_session().await;
+    let mut first = kernel.create_session().await.unwrap();
     kernel.run(&mut first, Some("run v1".to_string())).await?;
     kernel.end_session(&mut first).await?;
     assert_eq!(std::fs::read_to_string(&marker_path)?, "v1");
@@ -2780,7 +2780,7 @@ async fn test_failed_harness_reload_preserves_last_valid_generation_for_new_sess
         .await
         .expect_err("invalid source must reject reload");
 
-    let mut after_failure = kernel.create_session().await;
+    let mut after_failure = kernel.create_session().await.unwrap();
     kernel
         .run(&mut after_failure, Some("still run v1".to_string()))
         .await?;
@@ -2799,7 +2799,7 @@ async fn test_failed_harness_reload_preserves_last_valid_generation_for_new_sess
     )?;
     assert_eq!(kernel.validate_named_harness("default")?, 1);
 
-    let mut after_validation = kernel.create_session().await;
+    let mut after_validation = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut after_validation,
@@ -2811,7 +2811,7 @@ async fn test_failed_harness_reload_preserves_last_valid_generation_for_new_sess
 
     kernel.reload_harness().await?;
 
-    let mut after_success = kernel.create_session().await;
+    let mut after_success = kernel.create_session().await.unwrap();
     kernel
         .run(&mut after_success, Some("run v2".to_string()))
         .await?;
@@ -2851,7 +2851,7 @@ async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
 
     let marker_path = tmp.path().join("watch-marker.txt");
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("before nested reload".to_string()))
         .await?;
@@ -2872,7 +2872,7 @@ async fn test_explicit_watch_reloads_nested_used_blocks() -> Result<()> {
     let mut saw_v2 = false;
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let mut session = kernel.create_session().await;
+        let mut session = kernel.create_session().await.unwrap();
         kernel
             .run(&mut session, Some("after nested reload".to_string()))
             .await?;
@@ -2930,7 +2930,7 @@ async fn test_watcher_rebuilds_when_watch_roots_change() -> Result<()> {
 
     let marker_path = tmp.path().join("dynamic-watch-marker.txt");
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("before watch-root change".to_string()))
         .await?;
@@ -2950,7 +2950,7 @@ async fn test_watcher_rebuilds_when_watch_roots_change() -> Result<()> {
     let mut saw_extra_v1 = false;
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let mut session = kernel.create_session().await;
+        let mut session = kernel.create_session().await.unwrap();
         kernel
             .run(&mut session, Some("after watch-root change".to_string()))
             .await?;
@@ -2981,7 +2981,7 @@ async fn test_watcher_rebuilds_when_watch_roots_change() -> Result<()> {
     let mut saw_extra_v2 = false;
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let mut session = kernel.create_session().await;
+        let mut session = kernel.create_session().await.unwrap();
         kernel
             .run(&mut session, Some("after nested extras reload".to_string()))
             .await?;
@@ -3112,7 +3112,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
 
     let marker_path = tmp.path().join(".turin/runtime/peer-watch-marker.txt");
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("initial review".to_string()))
         .await?;
@@ -3133,7 +3133,7 @@ async fn test_peer_agent_harness_reload_uses_shared_runtime_manager() -> Result<
     let mut saw_v2 = false;
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let mut session = kernel.create_session().await;
+        let mut session = kernel.create_session().await.unwrap();
         kernel
             .run(&mut session, Some("post reload review".to_string()))
             .await?;
@@ -3419,11 +3419,11 @@ async fn test_single_kernel_routes_sessions_to_agent_specific_harnesses() -> Res
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut default_session = kernel.create_session().await;
+    let mut default_session = kernel.create_session().await.unwrap();
     kernel.start_session(&mut default_session).await?;
     kernel.end_session(&mut default_session).await?;
 
-    let mut writer_session = kernel.create_session_for_agent("writer").await;
+    let mut writer_session = kernel.create_session_for_agent("writer").await.unwrap();
     kernel.start_session(&mut writer_session).await?;
     kernel.end_session(&mut writer_session).await?;
 
@@ -3473,7 +3473,7 @@ async fn test_events_persisted_to_state_store() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Persist me".to_string()))
         .await?;
@@ -3526,7 +3526,7 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Persist immutable audit".to_string()))
         .await?;
@@ -3598,7 +3598,7 @@ async fn test_governance_grant_audit_events_persisted() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Emit grant audit events".to_string()))
         .await?;
@@ -3700,7 +3700,7 @@ async fn test_kernel_without_state_store_works() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("No persistence".to_string()))
         .await?;
@@ -3715,7 +3715,7 @@ async fn test_multitask_workflow_execution() -> Result<()> {
     let tmp = tempdir()?;
     let mut kernel = make_kernel(tmp.path()).await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     // Manually push 2 tasks
     // (We use a scope to drop the lock)
@@ -3757,7 +3757,7 @@ async fn test_token_usage_reject_is_informational_by_default() -> Result<()> {
     )?;
 
     let mut kernel = make_kernel(tmp.path()).await?;
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Should still complete".to_string()))
         .await?;
@@ -3807,7 +3807,7 @@ async fn test_token_usage_reject_can_enforce_task() -> Result<()> {
         )
         .await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(
             &mut session,
@@ -3861,7 +3861,7 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
         )
         .await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     {
         let mut q = session.queue.lock().await;
         let mut t1 = QueuedTask::ad_hoc("Task 1");
@@ -3981,7 +3981,7 @@ async fn test_token_usage_and_task_complete_include_task_budget_metrics() -> Res
         )
         .await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("Check budget metrics".to_string()))
         .await?;

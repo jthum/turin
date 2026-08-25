@@ -13,19 +13,39 @@ This subsystem should preserve three guarantees:
 ## Files
 
 - `src/kernel/agent_manager.rs`
-  - Core types, runtime handles, task/result records, runtime control state, and manager construction.
+  - Core types, runtime handles, and manager construction.
+- `src/kernel/agent_manager/records.rs`
+  - Runtime handles, pending-task records, and wake notifications.
+- `src/kernel/agent_manager/lane_scheduler.rs`
+  - Fair dequeue and linked-lane admission.
 - `src/kernel/agent_manager/operations.rs`
   - Live session operation surface: open/resume/reload sessions, list statuses/live sessions, session event subscription, and runtime lookup helpers.
 - `src/kernel/agent_manager/tasks.rs`
   - Peer task operation surface: submit/await tasks, completed-result cache updates, promotion, pending-result bookkeeping, and runtime queue enqueueing.
 - `src/kernel/agent_manager/task_status.rs`
   - Pending/completed task snapshot construction and payload-sparse change fingerprints.
+- `src/kernel/agent_manager/task_results.rs`
+  - Completed-result cache and result pairing.
 - `src/kernel/agent_manager/cancellation.rs`
   - Runtime, session, and task cancellation/kill behavior.
 - `src/kernel/agent_manager/runtime_registry.rs`
   - Runtime-slot creation, replacement, and registry lifecycle.
+- `src/kernel/agent_manager/runtime_control.rs`
+  - Per-runtime control surfaces and live session publication.
+- `src/kernel/agent_manager/runtime_worker.rs`
+  - Background worker loop for a runtime slot.
 - `src/kernel/agent_manager/peer_runtime.rs`
   - Peer runtime loop, task execution, result construction, and runtime session hydration.
+- `src/kernel/agent_manager/peer_session.rs`
+  - Linked session bootstrap, reset, and restore.
+- `src/kernel/agent_manager/peer_signals.rs`
+  - Cross-agent signal routing.
+- `src/kernel/agent_manager/caches.rs`
+  - Request and result caches.
+- `src/kernel/agent_manager/allocator.rs`
+  - Slot allocation.
+- `src/kernel/agent_manager/catalog_lifecycle.rs`
+  - Catalog reconcile against live runtimes.
 
 ## Data Flow
 

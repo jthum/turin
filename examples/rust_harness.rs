@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     kernel.init_clients()?;
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.run(&mut session, Some(prompt)).await?;
     kernel.end_session(&mut session).await?;
     Ok(())

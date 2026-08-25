@@ -219,7 +219,7 @@ async fn test_agent_loop_event_sequence() -> Result<()> {
         ProviderClient::new("mock", mock_provider),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     // Capture events from the session broadcast
     let mut rx = session.event_tx.subscribe();
@@ -404,7 +404,7 @@ async fn test_harness_observation() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel.run(&mut session, Some("Hi".to_string())).await?;
 
     // Check KV store if it was updated by the harness (project:state context)
@@ -539,7 +539,7 @@ async fn test_nested_agent_spawning() -> Result<()> {
     );
     kernel.init_harness().await?;
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("trigger_nesting now".to_string()))
         .await?;
@@ -628,7 +628,7 @@ async fn test_on_inference_error_can_queue_fallback_task() -> Result<()> {
     });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("trigger".to_string()))
         .await?;
@@ -729,7 +729,7 @@ async fn test_stale_branch_conflict_does_not_trigger_inference_recovery() -> Res
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let internal_id = session.internal_id.expect("session should be persisted");
 
@@ -880,7 +880,7 @@ async fn test_stale_branch_conflict_can_continue_detached() -> Result<()> {
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let internal_id = session.internal_id.expect("session should be persisted");
@@ -1047,7 +1047,7 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
         ),
     );
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
 
     let store = kernel.store_manager().open(&session.store_selector).await?;
     let internal_id = session.internal_id.expect("session should be persisted");
@@ -1310,7 +1310,7 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
     });
     kernel.add_client("mock".to_string(), ProviderClient::new("mock", provider));
 
-    let mut session = kernel.create_session().await;
+    let mut session = kernel.create_session().await.unwrap();
     kernel
         .run(&mut session, Some("process".to_string()))
         .await?;

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::warn;
 
@@ -14,10 +15,17 @@ impl ExecutionHost {
         session: &mut SessionState,
         create_row: bool,
         link: Option<&LinkedSessionCreate>,
-    ) {
-        let Ok(store) = self.store_manager.open(&session.store_selector).await else {
-            return;
-        };
+    ) -> Result<()> {
+        let store = self
+            .store_manager
+            .open(&session.store_selector)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to open session store for {}",
+                    session.identity.session_id()
+                )
+            })?;
 
         if create_row && let Ok(public_id) = uuid::Uuid::parse_str(session.identity.session_id()) {
             let metadata = create_session_metadata(session.default_store_selector.as_ref());
@@ -51,7 +59,9 @@ impl ExecutionHost {
                         warn!(%error, "Failed to bind shared persistence lock for session");
                     }
                 }
-                Err(error) => warn!(%error, "Failed to create session row in DB"),
+                Err(error) => {
+                    return Err(error).context("Failed to create session row in DB");
+                }
             }
         }
 
@@ -121,6 +131,7 @@ impl ExecutionHost {
             }
         });
         session.event_task = Some(Arc::new(AsyncMutex::new(Some(handle))));
+        Ok(())
     }
 }
 

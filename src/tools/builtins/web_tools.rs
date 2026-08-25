@@ -165,6 +165,10 @@ fn validate_optional_http_url(value: Option<&str>, key: &str) -> Result<()> {
     Ok(())
 }
 
+fn clamp_timeout_seconds(timeout_seconds: u64) -> u64 {
+    timeout_seconds.min(300)
+}
+
 fn build_http_client(timeout_seconds: u64) -> Result<Client, ToolError> {
     Client::builder()
         .redirect(Policy::limited(10))
@@ -351,7 +355,7 @@ impl Tool for WebFetchTool {
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolEffect, ToolError> {
         let args: WebFetchArgs = parse_args(params)?;
         let url = validate_web_url(&args.url)?;
-        let client = build_http_client(args.timeout_seconds)?;
+        let client = build_http_client(clamp_timeout_seconds(args.timeout_seconds))?;
         let request = apply_fetch_headers(client.get(url.clone()), &ctx.tools.web_fetch)?;
         let response = request
             .send()
@@ -455,7 +459,7 @@ impl Tool for WebSearchTool {
         }
 
         let limit = args.limit.clamp(1, 10);
-        let client = build_http_client(args.timeout_seconds)?;
+        let client = build_http_client(clamp_timeout_seconds(args.timeout_seconds))?;
         let providers = configured_search_providers(&ctx.tools.web_search)
             .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
         let mut errors = Vec::new();

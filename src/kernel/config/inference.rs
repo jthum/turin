@@ -86,15 +86,16 @@ pub enum InferenceCompactionMode {
     Hybrid,
     TrimOnly,
     SummaryOnly,
+    Off,
 }
 
 impl InferenceCompactionMode {
     pub fn uses_summary(&self) -> bool {
-        !matches!(self, Self::TrimOnly)
+        matches!(self, Self::Hybrid | Self::SummaryOnly)
     }
 
     pub fn uses_structural_trim(&self) -> bool {
-        !matches!(self, Self::SummaryOnly)
+        matches!(self, Self::Hybrid | Self::TrimOnly)
     }
 }
 

@@ -1,12 +1,46 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::kernel::event::TaskTerminalStatus;
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::policy::PolicyScope;
 use crate::kernel::session::{PlanProgress, QueuedTask, SessionState, TaskExecutionOverrides};
 
 impl ExecutionHost {
+    pub(crate) fn policy_scope_for_session(&self, session: &SessionState) -> PolicyScope {
+        PolicyScope {
+            agent_id: Some(session.identity.agent_id().to_string()),
+            session_id: Some(session.identity.session_id().to_string()),
+            run_id: session.identity.run_id().map(str::to_string),
+            ..PolicyScope::default()
+        }
+    }
+
+    pub(crate) async fn enqueue_session_task(
+        &self,
+        session: &mut SessionState,
+        mut task: QueuedTask,
+    ) -> Result<()> {
+        let policy = self
+            .policy_manager
+            .typed_snapshot(&self.policy_scope_for_session(session))
+            .await;
+        let mut q = session.queue.lock().await;
+        if q.len() >= policy.queue_max_depth {
+            return Err(anyhow!(
+                "Policy denial: queue.max_depth={} reached",
+                policy.queue_max_depth
+            ));
+        }
+        if task.task_id.is_empty() {
+            task.task_id = format!("t_{}", session.next_task_id);
+            session.next_task_id += 1;
+        }
+        q.push_back(task);
+        Ok(())
+    }
+
     /// Add a prompt to the end of the queue as an implicit single-task plan.
-    pub async fn queue_prompt(&self, session: &mut SessionState, prompt: String) {
+    pub async fn queue_prompt(&self, session: &mut SessionState, prompt: String) -> Result<()> {
         let plan_id = format!("p_{}", session.next_plan_id);
         session.next_plan_id += 1;
         session.plans.insert(
@@ -18,11 +52,8 @@ impl ExecutionHost {
                 completed_tasks: 0,
             },
         );
-        let mut q = session.queue.lock().await;
-        let mut task = QueuedTask::with_plan(prompt, plan_id, Some("queued_prompt".to_string()));
-        task.task_id = format!("t_{}", session.next_task_id);
-        session.next_task_id += 1;
-        q.push_back(task);
+        let task = QueuedTask::with_plan(prompt, plan_id, Some("queued_prompt".to_string()));
+        self.enqueue_session_task(session, task).await
     }
 
     pub(crate) fn parse_task_list(
