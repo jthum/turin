@@ -1318,7 +1318,7 @@ Aliases are great for ergonomics, but `runtime.*` is clearer and more future-pro
 ## Debugging Harnesses
 
 - Use `log("...")` for harness-level diagnostics
-- Use `turin repl` and `/reload` to iterate quickly
+- Use `turin harness test` for mock-backed iteration and `turin daemon harness reload <id>` after editing a daemon-managed harness
 - Use `on_kernel_event` for temporary deep observability
 - Run `turin check` to validate config + harness syntax
 - Use `scripts/live_minimax_smoke.sh` (manual/opt-in) for real endpoint testing

@@ -48,14 +48,6 @@ pub fn turn_header(turn_index_1based: u32, ansi: bool) -> String {
     header(&format!("Turn {}", turn_index_1based), ansi)
 }
 
-pub fn repl_prompt(ansi: bool) -> String {
-    if ansi {
-        "\x1b[36m\x1b[1mturin\x1b[0m\x1b[34m>\x1b[0m ".to_string()
-    } else {
-        "turin> ".to_string()
-    }
-}
-
 pub fn approval_prompt_prefix(ansi: bool) -> String {
     if ansi {
         "\x1b[33m\x1b[1m! Approval Required:\x1b[0m".to_string()

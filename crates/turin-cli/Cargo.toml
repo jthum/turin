@@ -13,7 +13,6 @@ perf-diagnostics = ["turin/perf-diagnostics"]
 anyhow = "1.0"
 clap = { version = "4.5", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 dhat = { version = "0.3", optional = true }
-rustyline = "18.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "process", "io-util", "fs", "signal", "net"] }

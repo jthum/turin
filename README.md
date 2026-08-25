@@ -370,8 +370,6 @@ target/release/turin run --prompt "List the files in this project and summarize 
 
 - `turin run --prompt ...` — one-shot execution
 - `turin run --agent reviewer --prompt ...` — run against a specific configured agent/harness binding
-- `turin repl` — interactive session
-- `turin repl --agent reviewer` — interactive session for a specific configured agent
 - `turin script PATH` — run a harness script directly for testing
 - `turin init` — scaffold a Turin project, interactively or from flags
 - `turin quickstart` — scaffold a mock-backed project if needed and run a first prompt immediately
@@ -428,7 +426,7 @@ For local wrappers and desktop apps:
 Use `turin doctor` for one consolidated local diagnostic. It validates the
 configuration, active provider credentials, harness directories and scripts,
 state database location, and daemon health. An offline daemon is reported as a
-warning because `turin run` and `turin repl` can execute directly.
+warning because `turin run` can execute directly.
 
 See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavior, and command surface.
 

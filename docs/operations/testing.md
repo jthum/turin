@@ -215,14 +215,6 @@ Options worth using while debugging:
 - `--model ...`
 - `--provider ...`
 
-## REPL mode
-
-```bash
-target/release/turin repl --config .turin/config.toml
-```
-
-Useful REPL slash commands include `/reload` (reload harness scripts).
-
 ## Config and Harness Validation
 
 ## `turin check`

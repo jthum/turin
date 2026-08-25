@@ -63,7 +63,7 @@ Tool call:
 
 Shutdown:
 
-1. Kernel, command, daemon, REPL, dispatch, and peer-runtime shutdown paths call `shutdown_mcp_clients`.
+1. Kernel, command, daemon, dispatch, and peer-runtime shutdown paths call `shutdown_mcp_clients`.
 2. Shutdown is best-effort and logs failures.
 3. `Kernel::drop` clears client refs as a fallback so transports can be dropped promptly.
 

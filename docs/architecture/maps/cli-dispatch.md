@@ -25,7 +25,7 @@ This subsystem should preserve three guarantees:
 - `src/cli/daemon.rs`
   - Daemon command shape, daemon subcommands, and shared daemon argument groups.
 - `src/dispatch.rs`
-  - Top-level command routing: run/repl/script/init/quickstart/check/doctor/harness/daemon.
+  - Top-level command routing: run/script/init/quickstart/check/doctor/harness/daemon.
 - `src/dispatch/daemon.rs`
   - Daemon command routing for control, agents, tasks, harnesses, and sessions.
 - `src/commands/*`

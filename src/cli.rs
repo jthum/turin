@@ -57,29 +57,6 @@ pub(crate) enum Commands {
         json: bool,
     },
 
-    /// Start an interactive REPL session
-    Repl {
-        /// Path to Turin config file
-        #[arg(long, default_value = DEFAULT_BOOTSTRAP_CONFIG_PATH)]
-        config: PathBuf,
-
-        /// Override the model from config
-        #[arg(long)]
-        model: Option<String>,
-
-        /// Override the provider from config
-        #[arg(long)]
-        provider: Option<String>,
-
-        /// Run the REPL against the named configured agent instead of the default root agent
-        #[arg(long)]
-        agent: Option<String>,
-
-        /// Show verbose event-level output
-        #[arg(long)]
-        verbose: bool,
-    },
-
     /// Run a specific harness script (for testing)
     Script {
         /// Path to the Lua script to run

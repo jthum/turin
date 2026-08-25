@@ -34,21 +34,6 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
             )?;
             commands::common::run_prompt_once(config, prompt, agent, json).await
         }
-        Commands::Repl {
-            config,
-            model,
-            provider,
-            agent,
-            verbose,
-        } => {
-            let config = commands::common::load_config_with_overrides(
-                &config,
-                model,
-                provider,
-                agent.as_deref(),
-            )?;
-            commands::repl::run_repl(config, verbose, agent).await
-        }
         Commands::Script {
             path,
             config,
