@@ -7218,8 +7218,6 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
             if ctx.prompt == "exercise local sidestep promotion" then
                 local sidestep_id, err = agent.sidestep("explore detached", "ephemeral")
                 if sidestep_id == nil then error("agent.sidestep failed: " .. tostring(err)) end
-                local queued, queue_err = agent.session.queue(promotion_prefix .. sidestep_id)
-                if not queued then error("agent.session.queue failed: " .. tostring(queue_err)) end
             elseif string.sub(ctx.prompt, 1, #promotion_prefix) == promotion_prefix then
                 local sidestep_id = string.sub(ctx.prompt, #promotion_prefix + 1)
                 local task, task_err = agent.task(sidestep_id)
@@ -7261,6 +7259,17 @@ async fn test_agent_can_promote_detached_local_sidestep_result() -> Result<()> {
                 if branch_again.branch_id ~= branch.branch_id then
                     error("agent.promote should be idempotent")
                 end
+                return REJECT, "promotion control task completed"
+            end
+            return ALLOW
+        end
+
+        function on_task_complete(event)
+            if event.status == "success"
+                and event.execution.write_policy == "detached"
+                and event.execution.durability == "ephemeral"
+            then
+                return MODIFY, { promotion_prefix .. event.task_id }
             end
             return ALLOW
         end
