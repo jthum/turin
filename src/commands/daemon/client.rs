@@ -101,26 +101,44 @@ pub(super) async fn wait_until_daemon_stopped(
     poll_interval: Duration,
 ) -> Result<()> {
     let client = daemon_client_from_config(config_path)?;
+    wait_until_client_stopped(&client, timeout, poll_interval)
+        .await
+        .map_err(|err| wrap_daemon_client_error(config_path, err))
+}
+
+async fn wait_until_client_stopped(
+    client: &DaemonClient,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     let poll_interval = poll_interval.max(Duration::from_millis(10));
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        match tokio::time::timeout(remaining, client.health()).await {
-            Err(_) => {
-                anyhow::bail!(
-                    "Timed out after {}ms waiting for Turin daemon at '{}' to stop",
-                    timeout.as_millis(),
-                    client.endpoint().display()
-                );
-            }
+        if remaining.is_zero() {
+            anyhow::bail!(
+                "Timed out after {}ms waiting for Turin daemon at '{}' to stop",
+                timeout.as_millis(),
+                client.endpoint().display()
+            );
+        }
+
+        match tokio::time::timeout(poll_interval.min(remaining), client.health()).await {
+            // During graceful shutdown the listener can remain bound without
+            // accepting requests. Keep probing until the overall deadline.
+            Err(_) => continue,
             Ok(Err(err)) if is_daemon_offline_error(&err) => return Ok(()),
-            Ok(Err(err)) => return Err(wrap_daemon_client_error(config_path, err)),
+            Ok(Err(err)) => return Err(err),
             Ok(Ok(_)) => {
-                tokio::time::sleep(
-                    poll_interval
-                        .min(deadline.saturating_duration_since(tokio::time::Instant::now())),
-                )
-                .await;
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    anyhow::bail!(
+                        "Timed out after {}ms waiting for Turin daemon at '{}' to stop",
+                        timeout.as_millis(),
+                        client.endpoint().display()
+                    );
+                }
+                tokio::time::sleep(poll_interval.min(remaining)).await;
             }
         }
     }
@@ -275,5 +293,39 @@ impl DaemonHealthReport {
             queued_task_count: 0,
             awaiting_result_count: 0,
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stopped_waiter_survives_a_bound_but_unresponsive_endpoint() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let endpoint = tempdir.path().join("daemon.sock");
+        let listener = tokio::net::UnixListener::bind(&endpoint).expect("bind endpoint");
+        let endpoint_for_server = endpoint.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept health probe");
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            drop(listener);
+            tokio::fs::remove_file(endpoint_for_server)
+                .await
+                .expect("remove endpoint");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            drop(stream);
+        });
+
+        let client = DaemonClient::new(endpoint);
+        wait_until_client_stopped(
+            &client,
+            Duration::from_secs(2),
+            Duration::from_millis(20),
+        )
+        .await
+        .expect("waiter should continue after individual probes time out");
+
+        server.abort();
     }
 }
