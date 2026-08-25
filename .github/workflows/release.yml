@@ -16,7 +16,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RELEASE_PACKAGES: >-
-    -p turin
+    -p turin-cli
     -p turin-map
     -p turin-manager
     -p turin-channel-discord
@@ -80,6 +80,22 @@ jobs:
       - name: Build release binaries
         shell: bash
         run: cargo build --release $RELEASE_PACKAGES
+
+      - name: Verify release binaries
+        shell: bash
+        run: |
+          suffix=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            suffix=".exe"
+          fi
+
+          for bin in $RELEASE_BINS; do
+            path="target/release/${bin}${suffix}"
+            if [[ ! -f "$path" ]]; then
+              echo "::error file=$path::Release binary was not produced"
+              exit 1
+            fi
+          done
 
       - name: Package release bundle (Unix)
         if: runner.os != 'Windows'
