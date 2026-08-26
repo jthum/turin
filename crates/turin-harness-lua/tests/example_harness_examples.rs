@@ -834,7 +834,6 @@ async fn test_governed_peer_review_example() -> Result<()> {
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         grants: GovernanceGrantsConfig {
             enabled: true,
@@ -1321,12 +1320,11 @@ async fn test_delegated_peer_capabilities_example() -> Result<()> {
     let mut config = base_config(tmp.path(), &main_harness_dir, "mock_main", providers);
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
             turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-                capability_profile: None,
+                capability_set: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
             },

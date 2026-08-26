@@ -3,7 +3,7 @@ mod daemon;
 use std::path::PathBuf;
 use turin_types::layout::{DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_HARNESSES_DIR};
 
-use crate::commands::scaffold::{GovernancePreset, HarnessTemplate, InitProvider};
+use crate::commands::scaffold::{HarnessTemplate, InitProvider};
 
 pub(crate) use daemon::*;
 
@@ -85,9 +85,6 @@ pub(crate) enum Commands {
         /// Initial harness template
         #[arg(long, value_enum)]
         harness_template: Option<HarnessTemplate>,
-        /// Governance preset for the generated config
-        #[arg(long, value_enum)]
-        governance: Option<GovernancePreset>,
         /// Overwrite an existing Turin config / starter harness files
         #[arg(long)]
         force: bool,
@@ -113,9 +110,6 @@ pub(crate) enum Commands {
         /// Initial harness template when scaffolding a new project
         #[arg(long, value_enum)]
         harness_template: Option<HarnessTemplate>,
-        /// Governance preset when scaffolding a new project
-        #[arg(long, value_enum)]
-        governance: Option<GovernancePreset>,
         /// Overwrite an existing Turin config / starter harness files when scaffolding
         #[arg(long)]
         force: bool,

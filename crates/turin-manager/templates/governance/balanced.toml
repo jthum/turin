@@ -1,25 +1,29 @@
 [governance]
-profile = "open"
-enforcement_enabled = false
-unmatched_capability = "allow"
+enforcement_enabled = true
+unmatched_capability = "deny"
 
 [governance.audit]
-mode = "off"
+mode = "observational"
 include_capability_context = false
 
 [governance.import]
-mode = "legacy"
-allow_unscoped_in_open = true
+mode = "mixed"
+allow_unscoped_in_open = false
 
 [governance.capabilities]
 "runtime.db.*" = true
 "runtime.agent.*" = true
 "runtime.graph.*" = true
 "runtime.code.search.*" = true
+"runtime.schedule.*" = true
+"runtime.worklist.*" = true
+"runtime.plan.*" = true
 "runtime.policy.set" = true
 "runtime.governance.grant.*" = true
 "harness.import.*" = true
 "harness.use.*" = true
-"fs.read" = true
-"fs.write" = true
-"shell.exec" = true
+"fs.*" = true
+"web.*" = true
+"memory.*" = true
+"shell.exec" = false
+"integration.mcp.*" = false

@@ -229,7 +229,6 @@ impl TurinConfig {
             self.governance.grants.max_ttl_ms,
             "governance.grants.max_ttl_ms",
         )?;
-        require_non_empty(&self.governance.profile, "governance.profile")?;
         validate_bool_rule_map(&self.governance.capabilities, "governance.capabilities")?;
 
         for (root_name, root) in &self.governance.roots {
@@ -240,22 +239,20 @@ impl TurinConfig {
             require_non_empty(&root.path, format!("governance.roots.{}.path", root_name))?;
         }
 
-        for profile_name in self.governance.capability_profiles.keys() {
+        for set_name in self.governance.capability_sets.keys() {
             require_non_empty_with_message(
-                profile_name,
-                "governance.capability_profiles contains an empty profile name",
+                set_name,
+                "governance.capability_sets contains an empty set name",
             )?;
         }
 
         for (agent_id, agent_cfg) in &self.governance.agents {
-            if let Some(profile_name) = &agent_cfg.capability_profile {
+            if let Some(set_name) = &agent_cfg.capability_set {
                 anyhow::ensure!(
-                    self.governance
-                        .capability_profiles
-                        .contains_key(profile_name),
-                    "governance.agents.{}.capability_profile '{}' not found in governance.capability_profiles",
+                    self.governance.capability_sets.contains_key(set_name),
+                    "governance.agents.{}.capability_set '{}' not found in governance.capability_sets",
                     agent_id,
-                    profile_name
+                    set_name
                 );
             }
         }

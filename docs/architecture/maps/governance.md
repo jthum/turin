@@ -47,7 +47,7 @@ Capability checks:
 
 1. Build a `GovernanceSubject` from active agent/session/module/root/grant context.
 2. Match the requested capability against the resolved baseline capability map.
-3. Apply ceilings from agent capability profile, agent max capabilities, root max capabilities, delegated import capabilities, and active grant.
+3. Apply ceilings from an agent capability set, agent max capabilities, root max capabilities, delegated import capabilities, and active grant.
 4. If enforcement is off, report the decision but allow execution.
 5. If enforcement is on, return the denial reason on failure.
 
@@ -70,7 +70,7 @@ Nested peer delegation:
 2. Explicit child capabilities intersect with that inherited ceiling rather than
    replacing it.
 3. Active grants further narrow the composed ceiling.
-4. The child agent's configured profile and maximum capabilities apply during checks.
+4. The child agent's configured capability set and maximum capabilities apply during checks.
 
 ## Invariants
 
@@ -89,7 +89,7 @@ Nested peer delegation:
 - Exact capability rules outrank wildcard rules.
 - The longest matching wildcard wins.
 - `governance.unmatched_capability` decides the baseline result when no explicit capability rule matches.
-- `governance.profile` is an observability/DX label; explicit capabilities are the security source of truth.
+- Core evaluates only explicit capability rules and `unmatched_capability`; named presets are manager-owned generation conveniences.
 - Empty bool allowlists deny when used as a hard ceiling.
 - Empty JSON max-capability maps mean no ceiling.
 - Enforcement-disabled mode must still produce accurate observability decisions.
@@ -110,7 +110,7 @@ Focused tests:
 ```sh
 cargo test -p turin --lib kernel::governance
 cargo test -p turin --test harness_tests test_runtime_governance_observability_api
-cargo test -p turin --test harness_tests test_governance_profile_enforcement_blocks_high_risk_runtime_apis
+cargo test -p turin-harness-lua --test harness_tests test_explicit_governance_enforcement_blocks_high_risk_runtime_apis
 cargo test -p turin --test harness_tests test_temporary_grant_ceiling_propagates_to_peer_submit
 cargo test -p turin --test session_tests test_governance_grant_audit_events_persisted
 ```
@@ -129,12 +129,11 @@ The current pass keeps `governance.rs` as the policy manager and public decision
 
 - `governance/capabilities.rs` owns capability rule matching logic.
 - `governance/grants.rs` owns temporary grant data and chain validation helpers.
-- `templates/governance/*.toml` owns starter policy templates used by onboarding/scaffold output.
+- `crates/turin-manager/templates/governance/*.toml` owns manager-only starter policy templates.
 
-`GovernanceManager` resolves a baseline from `[governance.capabilities]` and
-`governance.unmatched_capability`. If an older config only has a built-in
-`profile` label and no explicit capability map, the manager uses the matching
-template as a compatibility fallback.
+`GovernanceManager` resolves its baseline exclusively from
+`[governance.capabilities]` and `governance.unmatched_capability`. It does not
+load templates or interpret preset names.
 
 This centralized the exact/wildcard bool-rule matcher that had been duplicated in:
 

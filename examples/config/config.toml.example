@@ -239,7 +239,6 @@ allow_unscoped_in_open = true
 # [governance.roots.core]
 # path = ".turin/harnesses/core"
 # writable_hint = false
-# default_profile = "balanced"
 # max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false }
 
 # [governance.roots.plugins]
@@ -247,8 +246,8 @@ allow_unscoped_in_open = true
 # writable_hint = true
 # max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false, "fs.write" = true }
 
-# Named capability profiles (used by governance.agents.*.capability_profile)
-# [governance.capability_profiles.reviewer]
+# Named capability sets (used by governance.agents.*.capability_set)
+# [governance.capability_sets.reviewer]
 # "runtime.db.query" = true
 # "runtime.db.exec" = false
 # "fs.read" = true
@@ -257,7 +256,7 @@ allow_unscoped_in_open = true
 
 # Per-agent ceilings / allowlists (apply when governance enforcement is enabled)
 # [governance.agents.reviewer]
-# capability_profile = "reviewer"
+# capability_set = "reviewer"
 # allowed_child_agents = []
 # max_capabilities = { "runtime.policy.set" = false }
 

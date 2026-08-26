@@ -1,5 +1,4 @@
 [governance]
-profile = "governed"
 enforcement_enabled = true
 unmatched_capability = "deny"
 
@@ -21,6 +20,9 @@ allow_unscoped_in_open = false
 "runtime.graph.query" = true
 "runtime.graph.write" = false
 "runtime.code.search.*" = true
+"runtime.schedule.*" = false
+"runtime.worklist.*" = true
+"runtime.plan.*" = true
 "runtime.policy.set" = false
 "runtime.governance.grant.*" = true
 "harness.import.unscoped" = false
@@ -29,4 +31,8 @@ allow_unscoped_in_open = false
 "harness.use.scoped" = true
 "fs.read" = true
 "fs.write" = false
+"web.*" = true
+"memory.read" = true
+"memory.write" = false
 "shell.exec" = false
+"integration.mcp.*" = false

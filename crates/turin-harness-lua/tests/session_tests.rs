@@ -3507,7 +3507,6 @@ async fn test_immutable_audit_persists_rejected_audit_events() -> Result<()> {
         "#,
     )?;
 
-    config.governance.profile = "governed".to_string();
     config.governance.audit.mode = turin_core::kernel::config::GovernanceAuditMode::Immutable;
     config.governance.enforcement_enabled = false;
 
@@ -3577,7 +3576,6 @@ async fn test_governance_grant_audit_events_persisted() -> Result<()> {
         "#,
     )?;
 
-    config.governance.profile = "balanced".to_string();
     config.governance.enforcement_enabled = true;
     config.governance.grants.enabled = true;
     config.governance.grants.max_ttl_ms = Some(10_000);

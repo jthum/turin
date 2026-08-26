@@ -220,8 +220,18 @@ async fn test_dx_fixture_governed_capability_gate() -> Result<()> {
     providers.insert("mock_main".to_string(), mock_provider("GOVERNED_OK"));
     let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
     config.governance = GovernanceConfig {
-        profile: "governed".to_string(),
         enforcement_enabled: true,
+        unmatched_capability: turin_core::kernel::config::GovernanceUnmatchedCapability::Deny,
+        capabilities: std::collections::BTreeMap::from([
+            (
+                "runtime.db.query".to_string(),
+                serde_json::Value::Bool(true),
+            ),
+            (
+                "runtime.db.exec".to_string(),
+                serde_json::Value::Bool(false),
+            ),
+        ]),
         ..GovernanceConfig::default()
     };
 
@@ -261,7 +271,6 @@ async fn test_dx_fixture_peer_review_orchestrator() -> Result<()> {
     );
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         grants: GovernanceGrantsConfig {
             enabled: true,
@@ -307,7 +316,6 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
     providers.insert("mock_main".to_string(), mock_provider("IMPORT_OK"));
     let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         import: turin_core::kernel::config::GovernanceImportConfig {
             mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -319,7 +327,6 @@ async fn test_dx_fixture_import_scoped_capability_delegate() -> Result<()> {
             turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
-                default_profile: Some("core_full".to_string()),
                 max_capabilities: HashMap::new(),
             },
         )]),
@@ -357,7 +364,6 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
     let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         import: turin_core::kernel::config::GovernanceImportConfig {
             mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -369,14 +375,13 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
             turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
-                default_profile: Some("core_full".to_string()),
                 max_capabilities: HashMap::new(),
             },
         )]),
         agents: HashMap::from([(
             "default".to_string(),
             turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-                capability_profile: None,
+                capability_set: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
             },
@@ -439,7 +444,6 @@ async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
     providers.insert("mock_main".to_string(), mock_provider("NESTED_OK"));
     let mut config = base_config(tmp.path(), &harness_dir, "mock_main", providers);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         import: turin_core::kernel::config::GovernanceImportConfig {
             mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -451,7 +455,6 @@ async fn test_dx_fixture_nested_import_widen_denial() -> Result<()> {
             turin_core::kernel::config::GovernanceRootConfig {
                 path: harness_dir.to_string_lossy().to_string(),
                 writable_hint: false,
-                default_profile: Some("core_full".to_string()),
                 max_capabilities: HashMap::new(),
             },
         )]),
@@ -497,12 +500,11 @@ async fn test_dx_fixture_peer_agent_denial() -> Result<()> {
     );
     bind_named_harness(&mut config, "blocked", &blocked_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
             turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-                capability_profile: None,
+                capability_set: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
             },
@@ -562,12 +564,11 @@ async fn test_dx_fixture_peer_ask_delegated_caps() -> Result<()> {
     );
     bind_named_harness(&mut config, "reviewer", &reviewer_harness_dir);
     config.governance = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         agents: HashMap::from([(
             "default".to_string(),
             turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-                capability_profile: None,
+                capability_set: None,
                 max_capabilities: HashMap::new(),
                 allowed_child_agents: vec!["reviewer".to_string()],
             },

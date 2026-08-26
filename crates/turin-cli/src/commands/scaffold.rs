@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use clap::ValueEnum;
 use std::fs;
 use std::path::{Path, PathBuf};
-use turin_types::governance_templates;
 use turin_types::layout::{
     DEFAULT_BOOTSTRAP_CONFIG_PATH, DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace,
     default_state_db_for_workspace,
@@ -52,40 +51,6 @@ impl InitProvider {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
-pub enum GovernancePreset {
-    Open,
-    Balanced,
-    Governed,
-}
-
-impl GovernancePreset {
-    pub fn profile(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Balanced => "balanced",
-            Self::Governed => "governed",
-        }
-    }
-
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::Open => "Open experimentation with minimal governance friction",
-            Self::Balanced => "Safer defaults with observability and capability enforcement",
-            Self::Governed => "Tighter audit and scoped-import defaults for regulated setups",
-        }
-    }
-
-    pub fn template(self) -> &'static str {
-        match self {
-            Self::Open => governance_templates::OPEN,
-            Self::Balanced => governance_templates::BALANCED,
-            Self::Governed => governance_templates::GOVERNED,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
 pub enum HarnessTemplate {
     Starter,
     Safety,
@@ -129,7 +94,6 @@ pub struct InitOptions {
     pub provider: InitProvider,
     pub model: String,
     pub harness_template: HarnessTemplate,
-    pub governance: GovernancePreset,
     pub force: bool,
 }
 
@@ -140,8 +104,20 @@ pub struct ScaffoldResult {
     pub provider: InitProvider,
     pub model: String,
     pub harness_template: HarnessTemplate,
-    pub governance: GovernancePreset,
 }
+
+const DEFAULT_GOVERNANCE_CONFIG: &str = r#"[governance]
+enforcement_enabled = false
+unmatched_capability = "allow"
+
+[governance.audit]
+mode = "off"
+include_capability_context = false
+
+[governance.import]
+mode = "legacy"
+allow_unscoped_in_open = true
+"#;
 
 #[derive(Clone, Copy)]
 pub struct HarnessTemplateFile {
@@ -286,7 +262,6 @@ pub fn scaffold_project(root: &Path, options: &InitOptions) -> Result<ScaffoldRe
         provider: options.provider,
         model: options.model.clone(),
         harness_template: options.harness_template,
-        governance: options.governance,
     })
 }
 
@@ -397,7 +372,7 @@ pub fn render_turin_toml(options: &InitOptions) -> String {
     toml.push_str("# Then run `turin-map index` from the project root.\n");
 
     toml.push('\n');
-    toml.push_str(options.governance.template());
+    toml.push_str(DEFAULT_GOVERNANCE_CONFIG);
 
     toml
 }

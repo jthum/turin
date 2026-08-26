@@ -61,7 +61,6 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
             provider,
             model,
             harness_template,
-            governance,
             force,
             yes,
         } => {
@@ -69,7 +68,6 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
                 provider,
                 model,
                 harness_template,
-                governance,
                 force,
                 yes,
             })?;
@@ -81,7 +79,6 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
             provider,
             model,
             harness_template,
-            governance,
             force,
             yes,
         } => {
@@ -91,7 +88,6 @@ pub(crate) async fn run(cli: Cli) -> Result<()> {
                 provider,
                 model,
                 harness_template,
-                governance,
                 force,
                 yes,
             })

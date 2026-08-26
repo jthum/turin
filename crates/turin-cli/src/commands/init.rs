@@ -7,7 +7,7 @@ use turin::display;
 
 use crate::commands::common;
 use crate::commands::scaffold::{
-    GovernancePreset, HarnessTemplate, InitOptions, InitProvider, ScaffoldResult, scaffold_project,
+    HarnessTemplate, InitOptions, InitProvider, ScaffoldResult, scaffold_project,
 };
 
 #[derive(Clone, Debug)]
@@ -15,7 +15,6 @@ pub struct InitArgs {
     pub provider: Option<InitProvider>,
     pub model: Option<String>,
     pub harness_template: Option<HarnessTemplate>,
-    pub governance: Option<GovernancePreset>,
     pub force: bool,
     pub yes: bool,
 }
@@ -27,7 +26,6 @@ pub struct QuickstartArgs {
     pub provider: Option<InitProvider>,
     pub model: Option<String>,
     pub harness_template: Option<HarnessTemplate>,
-    pub governance: Option<GovernancePreset>,
     pub force: bool,
     pub yes: bool,
 }
@@ -151,25 +149,10 @@ fn resolve_init_options(args: InitArgs, quickstart_defaults: bool) -> Result<Ini
         )?,
     };
 
-    let governance = match args.governance {
-        Some(governance) => governance,
-        None => prompt_choice(
-            "Governance preset",
-            &[
-                GovernancePreset::Open,
-                GovernancePreset::Balanced,
-                GovernancePreset::Governed,
-            ],
-            GovernancePreset::Balanced,
-            |choice| format!("{} ({})", choice.profile(), choice.description()),
-        )?,
-    };
-
     Ok(InitOptions {
         provider,
         model,
         harness_template,
-        governance,
         force: args.force,
     })
 }
@@ -190,7 +173,6 @@ fn noninteractive_init_options(args: InitArgs, quickstart_defaults: bool) -> Ini
         harness_template: args
             .harness_template
             .unwrap_or(HarnessTemplate::CodingAssistant),
-        governance: args.governance.unwrap_or(GovernancePreset::Balanced),
         force: args.force,
     }
 }
@@ -203,7 +185,6 @@ fn resolve_quickstart_options(args: &QuickstartArgs) -> Result<InitOptions> {
             harness_template: args
                 .harness_template
                 .or(Some(HarnessTemplate::CodingAssistant)),
-            governance: args.governance.or(Some(GovernancePreset::Balanced)),
             force: args.force,
             yes: args.yes,
         },
@@ -223,12 +204,6 @@ fn print_scaffold_summary(summary: &ScaffoldResult, ansi: bool) {
         display::ok_mark(ansi),
         display::paint(summary.harness_template.name(), "34", ansi)
     );
-    println!(
-        "{} Governance preset: {}",
-        display::ok_mark(ansi),
-        display::paint(summary.governance.profile(), "34", ansi)
-    );
-
     if !summary.created_paths.is_empty() {
         println!("{} Created:", display::ok_mark(ansi));
         for path in &summary.created_paths {

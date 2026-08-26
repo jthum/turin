@@ -2703,7 +2703,6 @@ async fn test_engine_registered_callbacks_preserve_imported_module_subject_conte
         crate::kernel::config::GovernanceRootConfig {
             path: "plugins".to_string(),
             writable_hint: false,
-            default_profile: None,
             max_capabilities: Default::default(),
         },
     );

@@ -28,3 +28,4 @@ turin-types = { path = "../turin-types" }
 
 [dev-dependencies]
 tempfile = "3.10"
+turin-core = { package = "turin", path = "../..", default-features = false }

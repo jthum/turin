@@ -192,8 +192,7 @@ If you want a real provider-backed config from the start:
 ```bash
 target/release/turin init \
   --provider anthropic \
-  --harness-template coding-assistant \
-  --governance balanced
+  --harness-template coding-assistant
 ```
 
 Useful starter commands:
@@ -204,7 +203,8 @@ target/release/turin harness new reviewer --dir .turin/harnesses-reviewer
 target/release/turin harness test --response "HARNESS_TEST_OK"
 ```
 
-`turin init` is interactive when run in a terminal without `--yes`.
+`turin init` is interactive when run in a terminal without `--yes` and writes
+an explicit, enforcement-disabled governance block for local use.
 
 If you want the newer manager-driven setup path instead:
 
@@ -215,6 +215,9 @@ target/release/turin-manager channels configure telegram
 target/release/turin-manager channels status
 target/release/turin-manager doctor
 ```
+
+`turin-manager init` can expand an open, balanced, or governed template into
+explicit policy fields; Turin core does not interpret those preset names.
 
 `turin-manager` stages diffs before writing, validates assembled channel settings through the channel runner, stores optional secrets in a `.env` file next to `.turin/config.toml`, and prints the exact foreground launch command. The channel runner loads that environment file and connects to the independently running Turin daemon.
 

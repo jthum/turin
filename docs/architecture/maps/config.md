@@ -43,6 +43,9 @@ Keep top-level `config.rs` as the entry point for `TurinConfig`, agent/provider/
 - External client and channel configuration is not part of
   `TurinConfig`. Turin config owns runtime behavior, not client credentials,
   bindings, access policy, or process lifecycle.
+- Governance policy is explicit runtime configuration. Turin core does not
+  interpret named presets; `turin-manager` templates expand into concrete
+  enforcement, audit, import, and capability fields.
 
 ## Common Changes
 

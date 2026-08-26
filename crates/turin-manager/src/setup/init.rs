@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 use serde::Serialize;
-use turin_types::governance_templates;
 use turin_types::layout::{DEFAULT_LAYOUT_HARNESSES_DIR, default_layout_root_for_workspace};
 
 use crate::files::{
@@ -56,9 +55,9 @@ impl ProviderChoice {
 impl GovernanceChoice {
     fn template(self) -> &'static str {
         match self {
-            Self::Open => governance_templates::OPEN,
-            Self::Balanced => governance_templates::BALANCED,
-            Self::Governed => governance_templates::GOVERNED,
+            Self::Open => include_str!("../../templates/governance/open.toml"),
+            Self::Balanced => include_str!("../../templates/governance/balanced.toml"),
+            Self::Governed => include_str!("../../templates/governance/governed.toml"),
         }
     }
 }
@@ -209,7 +208,7 @@ fn prompt_provider() -> Result<ProviderChoice> {
 fn prompt_governance() -> Result<GovernanceChoice> {
     let options = ["Balanced", "Open", "Governed"];
     let index = Select::new()
-        .with_prompt("Governance profile")
+        .with_prompt("Governance template")
         .items(options)
         .default(0)
         .interact()?;
@@ -298,5 +297,29 @@ mod tests {
         assert!(body.contains("linked_runtime_lanes = 4"));
         assert!(body.contains("[governance.capabilities]"));
         assert!(body.contains("\"shell.exec\" = false"));
+        assert!(body.contains("\"runtime.worklist.*\" = true"));
+        assert!(!body.contains("profile ="));
+        toml::from_str::<toml::Value>(&body).expect("generated config should be valid TOML");
+    }
+
+    #[test]
+    fn every_governance_template_generates_valid_explicit_turin_config() {
+        for governance in [
+            GovernanceChoice::Open,
+            GovernanceChoice::Balanced,
+            GovernanceChoice::Governed,
+        ] {
+            let body = generate_turin_config(
+                ProviderChoice::Mock,
+                governance,
+                "mock",
+                "Test explicit governance.",
+            )
+            .expect("rendered");
+
+            turin_core::kernel::config::TurinConfig::from_str(&body)
+                .expect("manager template should be valid Turin configuration");
+            assert!(!body.contains("profile ="));
+        }
     }
 }

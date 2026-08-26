@@ -22,7 +22,6 @@ Configured in `[governance]`:
 
 ```toml
 [governance]
-profile = "open"         # descriptive label for observability and harness behavior
 enforcement_enabled = false
 unmatched_capability = "allow"  # allow | deny
 
@@ -34,14 +33,10 @@ unmatched_capability = "allow"  # allow | deny
 "shell.exec" = true
 ```
 
-The security source of truth is the explicit capability map plus
-`unmatched_capability`. `profile` is a lightweight label exposed through
-`runtime.governance.profile()` and snapshots; it is not trusted as the policy
-itself.
-
-Starter tools such as `turin init` can still offer named profiles like `open`,
-`balanced`, and `governed`, but they expand those choices into explicit
-capability rules in the generated config.
+The source of truth is the explicit capability map plus
+`unmatched_capability`. Turin core does not interpret named governance presets.
+`turin-manager` can generate open, balanced, or governed starting points, but
+each choice expands into complete, self-describing configuration.
 
 ### Open-style policies
 
@@ -123,6 +118,40 @@ currently checked by the governance enforcement path as a named capability.
 Notes:
 - `runtime.policy.get` is intentionally readable without a governance capability gate in the current design.
 
+### Runtime Graph and Code Search
+
+- `runtime.graph.query`
+- `runtime.graph.write`
+- `runtime.code.search.status`
+- `runtime.code.search.lexical`
+- `runtime.code.search.semantic`
+- `runtime.code.search.hybrid`
+
+### Runtime Schedules
+
+- `runtime.schedule.create`
+- `runtime.schedule.update`
+- `runtime.schedule.list`
+- `runtime.schedule.get`
+- `runtime.schedule.runs`
+- `runtime.schedule.enable`
+- `runtime.schedule.disable`
+- `runtime.schedule.delete`
+
+### Runtime Worklists
+
+- `runtime.worklist.open`
+- `runtime.worklist.add`
+- `runtime.worklist.next`
+- `runtime.worklist.claim`
+- `runtime.worklist.heartbeat`
+- `runtime.worklist.dispatch`
+- `runtime.worklist.done`
+- `runtime.worklist.fail`
+- `runtime.worklist.requeue`
+- `runtime.worklist.update`
+- `runtime.worklist.release_stale`
+
 ### Runtime Governance (Temporary Grants)
 
 - `runtime.governance.grant.issue`
@@ -131,7 +160,7 @@ Notes:
 - `runtime.governance.grant.use`
 
 Notes:
-- `runtime.governance.profile/snapshot/check/agent` are observability APIs and are not capability-gated in the current design.
+- `runtime.governance.snapshot/check/agent` are observability APIs and are not capability-gated in the current design.
 
 ### Harness Import
 
@@ -152,6 +181,14 @@ Usage:
   - `read_file` -> `fs.read`
   - `write_file` / `edit_file` / `apply_patch` -> `fs.write`
   - `shell_exec` -> `shell.exec`
+  - `web_fetch` -> `web.fetch`
+  - `web_search` -> `web.search`
+  - `remember` -> `memory.write`
+  - `recall` -> `memory.read`
+  - `submit_plan` -> `runtime.plan.submit`
+  - `bridge_mcp` -> `integration.mcp.bridge`
+
+MCP proxy tools declare `integration.mcp.tool` directly through the native tool contract.
 
 ### Useful Wildcard Prefixes
 
@@ -235,7 +272,6 @@ Define roots in `[governance.roots]`:
 [governance.roots.core]
 path = ".turin/harnesses/core"
 writable_hint = false
-default_profile = "balanced"
 
 [governance.roots.plugins]
 path = ".turin/harnesses/plugins"
@@ -279,28 +315,28 @@ These rules apply to peer-agent dispatch and runtime actions attributed to those
 
 ```toml
 [governance.agents.reviewer]
-capability_profile = "reviewer_read_only"
+capability_set = "reviewer_read_only"
 allowed_child_agents = []
 max_capabilities = { "runtime.db.exec" = false }
 
 [governance.agents.coder]
-capability_profile = "coder"
+capability_set = "coder"
 allowed_child_agents = ["reviewer"]
 ```
 
-### Capability profiles
+### Capability sets
 
-Define named capability profiles in `[governance.capability_profiles]`:
+Define reusable ceilings in `[governance.capability_sets]`:
 
 ```toml
-[governance.capability_profiles.reviewer_read_only]
+[governance.capability_sets.reviewer_read_only]
 "runtime.db.query" = true
 "runtime.db.exec" = false
 "fs.read" = true
 "fs.write" = false
 "runtime.policy.set" = false
 
-[governance.capability_profiles.coder]
+[governance.capability_sets.coder]
 "runtime.db.*" = true
 "fs.read" = true
 "fs.write" = true
@@ -471,7 +507,6 @@ This hook token-usage mode is a good example of Turin’s philosophy:
 Use these from harness code to inspect effective governance state:
 
 ```lua
-local profile = runtime.governance.profile()
 local snapshot = runtime.governance.snapshot()
 local agent_view = runtime.governance.agent("reviewer")
 local decision = runtime.governance.check("runtime.db.exec")
@@ -483,7 +518,7 @@ These are useful for adaptive behavior (e.g., degrade gracefully when a capabili
 
 ### 1. Open by default, tighten by deployment
 
-- local/dev sandbox: `profile = "open"`, `enforcement_enabled = false`, `unmatched_capability = "allow"`
+- local/dev sandbox: `enforcement_enabled = false`, `unmatched_capability = "allow"`
 - shared/dev infra: balanced starter policy with explicit capability rules
 - production/controlled workflows: governed starter policy + scoped imports + immutable audit
 
@@ -551,7 +586,7 @@ path = ".turin/harnesses/plugins"
 writable_hint = true
 max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false, "fs.write" = true }
 
-[governance.capability_profiles.reviewer]
+[governance.capability_sets.reviewer]
 "runtime.db.query" = true
 "runtime.db.exec" = false
 "fs.read" = true
@@ -559,7 +594,7 @@ max_capabilities = { "runtime.db.query" = true, "runtime.db.exec" = false, "fs.w
 "shell.exec" = false
 
 [governance.agents.reviewer]
-capability_profile = "reviewer"
+capability_set = "reviewer"
 allowed_child_agents = []
 
 [governance.grants]

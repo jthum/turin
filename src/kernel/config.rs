@@ -358,10 +358,6 @@ pub struct ProviderConfig {
     pub context_window_tokens: Option<u32>,
 }
 
-fn default_governance_profile() -> String {
-    "open".to_string()
-}
-
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GovernanceUnmatchedCapability {
@@ -389,6 +385,7 @@ pub enum GovernanceImportMode {
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceAuditConfig {
     #[serde(default)]
     pub mode: GovernanceAuditMode,
@@ -399,6 +396,7 @@ pub struct GovernanceAuditConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceImportConfig {
     #[serde(default)]
     pub mode: GovernanceImportMode,
@@ -419,20 +417,20 @@ impl Default for GovernanceImportConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceRootConfig {
     pub path: String,
     #[serde(default)]
     pub writable_hint: bool,
     #[serde(default)]
-    pub default_profile: Option<String>,
-    #[serde(default)]
     pub max_capabilities: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceAgentCapabilitiesConfig {
     #[serde(default)]
-    pub capability_profile: Option<String>,
+    pub capability_set: Option<String>,
     #[serde(default)]
     pub max_capabilities: std::collections::HashMap<String, serde_json::Value>,
     #[serde(default)]
@@ -440,6 +438,7 @@ pub struct GovernanceAgentCapabilitiesConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceGrantsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -450,9 +449,8 @@ pub struct GovernanceGrantsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GovernanceConfig {
-    #[serde(default = "default_governance_profile")]
-    pub profile: String,
     #[serde(default)]
     pub enforcement_enabled: bool,
     #[serde(default)]
@@ -466,7 +464,7 @@ pub struct GovernanceConfig {
     #[serde(default)]
     pub roots: std::collections::HashMap<String, GovernanceRootConfig>,
     #[serde(default)]
-    pub capability_profiles:
+    pub capability_sets:
         std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
     #[serde(default)]
     pub agents: std::collections::HashMap<String, GovernanceAgentCapabilitiesConfig>,
@@ -477,14 +475,13 @@ pub struct GovernanceConfig {
 impl Default for GovernanceConfig {
     fn default() -> Self {
         Self {
-            profile: default_governance_profile(),
             enforcement_enabled: false,
             unmatched_capability: GovernanceUnmatchedCapability::Allow,
             capabilities: Default::default(),
             audit: GovernanceAuditConfig::default(),
             import: GovernanceImportConfig::default(),
             roots: Default::default(),
-            capability_profiles: Default::default(),
+            capability_sets: Default::default(),
             agents: Default::default(),
             grants: GovernanceGrantsConfig::default(),
         }

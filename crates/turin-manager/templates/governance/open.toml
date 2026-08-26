@@ -1,0 +1,20 @@
+[governance]
+enforcement_enabled = false
+unmatched_capability = "allow"
+
+[governance.audit]
+mode = "off"
+include_capability_context = false
+
+[governance.import]
+mode = "legacy"
+allow_unscoped_in_open = true
+
+[governance.capabilities]
+"runtime.*" = true
+"harness.*" = true
+"fs.*" = true
+"shell.exec" = true
+"web.*" = true
+"memory.*" = true
+"integration.mcp.*" = true

@@ -1713,7 +1713,6 @@ Governance observability and temporary grants.
 
 ### Observability
 
-- `runtime.governance.profile() -> string` returns the configured governance profile label.
 - `runtime.governance.snapshot(agent_id?) -> snapshot_json`
 - `runtime.governance.agent(agent_id) -> snapshot_json`
 - `runtime.governance.check(capability, agent_id?) -> decision_json`

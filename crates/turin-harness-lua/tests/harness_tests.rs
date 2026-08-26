@@ -1561,7 +1561,7 @@ async fn test_virtual_tool_callback_can_return_follow_up_plan() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Result<()> {
+async fn test_explicit_policy_denies_shell_exec_tool_at_kernel_fallback() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_tool_fallback.db");
     let harness_dir = tmp.path().join("harnesses");
@@ -1623,8 +1623,11 @@ async fn test_governed_mode_denies_shell_exec_tool_at_kernel_fallback() -> Resul
         providers,
         embeddings: None,
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "governed".to_string(),
             enforcement_enabled: true,
+            capabilities: std::collections::BTreeMap::from([(
+                "shell.exec".to_string(),
+                serde_json::Value::Bool(false),
+            )]),
             ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
@@ -1687,7 +1690,7 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
             local self_dec, sde = runtime.governance.check("runtime.policy.set")
             if self_dec == nil then error("orchestrator governance.check failed: " .. tostring(sde)) end
             if not self_dec.allowed then
-                error("balanced profile should allow runtime.policy.set before delegation")
+                error("parent policy should allow runtime.policy.set before delegation")
             end
 
             local task_id, se = runtime.agent.submit("worker", { prompt = "delegated worker run" }, {
@@ -1870,7 +1873,6 @@ async fn test_runtime_agent_submit_applies_delegated_capability_ceiling() -> Res
         providers,
         embeddings: None,
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             ..turin_core::kernel::config::GovernanceConfig::default()
         },
@@ -2007,7 +2009,7 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
     governance_agents.insert(
         "orchestrator".to_string(),
         turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: None,
+            capability_set: None,
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec!["worker_allowed".to_string()],
         },
@@ -2055,7 +2057,6 @@ async fn test_agent_allowed_child_agents_enforced_across_aliases() -> Result<()>
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
             ..turin_core::kernel::config::GovernanceConfig::default()
@@ -2211,7 +2212,6 @@ async fn test_agent_ask_applies_delegated_capability_ceiling() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             ..turin_core::kernel::config::GovernanceConfig::default()
         },
@@ -4064,14 +4064,8 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
 
     let harness_code = r#"
         function on_turn_prepare(ctx)
-            local profile = runtime.governance.profile()
-            if profile ~= "balanced" then
-                error("runtime.governance.profile mismatch: " .. tostring(profile))
-            end
-
             local snap, se = runtime.governance.snapshot()
             if snap == nil then error("runtime.governance.snapshot failed: " .. tostring(se)) end
-            if snap.profile ~= "balanced" then error("snapshot.profile mismatch") end
             if snap.enforcement_enabled ~= false then error("snapshot.enforcement_enabled mismatch") end
             if snap.capabilities_observability_only ~= true then error("snapshot should be observability-only in G1") end
             if snap.audit_mode ~= "observational" then error("snapshot.audit_mode mismatch") end
@@ -4084,7 +4078,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
                     saw_db_query = true
                 end
             end
-            if not saw_db_query then error("expected preset runtime.db.query capability") end
+            if not saw_db_query then error("expected explicit runtime.db.query capability") end
 
             local reviewer, re = runtime.governance.agent("reviewer")
             if reviewer == nil then error("runtime.governance.agent failed: " .. tostring(re)) end
@@ -4119,7 +4113,6 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         turin_core::kernel::config::GovernanceRootConfig {
             path: "harness/core".to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -4127,13 +4120,13 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
     agents.insert(
         "reviewer".to_string(),
         turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: Some("reviewer_ro".to_string()),
+            capability_set: Some("reviewer_ro".to_string()),
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec!["worker".to_string()],
         },
     );
-    let mut capability_profiles = std::collections::HashMap::new();
-    capability_profiles.insert(
+    let mut capability_sets = std::collections::HashMap::new();
+    capability_sets.insert(
         "reviewer_ro".to_string(),
         std::collections::HashMap::from([(
             "runtime.db.query".to_string(),
@@ -4176,10 +4169,12 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: false,
             unmatched_capability: turin_core::kernel::config::GovernanceUnmatchedCapability::Deny,
-            capabilities: Default::default(),
+            capabilities: std::collections::BTreeMap::from([(
+                "runtime.db.query".to_string(),
+                serde_json::Value::Bool(true),
+            )]),
             audit: turin_core::kernel::config::GovernanceAuditConfig {
                 mode: turin_core::kernel::config::GovernanceAuditMode::Observational,
                 include_capability_context: true,
@@ -4191,7 +4186,7 @@ async fn test_runtime_governance_observability_api() -> Result<()> {
                 allow_unscoped_in_open: false,
             },
             roots,
-            capability_profiles,
+            capability_sets,
             agents,
             grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -4296,7 +4291,6 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -4336,7 +4330,6 @@ async fn test_import_scoped_tracks_imported_module_subject_and_root() -> Result<
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
             ..turin_core::kernel::config::GovernanceConfig::default()
@@ -4411,7 +4404,6 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -4451,7 +4443,6 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_import() -> Result<()>
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "governed".to_string(),
             enforcement_enabled: true,
             import: turin_core::kernel::config::GovernanceImportConfig {
                 mode: turin_core::kernel::config::GovernanceImportMode::Scoped,
@@ -4538,7 +4529,6 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -4578,7 +4568,6 @@ async fn test_governed_scoped_import_mode_blocks_unscoped_use() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin_core::kernel::config::GovernanceImportConfig {
                 mode: turin_core::kernel::config::GovernanceImportMode::Scoped,
@@ -4646,7 +4635,6 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -4686,7 +4674,6 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: false,
             roots,
             ..turin_core::kernel::config::GovernanceConfig::default()
@@ -4765,7 +4752,6 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_locked".to_string()),
             max_capabilities: root_caps,
         },
     );
@@ -4805,7 +4791,6 @@ async fn test_root_max_capabilities_applies_to_top_level_hooks() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             roots,
             ..turin_core::kernel::config::GovernanceConfig::default()
@@ -4883,7 +4868,7 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
     governance_agents.insert(
         "default".to_string(),
         turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: None,
+            capability_set: None,
             max_capabilities: agent_caps,
             allowed_child_agents: vec![],
         },
@@ -4924,7 +4909,6 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             agents: governance_agents,
             ..turin_core::kernel::config::GovernanceConfig::default()
@@ -4951,9 +4935,9 @@ async fn test_agent_max_capabilities_denies_runtime_policy_set() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Result<()> {
+async fn test_agent_capability_set_denies_peer_runtime_policy_set() -> Result<()> {
     let tmp = tempdir()?;
-    let db_path = tmp.path().join("test_agent_capability_profile_peer.db");
+    let db_path = tmp.path().join("test_agent_capability_set_peer.db");
     let orchestrator_harness_dir = tmp.path().join("harnesses_orchestrator");
     let reviewer_harness_dir = tmp.path().join("harnesses_reviewer");
     std::fs::create_dir(&orchestrator_harness_dir)?;
@@ -4969,7 +4953,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
                     error("orchestrator should keep runtime.policy.set in balanced mode")
                 end
 
-                local task_id, te = runtime.agent.submit("reviewer", { prompt = "capability profile check" })
+                local task_id, te = runtime.agent.submit("reviewer", { prompt = "capability set check" })
                 if task_id == nil then error("runtime.agent.submit failed: " .. tostring(te)) end
 
                 local res, ae = runtime.agent.await(task_id, { timeout_ms = 5000 })
@@ -4997,24 +4981,24 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
                     error("reviewer subject_agent_id mismatch")
                 end
                 if dec_policy.allowed then
-                    error("runtime.policy.set should be denied by agent capability_profile")
+                    error("runtime.policy.set should be denied by agent capability_set")
                 end
-                if dec_policy.reason == nil or string.find(dec_policy.reason, "agent capability_profile 'reviewer_ro'", 1, true) == nil then
-                    error("policy denial reason should mention reviewer_ro capability_profile")
+                if dec_policy.reason == nil or string.find(dec_policy.reason, "agent capability_set 'reviewer_ro'", 1, true) == nil then
+                    error("policy denial reason should mention reviewer_ro capability_set")
                 end
 
                 local dec_query, qe = runtime.governance.check("runtime.db.query")
                 if dec_query == nil then error("query decision failed: " .. tostring(qe)) end
                 if not dec_query.allowed then
-                    error("runtime.db.query should be allowed by reviewer_ro capability_profile")
+                    error("runtime.db.query should be allowed by reviewer_ro capability_set")
                 end
 
-                local ok, err = try(runtime.policy.set, "reviewer.cap.profile.test", true)
+                local ok, err = try(runtime.policy.set, "reviewer.capability.set.test", true)
                 if ok ~= false or err == nil then
-                    error("runtime.policy.set should fail under agent capability_profile")
+                    error("runtime.policy.set should fail under agent capability_set")
                 end
-                if string.find(tostring(err), "agent capability_profile 'reviewer_ro'", 1, true) == nil then
-                    error("runtime.policy.set denial should mention reviewer_ro capability_profile")
+                if string.find(tostring(err), "agent capability_set 'reviewer_ro'", 1, true) == nil then
+                    error("runtime.policy.set denial should mention reviewer_ro capability_set")
                 end
 
                 return ALLOW
@@ -5051,8 +5035,8 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         },
     );
 
-    let mut capability_profiles = std::collections::HashMap::new();
-    capability_profiles.insert(
+    let mut capability_sets = std::collections::HashMap::new();
+    capability_sets.insert(
         "reviewer_ro".to_string(),
         std::collections::HashMap::from([
             (
@@ -5069,7 +5053,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
     governance_agents.insert(
         "reviewer".to_string(),
         turin_core::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: Some("reviewer_ro".to_string()),
+            capability_set: Some("reviewer_ro".to_string()),
             max_capabilities: std::collections::HashMap::new(),
             allowed_child_agents: vec![],
         },
@@ -5117,9 +5101,8 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
-            capability_profiles,
+            capability_sets,
             agents: governance_agents,
             ..turin_core::kernel::config::GovernanceConfig::default()
         },
@@ -5136,7 +5119,7 @@ async fn test_agent_capability_profile_denies_peer_runtime_policy_set() -> Resul
     kernel
         .run(
             &mut session,
-            Some("exercise agent capability_profile enforcement".to_string()),
+            Some("exercise agent capability_set enforcement".to_string()),
         )
         .await?;
     kernel.end_session(&mut session).await?;
@@ -5308,7 +5291,6 @@ async fn test_runtime_governance_temporary_grants_issue_use_revoke() -> Result<(
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -5483,7 +5465,6 @@ async fn test_temporary_grant_ceiling_propagates_to_peer_submit() -> Result<()> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: turin_core::kernel::config::GovernanceGrantsConfig {
                 enabled: true,
@@ -5593,7 +5574,6 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -5633,7 +5613,6 @@ async fn test_import_scoped_capability_delegation_is_downward_only() -> Result<(
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin_core::kernel::config::GovernanceImportConfig {
                 mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -5744,7 +5723,6 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -5784,7 +5762,6 @@ async fn test_use_scoped_capability_delegation_is_downward_only() -> Result<()> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin_core::kernel::config::GovernanceImportConfig {
                 mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -5895,7 +5872,6 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         turin_core::kernel::config::GovernanceRootConfig {
             path: harness_dir.to_str().unwrap().to_string(),
             writable_hint: false,
-            default_profile: Some("core_full".to_string()),
             max_capabilities: std::collections::HashMap::new(),
         },
     );
@@ -5935,7 +5911,6 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             import: turin_core::kernel::config::GovernanceImportConfig {
                 mode: turin_core::kernel::config::GovernanceImportMode::Mixed,
@@ -5967,7 +5942,7 @@ async fn test_nested_import_cannot_widen_import_delegation() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
+async fn test_explicit_governance_enforcement_blocks_high_risk_runtime_apis() -> Result<()> {
     let tmp = tempdir()?;
     let db_path = tmp.path().join("test_governed_enforcement.db");
     let harness_dir = tmp.path().join("harnesses");
@@ -6058,8 +6033,32 @@ async fn test_governance_profile_enforcement_blocks_high_risk_runtime_apis() -> 
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: turin_core::kernel::config::GovernanceConfig {
-            profile: "governed".to_string(),
             enforcement_enabled: true,
+            unmatched_capability:
+                turin_core::kernel::config::GovernanceUnmatchedCapability::Deny,
+            capabilities: std::collections::BTreeMap::from([
+                (
+                    "runtime.db.query".to_string(),
+                    serde_json::Value::Bool(true),
+                ),
+                (
+                    "runtime.db.exec".to_string(),
+                    serde_json::Value::Bool(false),
+                ),
+                (
+                    "runtime.policy.set".to_string(),
+                    serde_json::Value::Bool(false),
+                ),
+                (
+                    "runtime.agent.spawn".to_string(),
+                    serde_json::Value::Bool(false),
+                ),
+                (
+                    "runtime.agent.status".to_string(),
+                    serde_json::Value::Bool(true),
+                ),
+                ("fs.write".to_string(), serde_json::Value::Bool(false)),
+            ]),
             ..turin_core::kernel::config::GovernanceConfig::default()
         },
         daemon: Default::default(),
@@ -7503,7 +7502,6 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: GovernanceGrantsConfig {
                 enabled: true,
@@ -7752,7 +7750,6 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
         providers,
         embeddings: Some(EmbeddingConfig::noop()),
         governance: GovernanceConfig {
-            profile: "balanced".to_string(),
             enforcement_enabled: true,
             grants: GovernanceGrantsConfig {
                 enabled: true,

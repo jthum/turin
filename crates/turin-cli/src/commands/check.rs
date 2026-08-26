@@ -345,9 +345,7 @@ fn status_label(status: CheckStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::scaffold::{
-        GovernancePreset, HarnessTemplate, InitOptions, InitProvider, scaffold_project,
-    };
+    use crate::commands::scaffold::{HarnessTemplate, InitOptions, InitProvider, scaffold_project};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -359,7 +357,6 @@ mod tests {
                 provider: InitProvider::Mock,
                 model: "mock-model".to_string(),
                 harness_template: HarnessTemplate::Starter,
-                governance: GovernancePreset::Balanced,
                 force: false,
             },
         )?;
@@ -391,7 +388,6 @@ mod tests {
                 provider: InitProvider::Openai,
                 model: "test-model".to_string(),
                 harness_template: HarnessTemplate::Starter,
-                governance: GovernancePreset::Balanced,
                 force: false,
             },
         )?;
@@ -418,7 +414,6 @@ mod tests {
                 provider: InitProvider::Mock,
                 model: "mock-model".to_string(),
                 harness_template: HarnessTemplate::Starter,
-                governance: GovernancePreset::Balanced,
                 force: false,
             },
         )?;

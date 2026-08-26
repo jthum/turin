@@ -1,5 +1,4 @@
 pub mod content;
-pub mod governance_templates;
 pub mod layout;
 
 pub use content::TaskInputContent;

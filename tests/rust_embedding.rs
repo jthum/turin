@@ -299,7 +299,6 @@ async fn public_embedding_path_supports_harnesses_tools_governance_and_persisten
     )]);
     config.tools.selection.allow = Some(vec!["forbidden_record".into(), "record_fact".into()]);
     config.governance = GovernanceConfig {
-        profile: "embedded".into(),
         enforcement_enabled: true,
         unmatched_capability: GovernanceUnmatchedCapability::Deny,
         capabilities: [("records.write".into(), serde_json::Value::Bool(true))]

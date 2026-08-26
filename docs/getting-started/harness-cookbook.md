@@ -15,7 +15,7 @@ That creates `.turin/config.toml`, `.turin/harnesses/`, a starter state DB, and 
 For a real project scaffold:
 
 ```bash
-turin init --provider anthropic --harness-template coding-assistant --governance balanced
+turin init --provider anthropic --harness-template coding-assistant
 ```
 
 Useful flags:
@@ -23,9 +23,12 @@ Useful flags:
 - `--provider anthropic|openai|mock`
 - `--model ...`
 - `--harness-template starter|safety|coding-assistant|reviewer`
-- `--governance open|balanced|governed`
 - `--yes` to skip prompts
 - `--force` to overwrite the generated starter files
+
+`turin init` writes a transparent, enforcement-disabled governance block for
+the frictionless local path. Use interactive `turin-manager init` when you want
+it to generate an explicit open, balanced, or governed policy template.
 
 ## 2. Generate a harness template
 

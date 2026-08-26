@@ -802,7 +802,6 @@ provider = "openai"
 type = "openai"
 
 [governance]
-profile = "balanced"
 enforcement_enabled = false
 unmatched_capability = "deny"
 
@@ -822,18 +821,17 @@ default_root = "core"
 [governance.roots.core]
 path = "harness/core"
 writable_hint = false
-default_profile = "core_full"
 
 [governance.roots.core.max_capabilities]
 "runtime.db.query" = true
 "runtime.db.exec" = false
 
-[governance.capability_profiles.reviewer_ro]
+[governance.capability_sets.reviewer_ro]
 "runtime.db.query" = true
 "runtime.policy.set" = false
 
 [governance.agents.reviewer]
-capability_profile = "reviewer_ro"
+capability_set = "reviewer_ro"
 allowed_child_agents = ["worker"]
 
 [governance.agents.reviewer.max_capabilities]
@@ -847,7 +845,6 @@ require_audit_reason = true
 "#;
 
     let config = TurinConfig::from_str(toml).unwrap();
-    assert_eq!(config.governance.profile, "balanced".to_string());
     assert_eq!(
         config.governance.unmatched_capability,
         GovernanceUnmatchedCapability::Deny
@@ -872,7 +869,7 @@ require_audit_reason = true
     assert_eq!(
         config
             .governance
-            .capability_profiles
+            .capability_sets
             .get("reviewer_ro")
             .and_then(|p| p.get("runtime.policy.set"))
             .and_then(|v| v.as_bool()),
@@ -888,6 +885,43 @@ require_audit_reason = true
         Some("worker")
     );
     assert!(config.governance.grants.enabled);
+}
+
+#[test]
+fn test_rejects_removed_governance_profile() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[governance]
+profile = "balanced"
+enforcement_enabled = true
+"#;
+
+    let err = TurinConfig::from_str(toml).unwrap_err();
+    assert!(format!("{err:#}").contains("unknown field `profile`"));
+}
+
+#[test]
+fn test_rejects_removed_agent_capability_profile() {
+    let toml = r#"
+[agent]
+model = "gpt-4o"
+provider = "openai"
+
+[providers.openai]
+type = "openai"
+
+[governance.agents.reviewer]
+capability_profile = "reviewer"
+"#;
+
+    let err = TurinConfig::from_str(toml).unwrap_err();
+    assert!(format!("{err:#}").contains("unknown field `capability_profile`"));
 }
 
 #[tokio::test]

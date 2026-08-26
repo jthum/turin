@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use turin_types::governance_templates;
 
 use crate::kernel::config::{
     GovernanceAuditMode, GovernanceConfig, GovernanceImportMode, GovernanceUnmatchedCapability,
@@ -29,22 +28,19 @@ pub struct GovernanceRootSnapshot {
     pub name: String,
     pub path: String,
     pub writable_hint: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernanceAgentSnapshot {
     pub agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub capability_profile: Option<String>,
+    pub capability_set: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_child_agents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GovernanceSnapshot {
-    pub profile: String,
     pub enforcement_enabled: bool,
     pub audit_mode: GovernanceAuditMode,
     pub audit_persist_before_hooks: bool,
@@ -77,7 +73,6 @@ pub struct CapabilityDecision {
     pub subject_root_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject_grant_id: Option<String>,
-    pub profile: String,
     pub enforcement_enabled: bool,
     pub matched_rule: Option<String>,
     pub matched_via_wildcard: bool,
@@ -102,44 +97,6 @@ pub struct GovernanceSubject {
     pub import_capabilities: Option<BTreeMap<String, bool>>,
 }
 
-#[derive(Debug, Clone)]
-struct CapabilityBaseline {
-    capabilities: BTreeMap<String, serde_json::Value>,
-    unmatched_capability: GovernanceUnmatchedCapability,
-}
-
-#[derive(Debug, Deserialize)]
-struct GovernanceTemplateDocument {
-    governance: GovernanceConfig,
-}
-
-fn resolve_capability_baseline(config: &GovernanceConfig) -> CapabilityBaseline {
-    if !config.capabilities.is_empty() {
-        return CapabilityBaseline {
-            capabilities: config.capabilities.clone(),
-            unmatched_capability: config.unmatched_capability.clone(),
-        };
-    }
-
-    let Some(template) = governance_templates::by_name(config.profile.as_str()) else {
-        return CapabilityBaseline {
-            capabilities: BTreeMap::new(),
-            unmatched_capability: config.unmatched_capability.clone(),
-        };
-    };
-
-    match toml::from_str::<GovernanceTemplateDocument>(template) {
-        Ok(document) => CapabilityBaseline {
-            capabilities: document.governance.capabilities,
-            unmatched_capability: document.governance.unmatched_capability,
-        },
-        Err(error) => panic!(
-            "built-in governance template '{}' failed to parse: {error}",
-            config.profile
-        ),
-    }
-}
-
 impl GovernanceSubject {
     pub fn for_agent(agent_id: impl Into<String>) -> Self {
         Self {
@@ -159,11 +116,10 @@ pub struct GovernanceManager {
 
 impl GovernanceManager {
     pub fn new(config: GovernanceConfig) -> Self {
-        let baseline = resolve_capability_baseline(&config);
         Self {
+            baseline_capabilities: config.capabilities.clone(),
+            unmatched_capability: config.unmatched_capability.clone(),
             config,
-            baseline_capabilities: baseline.capabilities,
-            unmatched_capability: baseline.unmatched_capability,
             grants: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -185,7 +141,6 @@ impl GovernanceManager {
                 name: name.clone(),
                 path: root.path.clone(),
                 writable_hint: root.writable_hint,
-                default_profile: root.default_profile.clone(),
             })
             .collect();
         roots.sort_by(|a, b| a.name.cmp(&b.name));
@@ -196,14 +151,13 @@ impl GovernanceManager {
             .iter()
             .map(|(id, cfg)| GovernanceAgentSnapshot {
                 agent_id: id.clone(),
-                capability_profile: cfg.capability_profile.clone(),
+                capability_set: cfg.capability_set.clone(),
                 allowed_child_agents: cfg.allowed_child_agents.clone(),
             })
             .collect();
         agents.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
 
         GovernanceSnapshot {
-            profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
             audit_mode: self.config.audit.mode.clone(),
             audit_persist_before_hooks: self.config.audit.persist_before_hooks.unwrap_or(matches!(
@@ -256,13 +210,13 @@ impl GovernanceManager {
         if baseline_allowed {
             if let Some(agent_id) = subject.agent_id.as_deref()
                 && let Some(agent_cfg) = self.config.agents.get(agent_id)
-                && let Some(profile_name) = agent_cfg.capability_profile.as_deref()
-                && let Some(profile_caps) = self.config.capability_profiles.get(profile_name)
+                && let Some(set_name) = agent_cfg.capability_set.as_deref()
+                && let Some(set_caps) = self.config.capability_sets.get(set_name)
                 && let Some(reason) = capability_ceiling_denial_reason_json_map(
-                    profile_caps,
+                    set_caps,
                     capability,
-                    "agent capability_profile",
-                    profile_name,
+                    "agent capability_set",
+                    set_name,
                     false,
                 )
             {
@@ -334,12 +288,12 @@ impl GovernanceManager {
         } else {
             Some(match &matched.rule {
                 Some(rule) => format!(
-                    "Governance denial: capability '{}' denied by profile '{}' (rule '{}')",
-                    capability, self.config.profile, rule
+                    "Governance denial: capability '{}' denied by baseline rule '{}'",
+                    capability, rule
                 ),
                 None => format!(
-                    "Governance denial: capability '{}' denied by profile '{}' (no matching allow rule)",
-                    capability, self.config.profile
+                    "Governance denial: capability '{}' denied by unmatched_capability policy",
+                    capability
                 ),
             })
         };
@@ -350,7 +304,6 @@ impl GovernanceManager {
             subject_module_name: subject.module_name.clone(),
             subject_root_name: subject.root_name.clone(),
             subject_grant_id: subject.grant_id.clone(),
-            profile: self.config.profile.clone(),
             enforcement_enabled: self.config.enforcement_enabled,
             matched_rule: matched.rule,
             matched_via_wildcard: matched.via_wildcard,

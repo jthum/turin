@@ -352,7 +352,6 @@ mod tests {
         assert_eq!(
             KernelEvent::Audit(AuditEvent::GovernanceSnapshot {
                 snapshot: GovernanceSnapshot {
-                    profile: "open".to_string(),
                     enforcement_enabled: false,
                     audit_mode: crate::kernel::config::GovernanceAuditMode::Off,
                     audit_persist_before_hooks: false,
@@ -381,7 +380,6 @@ mod tests {
                     subject_module_name: None,
                     subject_root_name: None,
                     subject_grant_id: None,
-                    profile: "balanced".to_string(),
                     enforcement_enabled: true,
                     matched_rule: Some("fs.*".into()),
                     matched_via_wildcard: true,

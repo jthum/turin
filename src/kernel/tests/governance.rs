@@ -5,12 +5,14 @@ use crate::kernel::config::{
 };
 
 #[test]
-fn snapshot_includes_profile_defaults_and_subject() {
+fn snapshot_includes_explicit_policy_and_subject() {
     let mut cfg = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: false,
         unmatched_capability: GovernanceUnmatchedCapability::Deny,
-        capabilities: Default::default(),
+        capabilities: BTreeMap::from([(
+            "runtime.db.query".to_string(),
+            serde_json::Value::Bool(true),
+        )]),
         audit: GovernanceAuditConfig {
             mode: GovernanceAuditMode::Observational,
             include_capability_context: true,
@@ -22,7 +24,7 @@ fn snapshot_includes_profile_defaults_and_subject() {
             allow_unscoped_in_open: false,
         },
         roots: Default::default(),
-        capability_profiles: Default::default(),
+        capability_sets: Default::default(),
         agents: Default::default(),
         grants: GovernanceGrantsConfig {
             enabled: true,
@@ -35,14 +37,13 @@ fn snapshot_includes_profile_defaults_and_subject() {
         GovernanceRootConfig {
             path: "harness/core".into(),
             writable_hint: false,
-            default_profile: Some("core_full".into()),
             max_capabilities: Default::default(),
         },
     );
     cfg.agents.insert(
         "reviewer".into(),
         GovernanceAgentCapabilitiesConfig {
-            capability_profile: Some("reviewer_ro".into()),
+            capability_set: Some("reviewer_ro".into()),
             max_capabilities: Default::default(),
             allowed_child_agents: vec!["worker".into()],
         },
@@ -50,7 +51,6 @@ fn snapshot_includes_profile_defaults_and_subject() {
 
     let mgr = GovernanceManager::new(cfg);
     let snapshot = mgr.snapshot_for_agent(Some("reviewer"));
-    assert_eq!(snapshot.profile, "balanced");
     assert_eq!(snapshot.subject_agent_id.as_deref(), Some("reviewer"));
     assert_eq!(snapshot.audit_mode, GovernanceAuditMode::Observational);
     assert_eq!(
@@ -64,10 +64,14 @@ fn snapshot_includes_profile_defaults_and_subject() {
 }
 
 #[test]
-fn capability_decision_respects_profile_and_enforcement() {
+fn capability_decision_respects_explicit_rules_and_enforcement() {
     let mut cfg = GovernanceConfig {
-        profile: "governed".to_string(),
         enforcement_enabled: true,
+        unmatched_capability: GovernanceUnmatchedCapability::Deny,
+        capabilities: BTreeMap::from([
+            ("runtime.db.query".into(), serde_json::Value::Bool(true)),
+            ("runtime.db.exec".into(), serde_json::Value::Bool(false)),
+        ]),
         ..GovernanceConfig::default()
     };
     let mgr = GovernanceManager::new(cfg.clone());
@@ -86,7 +90,7 @@ fn capability_decision_respects_profile_and_enforcement() {
             .reason
             .as_deref()
             .unwrap()
-            .contains("no matching allow rule")
+            .contains("unmatched_capability policy")
     );
 
     cfg.enforcement_enabled = false;
@@ -120,7 +124,6 @@ fn tool_capability_mapping_covers_high_risk_builtins() {
 #[test]
 fn capability_decision_preserves_module_subject_context() {
     let mgr = GovernanceManager::new(GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: false,
         ..GovernanceConfig::default()
     });
@@ -140,14 +143,13 @@ fn capability_decision_preserves_module_subject_context() {
 #[test]
 fn allowed_child_agents_is_opt_in_and_enforced_when_configured() {
     let mut cfg = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         ..GovernanceConfig::default()
     };
     cfg.agents.insert(
         "orchestrator".into(),
         crate::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: None,
+            capability_set: None,
             max_capabilities: Default::default(),
             allowed_child_agents: vec!["worker_allowed".into()],
         },
@@ -169,13 +171,12 @@ fn allowed_child_agents_is_opt_in_and_enforced_when_configured() {
 }
 
 #[test]
-fn agent_capability_profile_applies_named_capability_ceiling() {
+fn agent_capability_set_applies_named_capability_ceiling() {
     let mut cfg = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         ..GovernanceConfig::default()
     };
-    cfg.capability_profiles.insert(
+    cfg.capability_sets.insert(
         "reviewer_ro".into(),
         HashMap::from([
             (
@@ -191,7 +192,7 @@ fn agent_capability_profile_applies_named_capability_ceiling() {
     cfg.agents.insert(
         "reviewer".into(),
         crate::kernel::config::GovernanceAgentCapabilitiesConfig {
-            capability_profile: Some("reviewer_ro".into()),
+            capability_set: Some("reviewer_ro".into()),
             max_capabilities: Default::default(),
             allowed_child_agents: vec![],
         },
@@ -214,7 +215,7 @@ fn agent_capability_profile_applies_named_capability_ceiling() {
             .reason
             .as_deref()
             .unwrap()
-            .contains("agent capability_profile")
+            .contains("agent capability_set")
     );
 
     let reviewer_query = mgr.capability_decision_for_subject(&reviewer, "runtime.db.query");
@@ -227,7 +228,6 @@ fn agent_capability_profile_applies_named_capability_ceiling() {
 #[test]
 fn temporary_grants_apply_ceiling_and_consume_max_uses() {
     let cfg = GovernanceConfig {
-        profile: "balanced".to_string(),
         enforcement_enabled: true,
         grants: GovernanceGrantsConfig {
             enabled: true,

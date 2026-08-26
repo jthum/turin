@@ -66,13 +66,15 @@ fn init_scaffolds_project_and_gitignore() -> Result<()> {
         "mock-model",
         "--harness-template",
         "starter",
-        "--governance",
-        "open",
     ])?;
 
     assert!(harness.root().join(".turin/config.toml").exists());
     assert!(harness.root().join(".turin/harnesses/main.lua").exists());
     assert!(harness.root().join(".turin/data/state.db").exists());
+    let config = std::fs::read_to_string(harness.root().join(".turin/config.toml"))?;
+    assert!(config.contains("enforcement_enabled = false"));
+    assert!(config.contains("unmatched_capability = \"allow\""));
+    assert!(!config.contains("profile ="));
 
     let gitignore = std::fs::read_to_string(harness.root().join(".gitignore"))?;
     assert!(gitignore.contains(".turin/"));

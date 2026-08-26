@@ -353,10 +353,10 @@ This keeps reload semantics simple:
 
 Peer dispatch can carry delegated capability ceilings. Effective authority is constrained by:
 
-- governance profile / enforcement state
+- explicit governance capabilities / enforcement state
 - caller subject capabilities
 - caller grants (if active)
-- agent max capabilities / profiles
+- agent maximum capabilities / capability sets
 - child-agent allowlists
 
 ## Governance Architecture (Opt-In)
@@ -365,11 +365,11 @@ Governance is implemented as an overlay, not a rewrite of kernel behavior.
 
 ### Key Concepts
 
-- **Profile** (`open`, `balanced`, `governed`, `custom`)
+- **Explicit baseline policy** (`enforcement_enabled`, `unmatched_capability`, and capability rules)
 - **Capability checks** (`runtime.db.exec`, `shell.exec`, etc.)
 - **Subject context** (agent/module/root/import delegation/grant)
 - **Import policy** (`legacy`, `mixed`, `scoped`)
-- **Agent ceilings** (`capability_profile`, `max_capabilities`, `allowed_child_agents`)
+- **Agent ceilings** (`capability_set`, `max_capabilities`, `allowed_child_agents`)
 - **Temporary grants** (TTL/max uses, auditable)
 
 ### Enforcement Layers

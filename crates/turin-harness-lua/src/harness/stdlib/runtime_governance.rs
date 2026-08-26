@@ -1,9 +1,7 @@
 use mlua::{Function, Lua, MultiValue, Result as LuaResult, Table, Value};
 
 use crate::harness::globals::HarnessAppData;
-use crate::harness::stdlib::binding_common::{
-    bool_value_ok, json_ok, nil_err, nil_ok, string_value,
-};
+use crate::harness::stdlib::binding_common::{bool_value_ok, json_ok, nil_err, nil_ok};
 use crate::harness::stdlib::governance_support::{
     capability_decision as governance_capability_decision, current_subject,
     emit_governance_audit_event, parse_delegated_capabilities,
@@ -17,17 +15,6 @@ pub fn register_runtime_governance_namespace(
     app_data: &HarnessAppData,
 ) -> LuaResult<()> {
     let governance_table = lua.create_table()?;
-
-    {
-        let governance_manager = app_data.governance_manager.clone();
-        governance_table.set(
-            "profile",
-            lua.create_function(move |lua, ()| {
-                let snapshot = governance_manager.snapshot();
-                string_value(lua, &snapshot.profile)
-            })?,
-        )?;
-    }
 
     {
         let governance_manager = app_data.governance_manager.clone();
