@@ -229,6 +229,20 @@ impl ExecutionHost {
             .map(ToOwned::to_owned)
             .collect();
 
+        for tool in session.session_tools.tool_definitions() {
+            let Some(name) = tool.get("name").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            if !seen_names.insert(name.to_string()) {
+                warn!(
+                    tool = %name,
+                    "Skipping session-attached tool because a tool with that name already exists"
+                );
+                continue;
+            }
+            tools.push(tool);
+        }
+
         if let Some(harness) = self.session_harness_engine(session) {
             let engine = harness.lock().expect("session harness mutex poisoned");
             for tool in engine.declared_virtual_tools()? {

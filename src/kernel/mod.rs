@@ -149,6 +149,18 @@ impl Kernel {
         self.host.init_harness().await
     }
 
+    /// Run state, client, harness, and watcher initialization.
+    ///
+    /// `build()` stays I/O-free. Tests that inject clients between steps should
+    /// keep calling the individual `init_*` methods.
+    pub async fn start(&mut self) -> Result<()> {
+        self.init_state().await?;
+        self.init_clients()?;
+        self.init_harness().await?;
+        self.start_watcher()?;
+        Ok(())
+    }
+
     /// Atomically reload all configured harness definitions.
     pub async fn reload_harness(&mut self) -> Result<()> {
         self.host.reload_harness().await

@@ -66,7 +66,7 @@ This release establishes the forward-looking public harness surface:
 - memory v2 lifecycle primitives (`feedback`, `correct`, `purge`) with lexical/semantic/hybrid recall
 - root-path-first code-search primitives under `runtime.code.search.*`
 - optional `turin-map` indexing companion with direct runtime reads through `turin-code-index`
-- governance profiles/capabilities/import scoping/grants (opt-in)
+- governance capabilities/import scoping/grants (opt-in)
 - multi-db and multi-agent orchestration primitives
 
 Turin is still pre-1.0, so change is expected. But the direction is now much clearer and more coherent than earlier versions.

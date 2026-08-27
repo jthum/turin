@@ -34,8 +34,10 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
 1. An embedding loads or constructs `TurinConfig`.
 2. `RuntimeBuilder` composes optional Rust harnesses, one scripting adapter, custom
    tools, and an authorization handler.
-3. `build` creates one root `Kernel` and its crate-private `ExecutionHost`.
-4. Explicit `Kernel` methods initialize providers, stores, and harnesses.
+3. `build` creates one root `Kernel` and its crate-private `ExecutionHost` without I/O.
+4. Embeddings that do not inject clients between steps call `Kernel::start()` for
+   state, client, harness, and watcher initialization. Tests and the daemon keep
+   the explicit `init_*` sequence when they bind resources between those steps.
 5. Direct embeddings create/resume a `SessionState` and run it through `Kernel`, or
    use `AgentManager` for durable managed runtimes and linked-agent work.
 6. `shutdown` stops peer admission/work and closes root external resources.
@@ -57,8 +59,9 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
   generation.
 - New embedded operations should use domain inputs and outcomes rather than persistence
   rows or daemon protocol DTOs.
-- Initialization ordering remains explicit until a separate atomic startup API can
-  preserve provider injection and test use cases without reducing control.
+- `Kernel::build` stays I/O-free. `Kernel::start` runs state, client, harness, and
+  watcher initialization. Keep the stepwise `init_*` methods for embeddings that
+  inject clients or bind a scheduler between those steps.
 
 ## Focused Checks
 

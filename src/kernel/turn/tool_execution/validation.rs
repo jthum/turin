@@ -90,11 +90,16 @@ impl ExecutionHost {
                 }
                 Verdict::Escalate(reason) => {
                     warn!(tool = %tc.name, reason = %reason, "Tool requires escalation");
-                    if let Some(decision) = self.native_tool_governance_decision(
-                        session.identity.agent_id(),
-                        &self.session_reference(session),
-                        &tc.name,
-                    )
+                    let native_tool = session
+                        .session_tools
+                        .get(&tc.name)
+                        .or_else(|| self.tool_registry.get(&tc.name));
+                    if let Some(tool) = native_tool
+                        && let Some(decision) = self.native_tool_governance_decision(
+                            session.identity.agent_id(),
+                            &self.session_reference(session),
+                            tool.as_ref(),
+                        )
                         && !decision.allowed
                     {
                         let detail = decision

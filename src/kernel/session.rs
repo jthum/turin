@@ -11,8 +11,10 @@ use crate::kernel::event::KernelEvent;
 use crate::kernel::event::TaskBranchOutcome;
 use crate::kernel::harness_runtime::HarnessInstance;
 use crate::kernel::identity::RuntimeIdentity;
+use crate::kernel::mcp_runtime::McpClientEntry;
 use crate::persistence::manager::StoreSelector;
 use crate::persistence::state::TurnWriteTarget;
+use crate::tools::registry::ToolRegistry;
 
 mod completed_tasks;
 mod execution;
@@ -174,6 +176,8 @@ pub struct SessionState {
     pub(crate) selected_branch_head_cursor: Option<BranchHeadCursor>,
     pub(crate) harness_engine: Option<SessionHarnessEngine>,
     pub(crate) harness_generation: u64,
+    pub(crate) session_tools: ToolRegistry,
+    pub(crate) mcp_clients: Vec<McpClientEntry>,
     pub(crate) queue: Arc<Mutex<VecDeque<QueuedTask>>>,
     pub completed_task_results: CompletedLocalTaskResultsHandle,
     pub(crate) plans: HashMap<String, PlanProgress>,
@@ -219,6 +223,8 @@ impl SessionState {
             selected_branch_head_cursor: None,
             harness_engine: None,
             harness_generation: 0,
+            session_tools: ToolRegistry::new(),
+            mcp_clients: Vec::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             completed_task_results: Arc::new(RwLock::new(CompletedLocalTaskResults::default())),
             plans: HashMap::new(),

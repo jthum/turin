@@ -248,7 +248,7 @@ Turin’s test suite includes dedicated coverage for:
 - harness verdict composition
 - canonical stdlib APIs (`runtime.*`)
 - code-search primitives (`runtime.code.search.*`)
-- governance profiles/capabilities/import scoping
+- governance capabilities/import scoping
 - temporary grants and immutable audit semantics
 - peer-agent orchestration
 - path traversal/security checks

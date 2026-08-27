@@ -233,7 +233,7 @@ Configured in `[governance.import]`:
 [governance.import]
 mode = "scoped"                # legacy | mixed | scoped
 default_root = "core"          # optional
-allow_unscoped_in_open = true   # open profile escape hatch
+allow_unscoped_in_open = true   # when enforcement is off
 ```
 
 ### Modes
@@ -545,7 +545,6 @@ Use grants for short-lived elevated actions rather than widening persistent capa
 
 ```toml
 [governance]
-profile = "governed"
 enforcement_enabled = true
 unmatched_capability = "deny"
 
@@ -606,5 +605,5 @@ require_audit_reason = true
 ## Limitations and Notes
 
 - Governance is intentionally opt-in; if enforcement is off, capability checks are observational only.
-- Runtime policy (`runtime.policy.set`) remains powerful by design, but can be gated by capability checks and profile/agent/root ceilings.
+- Runtime policy (`runtime.policy.set`) remains powerful by design, but can be gated by capability checks and agent/root ceilings.
 - Some runtime behavior is still controlled by policy keys and config rather than a fully centralized knob registry; Turin is moving toward increasingly explicit knobs over time.

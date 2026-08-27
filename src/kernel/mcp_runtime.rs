@@ -8,6 +8,7 @@ use mcp_sdk::types::ToolDefinition;
 use tracing::{info, instrument, warn};
 
 use crate::kernel::execution_host::ExecutionHost;
+use crate::kernel::session::SessionState;
 use crate::tools::mcp::McpToolProxy;
 use crate::tools::registry::ToolRegistry;
 
@@ -24,17 +25,17 @@ pub(crate) struct McpAttachReport {
 }
 
 impl ExecutionHost {
-    /// Connect to an MCP server, initialize it, and register its tools.
-    #[instrument(skip(self, args), fields(command = %command, arg_count = args.len()))]
+    /// Connect to an MCP server, initialize it, and register its tools on the session.
+    #[instrument(skip(self, session, args), fields(command = %command, arg_count = args.len()))]
     pub(crate) async fn spawn_mcp_server(
-        &mut self,
+        &self,
+        session: &mut SessionState,
         command: &str,
         args: &[String],
     ) -> Result<McpAttachReport> {
         let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-        // Check for existing client.
-        if let Some(client) = self
+        if let Some(client) = session
             .mcp_clients
             .iter()
             .find(|e| e.command == command && e.args == args)
@@ -46,7 +47,12 @@ impl ExecutionHost {
                 .list_tools()
                 .await
                 .with_context(|| "Failed to list MCP tools on reused client")?;
-            return register_reused_mcp_tools(&mut self.tool_registry, client, list_result.tools);
+            return register_reused_mcp_tools(
+                &self.tool_registry,
+                &mut session.session_tools,
+                client,
+                list_result.tools,
+            );
         }
 
         info!("Connecting to MCP server");
@@ -64,15 +70,19 @@ impl ExecutionHost {
             .list_tools()
             .await
             .with_context(|| "Failed to list MCP tools")?;
-        validate_new_mcp_tools(&self.tool_registry, &list_result.tools)?;
+        validate_new_mcp_tools(
+            &self.tool_registry,
+            &session.session_tools,
+            &list_result.tools,
+        )?;
 
         let client_arc = Arc::new(client);
         let report = register_new_mcp_tools(
-            &mut self.tool_registry,
+            &mut session.session_tools,
             client_arc.clone(),
             list_result.tools,
         )?;
-        self.mcp_clients.push(McpClientEntry {
+        session.mcp_clients.push(McpClientEntry {
             command: command.to_string(),
             args: args.to_vec(),
             client: client_arc,
@@ -82,35 +92,47 @@ impl ExecutionHost {
         Ok(report)
     }
 
-    /// Best-effort shutdown for all active MCP subprocess clients owned by this kernel.
+    /// Best-effort shutdown for leftover host-owned MCP clients.
     pub async fn shutdown_mcp_clients(&mut self) {
-        if self.mcp_clients.is_empty() {
-            return;
-        }
-
-        let entries = std::mem::take(&mut self.mcp_clients);
-        let shutdown = async move {
-            for entry in entries {
-                if let Err(err) = entry.client.shutdown().await {
-                    warn!(
-                        command = %entry.command,
-                        arg_count = entry.args.len(),
-                        error = %err,
-                        "Failed to shutdown MCP client cleanly"
-                    );
-                }
-            }
-        };
-        if tokio::time::timeout(Duration::from_secs(2), shutdown)
-            .await
-            .is_err()
-        {
-            warn!("MCP client shutdown exceeded the grace period");
-        }
+        shutdown_mcp_client_list(&mut self.mcp_clients).await;
     }
 }
 
-fn validate_new_mcp_tools(registry: &ToolRegistry, tools: &[ToolDefinition]) -> Result<()> {
+pub(crate) async fn shutdown_mcp_client_list(entries: &mut Vec<McpClientEntry>) {
+    if entries.is_empty() {
+        return;
+    }
+
+    let entries = std::mem::take(entries);
+    let shutdown = async move {
+        for entry in entries {
+            if let Err(err) = entry.client.shutdown().await {
+                warn!(
+                    command = %entry.command,
+                    arg_count = entry.args.len(),
+                    error = %err,
+                    "Failed to shutdown MCP client cleanly"
+                );
+            }
+        }
+    };
+    if tokio::time::timeout(Duration::from_secs(2), shutdown)
+        .await
+        .is_err()
+    {
+        warn!("MCP client shutdown exceeded the grace period");
+    }
+}
+
+fn mcp_name_conflicts(host: &ToolRegistry, session: &ToolRegistry, name: &str) -> bool {
+    host.contains(name) || session.contains(name)
+}
+
+fn validate_new_mcp_tools(
+    host: &ToolRegistry,
+    session: &ToolRegistry,
+    tools: &[ToolDefinition],
+) -> Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for tool in tools {
         let name = tool.name.trim();
@@ -120,7 +142,7 @@ fn validate_new_mcp_tools(registry: &ToolRegistry, tools: &[ToolDefinition]) -> 
         if !seen.insert(name.to_string()) {
             bail!("MCP server returned duplicate tool '{}'", name);
         }
-        if registry.contains(name) {
+        if mcp_name_conflicts(host, session, name) {
             bail!("MCP tool '{}' conflicts with an existing tool", name);
         }
     }
@@ -147,7 +169,8 @@ fn register_new_mcp_tools(
 }
 
 fn register_reused_mcp_tools(
-    registry: &mut ToolRegistry,
+    host: &ToolRegistry,
+    session: &mut ToolRegistry,
     client: Arc<McpClient<StdioTransport>>,
     tools: Vec<ToolDefinition>,
 ) -> Result<McpAttachReport> {
@@ -164,12 +187,12 @@ fn register_reused_mcp_tools(
         if !seen.insert(name.to_string()) {
             bail!("MCP server returned duplicate tool '{}'", name);
         }
-        if registry.contains(name) {
+        if mcp_name_conflicts(host, session, name) {
             skipped_existing_tools += 1;
             continue;
         }
         let proxy = McpToolProxy::new(client.clone(), tool_def);
-        registry
+        session
             .register(Box::new(proxy))
             .with_context(|| "Failed to register MCP tool")?;
         registered_tools += 1;
@@ -198,8 +221,9 @@ mod tests {
 
     #[test]
     fn validates_duplicate_mcp_tool_names() {
-        let registry = ToolRegistry::new();
-        let err = validate_new_mcp_tools(&registry, &[tool("alpha"), tool("alpha")])
+        let host = ToolRegistry::new();
+        let session = ToolRegistry::new();
+        let err = validate_new_mcp_tools(&host, &session, &[tool("alpha"), tool("alpha")])
             .expect_err("duplicate MCP tool names should fail");
 
         assert!(err.to_string().contains("duplicate tool 'alpha'"));
@@ -207,12 +231,26 @@ mod tests {
 
     #[test]
     fn validates_mcp_tool_name_conflicts_with_existing_registry() {
-        let mut registry = ToolRegistry::new();
-        registry.register(Box::new(ReadFileTool)).unwrap();
+        let mut host = ToolRegistry::new();
+        host.register(Box::new(ReadFileTool)).unwrap();
+        let session = ToolRegistry::new();
 
-        let err = validate_new_mcp_tools(&registry, &[tool("read_file")])
+        let err = validate_new_mcp_tools(&host, &session, &[tool("read_file")])
             .expect_err("MCP tool name should not conflict with existing tools");
 
         assert!(err.to_string().contains("conflicts with an existing tool"));
+    }
+
+    #[test]
+    fn validates_mcp_tool_name_conflicts_with_session_overlay() {
+        let host = ToolRegistry::new();
+        let mut session = ToolRegistry::new();
+        session.register(Box::new(ReadFileTool)).unwrap();
+
+        let err = validate_new_mcp_tools(&host, &session, &[tool("read_file")])
+            .expect_err("MCP tool name should not conflict with session-attached tools");
+
+        assert!(err.to_string().contains("conflicts with an existing tool"));
+        assert!(!host.contains("read_file"));
     }
 }

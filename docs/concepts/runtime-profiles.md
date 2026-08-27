@@ -2,7 +2,7 @@
 
 Runtime profiles are recommended operating shapes for Turin. They describe which capabilities should be enabled together and which risks should be explicit.
 
-This document is conceptual. Turin already has governance profiles and tool selection config; these runtime profiles describe higher-level product modes that can be implemented through configuration, feature flags, or future composition.
+This document is conceptual. Turin already has explicit governance capability maps and tool selection config; these runtime profiles describe higher-level product modes that can be implemented through configuration, feature flags, or future composition.
 
 ## Why Profiles Matter
 
@@ -175,7 +175,7 @@ Current Turin configuration can approximate these profiles through:
 - `[tools].allow` / `[tools].exclude`
 - `[agent.tools]`
 - channel `settings.tools`
-- governance profile/capability settings
+- governance capability settings
 - daemon/channel config
 - remote bind/auth settings
 - provider/inference routing settings

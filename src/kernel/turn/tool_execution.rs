@@ -49,12 +49,11 @@ impl ExecutionHost {
         &self,
         agent_id: &str,
         session_reference: &str,
-        tool_name: &str,
+        tool: &dyn crate::tools::Tool,
     ) -> Option<CapabilityDecision> {
-        let tool = self.tool_registry.get(tool_name)?;
         let capability = tool
             .capability()
-            .or_else(|| tool_capability_name(tool_name))?;
+            .or_else(|| tool_capability_name(tool.name()))?;
         let subject = GovernanceSubject {
             agent_id: Some(agent_id.to_string()),
             session_reference: Some(session_reference.to_string()),
@@ -165,11 +164,13 @@ impl ExecutionHost {
         let active_agent_id = session.identity.agent_id().to_string();
         let session_reference = self.session_reference(session);
         let harness_engine = self.session_harness_engine(session);
+        let session_tools = session.session_tools.clone();
         let futures = validated_calls.into_iter().map(|(tc, verdict)| {
             let tool_ctx = tool_ctx.clone();
             let active_agent_id = active_agent_id.clone();
             let session_reference = session_reference.clone();
             let harness_engine = harness_engine.clone();
+            let session_tools = session_tools.clone();
             async move {
                 let verdict_str = verdict.to_string();
                 let final_args = match verdict {
@@ -182,11 +183,35 @@ impl ExecutionHost {
 
                 let start = Instant::now();
                 let mut governance_denial = None;
-                let effect_res = if kernel.tool_registry.get(&tc.name).is_some() {
+                let session_tool = session_tools.get(&tc.name);
+                let effect_res = if let Some(tool) = session_tool {
                     if let Some(decision) = kernel.native_tool_governance_decision(
                         active_agent_id.as_str(),
                         &session_reference,
-                        &tc.name,
+                        tool.as_ref(),
+                    ) {
+                        match decision.allowed {
+                            true => tool
+                                .execute(final_args.clone(), &tool_ctx)
+                                .await
+                                .map(ExecutionArtifact::Native),
+                            false => {
+                                governance_denial = Some(decision.clone());
+                                Err(ToolError::PermissionDenied(decision.reason.unwrap_or_else(
+                                    || format!("Governance denied tool '{}'", tc.name),
+                                )))
+                            }
+                        }
+                    } else {
+                        tool.execute(final_args.clone(), &tool_ctx)
+                            .await
+                            .map(ExecutionArtifact::Native)
+                    }
+                } else if let Some(tool) = kernel.tool_registry.get(&tc.name) {
+                    if let Some(decision) = kernel.native_tool_governance_decision(
+                        active_agent_id.as_str(),
+                        &session_reference,
+                        tool.as_ref(),
                     )
                     {
                         match decision.allowed {
@@ -313,7 +338,7 @@ impl ExecutionHost {
                         is_error = is_error || plan_error;
                     }
                     ToolEffect::SpawnMcp { command, args } => {
-                        match self.spawn_mcp_server(&command, &args).await {
+                        match self.spawn_mcp_server(session, &command, &args).await {
                             Ok(report) => {
                                 content = format!(
                                     "Successfully connected to MCP server. Registered {} new tool(s) from {} listed tool(s).",

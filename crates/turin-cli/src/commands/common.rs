@@ -89,10 +89,7 @@ pub(crate) async fn run_prompt_once(
         crate::commands::tool_authorization::with_interactive_authorization(builder)
     };
     let mut kernel = builder.build()?;
-    kernel.init_state().await?;
-    kernel.init_clients()?;
-    kernel.init_harness().await?;
-    kernel.start_watcher()?;
+    kernel.start().await?;
     let mut session = kernel.create_session_for_agent(&selected_agent_id).await?;
     kernel.start_session(&mut session).await?;
     kernel.run(&mut session, Some(prompt)).await?;

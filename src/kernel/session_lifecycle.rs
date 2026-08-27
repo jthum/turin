@@ -662,6 +662,9 @@ impl ExecutionHost {
             .clear_transient_scopes(session.identity.session_id(), session.identity.run_id())
             .await;
 
+        crate::kernel::mcp_runtime::shutdown_mcp_client_list(&mut session.mcp_clients).await;
+        session.session_tools = crate::tools::registry::ToolRegistry::new();
+
         session.status = SessionStatus::Ended;
         self.clear_session_harness_engine(session);
         durability_error.map_or(Ok(()), Err)

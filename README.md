@@ -77,7 +77,7 @@ Turin now ships a coherent, canonical runtime with:
 - **Memory v2 primitives** with lifecycle controls (`feedback`, `correct`, `purge`) and lexical/semantic/hybrid recall
 - **Code search primitives** backed by an optional `turin-map` indexing companion and direct runtime reads (`runtime.code.search.*`)
 - **Stable hook model** with explicit lifecycle hooks and typed event payloads
-- **Opt-in governance model** with profiles, capabilities, import scoping, agent ceilings, and temporary grants
+- **Opt-in governance model** with explicit capabilities, import scoping, agent ceilings, and temporary grants
 - **Harness Library** with reusable `blocks/` and ready-to-run `workflows/`
 - **Provider-agnostic inference and embeddings path** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
@@ -97,8 +97,8 @@ Turin follows a strict separation:
 
 This gives you a runtime that can be:
 
-- minimalist and wide open (`open` governance profile)
-- tightly governed and auditable (`governed` profile)
+- wide open by default (enforcement off, unmatched capabilities allowed)
+- tightly governed and auditable (enforcement on, explicit capability maps)
 - anything in between, with explicit capability knobs
 
 Simple things should be simple. Powerful things should be possible.
@@ -133,7 +133,7 @@ Simple things should be simple. Powerful things should be possible.
 - **Peer-agent orchestration** with status inspection and async submit/await result handling
 - **Scheduled task orchestration** with one-shot/recurring jobs, anchored `daily` / `weekly` recurrence, prompt or named action payloads, overlap policy, and cross-store execution targeting
 - **Durable work coordination** with reusable worklists, optional hierarchy, claim heartbeats, stale-claim recovery, and prompt/action payload parity
-- **Opt-in governance** with profiles/capabilities/import scoping/agent ceilings/grants
+- **Opt-in governance** with capabilities/import scoping/agent ceilings/grants
 - **Live provider smoke tooling** (manual/opt-in) for real endpoint validation
 
 ## Harness Library
@@ -692,7 +692,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/release-operator-console.md` — concrete release desk scenario guide
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
 - `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
-- `docs/concepts/governance.md` — capability model, profiles, import scoping, grants
+- `docs/concepts/governance.md` — capability model, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
 - `docs/operations/ui-clients.md` — TUI, desktop, and web operator clients plus shared connection profiles
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
