@@ -105,7 +105,7 @@ function on_turn_prepare(ctx)
   session.set("coding_harness.plan_bytes", tostring(#plan))
   session.set("coding_harness.review_bytes", tostring(#review))
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS coding_harness_runs (
         id INTEGER PRIMARY KEY,

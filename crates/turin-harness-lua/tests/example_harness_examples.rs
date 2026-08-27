@@ -23,6 +23,15 @@ fn library_workflow_path(name: &str) -> PathBuf {
     repo_path(Path::new("library").join("workflows").join(name))
 }
 
+async fn open_harness_owned_store(
+    workspace: &Path,
+) -> Result<turin_core::persistence::state::StateStore> {
+    turin_core::persistence::state::StateStore::open(
+        &workspace.join(".turin/runtime/harness.db").to_string_lossy(),
+    )
+    .await
+}
+
 async fn wait_for_persisted_agent_output(
     kernel: &Kernel,
     agent_id: &str,
@@ -526,8 +535,8 @@ async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Resul
     assert_eq!(delegated_output, "REVIEW_OK");
     assert!(reviewer_prompt.contains("User request"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
-    let conn = store.get_connection().await?;
+    let harness_store = open_harness_owned_store(fixture.tmp.path()).await?;
+    let conn = harness_store.get_connection().await?;
     let mut rows = conn
         .query(
             "SELECT route, delegated_agent, delegated_output, prompt \
@@ -546,6 +555,8 @@ async fn test_openclaw_style_personal_assistant_routes_review_prompts() -> Resul
     assert_eq!(prompt_value, prompt);
     drop(rows);
 
+    let store = fixture.kernel.store_manager().get_default().await?;
+    let conn = store.get_connection().await?;
     let mut reviewer_rows = conn
         .query(
             "SELECT s.agent_id, tm.role, tm.content \
@@ -592,7 +603,7 @@ async fn test_openclaw_style_personal_assistant_routes_planning_prompts() -> Res
     assert_eq!(delegated_output, "PLAN_OK");
     assert!(planner_prompt.contains("User request"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(fixture.tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -642,7 +653,7 @@ async fn test_full_coding_harness_workflow() -> Result<()> {
     assert!(planner_prompt.contains("Workspace context"));
     assert!(reviewer_prompt.contains("Proposed plan"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(fixture.tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -691,7 +702,7 @@ async fn test_bug_triage_desk_workflow() -> Result<()> {
     assert!(triager_prompt.contains("Bug report"));
     assert!(responder_prompt.contains("Triage summary"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(fixture.tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -743,7 +754,7 @@ async fn test_release_manager_workflow() -> Result<()> {
     assert!(reviewer_prompt.contains("Release request"));
     assert!(changelog_prompt.contains("Readiness review"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(fixture.tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -792,7 +803,7 @@ async fn test_docs_team_assistant_workflow() -> Result<()> {
     assert!(reviewer_prompt.contains("Docs task"));
     assert!(draft_prompt.contains("Review findings"));
 
-    let store = fixture.kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(fixture.tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -911,7 +922,7 @@ async fn test_durable_journal_example() -> Result<()> {
     let snapshot = fs::read_to_string(tmp.path().join(".turin/runtime/journal-last.txt"))?;
     assert_eq!(snapshot, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -956,7 +967,7 @@ async fn test_code_reviewer_block() -> Result<()> {
     assert!(context.contains("# RISK_AREAS.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1001,7 +1012,7 @@ async fn test_task_planner_block() -> Result<()> {
     assert!(context.contains("# DELIVERY_CONSTRAINTS.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1047,7 +1058,7 @@ async fn test_spec_writer_block() -> Result<()> {
     assert!(contract.contains("# CONTEXT.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1093,7 +1104,7 @@ async fn test_test_gap_finder_block() -> Result<()> {
     assert!(contract.contains("# RISK_AREAS.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1140,7 +1151,7 @@ async fn test_repo_librarian_block() -> Result<()> {
     assert!(contract.contains("# CONVENTIONS.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1186,7 +1197,7 @@ async fn test_release_readiness_checker_block() -> Result<()> {
     assert!(contract.contains("# RELEASE_NOTES_CONTEXT.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1233,7 +1244,7 @@ async fn test_docs_maintainer_block() -> Result<()> {
     assert!(contract.contains("# DRIFT_SIGNALS.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(
@@ -1279,7 +1290,7 @@ async fn test_changelog_writer_block() -> Result<()> {
     assert!(contract.contains("# WRITING_STYLE.md"));
     assert_eq!(last_request, prompt);
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = open_harness_owned_store(tmp.path()).await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(

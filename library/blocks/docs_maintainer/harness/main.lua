@@ -32,7 +32,7 @@ function on_turn_prepare(ctx)
   session.incr("docs_maintainer.run_count")
   session.set("docs_maintainer.last_prompt", prompt)
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS docs_maintainer_runs (
         id INTEGER PRIMARY KEY,

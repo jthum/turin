@@ -7,17 +7,19 @@ return {
     end
 
     local review = reviewer:ask("Review delegated import flow")
-    runtime.db.exec([[
-      CREATE TABLE IF NOT EXISTS delegated_ask_probe (
-        id INTEGER PRIMARY KEY,
-        review TEXT NOT NULL
-      )
-    ]])
+    runtime.db.with(".turin/runtime/harness.db", function(db)
+      db:exec([[
+        CREATE TABLE IF NOT EXISTS delegated_ask_probe (
+          id INTEGER PRIMARY KEY,
+          review TEXT NOT NULL
+        )
+      ]])
 
-    runtime.db.exec(
-      "INSERT INTO delegated_ask_probe(review) VALUES (?)",
-      { review }
-    )
+      db:exec(
+        "INSERT INTO delegated_ask_probe(review) VALUES (?)",
+        { review }
+      )
+    end)
 
     local db = access.check("db.exec")
     local policy = access.check("policy.set")

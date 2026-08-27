@@ -195,7 +195,12 @@ async fn test_dx_fixture_db_journal() -> Result<()> {
         .await?;
     kernel.end_session(&mut session).await?;
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = turin_core::persistence::state::StateStore::open(
+        &tmp.path()
+            .join(".turin/runtime/harness.db")
+            .to_string_lossy(),
+    )
+    .await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query("SELECT note FROM dx_journal ORDER BY id DESC LIMIT 1", ())
@@ -415,7 +420,12 @@ async fn test_dx_fixture_import_scoped_ask_delegate() -> Result<()> {
         .await?;
     kernel.end_session(&mut session).await?;
 
-    let store = kernel.store_manager().get_default().await?;
+    let store = turin_core::persistence::state::StateStore::open(
+        &tmp.path()
+            .join(".turin/runtime/harness.db")
+            .to_string_lossy(),
+    )
+    .await?;
     let conn = store.get_connection().await?;
     let mut rows = conn
         .query(

@@ -328,7 +328,7 @@ Notes:
 
 ```lua
 function on_turn_prepare(turn)
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec("CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, text TEXT)")
     db:exec("INSERT INTO notes(text) VALUES (?)", { "hello" })
 
@@ -346,6 +346,7 @@ Notes:
 
 - `db:one(...)` returns the first row or `nil`
 - `runtime.db.with(...)` prioritizes callback errors over close errors
+- Kernel alias `state` rejects DDL. Put harness tables in a path database.
 
 ### Fluent peer-agent access
 

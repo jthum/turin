@@ -28,7 +28,7 @@ function on_turn_prepare(ctx)
   session.incr("code_reviewer.run_count")
   session.set("code_reviewer.last_prompt", prompt)
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS code_review_runs (
         id INTEGER PRIMARY KEY,

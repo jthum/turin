@@ -32,7 +32,7 @@ function on_turn_prepare(ctx)
   session.incr("test_gap_finder.run_count")
   session.set("test_gap_finder.last_prompt", prompt)
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS test_gap_runs (
         id INTEGER PRIMARY KEY,

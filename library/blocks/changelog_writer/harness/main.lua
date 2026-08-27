@@ -32,7 +32,7 @@ function on_turn_prepare(ctx)
   session.incr("changelog_writer.run_count")
   session.set("changelog_writer.last_prompt", prompt)
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS changelog_writer_runs (
         id INTEGER PRIMARY KEY,

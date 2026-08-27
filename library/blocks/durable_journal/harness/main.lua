@@ -3,7 +3,7 @@ function on_turn_prepare(ctx)
 
   session.remember(prompt, { kind = "journal_prompt" })
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS example_journal (
         id INTEGER PRIMARY KEY,

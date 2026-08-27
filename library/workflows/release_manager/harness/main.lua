@@ -109,7 +109,7 @@ function on_turn_prepare(ctx)
   session.set("release_manager.readiness_bytes", tostring(#readiness))
   session.set("release_manager.changelog_bytes", tostring(#changelog))
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS release_manager_runs (
         id INTEGER PRIMARY KEY,

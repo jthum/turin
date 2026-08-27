@@ -23,7 +23,7 @@ function on_turn_prepare(turn)
   local spec = fs.summary("SPEC.md")
 
   if allowed("db.exec") then
-    runtime.db.with("state", function(db)
+    runtime.db.with(".turin/runtime/harness.db", function(db)
       db:exec("insert into review_log(spec) values (?)", { spec })
     end)
   end

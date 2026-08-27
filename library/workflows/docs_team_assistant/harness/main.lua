@@ -104,7 +104,7 @@ function on_turn_prepare(ctx)
   session.set("docs_team_assistant.review_bytes", tostring(#review))
   session.set("docs_team_assistant.draft_bytes", tostring(#draft))
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS docs_team_runs (
         id INTEGER PRIMARY KEY,

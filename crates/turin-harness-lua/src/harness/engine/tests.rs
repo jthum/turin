@@ -3347,7 +3347,7 @@ async fn test_dx_runtime_db_proxy_one_and_with_error_precedence() {
         dir.path().join("db_dx.lua"),
         r#"
             function on_turn_prepare(ctx)
-                runtime.db.with("state", function(db)
+                runtime.db.with(".turin/runtime/harness.db", function(db)
                     db:exec("CREATE TABLE IF NOT EXISTS dx_users(id INTEGER PRIMARY KEY, name TEXT)")
                     db:exec("DELETE FROM dx_users")
                     db:exec("INSERT INTO dx_users(name) VALUES (?)", {"alice"})

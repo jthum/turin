@@ -52,6 +52,8 @@ Runtime graph:
 ## Invariants
 
 - `runtime.db.query` and `runtime.db.exec` must share DB target/policy resolution.
+- Alias `state` rejects DDL. Harness-owned tables belong in a path database such as
+  `.turin/runtime/harness.db`, not in the kernel transcript store.
 - Dynamic path opens must be denied when `db.allow_dynamic_open=false`.
 - SQL param parsing should stay in `db_support.rs`; runtime DB should not parse params ad hoc.
 - `runtime.graph.write` guards node/edge creation.

@@ -1,5 +1,5 @@
 function on_turn_prepare(ctx)
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec("CREATE TABLE IF NOT EXISTS dx_journal(id INTEGER PRIMARY KEY, note TEXT)")
     db:exec("DELETE FROM dx_journal")
     db:exec("INSERT INTO dx_journal(note) VALUES (?)", { "seed" })

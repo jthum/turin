@@ -28,7 +28,7 @@ function on_turn_prepare(ctx)
   session.incr("task_planner.run_count")
   session.set("task_planner.last_prompt", prompt)
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS task_planner_runs (
         id INTEGER PRIMARY KEY,

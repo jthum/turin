@@ -105,7 +105,7 @@ function on_turn_prepare(ctx)
   session.set("bug_triage.triage_bytes", tostring(#triage))
   session.set("bug_triage.response_bytes", tostring(#response))
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS bug_triage_runs (
         id INTEGER PRIMARY KEY,

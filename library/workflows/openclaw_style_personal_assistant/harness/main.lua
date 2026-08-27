@@ -120,7 +120,7 @@ function on_turn_prepare(ctx)
   session.set("personal_assistant.contract_loaded_at", time.now_utc())
   session.set("personal_assistant.contract_bytes", tostring(#contract))
 
-  runtime.db.with("state", function(db)
+  runtime.db.with(".turin/runtime/harness.db", function(db)
     db:exec([[
       CREATE TABLE IF NOT EXISTS personal_assistant_activity (
         id INTEGER PRIMARY KEY,
