@@ -315,6 +315,9 @@ A store can be selected by:
 - `idle_ms`
 
 The store manager tracks handles and trims idle/open caches according to runtime policy.
+Alias-backed handles retain Turin `StateStore` semantics. Explicit path handles retain raw SQL
+semantics, so harness-owned databases do not receive Turin's transcript or FTS schema and cannot
+be passed into APIs that require a semantic state store.
 
 ## Multi-Agent Architecture
 

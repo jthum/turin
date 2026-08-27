@@ -11,7 +11,9 @@ use crate::harness::stdlib::db_support::{
 };
 use crate::harness::stdlib::governance_support::require_capability as require_governance_capability;
 use crate::harness::stdlib::policy_support::{policy_u64, runtime_policy_snapshot};
-use crate::persistence::manager::{StoreHandleInfo, StoreManager, StorePathScope, StoreSelector};
+use crate::persistence::manager::{
+    SqlStoreKind, StoreHandleInfo, StoreManager, StorePathScope, StoreSelector,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use turso::Connection;
@@ -72,15 +74,14 @@ async fn open_connection_for_query_exec(
     manager: Arc<StoreManager>,
     selector: StoreSelector,
     settings: DbRuntimeSettings,
-) -> Result<Connection, String> {
+) -> Result<(Connection, SqlStoreKind), String> {
     let _ = manager
         .trim_cache(settings.max_open_handles, settings.idle_close_seconds)
         .await;
-    let store = manager
-        .open_with_path_scope(&selector, settings.path_scope)
+    manager
+        .open_sql_connection(&selector, settings.path_scope)
         .await
-        .map_err(|e| e.to_string())?;
-    store.get_connection().await.map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())
 }
 
 async fn query_sql_rows(
@@ -90,7 +91,7 @@ async fn query_sql_rows(
     sql: String,
     sql_params: SqlParams,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let conn = open_connection_for_query_exec(manager, selector, settings).await?;
+    let (conn, _) = open_connection_for_query_exec(manager, selector, settings).await?;
     let mut stmt = conn.prepare(&sql).await.map_err(|e| e.to_string())?;
     let cols = stmt
         .columns()
@@ -114,15 +115,12 @@ async fn query_sql_rows(
     Ok(out_rows)
 }
 
-fn rejects_kernel_schema_ddl(selector: &StoreSelector, sql: &str) -> bool {
-    if !matches!(selector, StoreSelector::Alias(alias) if alias == "state") {
+fn rejects_kernel_schema_ddl(kind: SqlStoreKind, sql: &str) -> bool {
+    if kind != SqlStoreKind::State {
         return false;
     }
     let trimmed = sql.trim_start();
-    let head = trimmed
-        .get(..12)
-        .unwrap_or(trimmed)
-        .to_ascii_uppercase();
+    let head = trimmed.get(..12).unwrap_or(trimmed).to_ascii_uppercase();
     head.starts_with("CREATE")
         || head.starts_with("DROP")
         || head.starts_with("ALTER")
@@ -137,13 +135,13 @@ async fn exec_sql(
     sql: String,
     sql_params: SqlParams,
 ) -> Result<u64, String> {
-    if rejects_kernel_schema_ddl(&selector, &sql) {
+    let (conn, kind) = open_connection_for_query_exec(manager, selector, settings).await?;
+    if rejects_kernel_schema_ddl(kind, &sql) {
         return Err(
             "kernel state store does not allow DDL; open a harness-owned database instead"
                 .to_string(),
         );
     }
-    let conn = open_connection_for_query_exec(manager, selector, settings).await?;
     match sql_params {
         SqlParams::None => conn.execute(&sql, ()).await.map_err(|e| e.to_string()),
         SqlParams::Positional(v) => conn.execute(&sql, v).await.map_err(|e| e.to_string()),

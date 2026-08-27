@@ -446,6 +446,8 @@ Notes:
 
 - `:one(...)` returns the first row or `nil`
 - `runtime.db.with(...)` opens a handle, runs the callback, and closes the handle
+- alias selectors address Turin-managed stores; explicit path selectors address raw Turso
+  databases owned by the harness and do not initialize Turin's state schema
 - if the callback errors, the callback error wins over any close error
 
 ### DX `runtime.agent(...)`

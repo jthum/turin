@@ -38,8 +38,10 @@ Runtime DB:
 2. The namespace checks the matching governance capability.
 3. DB selectors are parsed by `db_support`.
 4. Runtime policy resolves path scope, cache trimming, and dynamic-open denial.
-5. `query` and `exec` open a scoped state store connection and dispatch SQL with parsed params.
-6. `query` converts rows to JSON-shaped Lua tables; `exec` returns changed row count.
+5. Alias selectors open Turin-managed `StateStore` connections; explicit path selectors open
+   raw Turso databases without initializing Turin's schema. Handles retain that ownership kind.
+6. `query` and `exec` dispatch SQL with parsed params.
+7. `query` converts rows to JSON-shaped Lua tables; `exec` returns changed row count.
 
 Runtime graph:
 
@@ -54,6 +56,9 @@ Runtime graph:
 - `runtime.db.query` and `runtime.db.exec` must share DB target/policy resolution.
 - Alias `state` rejects DDL. Harness-owned tables belong in a path database such as
   `.turin/runtime/harness.db`, not in the kernel transcript store.
+- Explicit runtime DB paths are raw SQL databases. They do not receive Turin transcript, FTS,
+  or schema-version tables, and a raw handle cannot be reused as a semantic state-store selector.
+- One database path cannot be opened as both raw SQL and Turin-managed state within a manager.
 - Dynamic path opens must be denied when `db.allow_dynamic_open=false`.
 - SQL param parsing should stay in `db_support.rs`; runtime DB should not parse params ad hoc.
 - `runtime.graph.write` guards node/edge creation.

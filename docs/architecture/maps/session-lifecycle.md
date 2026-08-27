@@ -38,8 +38,9 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
 - `src/persistence/state/sessions.rs`
   - Session creation, normalized linkage, family lifecycle, title updates, and transactional deletion.
 - `src/persistence/state/sessions/search.rs`
-  - Ranked session, active-path message, tool-execution, and event search read model
-    with SQL ancestry and LIMIT/OFFSET.
+  - Ranked session, active-path message, tool-execution, and event search read model.
+    Candidate rows are paged in SQL and filtered through cached active paths because the
+    embedded Turso release does not yet support recursive CTE ancestry.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 

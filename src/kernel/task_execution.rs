@@ -15,6 +15,15 @@ use crate::persistence::schema::BranchProvenance;
 use crate::tools::ToolContext;
 use turin_types::layout::{DEFAULT_LAYOUT_ROOT, resolve_relative_to};
 
+fn admit_session_mcp_tools(
+    allowed: &mut std::collections::BTreeSet<String>,
+    session_tools: std::collections::BTreeSet<String>,
+) {
+    if allowed.contains("bridge_mcp") {
+        allowed.extend(session_tools);
+    }
+}
+
 impl ExecutionHost {
     /// Execute a single task (one specific prompt) within the persistent session.
     #[instrument(skip(self, session, task), fields(task_id = %task.task_id, trace_id = %task.trace_id))]
@@ -24,7 +33,6 @@ impl ExecutionHost {
         task: &QueuedTask,
     ) -> Result<TaskExecutionResult> {
         self.ensure_session_harness_engine(session)?;
-        let session_id = self.session_reference(session);
         let prompt = task.prompt.as_str();
         let user_content = if let Some(content) = task.content.as_ref() {
             let media_dir = self.managed_media_dir();
@@ -48,36 +56,9 @@ impl ExecutionHost {
             .await?;
         self.append_task_user_message(session, &user_content);
 
-        let effective_tools = crate::tools::policy::resolve_effective_tools_config_for_registry(
-            &self.config,
-            session.identity.agent_id(),
-            task.tools.as_ref(),
-            &self.tool_registry.names(),
-        )?;
-        let allowed_native_tools = Arc::new(
-            effective_tools
-                .selection
-                .allow
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        );
-
-        let tool_ctx = ToolContext {
-            workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
-            session_id: session_id.clone(),
-            agent_id: session.identity.agent_id().to_string(),
-            store_manager: Some(self.store_manager.clone()),
-            embedding_provider: self.embedding_provider.clone(),
-            config: Some(self.config.clone()),
-            allowed_native_tools: Arc::clone(&allowed_native_tools),
-            tools: Arc::new(effective_tools),
-        };
-
         self.set_task_active_session(session, task);
 
-        let task_status_result = self.run_task_turn_loop(session, task, &tool_ctx).await;
+        let task_status_result = self.run_task_turn_loop(session, task).await;
 
         self.clear_task_active_session(session);
 
@@ -156,7 +137,6 @@ impl ExecutionHost {
         &mut self,
         session: &mut SessionState,
         task: &QueuedTask,
-        tool_ctx: &ToolContext,
     ) -> Result<(TaskTerminalStatus, u32)> {
         let mut task_turn_count = 0;
         let max_task_turns = self.config.kernel.max_turns;
@@ -173,6 +153,7 @@ impl ExecutionHost {
                 break Ok(TaskTerminalStatus::MaxTurns);
             }
 
+            let tool_ctx = self.tool_context_for_task(session, task)?;
             self.begin_turn_persistence(session, Some(task)).await?;
 
             let turn_ctx = turn::TurnContext {
@@ -183,7 +164,7 @@ impl ExecutionHost {
                 inference_context: task.inference_context.clone(),
                 allowed_native_tools: Arc::clone(&tool_ctx.allowed_native_tools),
             };
-            let completed_turn = match self.execute_turn(session, tool_ctx, &turn_ctx).await {
+            let completed_turn = match self.execute_turn(session, &tool_ctx, &turn_ctx).await {
                 Ok(outcome) => {
                     self.clear_turn_persistence(session);
                     outcome
@@ -241,6 +222,42 @@ impl ExecutionHost {
 
         let task_status = task_status_result?;
         Ok((task_status, task_turn_count))
+    }
+
+    fn tool_context_for_task(
+        &self,
+        session: &SessionState,
+        task: &QueuedTask,
+    ) -> Result<ToolContext> {
+        let mut effective_tools =
+            crate::tools::policy::resolve_effective_tools_config_for_registry(
+                &self.config,
+                session.identity.agent_id(),
+                task.tools.as_ref(),
+                &self.tool_registry.names(),
+            )?;
+        let mut allowed_native_tools = effective_tools
+            .selection
+            .allow
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        admit_session_mcp_tools(&mut allowed_native_tools, session.session_tools.names());
+        if allowed_native_tools.contains("bridge_mcp") {
+            effective_tools.selection.allow = Some(allowed_native_tools.iter().cloned().collect());
+        }
+
+        Ok(ToolContext {
+            workspace_root: std::path::PathBuf::from(&self.config.kernel.workspace_root),
+            session_id: self.session_reference(session),
+            agent_id: session.identity.agent_id().to_string(),
+            store_manager: Some(self.store_manager.clone()),
+            embedding_provider: self.embedding_provider.clone(),
+            config: Some(self.config.clone()),
+            allowed_native_tools: Arc::new(allowed_native_tools),
+            tools: Arc::new(effective_tools),
+        })
     }
 
     async fn begin_turn_persistence(
@@ -396,5 +413,23 @@ impl ExecutionHost {
 
     fn clear_turn_persistence(&self, session: &mut SessionState) {
         session.set_active_turn_write_target(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::admit_session_mcp_tools;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn session_mcp_tools_follow_bridge_selection() {
+        let overlay = BTreeSet::from(["mcp_read".to_string()]);
+        let mut restricted = BTreeSet::from(["read_file".to_string()]);
+        admit_session_mcp_tools(&mut restricted, overlay.clone());
+        assert!(!restricted.contains("mcp_read"));
+
+        let mut bridged = BTreeSet::from(["bridge_mcp".to_string()]);
+        admit_session_mcp_tools(&mut bridged, overlay);
+        assert!(bridged.contains("mcp_read"));
     }
 }

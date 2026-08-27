@@ -334,7 +334,7 @@ impl StateStore {
                 None,
                 event_types,
                 EventTurnClause::SessionLevelOnly,
-                None,
+                limit,
             )
             .await?;
         for chunk in turn_list.chunks(TURN_QUERY_CHUNK) {
@@ -344,7 +344,7 @@ impl StateStore {
                     Some(chunk),
                     event_types,
                     EventTurnClause::Turns,
-                    None,
+                    limit,
                 )
                 .await?,
             );
@@ -366,7 +366,8 @@ impl StateStore {
         turn_clause: EventTurnClause,
         limit: Option<usize>,
     ) -> Result<Vec<EventRow>> {
-        if matches!(turn_clause, EventTurnClause::Turns) && turn_ids.is_some_and(|ids| ids.is_empty())
+        if matches!(turn_clause, EventTurnClause::Turns)
+            && turn_ids.is_some_and(|ids| ids.is_empty())
         {
             return Ok(Vec::new());
         }

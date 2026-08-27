@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::persistence::manager::{StoreManager, StorePathScope, StoreSelector};
+use crate::persistence::manager::{SqlStoreKind, StoreManager, StorePathScope, StoreSelector};
 
 impl StoreManager {
     pub(super) fn default_alias_path(&self, alias: &str) -> PathBuf {
@@ -15,15 +15,15 @@ impl StoreManager {
         &self,
         selector: &StoreSelector,
         path_scope: StorePathScope,
-    ) -> Result<(PathBuf, Option<String>)> {
+    ) -> Result<(PathBuf, Option<String>, SqlStoreKind)> {
         match selector {
             StoreSelector::Alias(alias) => {
                 let path = self.resolve_alias_path(alias).await?;
-                Ok((path, Some(alias.clone())))
+                Ok((path, Some(alias.clone()), SqlStoreKind::State))
             }
             StoreSelector::Path(p) => {
                 let path = self.resolve_path_scoped(Path::new(p), path_scope)?;
-                Ok((path, None))
+                Ok((path, None, SqlStoreKind::Raw))
             }
             StoreSelector::Handle(handle) => {
                 let mut handles = self.handles.write().await;
@@ -32,7 +32,7 @@ impl StoreManager {
                     .ok_or_else(|| anyhow::anyhow!("Unknown db handle '{}'", handle))?;
                 entry.open_count = entry.open_count.saturating_add(1);
                 entry.last_access = Instant::now();
-                Ok((entry.path.clone(), entry.alias.clone()))
+                Ok((entry.path.clone(), entry.alias.clone(), entry.kind))
             }
         }
     }
@@ -42,9 +42,12 @@ impl StoreManager {
         selector: &StoreSelector,
         path_scope: StorePathScope,
     ) -> Result<PathBuf> {
-        let (path, _) = self
+        let (path, _, kind) = self
             .resolve_selector_with_alias(selector, path_scope)
             .await?;
+        if matches!(selector, StoreSelector::Handle(_)) && kind == SqlStoreKind::Raw {
+            anyhow::bail!("Raw SQL database handles cannot select a Turin state store");
+        }
         Ok(path)
     }
 

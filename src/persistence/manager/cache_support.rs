@@ -7,12 +7,29 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::persistence::manager::{
-    HandleEntry, StoreCacheEntry, StoreHandleInfo, StoreManager, StorePathScope, StoreSelector,
+    HandleEntry, RawStoreCacheEntry, SqlStoreKind, StoreCacheEntry, StoreHandleInfo, StoreManager,
+    StorePathScope, StoreSelector,
 };
 
 use super::super::state::StateStore;
 
 impl StoreManager {
+    async fn claim_store_kind(&self, path: &PathBuf, requested: SqlStoreKind) -> Result<()> {
+        let mut kinds = self.store_kinds.write().await;
+        match kinds.get(path) {
+            Some(existing) if *existing != requested => anyhow::bail!(
+                "Database '{}' is already owned as a {:?} store",
+                path.display(),
+                existing
+            ),
+            Some(_) => Ok(()),
+            None => {
+                kinds.insert(path.clone(), requested);
+                Ok(())
+            }
+        }
+    }
+
     /// Open a selector and register an opaque handle for later `runtime.db.query/exec/close`.
     pub async fn open_handle(
         &self,
@@ -23,13 +40,20 @@ impl StoreManager {
     ) -> Result<StoreHandleInfo> {
         self.trim_cache(max_open_handles, idle_close_seconds).await;
 
-        let (target_path, alias) = self
+        let (target_path, alias, kind) = self
             .resolve_selector_with_alias(selector, path_scope)
             .await?;
 
         {
             let handles = self.handles.read().await;
             if let Some((handle, entry)) = handles.iter().find(|(_, e)| e.path == target_path) {
+                if entry.kind != kind {
+                    anyhow::bail!(
+                        "Database '{}' is already open as a {:?} store",
+                        target_path.display(),
+                        entry.kind
+                    );
+                }
                 return Ok(handle_info_from_entry(handle, entry));
             }
             if handles.len() >= max_open_handles {
@@ -40,7 +64,14 @@ impl StoreManager {
             }
         }
 
-        let _ = self.open_path_cached(&target_path).await?;
+        match kind {
+            SqlStoreKind::State => {
+                let _ = self.open_path_cached(&target_path).await?;
+            }
+            SqlStoreKind::Raw => {
+                let _ = self.open_raw_path_cached(&target_path).await?;
+            }
+        }
 
         let handle_id = uuid::Uuid::now_v7().simple().to_string();
         let now = Instant::now();
@@ -48,6 +79,7 @@ impl StoreManager {
         let entry = HandleEntry {
             path: target_path.clone(),
             alias,
+            kind,
             open_count: 1,
             last_access: now,
         };
@@ -88,8 +120,8 @@ impl StoreManager {
                 .collect::<HashSet<_>>()
         };
 
-        let mut stores = self.stores.write().await;
         let mut evicted = 0usize;
+        let mut stores = self.stores.write().await;
 
         // First pass: evict idle entries not referenced by active handles.
         let idle_candidates = stores
@@ -113,37 +145,91 @@ impl StoreManager {
             }
         }
 
-        if stores.len() <= max_entries {
-            return evicted;
-        }
-
-        let mut lru = stores
+        let mut raw_stores = self.raw_stores.write().await;
+        let raw_idle_candidates = raw_stores
             .iter()
-            .filter_map(|(path, entry)| {
-                if protected_paths.contains(path) {
-                    return None;
-                }
-                if Arc::strong_count(&entry.store) > 1 {
-                    return None;
-                }
-                Some((path.clone(), entry.last_access))
+            .filter(|(path, entry)| {
+                !protected_paths.contains(*path)
+                    && entry.last_access.elapsed() >= idle_cutoff
+                    && Arc::strong_count(&entry.database) == 1
             })
+            .map(|(path, _)| path.clone())
             .collect::<Vec<_>>();
-        lru.sort_by_key(|(_, last_access)| *last_access);
-
-        for (path, _) in lru {
-            if stores.len() <= max_entries {
-                break;
-            }
-            if stores.remove(&path).is_some() {
+        for path in raw_idle_candidates {
+            if raw_stores.remove(&path).is_some() {
                 evicted += 1;
             }
+        }
+
+        // State and raw databases share one retained-store budget. Active handles and stores
+        // borrowed by callers remain protected even when they temporarily exceed the cap.
+        while stores.len() + raw_stores.len() > max_entries {
+            let oldest_state = stores
+                .iter()
+                .filter(|(path, entry)| {
+                    !protected_paths.contains(*path) && Arc::strong_count(&entry.store) == 1
+                })
+                .min_by_key(|(_, entry)| entry.last_access)
+                .map(|(path, entry)| (path.clone(), entry.last_access));
+            let oldest_raw = raw_stores
+                .iter()
+                .filter(|(path, entry)| {
+                    !protected_paths.contains(*path) && Arc::strong_count(&entry.database) == 1
+                })
+                .min_by_key(|(_, entry)| entry.last_access)
+                .map(|(path, entry)| (path.clone(), entry.last_access));
+
+            let removed = match (oldest_state, oldest_raw) {
+                (Some((state_path, state_access)), Some((raw_path, raw_access))) => {
+                    if state_access <= raw_access {
+                        stores.remove(&state_path).is_some()
+                    } else {
+                        raw_stores.remove(&raw_path).is_some()
+                    }
+                }
+                (Some((path, _)), None) => stores.remove(&path).is_some(),
+                (None, Some((path, _))) => raw_stores.remove(&path).is_some(),
+                (None, None) => false,
+            };
+            if !removed {
+                break;
+            }
+            evicted += 1;
         }
 
         evicted
     }
 
+    pub async fn open_sql_connection(
+        &self,
+        selector: &StoreSelector,
+        path_scope: StorePathScope,
+    ) -> Result<(turso::Connection, SqlStoreKind)> {
+        let (target_path, _, kind) = self
+            .resolve_selector_with_alias(selector, path_scope)
+            .await?;
+        let connection = match kind {
+            SqlStoreKind::State => {
+                self.open_path_cached(&target_path)
+                    .await?
+                    .get_connection()
+                    .await?
+            }
+            SqlStoreKind::Raw => self.open_raw_path_cached(&target_path).await?.connect()?,
+        };
+        if kind == SqlStoreKind::Raw {
+            connection.execute("PRAGMA foreign_keys = ON;", ()).await?;
+            connection
+                .execute("PRAGMA busy_timeout = 5000;", ())
+                .await
+                .ok();
+        }
+        Ok((connection, kind))
+    }
+
     pub(super) async fn open_path_cached(&self, target_path: &PathBuf) -> Result<Arc<StateStore>> {
+        self.claim_store_kind(target_path, SqlStoreKind::State)
+            .await?;
         {
             let mut stores = self.stores.write().await;
             if let Some(entry) = stores.get_mut(target_path) {
@@ -176,6 +262,56 @@ impl StoreManager {
                 },
             );
             Ok(store)
+        }
+    }
+
+    async fn open_raw_path_cached(&self, target_path: &PathBuf) -> Result<Arc<turso::Database>> {
+        self.claim_store_kind(target_path, SqlStoreKind::Raw)
+            .await?;
+        {
+            let mut stores = self.raw_stores.write().await;
+            if let Some(entry) = stores.get_mut(target_path) {
+                entry.last_access = Instant::now();
+                return Ok(Arc::clone(&entry.database));
+            }
+        }
+
+        if let Some(parent) = target_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Failed to create raw database directory: {}",
+                    parent.display()
+                )
+            })?;
+        }
+        let db_path = target_path
+            .to_str()
+            .context("Database path contains invalid UTF-8")?;
+        info!(path = %target_path.display(), "Opening raw SQL database");
+        let database = Arc::new(
+            turso::Builder::new_local(db_path)
+                .build()
+                .await
+                .with_context(|| {
+                    format!("Failed to open raw database: {}", target_path.display())
+                })?,
+        );
+
+        let mut stores = self.raw_stores.write().await;
+        if let Some(entry) = stores.get_mut(target_path) {
+            entry.last_access = Instant::now();
+            Ok(Arc::clone(&entry.database))
+        } else {
+            stores.insert(
+                target_path.clone(),
+                RawStoreCacheEntry {
+                    database: Arc::clone(&database),
+                    last_access: Instant::now(),
+                },
+            );
+            Ok(database)
         }
     }
 }

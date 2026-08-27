@@ -23,13 +23,25 @@ fn library_workflow_path(name: &str) -> PathBuf {
     repo_path(Path::new("library").join("workflows").join(name))
 }
 
-async fn open_harness_owned_store(
-    workspace: &Path,
-) -> Result<turin_core::persistence::state::StateStore> {
-    turin_core::persistence::state::StateStore::open(
-        &workspace.join(".turin/runtime/harness.db").to_string_lossy(),
+struct HarnessOwnedStore {
+    database: turso::Database,
+}
+
+impl HarnessOwnedStore {
+    async fn get_connection(&self) -> Result<turso::Connection> {
+        Ok(self.database.connect()?)
+    }
+}
+
+async fn open_harness_owned_store(workspace: &Path) -> Result<HarnessOwnedStore> {
+    let database = turso::Builder::new_local(
+        &workspace
+            .join(".turin/runtime/harness.db")
+            .to_string_lossy(),
     )
-    .await
+    .build()
+    .await?;
+    Ok(HarnessOwnedStore { database })
 }
 
 async fn wait_for_persisted_agent_output(

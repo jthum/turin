@@ -229,7 +229,10 @@ impl ExecutionHost {
             .map(ToOwned::to_owned)
             .collect();
 
-        for tool in session.session_tools.tool_definitions() {
+        for tool in session
+            .session_tools
+            .tool_definitions_filtered(&turn_ctx.allowed_native_tools)
+        {
             let Some(name) = tool.get("name").and_then(|value| value.as_str()) else {
                 continue;
             };

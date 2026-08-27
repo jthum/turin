@@ -78,6 +78,32 @@ fn registered_custom_tools_participate_in_selection() {
 }
 
 #[test]
+fn registered_dynamic_tools_are_default_on_but_request_restrictable() {
+    let config = config_with_tools(
+        ToolSelectionConfig::default(),
+        ToolSelectionConfig::default(),
+    );
+    let available = BTreeSet::from(["read_file".to_string(), "mcp_dynamic".to_string()]);
+
+    let default =
+        resolve_effective_tools_config_for_registry(&config, "default", None, &available).unwrap();
+    assert_eq!(
+        default.selection.allow,
+        Some(vec!["mcp_dynamic".to_string(), "read_file".to_string()])
+    );
+
+    let mut request = ToolsConfig::default();
+    request.selection.allow = Some(vec!["read_file".to_string()]);
+    let restricted =
+        resolve_effective_tools_config_for_registry(&config, "default", Some(&request), &available)
+            .unwrap();
+    assert_eq!(
+        restricted.selection.allow,
+        Some(vec!["read_file".to_string()])
+    );
+}
+
+#[test]
 fn registry_validation_rejects_unknown_exact_tool_names() {
     let config = config_with_tools(
         ToolSelectionConfig {

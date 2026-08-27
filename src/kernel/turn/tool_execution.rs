@@ -23,8 +23,6 @@ use super::super::PendingToolCall;
 use super::super::event::{AuditEvent, KernelEvent};
 use super::TurnOutcome;
 
-
-
 #[derive(Debug, Clone)]
 struct FinalToolRecord {
     id: String,
@@ -191,8 +189,8 @@ impl ExecutionHost {
                         tool.as_ref(),
                     ) {
                         match decision.allowed {
-                            true => tool
-                                .execute(final_args.clone(), &tool_ctx)
+                            true => session_tools
+                                .execute(&tc.name, final_args.clone(), &tool_ctx)
                                 .await
                                 .map(ExecutionArtifact::Native),
                             false => {
@@ -203,7 +201,8 @@ impl ExecutionHost {
                             }
                         }
                     } else {
-                        tool.execute(final_args.clone(), &tool_ctx)
+                        session_tools
+                            .execute(&tc.name, final_args.clone(), &tool_ctx)
                             .await
                             .map(ExecutionArtifact::Native)
                     }
@@ -212,8 +211,7 @@ impl ExecutionHost {
                         active_agent_id.as_str(),
                         &session_reference,
                         tool.as_ref(),
-                    )
-                    {
+                    ) {
                         match decision.allowed {
                             true => kernel
                                 .tool_registry
@@ -297,11 +295,7 @@ impl ExecutionHost {
             }
             results = stream::iter(futures)
                 .buffer_unordered(
-                    self.config
-                        .runtime
-                        .max_parallel_tool_calls
-                        .max(1)
-                        .min(64),
+                    self.config.runtime.max_parallel_tool_calls.clamp(1, 64),
                 )
                 .collect::<Vec<_>>() => results,
         };

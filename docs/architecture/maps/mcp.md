@@ -84,9 +84,11 @@ Shutdown:
 - Reusing an existing client on the same session may skip already-registered tools but must still reject empty or duplicate names from the server response.
 - MCP proxies belong to the owning session's tool overlay, not the shared host
   registry. Another session on the same kernel does not see those tools.
-- Session-attached MCP tools are admitted by attach, not by a config allow-list.
-  Host native-tool permission checks still apply to built-ins; MCP tool calls still
-  go through governance using `integration.mcp.tool`.
+- Session-attached MCP tools join the registered tool set on the next inference turn.
+  Effective root, agent, and task tool selection is recomputed each turn. Selection
+  that includes `bridge_mcp` admits that session's attached overlay; a narrower task
+  that omits `bridge_mcp` hides and blocks the overlay. MCP tool calls also go through
+  governance using `integration.mcp.tool`.
 - Session end shuts down that session's MCP clients. Host shutdown only covers
   leftover host-owned clients.
 - MCP process arguments remain available in memory for exact client reuse but must not be

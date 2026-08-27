@@ -60,10 +60,22 @@ struct StoreCacheEntry {
     last_access: Instant,
 }
 
+struct RawStoreCacheEntry {
+    database: Arc<turso::Database>,
+    last_access: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlStoreKind {
+    State,
+    Raw,
+}
+
 #[derive(Debug)]
 struct HandleEntry {
     path: PathBuf,
     alias: Option<String>,
+    kind: SqlStoreKind,
     open_count: u64,
     last_access: Instant,
 }
@@ -73,6 +85,12 @@ struct HandleEntry {
 pub struct StoreManager {
     /// Active open stores, keyed by their canonical absolute path
     stores: RwLock<HashMap<PathBuf, StoreCacheEntry>>,
+
+    /// Raw SQL databases opened explicitly through `runtime.db` paths.
+    raw_stores: RwLock<HashMap<PathBuf, RawStoreCacheEntry>>,
+
+    /// Prevent one path from being opened with conflicting schema ownership.
+    store_kinds: RwLock<HashMap<PathBuf, SqlStoreKind>>,
 
     /// Mapping of alias names to canonical paths
     aliases: RwLock<HashMap<String, PathBuf>>,
@@ -92,6 +110,8 @@ impl StoreManager {
     pub fn new(workspace_root: impl Into<PathBuf>, store_root: impl Into<PathBuf>) -> Self {
         Self {
             stores: RwLock::new(HashMap::new()),
+            raw_stores: RwLock::new(HashMap::new()),
+            store_kinds: RwLock::new(HashMap::new()),
             aliases: RwLock::new(HashMap::new()),
             handles: RwLock::new(HashMap::new()),
             workspace_root: workspace_root.into(),
@@ -176,5 +196,76 @@ mod tests {
             err.to_string().contains("Path traversal")
                 || err.to_string().contains("outside workspace")
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_sql_paths_are_raw_and_cannot_be_reused_as_state_store_handles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = StoreManager::new(tmp.path(), tmp.path().join("stores"));
+        let handle = mgr
+            .open_handle(
+                &StoreSelector::Path("harness.db".to_string()),
+                StorePathScope::WorkspaceOnly,
+                8,
+                300,
+            )
+            .await
+            .unwrap();
+        let selector = StoreSelector::Handle(handle.handle.clone());
+        let (conn, kind) = mgr
+            .open_sql_connection(&selector, StorePathScope::WorkspaceOnly)
+            .await
+            .unwrap();
+        assert_eq!(kind, SqlStoreKind::Raw);
+        conn.execute("CREATE TABLE custom_data (value TEXT)", ())
+            .await
+            .unwrap();
+
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut tables = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            tables.push(row.get::<String>(0).unwrap());
+        }
+        assert_eq!(tables, ["custom_data"]);
+
+        let error = match mgr
+            .open_with_path_scope(&selector, StorePathScope::WorkspaceOnly)
+            .await
+        {
+            Ok(_) => panic!("raw SQL handles must not become semantic state stores"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("Raw SQL database handles"));
+    }
+
+    #[tokio::test]
+    async fn state_and_raw_stores_share_one_retained_cache_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = StoreManager::new(tmp.path(), tmp.path().join("stores"));
+        mgr.register_alias("state", tmp.path().join("state.db"))
+            .await
+            .unwrap();
+
+        let state = mgr.get_default().await.unwrap();
+        drop(state);
+        let raw = mgr
+            .open_handle(
+                &StoreSelector::Path("harness.db".to_string()),
+                StorePathScope::WorkspaceOnly,
+                8,
+                300,
+            )
+            .await
+            .unwrap();
+        mgr.close_handle(&raw.handle).await.unwrap();
+
+        mgr.trim_cache(1, 300).await;
+        assert!(mgr.stores.read().await.len() + mgr.raw_stores.read().await.len() <= 1);
     }
 }

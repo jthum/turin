@@ -48,12 +48,10 @@ pub fn register_runtime_policy_namespace(
                     let json_value = lua.from_value::<serde_json::Value>(value).map_err(|e| {
                         mlua::Error::runtime(format!("invalid policy value: {}", e))
                     })?;
-                    if let Some(extra) = widening_policy_capability(&key, &json_value) {
-                        if let Err(err) =
-                            require_governance_capability(&app_data_snapshot, extra)
-                        {
-                            return bool_err(lua, &err);
-                        }
+                    if let Some(extra) = widening_policy_capability(&key, &json_value)
+                        && let Err(err) = require_governance_capability(&app_data_snapshot, extra)
+                    {
+                        return bool_err(lua, &err);
                     }
                     let policy_manager = policy_manager.clone();
                     let result = bridge_async_display_err(async move {

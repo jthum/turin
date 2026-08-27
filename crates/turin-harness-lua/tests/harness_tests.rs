@@ -6223,6 +6223,21 @@ async fn test_runtime_db_api_and_context_glob() -> Result<()> {
         dyn_db.exists(),
         "expected runtime.db.open path to create database"
     );
+    let raw_db = turso::Builder::new_local(dyn_db.to_str().unwrap())
+        .build()
+        .await?;
+    let raw_conn = raw_db.connect()?;
+    let mut schema_rows = raw_conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('items', 'schema_info') ORDER BY name",
+            (),
+        )
+        .await?;
+    let mut tables = Vec::new();
+    while let Some(row) = schema_rows.next().await? {
+        tables.push(row.get::<String>(0)?);
+    }
+    assert_eq!(tables, ["items"]);
 
     Ok(())
 }
