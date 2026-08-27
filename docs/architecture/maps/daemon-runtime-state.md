@@ -19,6 +19,7 @@ This subsystem should preserve three guarantees:
     resolution, and live mutation guards.
 - `src/daemon/state/runtime_sessions/discovery.rs`
   - Root/linked session listing, ranked history search, and bounded search excerpts.
+    Persistence search pages in SQL over the active branch path.
 - `src/daemon/state/runtime_sessions/branches.rs`
   - Branch listing, sibling lookup, creation, checkout, and turn-graph projection.
 - `src/daemon/state/runtime_sessions/family.rs`

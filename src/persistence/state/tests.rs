@@ -183,6 +183,75 @@ async fn test_get_recent_events_by_types_is_bounded_and_chronological() {
 }
 
 #[tokio::test]
+async fn test_get_recent_events_by_types_stays_on_selected_path() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(
+            session,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "root"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_event(
+            session,
+            Some(turn(0)),
+            "task_start",
+            &json!({"branch": "main"}),
+        )
+        .await
+        .unwrap();
+
+    let alt = store
+        .create_branch_head_from_turn_index(session, "alt", Some(0), true)
+        .await
+        .unwrap();
+    store
+        .insert_event(
+            session,
+            Some(turn(1)),
+            "task_start",
+            &json!({"branch": "alt"}),
+        )
+        .await
+        .unwrap();
+    store
+        .checkout_branch_head_by_name(session, "main")
+        .await
+        .unwrap();
+
+    let events = store
+        .get_recent_events_by_types(session, &active_branch(), &["task_start"], 8)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].payload.contains("main"));
+
+    let alt_events = store
+        .get_recent_events_by_types(
+            session,
+            &SessionReadTarget::BranchHead(alt.id),
+            &["task_start"],
+            8,
+        )
+        .await
+        .unwrap();
+    assert!(
+        alt_events
+            .iter()
+            .any(|event| event.payload.contains("alt"))
+    );
+}
+
+#[tokio::test]
 async fn test_session_counters_are_aggregated_without_materializing_events() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
@@ -1932,6 +2001,24 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
         event_hits
             .iter()
             .any(|hit| hit.kind == SessionSearchHitKind::Event)
+    );
+
+    let paged = store
+        .search_session_history("compiler", SessionSearchScope::All, 1, 0)
+        .await
+        .unwrap();
+    assert_eq!(paged.len(), 1);
+    assert_eq!(paged[0].kind, SessionSearchHitKind::Session);
+
+    let skipped = store
+        .search_session_history("compiler", SessionSearchScope::All, 1, 1)
+        .await
+        .unwrap();
+    assert!(
+        skipped
+            .first()
+            .is_none_or(|hit| hit.kind != SessionSearchHitKind::Session
+                || hit.match_text != paged[0].match_text)
     );
 }
 

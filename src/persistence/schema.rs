@@ -3,7 +3,7 @@
 // ─── Schema Constants ───────────────────────────────────────────
 
 /// Schema version — bump when changing table structure.
-pub(crate) const SCHEMA_VERSION: u32 = 34;
+pub(crate) const SCHEMA_VERSION: u32 = 35;
 
 /// SQL statements to initialize the core database schema.
 pub(crate) const INIT_SCHEMA_CORE: &str = r#"
@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS schema_info (
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_session_type_id ON events(session_id, event_type, id);
+CREATE INDEX IF NOT EXISTS idx_events_session_turn_id ON events(session_id, turn_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent_created
     ON sessions(parent_session_id, created_at)
     WHERE parent_session_id IS NOT NULL;

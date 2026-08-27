@@ -38,7 +38,8 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
 - `src/persistence/state/sessions.rs`
   - Session creation, normalized linkage, family lifecycle, title updates, and transactional deletion.
 - `src/persistence/state/sessions/search.rs`
-  - Ranked session, active-path message, tool-execution, and event search read model.
+  - Ranked session, active-path message, tool-execution, and event search read model
+    with SQL ancestry and LIMIT/OFFSET.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 
@@ -137,8 +138,9 @@ End session:
    for a never-started session.
    A stalled persistence task is aborted after a bounded shutdown wait and returned
    to the caller as an error; direct embedded-session teardown must not hang forever.
-4. Cancel the session token and release process-local session/run policy overrides.
-5. Clear the harness engine and mark the session `ended`.
+4. Shut down session-owned MCP clients and clear the session tool overlay.
+5. Cancel the session token and release process-local session/run policy overrides.
+6. Clear the harness engine and mark the session `ended`.
    Ended session objects are terminal; callers resume persisted state into a new
    session object rather than restarting one with a cancelled token.
 

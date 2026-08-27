@@ -8,6 +8,31 @@ use super::{EventRow, SessionReadTarget, StateStore, TurnRow, TurnWriteTarget};
 const INSERT_EVENT_SQL: &str =
     "INSERT INTO events (session_id, turn_id, event_type, payload) VALUES (?1, ?2, ?3, ?4)";
 
+#[derive(Debug, Clone, Copy)]
+enum EventTurnClause {
+    All,
+    SessionLevelOnly,
+    Turns,
+    SessionLevelOrTurns,
+}
+
+fn event_row_from_sql_row(row: &turso::Row) -> Result<EventRow> {
+    let id = row.get::<i64>(0)?;
+    Ok(EventRow {
+        id,
+        session_id: row.get::<i64>(1)?,
+        turn_id: row.get::<Option<i64>>(2)?,
+        event_type: row.get::<String>(3)?,
+        payload: row.get::<String>(4)?,
+        turn_index: super::persisted_optional_u32(
+            &format!("event {id}"),
+            "turn index",
+            row.get::<Option<i64>>(5)?,
+        )?,
+        created_at: row.get::<String>(6)?,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCounters {
     pub next_task_id: u32,
@@ -108,7 +133,8 @@ impl StateStore {
     }
 
     pub async fn get_all_events(&self, session_id: i64) -> Result<Vec<EventRow>> {
-        self.query_events(session_id).await
+        self.query_events_matching(session_id, None, None, EventTurnClause::All, None)
+            .await
     }
 
     pub async fn get_events(
@@ -116,35 +142,9 @@ impl StateStore {
         session_id: i64,
         target: &SessionReadTarget,
     ) -> Result<Vec<EventRow>> {
-        let events = self.query_events(session_id).await?;
-        match target {
-            SessionReadTarget::ActiveBranch => {
-                self.filter_events_for_branch_head(session_id, None, events)
-                    .await
-            }
-            SessionReadTarget::BranchHead(branch_head_id) => {
-                self.filter_events_for_branch_head(session_id, Some(*branch_head_id), events)
-                    .await
-            }
-            SessionReadTarget::TurnId(turn_id) => {
-                let turn_ids = self
-                    .turn_path_to_turn_id(session_id, *turn_id)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-            SessionReadTarget::SelectedPath(turn_ids) => {
-                let turn_ids = self
-                    .turn_rows_for_selected_path(session_id, turn_ids)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-        }
+        let turn_ids = self.turn_ids_for_read_target(session_id, target).await?;
+        self.query_events_for_turns(session_id, &turn_ids, None, None)
+            .await
     }
 
     pub async fn get_events_by_types(
@@ -156,35 +156,9 @@ impl StateStore {
         if event_types.is_empty() {
             return Ok(Vec::new());
         }
-        let events = self.query_events_by_types(session_id, event_types).await?;
-        match target {
-            SessionReadTarget::ActiveBranch => {
-                self.filter_events_for_branch_head(session_id, None, events)
-                    .await
-            }
-            SessionReadTarget::BranchHead(branch_head_id) => {
-                self.filter_events_for_branch_head(session_id, Some(*branch_head_id), events)
-                    .await
-            }
-            SessionReadTarget::TurnId(turn_id) => {
-                let turn_ids = self
-                    .turn_path_to_turn_id(session_id, *turn_id)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-            SessionReadTarget::SelectedPath(turn_ids) => {
-                let turn_ids = self
-                    .turn_rows_for_selected_path(session_id, turn_ids)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-        }
+        let turn_ids = self.turn_ids_for_read_target(session_id, target).await?;
+        self.query_events_for_turns(session_id, &turn_ids, Some(event_types), None)
+            .await
     }
 
     pub async fn get_latest_session_event_by_type(
@@ -276,37 +250,9 @@ impl StateStore {
         if event_types.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        let events = self
-            .query_recent_events_by_types(session_id, event_types, limit, 0)
-            .await?;
-        match target {
-            SessionReadTarget::ActiveBranch => {
-                self.filter_events_for_branch_head(session_id, None, events)
-                    .await
-            }
-            SessionReadTarget::BranchHead(branch_head_id) => {
-                self.filter_events_for_branch_head(session_id, Some(*branch_head_id), events)
-                    .await
-            }
-            SessionReadTarget::TurnId(turn_id) => {
-                let turn_ids = self
-                    .turn_path_to_turn_id(session_id, *turn_id)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-            SessionReadTarget::SelectedPath(turn_ids) => {
-                let turn_ids = self
-                    .turn_rows_for_selected_path(session_id, turn_ids)
-                    .await?
-                    .into_iter()
-                    .map(|turn| turn.id)
-                    .collect::<HashSet<_>>();
-                Ok(self.filter_events_for_turn_ids(events, &turn_ids))
-            }
-        }
+        let turn_ids = self.turn_ids_for_read_target(session_id, target).await?;
+        self.query_events_for_turns(session_id, &turn_ids, Some(event_types), Some(limit))
+            .await
     }
 
     pub async fn list_sessions(&self, limit: usize, offset: usize) -> Result<Vec<i64>> {
@@ -325,58 +271,107 @@ impl StateStore {
         Ok(sessions)
     }
 
-    async fn query_events(&self, session_id: i64) -> Result<Vec<EventRow>> {
-        let conn = self.connect().await?;
-        let mut rows = conn
-            .query(
-                r#"
-                SELECT e.id,
-                       e.session_id,
-                       e.turn_id,
-                       e.event_type,
-                       e.payload,
-                       t.branch_depth,
-                       e.created_at
-                FROM events e
-                LEFT JOIN turns t ON t.id = e.turn_id
-                WHERE e.session_id = ?1
-                ORDER BY e.id
-                "#,
-                [session_id],
+    async fn turn_ids_for_read_target(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+    ) -> Result<HashSet<i64>> {
+        Ok(match target {
+            SessionReadTarget::ActiveBranch => self
+                .branch_path_turns(session_id, None)
+                .await?
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect(),
+            SessionReadTarget::BranchHead(branch_head_id) => self
+                .branch_path_turns(session_id, Some(*branch_head_id))
+                .await?
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect(),
+            SessionReadTarget::TurnId(turn_id) => self
+                .turn_path_to_turn_id(session_id, *turn_id)
+                .await?
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect(),
+            SessionReadTarget::SelectedPath(turn_ids) => self
+                .turn_rows_for_selected_path(session_id, turn_ids)
+                .await?
+                .into_iter()
+                .map(|turn| turn.id)
+                .collect(),
+        })
+    }
+
+    async fn query_events_for_turns(
+        &self,
+        session_id: i64,
+        turn_ids: &HashSet<i64>,
+        event_types: Option<&[&str]>,
+        limit: Option<usize>,
+    ) -> Result<Vec<EventRow>> {
+        const TURN_QUERY_CHUNK: usize = 500;
+        if limit == Some(0) {
+            return Ok(Vec::new());
+        }
+        let turn_list: Vec<i64> = turn_ids.iter().copied().collect();
+        if turn_list.len() <= TURN_QUERY_CHUNK {
+            return self
+                .query_events_matching(
+                    session_id,
+                    Some(&turn_list),
+                    event_types,
+                    EventTurnClause::SessionLevelOrTurns,
+                    limit,
+                )
+                .await;
+        }
+
+        let mut events = self
+            .query_events_matching(
+                session_id,
+                None,
+                event_types,
+                EventTurnClause::SessionLevelOnly,
+                None,
             )
             .await?;
-
-        let mut events = Vec::new();
-        while let Some(row) = rows.next().await? {
-            let id = row.get::<i64>(0)?;
-            events.push(EventRow {
-                id,
-                session_id: row.get::<i64>(1)?,
-                turn_id: row.get::<Option<i64>>(2)?,
-                event_type: row.get::<String>(3)?,
-                payload: row.get::<String>(4)?,
-                turn_index: super::persisted_optional_u32(
-                    &format!("event {id}"),
-                    "turn index",
-                    row.get::<Option<i64>>(5)?,
-                )?,
-                created_at: row.get::<String>(6)?,
-            });
+        for chunk in turn_list.chunks(TURN_QUERY_CHUNK) {
+            events.extend(
+                self.query_events_matching(
+                    session_id,
+                    Some(chunk),
+                    event_types,
+                    EventTurnClause::Turns,
+                    None,
+                )
+                .await?,
+            );
+        }
+        events.sort_by_key(|event| event.id);
+        events.dedup_by_key(|event| event.id);
+        if let Some(limit) = limit {
+            let start = events.len().saturating_sub(limit);
+            events = events.split_off(start);
         }
         Ok(events)
     }
 
-    async fn query_events_by_types(
+    async fn query_events_matching(
         &self,
         session_id: i64,
-        event_types: &[&str],
+        turn_ids: Option<&[i64]>,
+        event_types: Option<&[&str]>,
+        turn_clause: EventTurnClause,
+        limit: Option<usize>,
     ) -> Result<Vec<EventRow>> {
+        if matches!(turn_clause, EventTurnClause::Turns) && turn_ids.is_some_and(|ids| ids.is_empty())
+        {
+            return Ok(Vec::new());
+        }
         let conn = self.connect().await?;
-        let placeholders = (2..event_types.len() + 2)
-            .map(|index| format!("?{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
+        let mut sql = String::from(
             r#"
                 SELECT e.id,
                        e.session_id,
@@ -388,35 +383,65 @@ impl StateStore {
                 FROM events e
                 LEFT JOIN turns t ON t.id = e.turn_id
                 WHERE e.session_id = ?1
-                  AND e.event_type IN ({placeholders})
-                ORDER BY e.id
-                "#
+            "#,
         );
-        let mut params = Vec::with_capacity(event_types.len() + 1);
-        params.push(SqlValue::Integer(session_id));
-        params.extend(
-            event_types
-                .iter()
-                .map(|event_type| SqlValue::Text((*event_type).to_string())),
-        );
+        let mut params = vec![SqlValue::Integer(session_id)];
+        let mut next = 2;
+        match turn_clause {
+            EventTurnClause::All => {}
+            EventTurnClause::SessionLevelOnly => {
+                sql.push_str(" AND e.turn_id IS NULL");
+            }
+            EventTurnClause::Turns | EventTurnClause::SessionLevelOrTurns => {
+                let turn_ids = turn_ids.unwrap_or(&[]);
+                if turn_ids.is_empty() {
+                    if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
+                        sql.push_str(" AND e.turn_id IS NULL");
+                    }
+                } else {
+                    let placeholders = (next..next + turn_ids.len())
+                        .map(|index| format!("?{index}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
+                        sql.push_str(&format!(
+                            " AND (e.turn_id IS NULL OR e.turn_id IN ({placeholders}))"
+                        ));
+                    } else {
+                        sql.push_str(&format!(" AND e.turn_id IN ({placeholders})"));
+                    }
+                    params.extend(turn_ids.iter().copied().map(SqlValue::Integer));
+                    next += turn_ids.len();
+                }
+            }
+        }
+        if let Some(event_types) = event_types {
+            let placeholders = (next..next + event_types.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql.push_str(&format!(" AND e.event_type IN ({placeholders})"));
+            params.extend(
+                event_types
+                    .iter()
+                    .map(|event_type| SqlValue::Text((*event_type).to_string())),
+            );
+            next += event_types.len();
+        }
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" ORDER BY e.id DESC LIMIT ?{next}"));
+            params.push(SqlValue::Integer(limit as i64));
+        } else {
+            sql.push_str(" ORDER BY e.id");
+        }
         let mut stmt = conn.prepare(&sql).await?;
         let mut rows = stmt.query(params).await?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().await? {
-            let id = row.get::<i64>(0)?;
-            events.push(EventRow {
-                id,
-                session_id: row.get::<i64>(1)?,
-                turn_id: row.get::<Option<i64>>(2)?,
-                event_type: row.get::<String>(3)?,
-                payload: row.get::<String>(4)?,
-                turn_index: super::persisted_optional_u32(
-                    &format!("event {id}"),
-                    "turn index",
-                    row.get::<Option<i64>>(5)?,
-                )?,
-                created_at: row.get::<String>(6)?,
-            });
+            events.push(event_row_from_sql_row(&row)?);
+        }
+        if limit.is_some() {
+            events.reverse();
         }
         Ok(events)
     }
@@ -466,52 +491,9 @@ impl StateStore {
         let mut rows = stmt.query(params).await?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().await? {
-            let id = row.get::<i64>(0)?;
-            events.push(EventRow {
-                id,
-                session_id: row.get::<i64>(1)?,
-                turn_id: row.get::<Option<i64>>(2)?,
-                event_type: row.get::<String>(3)?,
-                payload: row.get::<String>(4)?,
-                turn_index: super::persisted_optional_u32(
-                    &format!("event {id}"),
-                    "turn index",
-                    row.get::<Option<i64>>(5)?,
-                )?,
-                created_at: row.get::<String>(6)?,
-            });
+            events.push(event_row_from_sql_row(&row)?);
         }
         events.reverse();
         Ok(events)
-    }
-
-    async fn filter_events_for_branch_head(
-        &self,
-        session_id: i64,
-        branch_head_id: Option<i64>,
-        events: Vec<EventRow>,
-    ) -> Result<Vec<EventRow>> {
-        let active_turn_ids = self
-            .branch_path_turns(session_id, branch_head_id)
-            .await?
-            .into_iter()
-            .map(|turn| turn.id)
-            .collect::<HashSet<_>>();
-        Ok(self.filter_events_for_turn_ids(events, &active_turn_ids))
-    }
-
-    fn filter_events_for_turn_ids(
-        &self,
-        events: Vec<EventRow>,
-        turn_ids: &HashSet<i64>,
-    ) -> Vec<EventRow> {
-        events
-            .into_iter()
-            .filter(|event| {
-                event
-                    .turn_id
-                    .is_none_or(|turn_id| turn_ids.contains(&turn_id))
-            })
-            .collect()
     }
 }
