@@ -1099,12 +1099,12 @@ async fn test_stale_branch_conflict_can_fork_sibling_durably() -> Result<()> {
 
     {
         kernel
-        .enqueue_task(
-            &mut session,
-            QueuedTask::ad_hoc("trigger")
-                .with_conflict_policy(Some(ExecutionConflictPolicy::ForkSibling)),
-        )
-        .await?;
+            .enqueue_task(
+                &mut session,
+                QueuedTask::ad_hoc("trigger")
+                    .with_conflict_policy(Some(ExecutionConflictPolicy::ForkSibling)),
+            )
+            .await?;
     }
 
     kernel.run(&mut session, None).await?;
@@ -1318,7 +1318,8 @@ async fn test_runtime_idle_zero_still_completes_tool_follow_up_turns() -> Result
         .await?;
 
     assert_eq!(
-        session.turn_index(), 2,
+        session.turn_index(),
+        2,
         "Cold-after-request retention must not cut off the follow-up model turn after tools run"
     );
 

@@ -423,7 +423,7 @@ impl ExecutionHost {
                 queue_depth: queue_depth_after_pop,
             }) {
                 Ok(v) => v,
-                Err(e) => self.harness_eval_error_verdict("on_task_start", e)
+                Err(e) => self.harness_eval_error_verdict("on_task_start", e),
             }
         } else {
             Verdict::Allow

@@ -265,11 +265,9 @@ async fn public_task_failures_are_classified_without_losing_detail() -> anyhow::
     let tmp = tempdir()?;
     let harness_dir = tmp.path().join("harness");
     std::fs::create_dir_all(&harness_dir)?;
-    let kernel = crate::kernel::harness_runtime::test_runtime_builder(test_config(
-        tmp.path(),
-        &harness_dir,
-    ))
-    .build()?;
+    let kernel =
+        crate::kernel::harness_runtime::test_runtime_builder(test_config(tmp.path(), &harness_dir))
+            .build()?;
 
     let error = kernel
         .agent_manager()

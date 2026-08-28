@@ -160,7 +160,10 @@ impl ExecutionHost {
             self.persist_published_event(session, &event).await;
         }
 
-        if self.paints_cli_text() && !output.response_text.is_empty() && !output.response_text.ends_with('\n') {
+        if self.paints_cli_text()
+            && !output.response_text.is_empty()
+            && !output.response_text.ends_with('\n')
+        {
             println!();
         }
 

@@ -318,13 +318,9 @@ mod tests {
         });
 
         let client = DaemonClient::new(endpoint);
-        wait_until_client_stopped(
-            &client,
-            Duration::from_secs(2),
-            Duration::from_millis(20),
-        )
-        .await
-        .expect("waiter should continue after individual probes time out");
+        wait_until_client_stopped(&client, Duration::from_secs(2), Duration::from_millis(20))
+            .await
+            .expect("waiter should continue after individual probes time out");
 
         server.abort();
     }

@@ -122,12 +122,14 @@ impl RuntimeBuilder {
         let policy_manager = Arc::new(RuntimePolicyManager::new());
         let governance_manager = Arc::new(GovernanceManager::new(config_arc.governance.clone()));
         let rust_harness_factories = Arc::new(self.rust_harness_factories);
-        let harness_manager = Arc::new(HarnessManager::from_config_with_harnesses(
-            config_arc.as_ref(),
-            rust_harness_factories.as_ref(),
-            self.script_harness_adapter.as_ref(),
-        )
-        .map_err(|error| KernelError::new(KernelErrorKind::Harness, error))?);
+        let harness_manager = Arc::new(
+            HarnessManager::from_config_with_harnesses(
+                config_arc.as_ref(),
+                rust_harness_factories.as_ref(),
+                self.script_harness_adapter.as_ref(),
+            )
+            .map_err(|error| KernelError::new(KernelErrorKind::Harness, error))?,
+        );
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {

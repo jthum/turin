@@ -112,15 +112,12 @@ impl DaemonState {
         job: &ScheduledJobRow,
         now_unix_ms: i64,
     ) -> Result<()> {
-        let job_kind = job
-            .job_kind
-            .parse::<ScheduledJobKind>()
-            .with_context(|| {
-                format!(
-                    "Scheduled job '{}' has invalid kind '{}'",
-                    job.id, job.job_kind
-                )
-            })?;
+        let job_kind = job.job_kind.parse::<ScheduledJobKind>().with_context(|| {
+            format!(
+                "Scheduled job '{}' has invalid kind '{}'",
+                job.id, job.job_kind
+            )
+        })?;
         if job.active_run_count > 0 {
             let overlap = job
                 .overlap_policy

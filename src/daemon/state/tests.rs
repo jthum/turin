@@ -600,7 +600,11 @@ async fn scheduled_job_update_rejects_corrupted_overlap_policy() -> Result<()> {
         .await
         .expect_err("corrupt overlap policy must not silently become skip");
 
-    assert!(error.to_string().contains("invalid overlap policy 'corrupt'"));
+    assert!(
+        error
+            .to_string()
+            .contains("invalid overlap policy 'corrupt'")
+    );
     Ok(())
 }
 

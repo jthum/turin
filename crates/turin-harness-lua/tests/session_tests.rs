@@ -3881,16 +3881,11 @@ async fn test_token_usage_reject_can_enforce_session() -> Result<()> {
         );
     }
 
-    assert!(
-        session.stop_requested(),
-        "session stop should be requested"
-    );
-    assert!(
-        session.queued_is_empty().await,
-        "queue should be cleared"
-    );
+    assert!(session.stop_requested(), "session stop should be requested");
+    assert!(session.queued_is_empty().await, "queue should be cleared");
     assert_eq!(
-        session.turn_index(), 1,
+        session.turn_index(),
+        1,
         "session should stop after first turn"
     );
 
