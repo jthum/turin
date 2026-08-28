@@ -278,7 +278,7 @@ impl AgentManager {
         if let Some(shared_runtime) = self.shared_runtime()
             && let Ok(Some(value)) = shared_runtime
                 .policy_manager
-                .get("runtime.idle_timeout_seconds", &scope)
+                .get_override("runtime.idle_timeout_seconds", &scope)
                 .await
         {
             effective = match value {

@@ -111,6 +111,9 @@ Linked runtime residency:
 6. Runtime slots retain the immutable agent/harness catalog generation used at
    startup. Targeted registry reconciliation retires only changed idle agents;
    unaffected active slots continue and future slots use the new generation.
+7. Worker idle timeout starts from the selected agent configuration. Only an
+   explicitly stored runtime-policy override replaces it; an absent override must
+   not be confused with the policy API's default `null` value.
 
 ## Invariants
 

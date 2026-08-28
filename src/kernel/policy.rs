@@ -257,6 +257,43 @@ impl RuntimePolicyManager {
         Ok(self.snapshot(scope).await.get(key).cloned())
     }
 
+    pub(crate) async fn get_override(
+        &self,
+        key: &str,
+        scope: &PolicyScope,
+    ) -> Result<Option<Value>> {
+        validate_key(key)?;
+        let state = self.state.read().await;
+        let mut resolved = state.global.get(key);
+
+        if let Some(agent_id) = scope.agent_id.as_ref()
+            && let Some(value) = state
+                .per_agent
+                .get(agent_id)
+                .and_then(|overrides| overrides.get(key))
+        {
+            resolved = Some(value);
+        }
+        if let Some(session_id) = scope.session_id.as_ref()
+            && let Some(value) = state
+                .per_session
+                .get(session_id)
+                .and_then(|overrides| overrides.get(key))
+        {
+            resolved = Some(value);
+        }
+        if let Some(run_id) = scope.run_id.as_ref()
+            && let Some(value) = state
+                .per_run
+                .get(run_id)
+                .and_then(|overrides| overrides.get(key))
+        {
+            resolved = Some(value);
+        }
+
+        Ok(resolved.cloned())
+    }
+
     pub async fn set(&self, key: &str, value: Value, scope: &PolicyScope) -> Result<()> {
         validate_key(key)?;
         validate_value(key, &value)?;
@@ -478,6 +515,72 @@ mod tests {
             })
             .await;
         assert_eq!(snapshot.get("spawn.max_depth"), Some(&Value::from(1u64)));
+    }
+
+    #[tokio::test]
+    async fn explicit_override_lookup_excludes_defaults_and_respects_precedence() {
+        let mgr = RuntimePolicyManager::new();
+        let resolved_scope = PolicyScope {
+            agent_id: Some("coder".to_string()),
+            session_id: Some("session-1".to_string()),
+            ..PolicyScope::default()
+        };
+
+        assert_eq!(
+            mgr.get_override("runtime.idle_timeout_seconds", &resolved_scope)
+                .await
+                .unwrap(),
+            None
+        );
+
+        mgr.set(
+            "runtime.idle_timeout_seconds",
+            Value::from(30),
+            &PolicyScope::default(),
+        )
+        .await
+        .unwrap();
+        mgr.set(
+            "runtime.idle_timeout_seconds",
+            Value::from(10),
+            &PolicyScope {
+                scope: Some("agent".to_string()),
+                agent_id: Some("coder".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await
+        .unwrap();
+        mgr.set(
+            "runtime.idle_timeout_seconds",
+            Value::Null,
+            &PolicyScope {
+                scope: Some("session".to_string()),
+                session_id: Some("session-1".to_string()),
+                ..PolicyScope::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            mgr.get_override("runtime.idle_timeout_seconds", &resolved_scope)
+                .await
+                .unwrap(),
+            Some(Value::Null)
+        );
+        assert_eq!(
+            mgr.get_override(
+                "runtime.idle_timeout_seconds",
+                &PolicyScope {
+                    agent_id: Some("coder".to_string()),
+                    ..PolicyScope::default()
+                },
+            )
+            .await
+            .unwrap(),
+            Some(Value::from(10))
+        );
     }
 
     #[tokio::test]
