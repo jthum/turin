@@ -68,6 +68,8 @@ Runtime graph:
 - Runtime graph is sparse relationship metadata; durable transcript/session state remains owned by persistence/session modules.
 - Every state-store connection enables foreign-key enforcement. Runtime DB callers may issue
   advanced SQL, but writes that violate declared state relationships fail at the database boundary.
+- Every state-store connection applies the configured SQLite busy timeout before use. Failure to
+  establish that concurrency behavior fails connection setup rather than degrading silently.
 - Core schema, FTS schema, and schema-version recording initialize in one transaction. A failed
   bootstrap must leave the database retryable rather than stranded as an unversioned partial schema.
 - Persisted values represented as unsigned domain counters, indexes, dimensions, or durations are

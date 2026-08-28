@@ -30,12 +30,14 @@ fn trim_on_peer_idle_enabled_from(value: Option<&OsStr>) -> bool {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn trim_allocator() -> bool {
+    // SAFETY: `malloc_trim` is a process-wide glibc allocator hint with no pointer
+    // arguments. Calling it is safe; whether pages can be released is its return value.
     unsafe { libc::malloc_trim(0) != 0 }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 fn trim_allocator() -> bool {
     false
 }

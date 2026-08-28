@@ -248,7 +248,9 @@ impl StateStore {
             .await
             .context("Failed to enable state-store foreign keys")?;
         // busy_timeout is connection-local in SQLite; must be set per connection.
-        conn.execute("PRAGMA busy_timeout = 5000;", ()).await.ok();
+        conn.execute("PRAGMA busy_timeout = 5000;", ())
+            .await
+            .context("Failed to configure state-store busy timeout")?;
         Ok(conn)
     }
 

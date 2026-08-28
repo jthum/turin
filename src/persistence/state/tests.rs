@@ -32,13 +32,18 @@ async fn test_schema_initialization() {
 }
 
 #[tokio::test]
-async fn test_connections_enforce_foreign_keys() {
+async fn test_connections_apply_required_pragmas() {
     let store = StateStore::open_memory().await.unwrap();
     let conn = store.get_connection().await.unwrap();
     let mut rows = conn.query("PRAGMA foreign_keys", ()).await.unwrap();
     assert_eq!(
         rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
         1
+    );
+    let mut rows = conn.query("PRAGMA busy_timeout", ()).await.unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        5_000
     );
 
     let error = conn
