@@ -7,6 +7,7 @@ mod operations;
 mod peer_runtime;
 mod peer_session;
 mod peer_signals;
+mod public_api;
 mod records;
 mod runtime_control;
 mod runtime_registry;

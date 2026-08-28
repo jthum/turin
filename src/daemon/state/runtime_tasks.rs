@@ -212,7 +212,11 @@ impl DaemonState {
     }
 
     pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
-        self.kernel.agent_manager().cancel_task(request_id).await
+        self.kernel
+            .agent_manager()
+            .cancel_task(request_id)
+            .await
+            .map_err(Into::into)
     }
 
     pub(crate) async fn promote_task_params(
@@ -227,6 +231,7 @@ impl DaemonState {
                 params.source_turn_id,
             )
             .await
+            .map_err(Into::into)
     }
 
     pub async fn wait_for_task(
@@ -300,6 +305,7 @@ impl DaemonState {
                 Default::default(),
             )
             .await
+            .map_err(Into::into)
     }
 
     pub async fn resume_session(
@@ -311,6 +317,7 @@ impl DaemonState {
             .agent_manager()
             .resume_session(session_id, slot_id, None, Default::default())
             .await
+            .map_err(Into::into)
     }
 
     pub async fn cancel_session(

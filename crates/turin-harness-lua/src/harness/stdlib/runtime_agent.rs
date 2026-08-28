@@ -356,6 +356,7 @@ pub fn register_runtime_agent_namespace(
                                 delegated_capabilities,
                             )
                             .await
+                            .map_err(anyhow::Error::new)
                     });
                     lua_string_result(lua, result)
                 },
@@ -426,6 +427,7 @@ pub fn register_runtime_agent_namespace(
                                 delegated_capabilities,
                             )
                             .await
+                            .map_err(anyhow::Error::new)
                     });
                     lua_string_result(lua, result)
                 },
@@ -482,6 +484,7 @@ pub fn register_runtime_agent_namespace(
                     manager
                         .promote_completed_task(&task_id, branch_name.as_deref(), source_turn_id)
                         .await
+                        .map_err(anyhow::Error::new)
                 });
                 lua_json_result(lua, result)
             })?,

@@ -14,7 +14,7 @@ use super::{
 
 impl AgentManager {
     /// Await a previously submitted peer task result.
-    pub async fn await_result(
+    pub(super) async fn await_result_inner(
         &self,
         request_id: &str,
         timeout_ms: Option<u64>,
@@ -174,7 +174,7 @@ impl AgentManager {
             .cloned()
     }
 
-    pub async fn promote_completed_task(
+    pub(super) async fn promote_completed_task_inner(
         &self,
         request_id: &str,
         branch_name: Option<&str>,

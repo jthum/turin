@@ -85,13 +85,16 @@ fn ensure_runtime_slot_idle(
 }
 
 impl AgentManager {
-    pub async fn wake_agent(self: &Arc<Self>, agent_id: &str) -> Result<()> {
+    pub(super) async fn wake_agent_inner(self: &Arc<Self>, agent_id: &str) -> Result<()> {
         let handle = self.ensure_runtime(agent_id).await?;
         handle.notify.notify_one();
         Ok(())
     }
 
-    pub async fn resolve_session_target(&self, session_id: &str) -> Result<(String, String)> {
+    pub(super) async fn resolve_session_target_inner(
+        &self,
+        session_id: &str,
+    ) -> Result<(String, String)> {
         let config = self.config_snapshot();
         let session_ref = parse_session_reference(session_id)?;
         let selector = session_ref
@@ -109,7 +112,7 @@ impl AgentManager {
         ))
     }
 
-    pub async fn wake_session(self: &Arc<Self>, session_id: &str) -> Result<()> {
+    pub(super) async fn wake_session_inner(self: &Arc<Self>, session_id: &str) -> Result<()> {
         let live = self.find_runtimes_by_session(session_id).await;
         if !live.is_empty() {
             for (_, handle) in live {
@@ -118,7 +121,7 @@ impl AgentManager {
             return Ok(());
         }
         let live = self
-            .resume_session(session_id, None, None, InferenceOverrideConfig::default())
+            .resume_session_inner(session_id, None, None, InferenceOverrideConfig::default())
             .await?;
         if let Some((_, handle)) = self
             .find_runtimes_by_session(&live.session_id)
@@ -131,7 +134,7 @@ impl AgentManager {
         Ok(())
     }
 
-    pub async fn open_session(
+    pub(super) async fn open_session_inner(
         self: &Arc<Self>,
         agent_id: &str,
         slot_id: Option<&str>,
@@ -174,7 +177,7 @@ impl AgentManager {
         Ok(live_session_snapshot(&runtime_key, &handle, session_id))
     }
 
-    pub async fn resume_session(
+    pub(super) async fn resume_session_inner(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
@@ -306,7 +309,7 @@ impl AgentManager {
         ))
     }
 
-    pub async fn reload_session(
+    pub(super) async fn reload_session_inner(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
@@ -355,7 +358,7 @@ impl AgentManager {
         ))
     }
 
-    pub async fn reload_session_if_live(
+    pub(super) async fn reload_session_if_live_inner(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,
@@ -368,14 +371,14 @@ impl AgentManager {
             {
                 return Ok(false);
             }
-            self.reload_session(session_id, Some(slot_id)).await?;
+            self.reload_session_inner(session_id, Some(slot_id)).await?;
             return Ok(true);
         }
 
         if live_matches.is_empty() {
             return Ok(false);
         }
-        self.reload_session(session_id, None).await?;
+        self.reload_session_inner(session_id, None).await?;
         Ok(true)
     }
 

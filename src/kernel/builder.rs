@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,7 +8,7 @@ use crate::kernel::harness_runtime::HarnessAdapterFactory;
 use crate::kernel::policy::RuntimePolicyManager;
 use crate::kernel::tool_authorization::{DenyUnavailableToolAuthorizer, ToolAuthorizer};
 use crate::kernel::{
-    Kernel, TurinConfig,
+    Kernel, KernelError, KernelErrorKind, KernelResult, TurinConfig,
     agent_manager::{AgentManager, SharedPeerRuntimeContext},
     execution_host::{ExecutionHost, SessionPersistenceCoordinator},
     harness_manager::HarnessManager,
@@ -96,7 +95,7 @@ impl RuntimeBuilder {
     }
 
     /// Build the Kernel.
-    pub fn build(self) -> Result<Kernel> {
+    pub fn build(self) -> KernelResult<Kernel> {
         let available_tools = self.tool_registry.names();
         for agent_id in std::iter::once(self.config.agent.id.as_str())
             .chain(self.config.agents.keys().map(String::as_str))
@@ -108,7 +107,10 @@ impl RuntimeBuilder {
                 &available_tools,
             )
             .map_err(|error| {
-                anyhow::anyhow!("invalid tool registry for agent '{}': {}", agent_id, error)
+                KernelError::new(
+                    KernelErrorKind::Configuration,
+                    anyhow::anyhow!("invalid tool registry for agent '{}': {}", agent_id, error),
+                )
             })?;
         }
         let store_manager = Arc::new(StoreManager::new(
@@ -124,7 +126,8 @@ impl RuntimeBuilder {
             config_arc.as_ref(),
             rust_harness_factories.as_ref(),
             self.script_harness_adapter.as_ref(),
-        )?);
+        )
+        .map_err(|error| KernelError::new(KernelErrorKind::Harness, error))?);
         let shared_harness_manager = Arc::new(std::sync::RwLock::new(Arc::clone(&harness_manager)));
         let persistence_locks = Arc::new(SessionPersistenceCoordinator::default());
         agent_manager.bind_shared_runtime(SharedPeerRuntimeContext {
@@ -166,6 +169,8 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use anyhow::Result;
 
     use super::*;
     use crate::harness::verdict::Verdict;

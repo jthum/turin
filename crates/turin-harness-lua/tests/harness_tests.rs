@@ -4687,8 +4687,10 @@ async fn test_use_scoped_root_mismatch_fails_harness_init() -> Result<()> {
     kernel.init_clients()?;
     let err = kernel.init_harness().await.unwrap_err();
     assert!(
-        err.chain()
-            .any(|cause| cause.to_string().contains("use_scoped root mismatch")),
+        std::iter::successors(Some(&err as &(dyn std::error::Error + 'static)), |error| {
+            error.source()
+        },)
+        .any(|cause| cause.to_string().contains("use_scoped root mismatch")),
         "unexpected error: {err}"
     );
 

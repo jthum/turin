@@ -19,6 +19,8 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
 - `src/kernel/builder.rs`
   - `RuntimeBuilder` composition of tools, harnesses, scripting adapters, and tool
     authorization.
+- `src/kernel/error.rs`
+  - Stable public error categories and the source-preserving `KernelError` boundary.
 - `src/kernel/execution_host.rs`
   - Crate-private shared execution state used by root and peer runtimes.
 - `src/kernel/init.rs`
@@ -62,6 +64,12 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
 - `Kernel::build` stays I/O-free. `Kernel::start` runs state, client, harness, and
   watcher initialization. Keep the stepwise `init_*` methods for embeddings that
   inject clients or bind a scheduler between those steps.
+- Fallible public `Kernel` and `AgentManager` operations return `KernelResult`. Classify
+  failures by stable operation domain at the facade; retain the original error as the
+  source and keep detailed persistence, harness, and runtime errors internal.
+- Do not add a blanket conversion from `anyhow::Error` to `KernelError`. Classification
+  must remain explicit so new public operations cannot silently become generic runtime
+  failures.
 
 ## Focused Checks
 

@@ -43,6 +43,8 @@ This surface sits between harness code and core runtime state. It should stay bo
   - `lane_scheduler.rs` owns fair cross-session selection while preserving per-session FIFO.
   - `task_results.rs` owns result waiting, task inspection, terminal bookkeeping, and
     completed-result promotion.
+  - `public_api.rs` is the typed error facade for fallible AgentManager operations;
+    orchestration modules retain detailed internal errors.
 - `src/kernel/session.rs`
   - Queued task, execution context target, conflict policy, and branch outcome types.
 - `src/kernel/task_promotion.rs`
@@ -139,6 +141,9 @@ Linked runtime residency:
   configuration replacement without blocking submissions to unrelated agents.
 - AgentManager's root module composes orchestration and public snapshots; mutable
   runtime-control state, queue records, and bounded caches retain focused internal owners.
+- Fallible public AgentManager operations classify internal failures as task, session,
+  or agent errors without discarding their source chain. Internal orchestration should
+  continue using detailed errors rather than depending on facade categories.
 - Non-executed terminal task results are constructed from their owning pending record or
   queued envelope so cancellation, shutdown, and lost-result paths retain one result shape.
 - Public task snapshots use the closed `TaskState` domain enum. Wire serialization remains

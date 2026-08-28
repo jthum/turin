@@ -23,7 +23,7 @@ use super::{
 
 impl AgentManager {
     /// Submit a task to a peer agent and return a request ID for later `await_result`.
-    pub async fn submit(
+    pub(super) async fn submit_inner(
         self: &Arc<Self>,
         agent_id: &str,
         task: QueuedTask,
@@ -38,7 +38,7 @@ impl AgentManager {
     }
 
     /// Submit into an agent-owned child session scoped to the originating session.
-    pub async fn submit_linked(
+    pub(super) async fn submit_linked_inner(
         self: &Arc<Self>,
         origin_session_id: &str,
         origin_turn_id: Option<i64>,
@@ -275,7 +275,7 @@ impl AgentManager {
         Ok(occupied)
     }
 
-    pub async fn submit_to_session(
+    pub(super) async fn submit_to_session_inner(
         self: &Arc<Self>,
         session_id: &str,
         slot_id: Option<&str>,

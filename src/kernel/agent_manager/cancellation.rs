@@ -102,7 +102,7 @@ impl AgentManager {
         tokio::task::yield_now().await;
     }
 
-    pub async fn cancel_task(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
+    pub(super) async fn cancel_task_inner(&self, request_id: &str) -> Result<TaskStatusSnapshot> {
         self.cancel_task_with_reason(request_id, "Task cancelled before execution")
             .await
     }
@@ -176,7 +176,7 @@ impl AgentManager {
         }
     }
 
-    pub async fn cancel_session(
+    pub(super) async fn cancel_session_inner(
         &self,
         session_id: &str,
         slot_id: Option<&str>,
@@ -207,7 +207,7 @@ impl AgentManager {
         ))
     }
 
-    pub async fn kill_session(
+    pub(super) async fn kill_session_inner(
         &self,
         session_id: &str,
         slot_id: Option<&str>,
@@ -273,7 +273,10 @@ impl AgentManager {
         ))
     }
 
-    pub async fn cancel_session_family(&self, session_id: &str) -> Result<(String, String, usize)> {
+    pub(super) async fn cancel_session_family_inner(
+        &self,
+        session_id: &str,
+    ) -> Result<(String, String, usize)> {
         let config = self.config_snapshot();
         let session_ref = parse_session_reference(session_id)?;
         let store_selector = session_ref
@@ -334,7 +337,7 @@ impl AgentManager {
 
     pub(super) async fn cancel_pending_requests(&self, request_ids: &[String]) -> Result<()> {
         for request_id in request_ids {
-            if let Err(error) = self.cancel_task(request_id).await {
+            if let Err(error) = self.cancel_task_inner(request_id).await {
                 // The cancellation sweep works from a snapshot. Completion may win the
                 // race after that snapshot; terminal or already-removed work is settled.
                 let is_settled = self.completed_result(request_id).await.is_some()

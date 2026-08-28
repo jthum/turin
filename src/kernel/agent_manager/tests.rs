@@ -260,6 +260,28 @@ fn test_config(workspace_root: &std::path::Path, harness_dir: &std::path::Path) 
     }
 }
 
+#[tokio::test]
+async fn public_task_failures_are_classified_without_losing_detail() -> anyhow::Result<()> {
+    let tmp = tempdir()?;
+    let harness_dir = tmp.path().join("harness");
+    std::fs::create_dir_all(&harness_dir)?;
+    let kernel = crate::kernel::harness_runtime::test_runtime_builder(test_config(
+        tmp.path(),
+        &harness_dir,
+    ))
+    .build()?;
+
+    let error = kernel
+        .agent_manager()
+        .cancel_task("missing-task")
+        .await
+        .expect_err("unknown task should fail");
+
+    assert_eq!(error.kind(), crate::kernel::KernelErrorKind::Task);
+    assert!(error.to_string().contains("Task 'missing-task' not found"));
+    Ok(())
+}
+
 fn signal_test_config(
     workspace_root: &std::path::Path,
     publisher_harness_dir: &std::path::Path,
