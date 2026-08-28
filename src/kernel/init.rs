@@ -75,7 +75,7 @@ impl ExecutionHost {
 
 impl ExecutionHost {
     /// Initialize all configured provider clients. Call before `init_harness()` and `run()`.
-    pub fn init_clients(&mut self) -> Result<()> {
+    pub(crate) fn init_clients(&mut self) -> Result<()> {
         let providers: Vec<_> = self
             .config
             .providers
@@ -120,7 +120,7 @@ impl ExecutionHost {
     }
 
     /// Initialize the default state store alias. Call before `run()`.
-    pub async fn init_state(&mut self) -> Result<()> {
+    pub(crate) async fn init_state(&mut self) -> Result<()> {
         let state_selector = self.config.persistence.top_level_state_selector()?;
         let db_path = self
             .store_manager
@@ -152,7 +152,7 @@ impl ExecutionHost {
 
     /// Initialize the harness engine. Call after `init_state()` and before `run()`.
     #[instrument(skip(self), fields(directory = %self.config.harness.directory))]
-    pub async fn init_harness(&mut self) -> Result<()> {
+    pub(crate) async fn init_harness(&mut self) -> Result<()> {
         info!("Initializing harness");
         for definition in self.harness_manager.definitions() {
             definition.init(self.harness_init_context())?;
@@ -163,7 +163,7 @@ impl ExecutionHost {
 
     /// Reload the harness from disk (atomic swap).
     #[instrument(skip(self))]
-    pub async fn reload_harness(&mut self) -> Result<()> {
+    pub(crate) async fn reload_harness(&mut self) -> Result<()> {
         info!("Reloading harness");
         for definition in self.harness_manager.definitions() {
             definition.reload(self.harness_init_context())?;
@@ -172,7 +172,7 @@ impl ExecutionHost {
         Ok(())
     }
 
-    pub async fn reload_named_harness(&mut self, harness_id: &str) -> Result<()> {
+    pub(crate) async fn reload_named_harness(&mut self, harness_id: &str) -> Result<()> {
         let definition = self
             .harness_manager
             .definition_by_id(harness_id)
@@ -184,7 +184,7 @@ impl ExecutionHost {
         Ok(())
     }
 
-    pub fn validate_named_harness(&self, harness_id: &str) -> Result<usize> {
+    pub(crate) fn validate_named_harness(&self, harness_id: &str) -> Result<usize> {
         let definition = self
             .harness_manager
             .definition_by_id(harness_id)

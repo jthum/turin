@@ -50,6 +50,9 @@ behavior through dereferencing, public fields, or a general-purpose host accesso
   turn implementation details into accidental public API.
 - `ExecutionHost` remains one in-memory object. Kernel delegation must not clone the
   host, serialize requests, or add dynamic dispatch.
+- Methods on crate-private implementation types must remain crate-scoped. The root
+  crate enables `unreachable_pub` so internal helpers cannot accidentally look like
+  supported external APIs.
 - Root and peer runtimes share execution implementations, but root-only ownership such
   as filesystem watcher lifetime remains on `Kernel`.
 - Public manager accessors are deliberate advanced APIs. Do not expose individual host

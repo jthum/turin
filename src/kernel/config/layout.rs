@@ -109,34 +109,34 @@ impl LayoutConfig {
     }
 }
 
-pub fn default_layout_data_dir() -> String {
+pub(super) fn default_layout_data_dir() -> String {
     DEFAULT_LAYOUT_DATA_DIR.to_string()
 }
 
-pub fn default_layout_states_dir() -> String {
+pub(super) fn default_layout_states_dir() -> String {
     DEFAULT_LAYOUT_STATES_DIR.to_string()
 }
 
-pub fn default_layout_stores_dir() -> String {
+pub(super) fn default_layout_stores_dir() -> String {
     DEFAULT_LAYOUT_STORES_DIR.to_string()
 }
 
-pub fn default_layout_harnesses_dir() -> String {
+pub(super) fn default_layout_harnesses_dir() -> String {
     DEFAULT_LAYOUT_HARNESSES_DIR.to_string()
 }
 
-pub fn default_layout_agents_dir() -> String {
+pub(super) fn default_layout_agents_dir() -> String {
     DEFAULT_LAYOUT_AGENTS_DIR.to_string()
 }
 
-pub fn default_layout_scopes_dir() -> String {
+pub(super) fn default_layout_scopes_dir() -> String {
     DEFAULT_LAYOUT_SCOPES_DIR.to_string()
 }
 
-pub fn default_layout_env_file() -> String {
+pub(super) fn default_layout_env_file() -> String {
     DEFAULT_LAYOUT_ENV_FILE.to_string()
 }
 
-pub fn default_layout_daemon_socket() -> String {
+pub(super) fn default_layout_daemon_socket() -> String {
     DEFAULT_LAYOUT_DAEMON_SOCKET.to_string()
 }

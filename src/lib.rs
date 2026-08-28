@@ -1,3 +1,5 @@
+#![warn(unreachable_pub)]
+
 pub mod daemon;
 pub mod display;
 pub mod harness;

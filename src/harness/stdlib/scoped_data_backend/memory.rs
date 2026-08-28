@@ -152,7 +152,7 @@ fn feedback_delta(signal: MemoryFeedbackSignal, request: &MemoryFeedbackRequest)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub async fn memory_store_backend(
+pub(super) async fn memory_store_backend(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,
@@ -201,7 +201,7 @@ pub async fn memory_store_backend_with_request(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub async fn memory_search_backend(
+pub(super) async fn memory_search_backend(
     manager: &StoreManager,
     embedding_provider: Option<&Arc<dyn EmbeddingProvider>>,
     selector: &ContextSelector,

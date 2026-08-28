@@ -16,7 +16,7 @@ use crate::schedule_support::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ScheduledJobOverlapPolicy {
+pub(crate) enum ScheduledJobOverlapPolicy {
     Skip,
     Queue,
     Parallel,
@@ -46,7 +46,7 @@ impl std::str::FromStr for ScheduledJobOverlapPolicy {
 }
 
 #[derive(Debug, Clone)]
-pub struct CreateScheduledJobInput {
+pub(crate) struct CreateScheduledJobInput {
     pub agent_id: String,
     pub prompt: Option<String>,
     pub content: Option<Vec<TaskInputContent>>,
@@ -64,7 +64,7 @@ pub struct CreateScheduledJobInput {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct UpdateScheduledJobInput {
+pub(crate) struct UpdateScheduledJobInput {
     pub agent_id: Option<String>,
     pub prompt: Option<String>,
     pub content: Option<Vec<TaskInputContent>>,

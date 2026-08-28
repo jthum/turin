@@ -109,17 +109,17 @@ impl ExecutionHost {
     }
 
     /// Create a new session.
-    pub async fn create_session(&self) -> Result<SessionState> {
+    pub(crate) async fn create_session(&self) -> Result<SessionState> {
         self.create_session_for_agent(&self.config.agent.id).await
     }
 
     /// Create a new session bound to a specific configured agent profile.
-    pub async fn create_session_for_agent(&self, agent_id: &str) -> Result<SessionState> {
+    pub(crate) async fn create_session_for_agent(&self, agent_id: &str) -> Result<SessionState> {
         self.create_session_for_agent_in_store(agent_id, None, None)
             .await
     }
 
-    pub async fn create_session_for_agent_in_store(
+    pub(crate) async fn create_session_for_agent_in_store(
         &self,
         agent_id: &str,
         state_selector: Option<StoreSelector>,
@@ -135,7 +135,7 @@ impl ExecutionHost {
         .await
     }
 
-    pub async fn create_session_for_agent_with_context(
+    pub(crate) async fn create_session_for_agent_with_context(
         &self,
         agent_id: &str,
         state_selector: Option<StoreSelector>,
@@ -207,7 +207,7 @@ impl ExecutionHost {
     }
 
     /// Resume an existing persisted session into a live runtime.
-    pub async fn resume_session_for_agent(
+    pub(crate) async fn resume_session_for_agent(
         &self,
         agent_id: &str,
         session_id: &str,
@@ -221,7 +221,7 @@ impl ExecutionHost {
         .await
     }
 
-    pub async fn resume_session_for_agent_with_context(
+    pub(crate) async fn resume_session_for_agent_with_context(
         &self,
         agent_id: &str,
         session_id: &str,
@@ -299,7 +299,10 @@ impl ExecutionHost {
         Ok(session)
     }
 
-    pub async fn refresh_session_from_persistence(&self, session: &mut SessionState) -> Result<()> {
+    pub(crate) async fn refresh_session_from_persistence(
+        &self,
+        session: &mut SessionState,
+    ) -> Result<()> {
         let (store, row) = self
             .load_current_session_row(
                 session,
@@ -412,7 +415,7 @@ impl ExecutionHost {
         }
     }
 
-    pub async fn select_session_branch_by_name_local(
+    pub(crate) async fn select_session_branch_by_name_local(
         &self,
         session: &mut SessionState,
         branch_name: &str,
@@ -441,7 +444,7 @@ impl ExecutionHost {
         Ok(true)
     }
 
-    pub async fn select_session_turn_local(
+    pub(crate) async fn select_session_turn_local(
         &self,
         session: &mut SessionState,
         turn_id: i64,
@@ -465,7 +468,7 @@ impl ExecutionHost {
         Ok(true)
     }
 
-    pub async fn select_session_external_reference_local(
+    pub(crate) async fn select_session_external_reference_local(
         &self,
         session: &mut SessionState,
         reference: &str,
@@ -544,7 +547,7 @@ impl ExecutionHost {
     }
 
     /// Start a new session.
-    pub async fn start_session(&self, session: &mut SessionState) -> Result<()> {
+    pub(crate) async fn start_session(&self, session: &mut SessionState) -> Result<()> {
         if session.status == SessionStatus::Active {
             return Ok(());
         }
@@ -605,7 +608,7 @@ impl ExecutionHost {
     }
 
     /// End the session and emit SessionEnd event.
-    pub async fn end_session(&self, session: &mut SessionState) -> Result<()> {
+    pub(crate) async fn end_session(&self, session: &mut SessionState) -> Result<()> {
         if session.status == SessionStatus::Ended {
             return Ok(());
         }

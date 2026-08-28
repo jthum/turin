@@ -18,7 +18,11 @@ impl ExecutionHost {
             store = %describe_store_selector(&session.store_selector)
         )
     )]
-    pub async fn run(&mut self, session: &mut SessionState, prompt: Option<String>) -> Result<()> {
+    pub(crate) async fn run(
+        &mut self,
+        session: &mut SessionState,
+        prompt: Option<String>,
+    ) -> Result<()> {
         // Ensure session is started
         self.start_session(session).await?;
 

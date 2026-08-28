@@ -40,7 +40,11 @@ impl ExecutionHost {
     }
 
     /// Add a prompt to the end of the queue as an implicit single-task plan.
-    pub async fn queue_prompt(&self, session: &mut SessionState, prompt: String) -> Result<()> {
+    pub(crate) async fn queue_prompt(
+        &self,
+        session: &mut SessionState,
+        prompt: String,
+    ) -> Result<()> {
         let plan_id = format!("p_{}", session.next_plan_id);
         session.next_plan_id += 1;
         session.plans.insert(

@@ -93,7 +93,7 @@ impl ExecutionHost {
     }
 
     /// Best-effort shutdown for leftover host-owned MCP clients.
-    pub async fn shutdown_mcp_clients(&mut self) {
+    pub(crate) async fn shutdown_mcp_clients(&mut self) {
         shutdown_mcp_client_list(&mut self.mcp_clients).await;
     }
 }

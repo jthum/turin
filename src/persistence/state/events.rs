@@ -104,7 +104,7 @@ pub(crate) struct EventWriter {
 }
 
 impl EventWriter {
-    pub async fn insert_event(
+    pub(crate) async fn insert_event(
         &self,
         session_id: i64,
         target: Option<TurnWriteTarget>,
