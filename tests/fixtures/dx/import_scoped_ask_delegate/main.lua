@@ -5,6 +5,8 @@ function on_turn_prepare(ctx)
       ["runtime.agent.submit"] = true,
       ["runtime.agent.await"] = true,
       ["runtime.agent.status"] = true,
+      ["runtime.db.open"] = true,
+      ["runtime.db.close"] = true,
       ["runtime.db.exec"] = true
     }
   })

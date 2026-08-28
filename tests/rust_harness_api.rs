@@ -9,7 +9,6 @@ use turin::inference::provider::{
     InferenceEvent, InferenceProvider, InferenceRequest, InferenceStream, ProviderClient,
     RequestOptions, SdkError,
 };
-use turin::kernel::Kernel;
 use turin::kernel::config::{
     AgentConfig, EmbeddingConfig, HarnessConfig, InferenceOverrideConfig, PersistenceConfig,
     ProviderConfig, TurinConfig,
@@ -18,6 +17,7 @@ use turin::kernel::harness::{Harness, HarnessFactory, Verdict};
 use turin::kernel::harness_contract::{
     HarnessActionRequest, HarnessSignal, HarnessTurnRequest, RequestOptionsOverride, ToolExposure,
 };
+use turin::kernel::{Kernel, KernelErrorKind};
 
 struct FixedHarness {
     received_signals: Arc<Mutex<Vec<String>>>,
@@ -351,9 +351,11 @@ fn rust_harness_registration_rejects_undeclared_id() -> Result<()> {
         Ok(_) => anyhow::bail!("undeclared Rust harness ID unexpectedly succeeded"),
         Err(error) => error,
     };
-    assert_eq!(
-        error.to_string(),
-        "Rust harness 'typo' is not declared in config.harnesses"
+    assert_eq!(error.kind(), KernelErrorKind::Harness);
+    assert!(
+        error
+            .to_string()
+            .contains("Rust harness 'typo' is not declared in config.harnesses")
     );
     Ok(())
 }

@@ -7420,12 +7420,13 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
                     id INTEGER PRIMARY KEY,
                     review TEXT NOT NULL
                 )
-            ]])
+            ]], nil, { path = "peer_ask_probe.db" })
             if changed == nil then error("runtime.db.exec create after runtime.agent.ask failed: " .. tostring(derr)) end
 
             changed, derr = runtime.db.exec(
                 "INSERT INTO peer_ask_probe(review) VALUES (?)",
-                { review }
+                { review },
+                { path = "peer_ask_probe.db" }
             )
             if changed == nil then error("runtime.db.exec insert after runtime.agent.ask failed: " .. tostring(derr)) end
 
@@ -7550,8 +7551,11 @@ async fn test_runtime_agent_ask_allows_post_ask_side_effects() -> Result<()> {
     assert!(artifact.exists(), "expected post-ask artifact to exist");
     assert_eq!(std::fs::read_to_string(&artifact)?, "worker-ok");
 
-    let store = kernel.store_manager().get_default().await?;
-    let conn = store.get_connection().await?;
+    let database =
+        turso::Builder::new_local(&tmp.path().join("peer_ask_probe.db").to_string_lossy())
+            .build()
+            .await?;
+    let conn = database.connect()?;
     let mut rows = conn
         .query(
             "SELECT review FROM peer_ask_probe ORDER BY id DESC LIMIT 1",
@@ -7647,14 +7651,15 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
                             outer_grant_id TEXT NOT NULL,
                             inner_grant_id TEXT NOT NULL
                         )
-                    ]])
+                    ]], nil, { path = "nested_ask_probe.db" })
                     if changed == nil then
                         error("runtime.db.exec create after nested grant failed: " .. tostring(derr))
                     end
 
                     changed, derr = runtime.db.exec(
                         "INSERT INTO nested_ask_probe(review, outer_grant_id, inner_grant_id) VALUES (?, ?, ?)",
-                        { review, outer_gid, inner_gid }
+                        { review, outer_gid, inner_gid },
+                        { path = "nested_ask_probe.db" }
                     )
                     if changed == nil then
                         error("runtime.db.exec insert after nested grant failed: " .. tostring(derr))
@@ -7793,8 +7798,11 @@ async fn test_runtime_agent_ask_preserves_nested_grant_context() -> Result<()> {
         .await?;
     kernel.end_session(&mut session).await?;
 
-    let store = kernel.store_manager().get_default().await?;
-    let conn = store.get_connection().await?;
+    let database =
+        turso::Builder::new_local(&tmp.path().join("nested_ask_probe.db").to_string_lossy())
+            .build()
+            .await?;
+    let conn = database.connect()?;
     let mut rows = conn
         .query(
             "SELECT review, outer_grant_id, inner_grant_id FROM nested_ask_probe ORDER BY id DESC LIMIT 1",
