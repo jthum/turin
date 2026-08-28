@@ -446,6 +446,9 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -648,6 +651,9 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -723,6 +729,9 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -788,6 +797,9 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -961,6 +973,9 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -1052,6 +1067,9 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -1118,6 +1136,9 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: None,
             }))
             .await?,
@@ -1163,6 +1184,9 @@ async fn wait_for_persisted_user_messages(
                     message_limit: None,
                     message_offset: None,
                     include_events: None,
+                    event_limit: None,
+                    event_offset: None,
+                    event_types: None,
                     include_efficiency: None,
                 }))
                 .await?,

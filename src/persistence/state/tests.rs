@@ -183,6 +183,59 @@ async fn test_get_recent_events_by_types_is_bounded_and_chronological() {
 }
 
 #[tokio::test]
+async fn test_event_window_reports_total_and_applies_offset_and_types() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for index in 0..6 {
+        let event_type = if index == 4 {
+            "message_end"
+        } else {
+            "task_start"
+        };
+        store
+            .insert_event(session, None, event_type, &json!({"index": index}))
+            .await
+            .unwrap();
+    }
+
+    let (events, total, offset) = store
+        .get_event_window(session, &active_branch(), Some(2), 2, Some(&["task_start"]))
+        .await
+        .unwrap();
+    assert_eq!(total, 5);
+    assert_eq!(offset, 2);
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&events[0].payload).unwrap()["index"],
+        2
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&events[1].payload).unwrap()["index"],
+        3
+    );
+
+    let (recent, total, offset) = store
+        .get_event_window(session, &active_branch(), None, 2, Some(&["task_start"]))
+        .await
+        .unwrap();
+    assert_eq!(total, 5);
+    assert_eq!(offset, 3);
+    assert_eq!(recent.len(), 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&recent[0].payload).unwrap()["index"],
+        3
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&recent[1].payload).unwrap()["index"],
+        5
+    );
+}
+
+#[tokio::test]
 async fn test_get_recent_events_by_types_stays_on_selected_path() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
@@ -244,11 +297,7 @@ async fn test_get_recent_events_by_types_stays_on_selected_path() {
         )
         .await
         .unwrap();
-    assert!(
-        alt_events
-            .iter()
-            .any(|event| event.payload.contains("alt"))
-    );
+    assert!(alt_events.iter().any(|event| event.payload.contains("alt")));
 }
 
 #[tokio::test]
@@ -2192,6 +2241,15 @@ async fn test_get_events_uses_hybrid_branch_filtering() {
     assert!(events[1].payload.contains("alt-branch"));
     assert_eq!(events[2].event_type, "all_tasks_complete");
     assert!(events[2].turn_id.is_none());
+
+    let (window, total, offset) = store
+        .get_event_window(session, &active_branch(), Some(1), 1, None)
+        .await
+        .unwrap();
+    assert_eq!(total, 3);
+    assert_eq!(offset, 1);
+    assert_eq!(window.len(), 1);
+    assert!(window[0].payload.contains("alt-branch"));
 
     let all_events = store.get_all_events(session).await.unwrap();
     assert_eq!(all_events.len(), 4);

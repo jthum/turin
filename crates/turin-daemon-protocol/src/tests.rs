@@ -119,6 +119,9 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
             assert!(params.message_limit.is_none());
             assert!(params.message_offset.is_none());
             assert!(params.include_events.is_none());
+            assert!(params.event_limit.is_none());
+            assert!(params.event_offset.is_none());
+            assert!(params.event_types.is_none());
             assert!(params.include_efficiency.is_none());
         }
         other => panic!("unexpected request variant: {other:?}"),
@@ -132,6 +135,9 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
             message_limit: Some(48),
             message_offset: Some(96),
             include_events: Some(false),
+            event_limit: Some(25),
+            event_offset: Some(50),
+            event_types: Some(vec!["tool_result".to_string()]),
             include_efficiency: Some(true),
         }),
     );
@@ -140,6 +146,9 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
     assert_eq!(value["params"]["target_turn_id"], 42);
     assert_eq!(value["params"]["message_offset"], 96);
     assert_eq!(value["params"]["include_events"], false);
+    assert_eq!(value["params"]["event_limit"], 25);
+    assert_eq!(value["params"]["event_offset"], 50);
+    assert_eq!(value["params"]["event_types"][0], "tool_result");
     assert_eq!(value["params"]["include_efficiency"], true);
 }
 

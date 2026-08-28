@@ -35,6 +35,14 @@ pub struct SessionGetParams {
     pub message_offset: Option<usize>,
     #[serde(default)]
     pub include_events: Option<bool>,
+    /// Bound the raw event projection. When `include_events` is omitted, the daemon uses its
+    /// default limit; `include_events = true` with no limit explicitly requests all events.
+    #[serde(default)]
+    pub event_limit: Option<usize>,
+    #[serde(default)]
+    pub event_offset: Option<usize>,
+    #[serde(default)]
+    pub event_types: Option<Vec<String>>,
     #[serde(default)]
     pub include_efficiency: Option<bool>,
 }

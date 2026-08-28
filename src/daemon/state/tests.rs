@@ -2100,6 +2100,29 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert!(!full.events.is_empty());
     assert!(full.message_window.is_none());
 
+    let event_windowed = state
+        .get_session_projection(
+            &live.session_id,
+            SessionProjectionRequest {
+                target_turn_id: None,
+                message_limit: Some(2),
+                message_offset: None,
+                events: SessionEventProjection::Window {
+                    limit: 2,
+                    offset: Some(1),
+                    event_types: None,
+                },
+                include_efficiency: false,
+            },
+        )
+        .await?
+        .expect("event-windowed session detail");
+    let event_window = event_windowed.event_window.expect("event window metadata");
+    assert_eq!(event_window.offset, 1);
+    assert_eq!(event_windowed.events.len(), 2);
+    assert_eq!(event_window.total, full.events.len());
+    assert_eq!(event_window.has_more, full.events.len() > 3);
+
     let graph = state
         .get_session_graph(&live.session_id)
         .await?
@@ -2117,11 +2140,13 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     let inspected = state
         .get_session_projection(
             &live.session_id,
-            Some(first_turn.turn_id),
-            Some(24),
-            None,
-            false,
-            false,
+            SessionProjectionRequest {
+                target_turn_id: Some(first_turn.turn_id),
+                message_limit: Some(24),
+                message_offset: None,
+                events: SessionEventProjection::None,
+                include_efficiency: false,
+            },
         )
         .await?
         .expect("exact-turn session projection");
@@ -2148,7 +2173,16 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     );
 
     let windowed = state
-        .get_session_projection(&live.session_id, None, Some(2), None, false, true)
+        .get_session_projection(
+            &live.session_id,
+            SessionProjectionRequest {
+                target_turn_id: None,
+                message_limit: Some(2),
+                message_offset: None,
+                events: SessionEventProjection::None,
+                include_efficiency: true,
+            },
+        )
         .await?
         .expect("windowed session detail");
     assert_eq!(windowed.messages.len(), 2);
@@ -2198,7 +2232,16 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
     assert_eq!(window.offset, full.messages.len() - 2);
 
     let first_window = state
-        .get_session_projection(&live.session_id, None, Some(2), Some(0), false, false)
+        .get_session_projection(
+            &live.session_id,
+            SessionProjectionRequest {
+                target_turn_id: None,
+                message_limit: Some(2),
+                message_offset: Some(0),
+                events: SessionEventProjection::None,
+                include_efficiency: false,
+            },
+        )
         .await?
         .expect("offset session detail");
     let first_window_meta = first_window.message_window.expect("offset metadata");

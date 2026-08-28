@@ -52,9 +52,11 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   clients can identify runtime work without opening every owning session.
 - Runtime-agent status includes base provider/model/harness identity and named
   effective inference contexts for client routing controls.
-- `get_session` preserves the complete persisted diagnostic view, while
-  `get_session_window` requests a bounded recent transcript without persisted
-  events for interactive clients.
+- `get_session` preserves the complete transcript and diagnostic projections but uses the
+  daemon's bounded raw-event default. `get_session_with_all_events` is the explicit complete
+  raw-event path, while `get_session_event_window` exposes paging and type filters.
+- `get_session_window` requests a bounded recent transcript without persisted events for
+  interactive clients.
 - `get_session_graph` is an explicit on-demand topology read. Normal session
   detail must not absorb its complete turn-tree cost.
 - `get_session_turn_window` is a bounded, read-only projection ending at an

@@ -33,6 +33,63 @@ fn event_row_from_sql_row(row: &turso::Row) -> Result<EventRow> {
     })
 }
 
+fn append_event_turn_filter(
+    sql: &mut String,
+    params: &mut Vec<SqlValue>,
+    next: &mut usize,
+    turn_ids: Option<&[i64]>,
+    turn_clause: EventTurnClause,
+) {
+    match turn_clause {
+        EventTurnClause::All => {}
+        EventTurnClause::SessionLevelOnly => sql.push_str(" AND e.turn_id IS NULL"),
+        EventTurnClause::Turns | EventTurnClause::SessionLevelOrTurns => {
+            let turn_ids = turn_ids.unwrap_or(&[]);
+            if turn_ids.is_empty() {
+                if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
+                    sql.push_str(" AND e.turn_id IS NULL");
+                }
+            } else {
+                let placeholders = (*next..*next + turn_ids.len())
+                    .map(|index| format!("?{index}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
+                    sql.push_str(&format!(
+                        " AND (e.turn_id IS NULL OR e.turn_id IN ({placeholders}))"
+                    ));
+                } else {
+                    sql.push_str(&format!(" AND e.turn_id IN ({placeholders})"));
+                }
+                params.extend(turn_ids.iter().copied().map(SqlValue::Integer));
+                *next += turn_ids.len();
+            }
+        }
+    }
+}
+
+fn append_event_type_filter(
+    sql: &mut String,
+    params: &mut Vec<SqlValue>,
+    next: &mut usize,
+    event_types: Option<&[&str]>,
+) {
+    let Some(event_types) = event_types else {
+        return;
+    };
+    let placeholders = (*next..*next + event_types.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    sql.push_str(&format!(" AND e.event_type IN ({placeholders})"));
+    params.extend(
+        event_types
+            .iter()
+            .map(|event_type| SqlValue::Text((*event_type).to_string())),
+    );
+    *next += event_types.len();
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCounters {
     pub next_task_id: u32,
@@ -159,6 +216,80 @@ impl StateStore {
         let turn_ids = self.turn_ids_for_read_target(session_id, target).await?;
         self.query_events_for_turns(session_id, &turn_ids, Some(event_types), None)
             .await
+    }
+
+    pub async fn get_event_window(
+        &self,
+        session_id: i64,
+        target: &SessionReadTarget,
+        offset: Option<usize>,
+        limit: usize,
+        event_types: Option<&[&str]>,
+    ) -> Result<(Vec<EventRow>, usize, usize)> {
+        if event_types.is_some_and(<[&str]>::is_empty) {
+            return Ok((Vec::new(), 0, 0));
+        }
+        let turn_ids = self.turn_ids_for_read_target(session_id, target).await?;
+        let total = self
+            .count_events_for_turns(session_id, &turn_ids, event_types)
+            .await?;
+        let offset = offset.unwrap_or_else(|| total.saturating_sub(limit));
+        if limit == 0 || offset >= total {
+            return Ok((Vec::new(), total, offset));
+        }
+        let end = offset.saturating_add(limit).min(total);
+        let scan_descending = total.saturating_sub(end) < offset;
+        let skip = if scan_descending {
+            total.saturating_sub(end)
+        } else {
+            offset
+        };
+
+        const MIN_CANDIDATE_PAGE_SIZE: usize = 128;
+        const MAX_CANDIDATE_PAGE_SIZE: usize = 1024;
+        let page_size = limit.clamp(MIN_CANDIDATE_PAGE_SIZE, MAX_CANDIDATE_PAGE_SIZE);
+        let mut candidate_offset = 0usize;
+        let mut accepted = 0usize;
+        let mut events = Vec::with_capacity(limit.min(total.saturating_sub(offset)));
+
+        loop {
+            let candidates = self
+                .query_event_candidate_page(
+                    session_id,
+                    event_types,
+                    candidate_offset,
+                    page_size,
+                    scan_descending,
+                )
+                .await?;
+            let candidate_count = candidates.len();
+            for event in candidates {
+                if event
+                    .turn_id
+                    .is_some_and(|turn_id| !turn_ids.contains(&turn_id))
+                {
+                    continue;
+                }
+                if accepted < skip {
+                    accepted += 1;
+                    continue;
+                }
+                events.push(event);
+                if events.len() == limit {
+                    if scan_descending {
+                        events.reverse();
+                    }
+                    return Ok((events, total, offset));
+                }
+            }
+            if candidate_count < page_size {
+                if scan_descending {
+                    events.reverse();
+                }
+                return Ok((events, total, offset));
+            }
+            candidate_offset = candidate_offset.saturating_add(candidate_count);
+        }
     }
 
     pub async fn get_latest_session_event_by_type(
@@ -358,6 +489,111 @@ impl StateStore {
         Ok(events)
     }
 
+    async fn count_events_for_turns(
+        &self,
+        session_id: i64,
+        turn_ids: &HashSet<i64>,
+        event_types: Option<&[&str]>,
+    ) -> Result<usize> {
+        const TURN_QUERY_CHUNK: usize = 500;
+        let turn_list = turn_ids.iter().copied().collect::<Vec<_>>();
+        if turn_list.len() <= TURN_QUERY_CHUNK {
+            return self
+                .query_event_count_matching(
+                    session_id,
+                    Some(&turn_list),
+                    event_types,
+                    EventTurnClause::SessionLevelOrTurns,
+                )
+                .await;
+        }
+
+        let mut total = self
+            .query_event_count_matching(
+                session_id,
+                None,
+                event_types,
+                EventTurnClause::SessionLevelOnly,
+            )
+            .await?;
+        for chunk in turn_list.chunks(TURN_QUERY_CHUNK) {
+            total = total.saturating_add(
+                self.query_event_count_matching(
+                    session_id,
+                    Some(chunk),
+                    event_types,
+                    EventTurnClause::Turns,
+                )
+                .await?,
+            );
+        }
+        Ok(total)
+    }
+
+    async fn query_event_candidate_page(
+        &self,
+        session_id: i64,
+        event_types: Option<&[&str]>,
+        offset: usize,
+        limit: usize,
+        descending: bool,
+    ) -> Result<Vec<EventRow>> {
+        let conn = self.connect().await?;
+        let mut sql = String::from(
+            r#"
+                SELECT e.id,
+                       e.session_id,
+                       e.turn_id,
+                       e.event_type,
+                       e.payload,
+                       t.branch_depth,
+                       e.created_at
+                FROM events e
+                LEFT JOIN turns t ON t.id = e.turn_id
+                WHERE e.session_id = ?1
+            "#,
+        );
+        let mut params = vec![SqlValue::Integer(session_id)];
+        let mut next = 2;
+        append_event_type_filter(&mut sql, &mut params, &mut next, event_types);
+        let direction = if descending { "DESC" } else { "ASC" };
+        sql.push_str(&format!(
+            " ORDER BY e.id {direction} LIMIT ?{next} OFFSET ?{}",
+            next + 1
+        ));
+        params.push(SqlValue::Integer(limit as i64));
+        params.push(SqlValue::Integer(offset as i64));
+
+        let mut rows = conn.prepare(&sql).await?.query(params).await?;
+        let mut events = Vec::new();
+        while let Some(row) = rows.next().await? {
+            events.push(event_row_from_sql_row(&row)?);
+        }
+        Ok(events)
+    }
+
+    async fn query_event_count_matching(
+        &self,
+        session_id: i64,
+        turn_ids: Option<&[i64]>,
+        event_types: Option<&[&str]>,
+        turn_clause: EventTurnClause,
+    ) -> Result<usize> {
+        let conn = self.connect().await?;
+        let mut sql = String::from("SELECT COUNT(*) FROM events e WHERE e.session_id = ?1");
+        let mut params = vec![SqlValue::Integer(session_id)];
+        let mut next = 2;
+        append_event_turn_filter(&mut sql, &mut params, &mut next, turn_ids, turn_clause);
+        append_event_type_filter(&mut sql, &mut params, &mut next, event_types);
+        let mut rows = conn.prepare(&sql).await?.query(params).await?;
+        let row = rows
+            .next()
+            .await?
+            .context("Event count query returned no row")?;
+        let count = row.get::<i64>(0)?;
+        usize::try_from(count).context("Event count cannot be represented as usize")
+    }
+
     async fn query_events_matching(
         &self,
         session_id: i64,
@@ -388,47 +624,8 @@ impl StateStore {
         );
         let mut params = vec![SqlValue::Integer(session_id)];
         let mut next = 2;
-        match turn_clause {
-            EventTurnClause::All => {}
-            EventTurnClause::SessionLevelOnly => {
-                sql.push_str(" AND e.turn_id IS NULL");
-            }
-            EventTurnClause::Turns | EventTurnClause::SessionLevelOrTurns => {
-                let turn_ids = turn_ids.unwrap_or(&[]);
-                if turn_ids.is_empty() {
-                    if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
-                        sql.push_str(" AND e.turn_id IS NULL");
-                    }
-                } else {
-                    let placeholders = (next..next + turn_ids.len())
-                        .map(|index| format!("?{index}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    if matches!(turn_clause, EventTurnClause::SessionLevelOrTurns) {
-                        sql.push_str(&format!(
-                            " AND (e.turn_id IS NULL OR e.turn_id IN ({placeholders}))"
-                        ));
-                    } else {
-                        sql.push_str(&format!(" AND e.turn_id IN ({placeholders})"));
-                    }
-                    params.extend(turn_ids.iter().copied().map(SqlValue::Integer));
-                    next += turn_ids.len();
-                }
-            }
-        }
-        if let Some(event_types) = event_types {
-            let placeholders = (next..next + event_types.len())
-                .map(|index| format!("?{index}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            sql.push_str(&format!(" AND e.event_type IN ({placeholders})"));
-            params.extend(
-                event_types
-                    .iter()
-                    .map(|event_type| SqlValue::Text((*event_type).to_string())),
-            );
-            next += event_types.len();
-        }
+        append_event_turn_filter(&mut sql, &mut params, &mut next, turn_ids, turn_clause);
+        append_event_type_filter(&mut sql, &mut params, &mut next, event_types);
         if let Some(limit) = limit {
             sql.push_str(&format!(" ORDER BY e.id DESC LIMIT ?{next}"));
             params.push(SqlValue::Integer(limit as i64));

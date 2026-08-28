@@ -3,7 +3,10 @@ use crate::daemon::protocol::{
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
     SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
 };
-use crate::daemon::state::session_store_selector_from_filters;
+use crate::daemon::state::{
+    DEFAULT_SESSION_EVENT_LIMIT, SessionEventProjection, SessionProjectionRequest,
+    session_store_selector_from_filters,
+};
 
 use super::{
     DispatchContext, emit_event, not_found_error, optional_response, optional_response_with_event,
@@ -158,17 +161,14 @@ pub(super) async fn get(
 ) -> ResponseEnvelope {
     use crate::perf_diagnostics::perf_session_scope;
 
+    let projection = match session_projection_request(&params) {
+        Ok(projection) => projection,
+        Err(error) => return validation_error(id, error),
+    };
     let guard = ctx.state.read().await;
     let result = perf_session_scope!(
         &params.session_id,
-        guard.get_session_projection(
-            &params.session_id,
-            params.target_turn_id,
-            params.message_limit,
-            params.message_offset,
-            params.include_events.unwrap_or(true),
-            params.include_efficiency.unwrap_or(false),
-        )
+        guard.get_session_projection(&params.session_id, projection)
     )
     .await;
     optional_response(
@@ -178,6 +178,51 @@ pub(super) async fn get(
         ErrorCode::SessionNotFound,
         || format!("Session '{}' not found", params.session_id),
     )
+}
+
+fn session_projection_request(
+    params: &SessionGetParams,
+) -> anyhow::Result<SessionProjectionRequest> {
+    let has_event_options = params.event_limit.is_some()
+        || params.event_offset.is_some()
+        || params.event_types.is_some();
+    let events = match params.include_events {
+        Some(false) => {
+            anyhow::ensure!(
+                !has_event_options,
+                "event paging and filters require events to be included"
+            );
+            SessionEventProjection::None
+        }
+        Some(true) => match params.event_limit {
+            Some(limit) => SessionEventProjection::Window {
+                limit,
+                offset: params.event_offset,
+                event_types: params.event_types.clone(),
+            },
+            None => {
+                anyhow::ensure!(
+                    params.event_offset.is_none(),
+                    "event_offset requires event_limit when all events are explicitly requested"
+                );
+                SessionEventProjection::All {
+                    event_types: params.event_types.clone(),
+                }
+            }
+        },
+        None => SessionEventProjection::Window {
+            limit: params.event_limit.unwrap_or(DEFAULT_SESSION_EVENT_LIMIT),
+            offset: params.event_offset,
+            event_types: params.event_types.clone(),
+        },
+    };
+    Ok(SessionProjectionRequest {
+        target_turn_id: params.target_turn_id,
+        message_limit: params.message_limit,
+        message_offset: params.message_offset,
+        events,
+        include_efficiency: params.include_efficiency.unwrap_or(false),
+    })
 }
 
 pub(super) async fn graph_get(
@@ -432,5 +477,56 @@ pub(super) async fn kill(
             ResponseEnvelope::ok(id, result)
         }
         Err(err) => validation_error(id, err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> SessionGetParams {
+        SessionGetParams {
+            session_id: "session".to_string(),
+            target_turn_id: None,
+            message_limit: None,
+            message_offset: None,
+            include_events: None,
+            event_limit: None,
+            event_offset: None,
+            event_types: None,
+            include_efficiency: None,
+        }
+    }
+
+    #[test]
+    fn omitted_event_options_use_bounded_default() {
+        let request = session_projection_request(&params()).unwrap();
+        assert!(matches!(
+            request.events,
+            SessionEventProjection::Window {
+                limit: DEFAULT_SESSION_EVENT_LIMIT,
+                offset: None,
+                event_types: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn explicit_event_inclusion_without_limit_requests_all() {
+        let mut params = params();
+        params.include_events = Some(true);
+        let request = session_projection_request(&params).unwrap();
+        assert!(matches!(
+            request.events,
+            SessionEventProjection::All { event_types: None }
+        ));
+    }
+
+    #[test]
+    fn excluded_events_reject_paging_options() {
+        let mut params = params();
+        params.include_events = Some(false);
+        params.event_limit = Some(10);
+        assert!(session_projection_request(&params).is_err());
     }
 }

@@ -110,6 +110,8 @@ pub struct SessionDetail {
     pub execution: SessionExecutionDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_window: Option<SessionMessageWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_window: Option<SessionEventWindow>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -229,6 +231,13 @@ pub struct SessionCompactionDetail {
 pub struct SessionMessageWindow {
     pub offset: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionEventWindow {
+    pub offset: usize,
+    pub total: usize,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

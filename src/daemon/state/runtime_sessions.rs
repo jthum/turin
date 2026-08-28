@@ -13,8 +13,8 @@ mod projection;
 use projection::{session_efficiency_from_events, session_execution_from_events};
 
 use super::{
-    DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionMessageDetail,
-    SessionMessageWindow, SessionSummary, SessionToolExecutionDetail,
+    DaemonState, SessionBranchDetail, SessionDetail, SessionEventDetail, SessionEventWindow,
+    SessionMessageDetail, SessionMessageWindow, SessionSummary, SessionToolExecutionDetail,
 };
 use crate::kernel::agent_manager::LiveSessionSnapshot;
 use crate::kernel::session_refs::{
@@ -26,6 +26,41 @@ use crate::persistence::schema::{BranchHeadRow, SessionRow};
 use crate::persistence::state::{SessionReadTarget, StateStore};
 
 const SESSION_EXECUTION_EVENT_LIMIT: usize = 400;
+pub(crate) const DEFAULT_SESSION_EVENT_LIMIT: usize = 200;
+
+#[derive(Debug, Clone)]
+pub(crate) enum SessionEventProjection {
+    None,
+    Window {
+        limit: usize,
+        offset: Option<usize>,
+        event_types: Option<Vec<String>>,
+    },
+    All {
+        event_types: Option<Vec<String>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionProjectionRequest {
+    pub target_turn_id: Option<i64>,
+    pub message_limit: Option<usize>,
+    pub message_offset: Option<usize>,
+    pub events: SessionEventProjection,
+    pub include_efficiency: bool,
+}
+
+impl SessionProjectionRequest {
+    fn full() -> Self {
+        Self {
+            target_turn_id: None,
+            message_limit: None,
+            message_offset: None,
+            events: SessionEventProjection::All { event_types: None },
+            include_efficiency: true,
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("Session '{session_id}' still has {work_count} active or queued runtime target(s)")]
@@ -37,7 +72,7 @@ pub(crate) struct SessionDeleteBusy {
 impl DaemonState {
     #[instrument(skip(self), fields(session_id = %session_id))]
     pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
-        self.get_session_projection(session_id, None, None, None, true, true)
+        self.get_session_projection(session_id, SessionProjectionRequest::full())
             .await
     }
 
@@ -45,21 +80,17 @@ impl DaemonState {
         skip(self),
         fields(
             session_id = %session_id,
-            message_limit = ?message_limit,
-            include_events = include_events
+            message_limit = ?request.message_limit,
+            event_projection = ?request.events
         )
     )]
-    pub async fn get_session_projection(
+    pub(crate) async fn get_session_projection(
         &self,
         session_id: &str,
-        target_turn_id: Option<i64>,
-        message_limit: Option<usize>,
-        message_offset: Option<usize>,
-        include_events: bool,
-        include_efficiency: bool,
+        request: SessionProjectionRequest,
     ) -> Result<Option<SessionDetail>> {
         anyhow::ensure!(
-            message_offset.is_none() || message_limit.is_some(),
+            request.message_offset.is_none() || request.message_limit.is_some(),
             "message_offset requires message_limit"
         );
         perf_stage!(
@@ -67,11 +98,11 @@ impl DaemonState {
             "session.projection",
             Some(session_id),
             serde_json::json!({
-                "message_limit": message_limit,
-                "message_offset": message_offset,
-                "target_turn_id": target_turn_id,
-                "include_events": include_events,
-                "include_efficiency": include_efficiency,
+                "message_limit": request.message_limit,
+                "message_offset": request.message_offset,
+                "target_turn_id": request.target_turn_id,
+                "event_projection": format!("{:?}", request.events),
+                "include_efficiency": request.include_efficiency,
             })
         );
         perf_stage!(
@@ -98,42 +129,82 @@ impl DaemonState {
             store = %describe_store_selector(&store_selector),
             "Resolved persisted session detail target"
         );
-        let read_target =
-            target_turn_id.map_or(SessionReadTarget::ActiveBranch, SessionReadTarget::TurnId);
+        let read_target = request
+            .target_turn_id
+            .map_or(SessionReadTarget::ActiveBranch, SessionReadTarget::TurnId);
 
-        let events = if include_events {
-            perf_stage!(
-                events_stage,
-                "session.events",
-                Some(session_id),
-                serde_json::json!({ "internal_session_id": row.id })
-            );
-            let persisted_events = store.get_events(row.id, &read_target).await?;
-            let _payload_bytes = persisted_events
-                .iter()
-                .map(|event| event.payload.len())
-                .sum::<usize>();
-            let events = persisted_events
-                .into_iter()
-                .map(|event| SessionEventDetail {
-                    id: event.id,
-                    event_type: event.event_type,
-                    payload: super::helpers::parse_json_or_string(&event.payload),
-                    created_at: event.created_at,
-                })
-                .collect::<Vec<_>>();
-            perf_stage_finish!(
-                events_stage,
-                "ok",
-                serde_json::json!({
-                    "rows": events.len(),
-                    "payload_bytes": _payload_bytes,
-                })
-            );
-            events
-        } else {
-            Vec::new()
+        perf_stage!(
+            events_stage,
+            "session.events",
+            Some(session_id),
+            serde_json::json!({ "internal_session_id": row.id })
+        );
+        let (persisted_events, event_window) = match &request.events {
+            SessionEventProjection::None => (Vec::new(), None),
+            SessionEventProjection::All { event_types } => {
+                let event_types = event_types
+                    .as_ref()
+                    .map(|types| types.iter().map(String::as_str).collect::<Vec<_>>());
+                let events = match event_types.as_deref() {
+                    Some(types) => {
+                        store
+                            .get_events_by_types(row.id, &read_target, types)
+                            .await?
+                    }
+                    None => store.get_events(row.id, &read_target).await?,
+                };
+                (events, None)
+            }
+            SessionEventProjection::Window {
+                limit,
+                offset,
+                event_types,
+            } => {
+                let event_types = event_types
+                    .as_ref()
+                    .map(|types| types.iter().map(String::as_str).collect::<Vec<_>>());
+                let (events, total, resolved_offset) = store
+                    .get_event_window(
+                        row.id,
+                        &read_target,
+                        *offset,
+                        *limit,
+                        event_types.as_deref(),
+                    )
+                    .await?;
+                let has_more = resolved_offset.saturating_add(events.len()) < total;
+                (
+                    events,
+                    Some(SessionEventWindow {
+                        offset: resolved_offset,
+                        total,
+                        has_more,
+                    }),
+                )
+            }
         };
+        let _payload_bytes = persisted_events
+            .iter()
+            .map(|event| event.payload.len())
+            .sum::<usize>();
+        let events = persisted_events
+            .into_iter()
+            .map(|event| SessionEventDetail {
+                id: event.id,
+                event_type: event.event_type,
+                payload: super::helpers::parse_json_or_string(&event.payload),
+                created_at: event.created_at,
+            })
+            .collect::<Vec<_>>();
+        perf_stage_finish!(
+            events_stage,
+            "ok",
+            serde_json::json!({
+                "rows": events.len(),
+                "payload_bytes": _payload_bytes,
+                "window": event_window,
+            })
+        );
 
         perf_stage!(
             messages_stage,
@@ -141,12 +212,12 @@ impl DaemonState {
             Some(session_id),
             serde_json::json!({
                 "internal_session_id": row.id,
-                "message_limit": message_limit,
-                "message_offset": message_offset,
+                "message_limit": request.message_limit,
+                "message_offset": request.message_offset,
             })
         );
         let (persisted_messages, total_messages, message_offset) =
-            match (message_limit, message_offset) {
+            match (request.message_limit, request.message_offset) {
                 (Some(limit), Some(offset)) => {
                     store
                         .get_message_window(row.id, &read_target, offset, limit)
@@ -211,7 +282,7 @@ impl DaemonState {
             serde_json::json!({ "rows": messages.len() })
         );
 
-        let visible_turn_indexes = message_limit.map(|_| {
+        let visible_turn_indexes = request.message_limit.map(|_| {
             messages
                 .iter()
                 .map(|message| message.turn_index)
@@ -283,7 +354,7 @@ impl DaemonState {
             serde_json::json!({ "rows": branches.len() })
         );
 
-        let efficiency = if include_efficiency {
+        let efficiency = if request.include_efficiency {
             perf_stage!(
                 efficiency_stage,
                 "session.efficiency",
@@ -357,10 +428,11 @@ impl DaemonState {
             tool_executions,
             efficiency,
             execution,
-            message_window: message_limit.map(|_| SessionMessageWindow {
+            message_window: request.message_limit.map(|_| SessionMessageWindow {
                 offset: message_offset,
                 total: total_messages,
             }),
+            event_window,
         };
         perf_stage_finish!(
             projection_stage,

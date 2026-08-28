@@ -101,32 +101,37 @@ Harness source editing:
 Persisted session detail:
 
 1. `runtime_sessions.rs` resolves the session reference into store selector and public UUID.
-2. A full request loads session row, branches, events, messages, and tool executions.
-3. An optional message limit projects the recent transcript, skips events when
+2. The daemon converts loose wire options into one typed `SessionProjectionRequest` before
+   persistence work begins. Raw events may be omitted, loaded as an explicit complete history,
+   or loaded through a bounded window with optional type filters.
+3. Ordinary protocol requests default to the newest 200 raw events. Event windows return
+   offset, total, and `has_more`; `include_events = true` without an event limit is the explicit
+   complete-history path.
+4. An optional message limit projects the recent transcript, skips events when
    requested, and returns window offset/total metadata. Matching tool
    executions are limited to turns represented in that message window.
-4. An optional absolute message offset selects an older bounded window. Window
+5. An optional absolute message offset selects an older bounded window. Window
    boundaries expand to complete turn groups so a tool cycle is not split.
-5. Full and bounded detail requests independently load only
+6. Full and bounded detail requests independently load only
    `inference_request`, `message_end`, and `context_compaction` events to build
    a bounded request-efficiency projection. High-volume stream deltas are
    filtered in SQL rather than materialized for this projection.
-6. Rows are converted into daemon-facing detail structs. Message projections
+7. Rows are converted into daemon-facing detail structs. Message projections
    retain their exact durable turn id as well as path-relative turn index so
    clients can perform exact contextual branch operations without loading the
    complete turn graph. Per-turn request
    estimates are paired with provider-reported input/output and optional
    prompt-cache usage when present, while older sessions remain valid without
    request telemetry or cache counters.
-7. Session detail also projects the newest bounded task, plan, and turn
+8. Session detail also projects the newest bounded task, plan, and turn
    lifecycle records into a typed execution summary. This projection retains
    execution context, terminal outcomes, branch outcomes, and errors without
    exposing the raw event log to clients.
-8. With `perf-diagnostics` enabled, the projection emits nested operation
+9. With `perf-diagnostics` enabled, the projection emits nested operation
    timings, row/query counters, and correlated daemon RSS/PSS observations
    through the existing event broadcast. Normal builds compile those hooks
    away.
-9. An optional exact-turn target applies the same bounded message/tool
+10. An optional exact-turn target applies the same bounded message/tool
    projection to the ancestral path ending at that turn. This is a read-only
    projection and does not alter the persisted active branch head.
 
@@ -179,6 +184,8 @@ Persisted session deletion:
 - Cross-store session access must use a qualified session reference.
 - Bounded session detail is a read projection only. It must not truncate
   persisted messages or change the runtime hot-history policy.
+- Raw event limits must be represented in both the request and response. Never silently truncate
+  an all-events request or return a bounded event list without window metadata.
 - Efficiency detail is also a read projection. It must preserve the distinction
   between provider-measured usage and Turin-estimated request composition.
 - Cache-read and cache-creation counts remain optional provider measurements;

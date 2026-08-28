@@ -36,13 +36,16 @@ use source_revision::{SourceRevision, calculate_bootstrap_revision, calculate_so
 
 pub(crate) use harness_sources::HarnessSourceConflict;
 pub(crate) use runtime_sessions::SessionDeleteBusy;
-pub(crate) use runtime_sessions::session_store_selector_from_filters;
+pub(crate) use runtime_sessions::{
+    DEFAULT_SESSION_EVENT_LIMIT, SessionEventProjection, SessionProjectionRequest,
+    session_store_selector_from_filters,
+};
 pub(crate) use scheduled_jobs::{
     CreateScheduledJobInput, ScheduledJobOverlapPolicy, UpdateScheduledJobInput,
 };
 pub use types::{
     AgentDetail, HarnessDetail, SessionBranchDetail, SessionCompactionDetail, SessionDetail,
-    SessionEfficiencyDetail, SessionEventDetail, SessionExecutionContextDetail,
+    SessionEfficiencyDetail, SessionEventDetail, SessionEventWindow, SessionExecutionContextDetail,
     SessionExecutionDetail, SessionFamilyDetail, SessionFamilyMember, SessionGraphDetail,
     SessionGraphTurnDetail, SessionMessageDetail, SessionMessageWindow, SessionPlanExecutionDetail,
     SessionRequestEfficiencyDetail, SessionSearchHit, SessionSummary, SessionTaskExecutionDetail,

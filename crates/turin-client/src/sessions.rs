@@ -131,7 +131,52 @@ impl Client {
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: Some(true),
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_session_with_all_events(&self, session_id: &str) -> Result<SessionDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.to_string(),
+                target_turn_id: None,
+                message_limit: None,
+                message_offset: None,
+                include_events: Some(true),
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
+                include_efficiency: Some(true),
+            }),
+        )
+        .await
+    }
+
+    pub async fn get_session_event_window(
+        &self,
+        session_id: &str,
+        event_limit: usize,
+        event_offset: usize,
+        event_types: Option<&[String]>,
+    ) -> Result<SessionDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.to_string(),
+                target_turn_id: None,
+                message_limit: None,
+                message_offset: None,
+                include_events: Some(true),
+                event_limit: Some(event_limit),
+                event_offset: Some(event_offset),
+                event_types: event_types.map(<[String]>::to_vec),
+                include_efficiency: Some(false),
             }),
         )
         .await
@@ -160,6 +205,9 @@ impl Client {
                 message_limit: Some(message_limit),
                 message_offset,
                 include_events: Some(false),
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: Some(true),
             }),
         )
@@ -184,6 +232,9 @@ impl Client {
                 message_limit: Some(message_limit),
                 message_offset: None,
                 include_events: Some(false),
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
                 include_efficiency: Some(false),
             }),
         )

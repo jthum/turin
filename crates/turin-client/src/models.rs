@@ -339,6 +339,8 @@ pub struct SessionDetail {
     pub execution: SessionExecutionDetail,
     #[serde(default)]
     pub message_window: Option<SessionMessageWindow>,
+    #[serde(default)]
+    pub event_window: Option<SessionEventWindow>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -500,6 +502,13 @@ pub struct SessionCompactionDetail {
 pub struct SessionMessageWindow {
     pub offset: usize,
     pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEventWindow {
+    pub offset: usize,
+    pub total: usize,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
