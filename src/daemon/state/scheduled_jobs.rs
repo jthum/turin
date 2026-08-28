@@ -215,17 +215,17 @@ impl DaemonState {
             .into_iter()
             .find(|row| row.id == id)
             .ok_or_else(|| anyhow!("Scheduled job '{}' was created but not visible", id))?;
-        Ok(map_scheduled_job_detail(job))
+        map_scheduled_job_detail(job)
     }
 
     pub(crate) async fn list_scheduled_jobs(&self) -> Result<Vec<ScheduleJobDetail>> {
         let store = Arc::clone(&self.runtime_store);
-        Ok(store
+        store
             .list_scheduled_jobs()
             .await?
             .into_iter()
             .map(map_scheduled_job_detail)
-            .collect())
+            .collect()
     }
 
     pub(crate) async fn update_scheduled_job(
@@ -336,10 +336,11 @@ impl DaemonState {
         if let Some(wake) = &self.scheduler_wake {
             wake.notify_one();
         }
-        Ok(store
+        store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub(crate) async fn scheduled_job_detail(
@@ -348,10 +349,11 @@ impl DaemonState {
     ) -> Result<Option<ScheduleJobDetail>> {
         let store = Arc::clone(&self.runtime_store);
         let public_id = uuid::Uuid::parse_str(public_id)?;
-        Ok(store
+        store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub(crate) async fn set_scheduled_job_enabled(
@@ -368,10 +370,11 @@ impl DaemonState {
         if let Some(wake) = &self.scheduler_wake {
             wake.notify_one();
         }
-        Ok(store
+        store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub(crate) async fn scheduled_job_runs(
@@ -410,7 +413,7 @@ impl DaemonState {
                 public_id
             );
         }
-        let detail = map_scheduled_job_detail(row.clone());
+        let detail = map_scheduled_job_detail(row.clone())?;
         store.delete_scheduled_job(row.id).await?;
         if let Some(wake) = &self.scheduler_wake {
             wake.notify_one();

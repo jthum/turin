@@ -605,6 +605,48 @@ async fn scheduled_job_update_rejects_corrupted_overlap_policy() -> Result<()> {
 }
 
 #[tokio::test]
+async fn scheduled_job_projection_rejects_corrupted_payload() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("future work".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: i64::MAX,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+    state
+        .runtime_store
+        .connect()
+        .await?
+        .execute(
+            "UPDATE scheduled_jobs SET content = 'not-json' WHERE id = ?1",
+            turso::params![job.id],
+        )
+        .await?;
+
+    let error = state
+        .list_scheduled_jobs()
+        .await
+        .expect_err("corrupt content must not be projected as absent");
+
+    assert!(error.to_string().contains("invalid content"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduler_reconciles_persisted_run_missing_from_runtime_after_restart() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;

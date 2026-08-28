@@ -89,26 +89,25 @@ impl HarnessSchedulerAccess {
             .into_iter()
             .find(|row| row.id == id)
             .ok_or_else(|| anyhow!("Scheduled job '{}' was created but not visible", id))?;
-        Ok(map_scheduled_job_detail(job))
+        map_scheduled_job_detail(job)
     }
 
     pub async fn list_jobs(&self) -> Result<Vec<ScheduleJobDetail>> {
-        Ok(self
-            .runtime_store
+        self.runtime_store
             .list_scheduled_jobs()
             .await?
             .into_iter()
             .map(map_scheduled_job_detail)
-            .collect())
+            .collect()
     }
 
     pub async fn get_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
         let public_id = uuid::Uuid::parse_str(public_id)?;
-        Ok(self
-            .runtime_store
+        self.runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub async fn list_job_runs(
@@ -229,11 +228,11 @@ impl HarnessSchedulerAccess {
         if let Some(wake) = &self.wake {
             wake.notify_one();
         }
-        Ok(self
-            .runtime_store
+        self.runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub async fn set_job_enabled(
@@ -255,11 +254,11 @@ impl HarnessSchedulerAccess {
         if let Some(wake) = &self.wake {
             wake.notify_one();
         }
-        Ok(self
-            .runtime_store
+        self.runtime_store
             .get_scheduled_job_by_public_id(public_id)
             .await?
-            .map(map_scheduled_job_detail))
+            .map(map_scheduled_job_detail)
+            .transpose()
     }
 
     pub async fn delete_job(&self, public_id: &str) -> Result<Option<ScheduleJobDetail>> {
@@ -277,7 +276,7 @@ impl HarnessSchedulerAccess {
                 public_id
             );
         }
-        let detail = map_scheduled_job_detail(row.clone());
+        let detail = map_scheduled_job_detail(row.clone())?;
         self.runtime_store.delete_scheduled_job(row.id).await?;
         if let Some(wake) = &self.wake {
             wake.notify_one();

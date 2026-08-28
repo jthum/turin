@@ -86,9 +86,10 @@ Runtime schedule API:
 ## Invariants
 
 - A scheduled job must define exactly one payload kind: prompt or action.
-- Persisted job kind, overlap policy, and recurrence values are validated when used.
-  Invalid rows fail explicitly; the scheduler must not reinterpret corruption through
-  a default that could execute different work or change concurrency semantics.
+- Persisted job kind, overlap policy, recurrence values, JSON payloads, actions, and
+  persistence targets are validated when read or executed. Invalid rows fail explicitly;
+  the scheduler must not reinterpret corruption through defaults or absent fields that
+  could execute different work or change concurrency semantics.
 - A scheduled job cannot define both `interval_seconds` and `recurring_pattern`.
 - Active prompt runs are tracked through scheduled job run rows.
 - Starting or finishing a scheduled run and refreshing the scheduled job's active-run summary
