@@ -1952,7 +1952,7 @@ impl TuiApp {
                 Row::new(vec![
                     task.request_id.clone(),
                     task.agent_id.clone(),
-                    task.state.clone(),
+                    task.state.to_string(),
                     task.status.clone().unwrap_or_default(),
                 ])
                 .style(style)
@@ -2417,7 +2417,7 @@ fn task_detail_lines(task: &TaskStatus) -> Vec<Line<'static>> {
         kv_line("Agent", task.agent_id.clone()),
         kv_line("Slot", task.slot_id.clone()),
         kv_line("Trace", task.trace_id.clone()),
-        kv_line("State", task.state.clone()),
+        kv_line("State", task.state.to_string()),
         kv_line("Execution", task.execution.execution_id.clone()),
         kv_line("Visibility", task.execution.visibility.clone()),
         kv_line("Durability", task.execution.durability.clone()),

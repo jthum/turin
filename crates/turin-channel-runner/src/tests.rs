@@ -5,7 +5,7 @@ use tempfile::tempdir;
 use turin_channel_core::{
     ChannelKind, ChannelMessageRef, ChannelSessionScope, ChannelUser, MessageBlock,
 };
-use turin_types::TaskInputContent;
+use turin_types::{TaskInputContent, TaskState};
 
 #[test]
 fn stream_mode_parse_normalizes_known_values() {
@@ -628,7 +628,7 @@ fn task_to_outbound_prefers_output() {
         agent_id: "writer".into(),
         slot_id: "slot-1".into(),
         trace_id: "trace-1".into(),
-        state: "completed".into(),
+        state: TaskState::Completed,
         runtime_task_id: None,
         status: Some("completed".into()),
         task_turn_count: Some(1),
@@ -651,7 +651,7 @@ fn task_to_outbound_parses_structured_payload() {
         agent_id: "writer".into(),
         slot_id: "slot-1".into(),
         trace_id: "trace-1".into(),
-        state: "completed".into(),
+        state: TaskState::Completed,
         runtime_task_id: None,
         status: Some("completed".into()),
         task_turn_count: Some(1),
@@ -681,7 +681,7 @@ fn task_to_outbound_maps_assistant_content_when_no_structured_payload() {
         agent_id: "writer".into(),
         slot_id: "slot-1".into(),
         trace_id: "trace-2".into(),
-        state: "completed".into(),
+        state: TaskState::Completed,
         runtime_task_id: None,
         status: Some("completed".into()),
         task_turn_count: Some(1),

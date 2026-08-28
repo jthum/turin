@@ -50,6 +50,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - Domain helper modules should stay thin: build protocol params, send the request, and unwrap list wrappers when helpful.
 - Task status preserves the daemon's bounded title/prompt description so
   clients can identify runtime work without opening every owning session.
+- Task lifecycle state is `TaskState`, re-exported by the client; presentation code converts it
+  to text only at the rendering edge.
 - Runtime-agent status includes base provider/model/harness identity and named
   effective inference contexts for client routing controls.
 - `get_session` preserves the complete transcript and diagnostic projections but uses the

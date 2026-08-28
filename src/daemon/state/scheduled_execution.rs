@@ -78,7 +78,7 @@ impl DaemonState {
         };
         let snapshot = self.get_task(&run.task_id).await;
         if let Some(snapshot) = snapshot.as_ref()
-            && matches!(snapshot.state.as_str(), "queued" | "running" | "cancelling")
+            && snapshot.state.is_active()
         {
             return Ok(());
         }
@@ -508,5 +508,5 @@ fn scheduled_job_terminal_status(snapshot: &TaskStatusSnapshot) -> String {
     snapshot
         .status
         .map(|status| format!("{:?}", status).to_ascii_lowercase())
-        .unwrap_or_else(|| snapshot.state.clone())
+        .unwrap_or_else(|| snapshot.state.to_string())
 }

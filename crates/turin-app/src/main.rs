@@ -1518,7 +1518,7 @@ impl TurinDesktopApp {
                 filter.is_empty()
                     || task.request_id.to_ascii_lowercase().contains(&filter)
                     || task.agent_id.to_ascii_lowercase().contains(&filter)
-                    || task.state.to_ascii_lowercase().contains(&filter)
+                    || task.state.as_str().contains(&filter)
             })
             .cloned()
             .collect()
@@ -4401,8 +4401,8 @@ impl TurinDesktopApp {
                     ui.heading("Task Detail");
                     if let Some(task) = &selected {
                         ui.add(
-                            cast::Badge::new(task.state.clone())
-                                .intent(status_intent(&task.state))
+                            cast::Badge::new(task.state.to_string())
+                                .intent(status_intent(task.state.as_str()))
                                 .status_dot(),
                         );
                     }
@@ -4413,7 +4413,7 @@ impl TurinDesktopApp {
                     detail_kv(ui, "Agent", &task.agent_id);
                     detail_kv(ui, "Slot", &task.slot_id);
                     detail_kv(ui, "Trace", &task.trace_id);
-                    detail_kv(ui, "State", &task.state);
+                    detail_kv(ui, "State", task.state);
                     detail_kv(
                         ui,
                         "Runtime Task",

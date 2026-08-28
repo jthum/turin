@@ -141,6 +141,8 @@ Linked runtime residency:
   runtime-control state, queue records, and bounded caches retain focused internal owners.
 - Non-executed terminal task results are constructed from their owning pending record or
   queued envelope so cancellation, shutdown, and lost-result paths retain one result shape.
+- Public task snapshots use the closed `TaskState` domain enum. Wire serialization remains
+  `queued`, `running`, `cancelling`, or `completed`; runtime decisions must not use free-form text.
 - Task admission publishes the result receiver, pending record, and queue envelope under
   the `pending_results -> pending_task_states -> runtime queue` lock order. Cancellation
   must never observe a queued record whose envelope has not been published.

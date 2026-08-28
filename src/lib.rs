@@ -17,3 +17,4 @@ pub mod tracing_support;
 pub mod work_items;
 
 pub use turin_code_index::code_index_reader;
+pub use turin_types::TaskState;

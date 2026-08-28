@@ -65,7 +65,8 @@ Task submission:
 3. Agent-manager methods enqueue the work by agent id or live session target.
 4. `wait_for_task` polls the targeted task snapshot until completion or timeout; it must not materialize the full task list for each wait.
 5. Runtime-wide task snapshots include a bounded human-readable prompt preview
-   and optional task title alongside trace, slot, execution policy, and outcome.
+   and optional task title alongside trace, slot, execution policy, and outcome. Task lifecycle
+   state is the closed `TaskState` enum while its JSON representation remains snake_case.
 
 Live session open/resume:
 

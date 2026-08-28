@@ -143,7 +143,7 @@ pub struct TaskStatus {
     pub title: Option<String>,
     #[serde(default)]
     pub prompt_preview: String,
-    pub state: String,
+    pub state: turin_types::TaskState,
     pub runtime_task_id: Option<String>,
     pub execution: LiveExecution,
     pub status: Option<String>,

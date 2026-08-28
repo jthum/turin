@@ -237,14 +237,14 @@ impl DaemonState {
         let Some(initial) = self.get_task(request_id).await else {
             anyhow::bail!("Task '{}' not found", request_id);
         };
-        if !matches!(initial.state.as_str(), "queued" | "running" | "cancelling") {
+        if !initial.state.is_active() {
             return Ok(initial);
         }
 
         let deadline = timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
         loop {
             if let Some(snapshot) = self.get_task(request_id).await {
-                if !matches!(snapshot.state.as_str(), "queued" | "running" | "cancelling") {
+                if !snapshot.state.is_active() {
                     return Ok(snapshot);
                 }
             } else {

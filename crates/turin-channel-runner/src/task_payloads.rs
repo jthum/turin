@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use turin_channel_core::{ChannelAttachment, InboundEvent, MessageBlock, OutboundMessage};
-use turin_types::TaskInputContent;
+use turin_types::{TaskInputContent, TaskState};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskSnapshot {
@@ -9,7 +9,7 @@ pub struct TaskSnapshot {
     pub agent_id: String,
     pub slot_id: String,
     pub trace_id: String,
-    pub state: String,
+    pub state: TaskState,
     pub runtime_task_id: Option<String>,
     pub status: Option<String>,
     pub task_turn_count: Option<u32>,

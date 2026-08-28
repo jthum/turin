@@ -19,6 +19,7 @@ pub use turin_daemon_protocol::{
     HarnessSourceSaveChange, HarnessSourceSaveResult, HarnessSourceValidationResult,
     ToolAuthorizationRequestDetail, ToolAuthorizationResolution, ToolAuthorizationResolveResult,
 };
+pub use turin_types::TaskState;
 
 #[cfg(test)]
 mod tests {

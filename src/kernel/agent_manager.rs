@@ -37,7 +37,7 @@ use crate::kernel::tool_authorization::ToolAuthorizer;
 use crate::persistence::manager::StoreManager;
 use crate::tools::registry::ToolRegistry;
 use tokio::sync::{Mutex as AsyncMutex, RwLock, oneshot};
-use turin_types::TaskInputContent;
+use turin_types::{TaskInputContent, TaskState};
 
 use caches::{CompletedTaskCache, DelegationBudgetCache};
 pub use records::AgentRuntimeHandle;
@@ -108,7 +108,7 @@ pub struct TaskStatusSnapshot {
     pub trace_id: String,
     pub title: Option<String>,
     pub prompt_preview: String,
-    pub state: String,
+    pub state: TaskState,
     pub runtime_task_id: Option<String>,
     pub execution: ExecutionStatusSnapshot,
     pub status: Option<TaskTerminalStatus>,
@@ -124,7 +124,7 @@ pub struct TaskStatusSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskStatusFingerprint {
     pub(crate) request_id: String,
-    state: &'static str,
+    state: TaskState,
     runtime_task_id: Option<String>,
     session_id: Option<String>,
     status: Option<TaskTerminalStatus>,

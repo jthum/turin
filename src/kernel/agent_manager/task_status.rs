@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use turin_types::TaskState;
 
 use crate::kernel::session::{ExecutionContext, ExecutionStatusSnapshot, QueuedTask};
 
@@ -55,9 +56,9 @@ pub(super) fn pending_task_snapshot(
         title: pending.title.clone(),
         prompt_preview: pending.prompt_preview.clone(),
         state: match pending.state {
-            PendingTaskState::Queued => "queued".to_string(),
-            PendingTaskState::Running => "running".to_string(),
-            PendingTaskState::Cancelling => "cancelling".to_string(),
+            PendingTaskState::Queued => TaskState::Queued,
+            PendingTaskState::Running => TaskState::Running,
+            PendingTaskState::Cancelling => TaskState::Cancelling,
         },
         runtime_task_id: pending.runtime_task_id.clone(),
         execution: pending.execution.clone(),
@@ -81,7 +82,7 @@ pub(super) fn completed_task_snapshot(result: &PeerAgentTaskResult) -> TaskStatu
         trace_id: result.trace_id.clone(),
         title: result.title.clone(),
         prompt_preview: result.prompt_preview.clone(),
-        state: "completed".to_string(),
+        state: TaskState::Completed,
         runtime_task_id: Some(result.runtime_task_id.clone()),
         execution: result.execution.clone(),
         status: Some(result.status),
@@ -102,9 +103,9 @@ pub(super) fn pending_task_fingerprint(
     TaskStatusFingerprint {
         request_id: request_id.to_string(),
         state: match pending.state {
-            PendingTaskState::Queued => "queued",
-            PendingTaskState::Running => "running",
-            PendingTaskState::Cancelling => "cancelling",
+            PendingTaskState::Queued => TaskState::Queued,
+            PendingTaskState::Running => TaskState::Running,
+            PendingTaskState::Cancelling => TaskState::Cancelling,
         },
         runtime_task_id: pending.runtime_task_id.clone(),
         session_id: pending.session_target.session_id.clone(),
@@ -124,7 +125,7 @@ pub(super) fn completed_task_fingerprint(result: &PeerAgentTaskResult) -> TaskSt
     let assistant_content = result.assistant_content.as_deref().unwrap_or_default();
     TaskStatusFingerprint {
         request_id: result.request_id.clone(),
-        state: "completed",
+        state: TaskState::Completed,
         runtime_task_id: Some(result.runtime_task_id.clone()),
         session_id: result.session_id.clone(),
         status: Some(result.status),

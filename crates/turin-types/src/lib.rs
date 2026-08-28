@@ -4,6 +4,42 @@ pub mod layout;
 pub use content::TaskInputContent;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Queued,
+    Running,
+    Cancelling,
+    Completed,
+}
+
+impl TaskState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Cancelling => "cancelling",
+            Self::Completed => "completed",
+        }
+    }
+
+    pub const fn is_active(self) -> bool {
+        !matches!(self, Self::Completed)
+    }
+}
+
+impl std::fmt::Display for TaskState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<&str> for TaskState {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ThinkingConfig {
     pub enabled: bool,
@@ -88,4 +124,28 @@ pub struct TavilySearchToolSettings {
 pub struct SearxngSearchToolSettings {
     #[serde(default)]
     pub base_url: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskState;
+
+    #[test]
+    fn task_state_preserves_wire_values() {
+        for (state, wire) in [
+            (TaskState::Queued, "queued"),
+            (TaskState::Running, "running"),
+            (TaskState::Cancelling, "cancelling"),
+            (TaskState::Completed, "completed"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&state).unwrap(),
+                format!("\"{wire}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<TaskState>(&format!("\"{wire}\"")).unwrap(),
+                state
+            );
+        }
+    }
 }
