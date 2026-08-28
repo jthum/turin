@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use turin_daemon_protocol::{ContextPersistenceParams, ScheduleActionParams};
 use turin_types::ToolsConfig;
 
@@ -115,12 +115,22 @@ impl DaemonState {
         let job_kind = job
             .job_kind
             .parse::<ScheduledJobKind>()
-            .unwrap_or(ScheduledJobKind::Prompt);
+            .with_context(|| {
+                format!(
+                    "Scheduled job '{}' has invalid kind '{}'",
+                    job.id, job.job_kind
+                )
+            })?;
         if job.active_run_count > 0 {
             let overlap = job
                 .overlap_policy
                 .parse::<ScheduledJobOverlapPolicy>()
-                .unwrap_or(ScheduledJobOverlapPolicy::Skip);
+                .with_context(|| {
+                    format!(
+                        "Scheduled job '{}' has invalid overlap policy '{}'",
+                        job.id, job.overlap_policy
+                    )
+                })?;
             if !matches!(overlap, ScheduledJobOverlapPolicy::Parallel) {
                 if let Some(advanced) = next_recurring_due(job, now_unix_ms)? {
                     store
@@ -261,7 +271,12 @@ impl DaemonState {
         let overlap = job
             .overlap_policy
             .parse::<ScheduledJobOverlapPolicy>()
-            .unwrap_or(ScheduledJobOverlapPolicy::Skip);
+            .with_context(|| {
+                format!(
+                    "Scheduled job '{}' has invalid overlap policy '{}'",
+                    job.id, job.overlap_policy
+                )
+            })?;
         let recurring_next = next_recurring_due(job, now_unix_ms)?;
         let (next_run_unix_ms, pending_rerun) = match (recurring_next, overlap) {
             (Some(next), ScheduledJobOverlapPolicy::Skip) => (next, false),

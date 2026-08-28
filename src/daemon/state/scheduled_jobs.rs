@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use turin_daemon_protocol::{
     ContextPersistenceParams, ScheduleActionParams, ScheduleJobDetail, ScheduleJobRunList,
@@ -278,15 +278,20 @@ impl DaemonState {
         let interval_seconds = input.interval_seconds.or(row.interval_seconds);
         let recurring_pattern = input.recurring_pattern.or(row.recurring_pattern.clone());
         validate_scheduled_job_recurrence(interval_seconds, recurring_pattern.as_deref())?;
-        let overlap_policy = input
-            .overlap_policy
-            .unwrap_or_else(|| {
-                row.overlap_policy
-                    .parse::<ScheduledJobOverlapPolicy>()
-                    .unwrap_or(ScheduledJobOverlapPolicy::Skip)
-            })
-            .as_str()
-            .to_string();
+        let overlap_policy = match input.overlap_policy {
+            Some(policy) => policy,
+            None => row
+                .overlap_policy
+                .parse::<ScheduledJobOverlapPolicy>()
+                .with_context(|| {
+                    format!(
+                        "Scheduled job '{}' has invalid overlap policy '{}'",
+                        row.id, row.overlap_policy
+                    )
+                })?,
+        }
+        .as_str()
+        .to_string();
         let work_key = input.work_key.or(row.work_key.clone());
         let max_concurrency = input.max_concurrency.or(row.max_concurrency);
         let enabled = input.enabled.unwrap_or(row.enabled);

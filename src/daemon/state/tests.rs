@@ -511,6 +511,100 @@ async fn scheduled_one_shot_job_submits_and_disables_after_completion() -> Resul
 }
 
 #[tokio::test]
+async fn scheduler_rejects_corrupted_persisted_job_kind() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let mut state = DaemonState::load(&config_path).await?;
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("must not run".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: now_unix_ms - 1,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+    state
+        .runtime_store
+        .connect()
+        .await?
+        .execute(
+            "UPDATE scheduled_jobs SET job_kind = 'corrupt' WHERE id = ?1",
+            turso::params![job.id],
+        )
+        .await?;
+
+    let error = state
+        .scheduler_tick()
+        .await
+        .expect_err("corrupt job kind must not silently become a prompt job");
+
+    assert!(error.to_string().contains("invalid kind 'corrupt'"));
+    assert!(state.list_tasks().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn scheduled_job_update_rejects_corrupted_overlap_policy() -> Result<()> {
+    let temp = tempdir()?;
+    let config_path = write_bootstrap(temp.path())?;
+    let state = DaemonState::load(&config_path).await?;
+    let job = state
+        .create_scheduled_job(CreateScheduledJobInput {
+            agent_id: "default".to_string(),
+            prompt: Some("future work".to_string()),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action: None,
+            persistence: None,
+            next_run_unix_ms: i64::MAX,
+            interval_seconds: None,
+            recurring_pattern: None,
+            overlap_policy: ScheduledJobOverlapPolicy::Skip,
+            work_key: None,
+            max_concurrency: None,
+            enabled: true,
+        })
+        .await?;
+    state
+        .runtime_store
+        .connect()
+        .await?
+        .execute(
+            "UPDATE scheduled_jobs SET overlap_policy = 'corrupt' WHERE id = ?1",
+            turso::params![job.id],
+        )
+        .await?;
+
+    let error = state
+        .update_scheduled_job(
+            &job.public_id,
+            UpdateScheduledJobInput {
+                enabled: Some(false),
+                ..UpdateScheduledJobInput::default()
+            },
+        )
+        .await
+        .expect_err("corrupt overlap policy must not silently become skip");
+
+    assert!(error.to_string().contains("invalid overlap policy 'corrupt'"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn scheduler_reconciles_persisted_run_missing_from_runtime_after_restart() -> Result<()> {
     let temp = tempdir()?;
     let config_path = write_bootstrap(temp.path())?;
