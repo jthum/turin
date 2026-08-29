@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { ArrowUp, Bot, ChevronUp, LoaderCircle, PanelLeft, Plus, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
+	import { Bot, ChevronUp, LoaderCircle, PanelLeft, Plus, RefreshCw, Sparkles, Trash2 } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import MessageComposer from '#lib/components/product/message-composer.svelte';
 	import SessionRail from '#lib/components/product/session-rail.svelte';
 	import type { Agent, Bootstrap, ConversationMessage, Session } from '#lib/api/contracts.js';
 	import { loadBootstrap } from '#lib/api/bootstrap.js';
@@ -225,13 +226,6 @@
 		}
 	}
 
-	function keydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' && !event.shiftKey) {
-			event.preventDefault();
-			void sendMessage();
-		}
-	}
-
 	function formatTime(value: string) {
 		return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
 	}
@@ -274,15 +268,7 @@
 				</div>
 			{/if}
 		</div>
-		{#if selected}
-			<div class="composer-dock">
-				<div class="composer-card">
-					<textarea bind:value={composer} onkeydown={keydown} placeholder={`Message ${selected.agent_id}`} rows="2" aria-label="Message"></textarea>
-					<div class="composer-actions"><button class="model-pill"><Sparkles />{agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id}<ChevronUp /></button><Button size="icon" onclick={sendMessage} disabled={!composer.trim() || submitting || streamState !== 'open'} aria-label="Send message">{#if submitting}<LoaderCircle class="spin" />{:else}<ArrowUp />{/if}</Button></div>
-				</div>
-				<p>Enter to send · Shift + Enter for a new line</p>
-			</div>
-		{/if}
+		{#if selected}<MessageComposer bind:value={composer} agentId={selected.agent_id} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
 	</main>
 </div>
 
@@ -328,14 +314,6 @@
 	.empty-orbit :global(svg) { width: 18px; }
 	.empty-state h1 { margin: 0; color: #222220; font-size: 21px; font-weight: 620; letter-spacing: -.025em; }
 	.empty-state p { max-width: 380px; margin: 6px 0 16px; color: #85857f; font-size: 12px; }
-	.composer-dock { padding: 0 24px 17px; background: linear-gradient(transparent, #fbfbfa 22%); }
-	.composer-card { width: min(760px, 100%); margin: auto; border: 1px solid #d9d9d4; border-radius: 16px; background: white; padding: 12px; box-shadow: 0 10px 35px #0000000b, 0 1px 2px #00000010; }
-	.composer-card textarea { display: block; width: 100%; min-height: 50px; resize: none; border: 0; outline: 0; background: transparent; color: #242422; font-size: 14px; line-height: 1.5; }
-	.composer-card textarea::placeholder { color: #a2a29b; }
-	.composer-actions { display: flex; align-items: center; justify-content: space-between; padding-top: 5px; }
-	.model-pill { display: flex; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: transparent; padding: 5px 7px; color: #777771; font-size: 10px; }
-	.model-pill :global(svg) { width: 12px; height: 12px; }
-	.composer-dock > p { margin: 7px auto 0; color: #aaa9a3; font-size: 9px; text-align: center; }
 	.sidebar-scrim { display: none; }
 	:global(.spin) { animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
@@ -355,7 +333,5 @@
 		.message { grid-template-columns: 25px minmax(0, 1fr); gap: 9px; }
 		.message-avatar { width: 25px; height: 25px; }
 		.message-content { font-size: 13px; }
-		.composer-dock { padding: 0 10px 10px; }
-		.composer-card { border-radius: 14px; }
 	}
 </style>
