@@ -109,7 +109,6 @@ Focused checks:
 ```sh
 cargo test -p turin-client
 cargo check -p turin-manager
-cargo check -p turin-ui-core
 ```
 
 Basic checks:

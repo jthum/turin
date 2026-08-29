@@ -101,9 +101,6 @@ Begin with a coding harness that reads the right architecture maps and runs one
 focused test command. Add worklists only when tasks need to survive across
 sessions.
 
-For a deeper walkthrough of this scenario, see
-`docs/guides/coding-workspace.md`.
-
 ## Release Operator Console
 
 ### What It Feels Like
@@ -112,9 +109,9 @@ You run a release desk rather than a generic assistant. The UI shows release
 readiness, approvals, QA gates, blockers, and actions for seeding checks or
 running smoke tests.
 
-This is the clearest example of harness UI: the same release harness can be
-opened in `turin-app`, `turin-tui`, or `turin-web`, with each client rendering
-the same semantic surfaces in its own way.
+This is one possible use of semantic harness UI. A capable client could render
+the same release intent in its own medium without making renderer details part
+of the harness contract.
 
 ### What The Harness Owns
 
@@ -146,9 +143,6 @@ the same semantic surfaces in its own way.
 Keep the first version worklist-backed and add richer data adapters only when
 worklists stop being enough. Turin does not currently ship this scenario as a
 ready-to-use harness.
-
-For a deeper walkthrough of this scenario, see
-`docs/guides/release-operator-console.md`.
 
 ## Bug Triage Desk
 
@@ -302,8 +296,9 @@ Real Turin systems can combine scenarios:
 - a personal assistant can run scheduled research or triage tasks
 
 This is why Turin should stay a runtime and harness platform rather than a
-single fixed app. The default clients should be useful without custom UI, while
-harness UI can turn a workflow into a purpose-built application when needed.
+single fixed app. Clients can present durable runtime capabilities directly,
+while experimental harness UI may eventually turn a workflow into a
+purpose-built application.
 
 ## Next Reading
 
@@ -311,5 +306,4 @@ harness UI can turn a workflow into a purpose-built application when needed.
 - `docs/concepts/scenario-starter-cards.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/concepts/worklists.md`
-- `docs/operations/ui-clients.md`
 - `docs/reference/primitives.md`

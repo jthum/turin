@@ -213,7 +213,5 @@ where persistent state changes the outcome.
 
 - `docs/concepts/scenarios.md` - broader scenario blueprints
 - `docs/getting-started/choose-first-workflow.md` - choosing a first workflow
-- `docs/concepts/harness-apps-and-ui-clients.md` - when custom UI helps
 - `docs/concepts/worklists.md` - durable work coordination
 - `docs/guides/harness-guide.md` - harness authoring
-- `docs/operations/ui-clients.md` - current app, TUI, and web client behavior

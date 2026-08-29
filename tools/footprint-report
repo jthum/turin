@@ -228,9 +228,6 @@ fi
 default_binaries=(
   "target/release/turin"
   "target/release/turin-manager"
-  "target/release/turin-tui"
-  "target/release/turin-app"
-  "target/release/turin-web"
   "target/release/turin-map"
   "target/release/turin-channel-telegram"
   "target/release/turin-channel-rocketchat"

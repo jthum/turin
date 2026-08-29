@@ -3,7 +3,6 @@
 Turin now has a local-first daemon mode for dynamic agent and harness management.
 
 For authenticated network access on top of the daemon, see `docs/operations/remote.md`.
-For operator shells on top of the same control surface, see `docs/operations/ui-clients.md`.
 
 The daemon is built around three rules:
 
@@ -158,8 +157,7 @@ turin daemon session branch-checkout 018f... alt
 Current scope:
 
 - branch create / list / checkout: supported
-- branch creation from focused turns: supported by older UI surfaces, but not
-  currently exposed in the rebuilt TUI
+- branch creation from focused turns: supported by the daemon protocol
 - branch rename / delete / archive: not implemented yet
 - merge/rebase semantics: intentionally not implemented
 
@@ -195,10 +193,10 @@ surface. On Unix, Turin explicitly sets the socket to owner read/write (`0600`)
 after binding. Stale-endpoint cleanup removes only Unix socket entries and
 refuses regular files and symlinks at the configured path.
 
-Local clients such as Turin App, TUI, CLI, and independently operated channel
+Local trusted clients such as the CLI and independently operated channel
 runners may connect directly. Network-facing or multi-user deployments should
-place authentication and user authorization in `turin-remote`, `turin-web`, or
-another trusted boundary service rather than exposing local IPC.
+place authentication and user authorization in `turin-remote` or another
+trusted boundary service rather than exposing local IPC.
 
 Current protocol:
 

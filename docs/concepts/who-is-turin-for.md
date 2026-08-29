@@ -124,4 +124,3 @@ better fit.
 - `docs/concepts/what-can-you-do.md` - scenario-first overview
 - `docs/concepts/scenarios.md` - concrete workflow blueprints
 - `docs/getting-started/choose-first-workflow.md` - choosing a first workflow
-- `docs/concepts/harness-apps-and-ui-clients.md` - app-like harness UI model

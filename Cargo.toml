@@ -8,8 +8,6 @@ members = [
     "crates/turin-daemon-client",
     "crates/turin-remote-client",
     "crates/turin-client",
-    "crates/turin-ui-core",
-    "crates/turin-web",
     "crates/turin-channel-core",
     "crates/turin-channel-host",
     "crates/turin-channel-runner",
@@ -22,8 +20,6 @@ members = [
     "crates/turin-code-index",
     "crates/turin-code-index-writer",
     "crates/turin-map",
-    "crates/turin-tui",
-    "crates/turin-app",
 ]
 resolver = "2"
 

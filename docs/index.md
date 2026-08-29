@@ -10,9 +10,6 @@ This is the documentation landing page for Turin.
 - `docs/concepts/what-can-you-do.md` — scenario-first overview for people asking what Turin is useful for
 - `docs/concepts/scenarios.md` — practical workflow blueprints for common Turin systems
 - `docs/concepts/scenario-starter-cards.md` — compact first-slice cards for choosing an initial Turin workflow
-- `docs/concepts/harness-apps-and-ui-clients.md` — how default consoles, harness apps, and local UI client state fit together
-- `docs/guides/coding-workspace.md` — concrete walkthrough of a repository-specific coding workspace
-- `docs/guides/release-operator-console.md` — concrete walkthrough of a release desk as a Turin harness app
 - `docs/getting-started/index.md` — first steps, quick paths, and entry points
 - `docs/getting-started/choose-first-workflow.md` — choose a first workflow and decide when custom UI is worth adding
 - `docs/concepts/turin.md` — Turin philosophy and design framing (kernel vs harness vs inference)
@@ -26,7 +23,6 @@ This is the documentation landing page for Turin.
 - `docs/guides/rust-embedding.md` — Rust API harnesses and embedding without Lua
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
-- `docs/operations/ui-clients.md` — local/remote operator shells for the Turin daemon control plane
 - `docs/adr/index.md` — architecture decision records for the current runtime and daemon shape
 
 ## Sections
@@ -53,10 +49,7 @@ into technical reference material.
 4. `docs/concepts/what-can-you-do.md`
 5. `docs/concepts/scenario-starter-cards.md`
 6. `docs/concepts/scenarios.md`
-7. `docs/concepts/harness-apps-and-ui-clients.md`
-8. `docs/guides/coding-workspace.md`
-9. `docs/guides/release-operator-console.md`
-10. `docs/getting-started/choose-first-workflow.md`
+7. `docs/getting-started/choose-first-workflow.md`
 
 This path answers the non-developer questions first: what Turin is, what it can
 be used for, which workflows fit, and when custom UI is worth adding.
@@ -69,13 +62,12 @@ be used for, which workflows fit, and when custom UI is worth adding.
 4. `docs/guides/harness-guide.md`
 5. `docs/concepts/worklists.md`
 6. `docs/concepts/memory-vs-kv.md`
-7. `docs/operations/ui-clients.md`
-8. `docs/reference/hooks.md`
-9. `docs/reference/primitives.md`
-10. `docs/guides/harness-library.md`
+7. `docs/reference/hooks.md`
+8. `docs/reference/primitives.md`
+9. `docs/guides/harness-library.md`
 
 This path starts from one concrete workflow, then moves into authoring,
-durable state, UI clients, hooks, and API reference.
+durable state, hooks, and API reference.
 
 ### For runtime users
 
@@ -125,18 +117,15 @@ The longer linear path is useful when reading the docs as a broad tour:
 5. `docs/concepts/scenario-starter-cards.md`
 6. `docs/concepts/scenarios.md`
 7. `docs/getting-started/choose-first-workflow.md`
-8. `docs/concepts/harness-apps-and-ui-clients.md`
-9. `docs/guides/coding-workspace.md`
-10. `docs/guides/release-operator-console.md`
-11. `docs/getting-started/index.md`
-12. `docs/concepts/turin.md`
-13. `docs/getting-started/harness-cookbook.md`
-14. `docs/reference/hooks.md`
-15. `docs/reference/primitives.md`
-16. `docs/concepts/memory-vs-kv.md`
-17. `docs/concepts/worklists.md`
-18. `docs/guides/inference-routing.md`
-19. `docs/guides/multimodal.md`
+8. `docs/getting-started/index.md`
+9. `docs/concepts/turin.md`
+10. `docs/getting-started/harness-cookbook.md`
+11. `docs/reference/hooks.md`
+12. `docs/reference/primitives.md`
+13. `docs/concepts/memory-vs-kv.md`
+14. `docs/concepts/worklists.md`
+15. `docs/guides/inference-routing.md`
+16. `docs/guides/multimodal.md`
 
 ## Channel Setup
 

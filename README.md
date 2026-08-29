@@ -43,8 +43,6 @@ If you are evaluating Turin rather than implementing a harness yet, start with:
 - [What can you do with Turin?](docs/concepts/what-can-you-do.md)
 - [Scenario starter cards](docs/concepts/scenario-starter-cards.md)
 - [Scenario blueprints](docs/concepts/scenarios.md)
-- [Coding Workspace](docs/guides/coding-workspace.md)
-- [Release Operator Console](docs/guides/release-operator-console.md)
 - [Choose a first workflow](docs/getting-started/choose-first-workflow.md)
 
 ## How It Feels To Use
@@ -61,8 +59,8 @@ The important boundary is deliberate:
 
 - Turin stores durable workflow state.
 - Harness code defines rules, actions, memory, and semantic UI intent.
-- Clients such as `turin-app`, `turin-tui`, and `turin-web` render that intent
-  in their own medium while keeping local presentation state local.
+- Clients decide how to present that state while keeping navigation, selection,
+  and other temporary view choices local.
 
 ## What Turin Is (Current Baseline)
 
@@ -82,9 +80,9 @@ Turin now ships a coherent, canonical runtime with:
 - **Provider-agnostic inference and embeddings path** (provider quirks belong in `inference-sdk-rust`, not Turin)
 - **Composable harness scripts** with `import(...)`, `import_scoped(...)`, `use(...)`, and explicit `watch(...)`
 - **Named harness programs** so different configured agents can bind to different harness directories in one runtime
-- **Semantic UI intent and lean clients** so harnesses can expose app-like
+- **Experimental semantic UI intent** so harnesses can describe app-like
   screens, menus, lists, forms, actions, panes, reports, charts, notices, and
-  badges through `turin-app`, `turin-tui`, and `turin-web`
+  badges without dictating a renderer
 - **Durable event persistence** and optional immutable audit behavior
 
 ## Philosophy
@@ -433,43 +431,6 @@ warning because `turin run` can execute directly.
 
 See `docs/operations/daemon.md` for the daemon filesystem model, runtime behavior, and command surface.
 
-## Operator Clients
-
-Turin also ships three operator-facing daemon clients:
-
-- `turin-tui` — lean terminal UI for overview, harness apps, tasks, and events
-- `turin-app` — native desktop shell over the same shared control layer
-- `turin-web` — thin HTTP/SSE API plus a lightweight same-origin browser shell
-
-All three clients can connect either:
-
-- locally through the daemon endpoint resolved from `.turin/config.toml`
-- remotely through `turin-remote`
-
-All three clients now share:
-
-- local and remote daemon transport
-- `.turin/ui-profiles.toml` connection-profile loading at startup
-- dashboard refreshes and event streaming through `turin-ui-core`
-- semantic harness UI contracts for screens, menus, panes, lists, forms,
-  actions, reports, charts, notices, badges, focus, and refresh hints
-
-Examples:
-
-```bash
-target/release/turin-tui --config .turin/config.toml
-target/release/turin-app --config .turin/config.toml
-target/release/turin-web --config .turin/config.toml --bind 127.0.0.1:8787
-
-target/release/turin-tui --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN
-target/release/turin-app --profile lab
-target/release/turin-web --remote-url http://127.0.0.1:9324 --auth-token-env TURIN_REMOTE_TOKEN --bind 127.0.0.1:8787
-```
-
-Shared connection profiles live in `.turin/ui-profiles.toml` by convention. A copyable example is included at `examples/config/ui-profiles.toml.example`.
-
-See `docs/operations/ui-clients.md` for local/remote usage, profile files, and current UI scope.
-
 ## Architecture Notes
 
 For the key design decisions behind the current runtime and daemon shape, see `docs/adr/index.md`.
@@ -688,13 +649,10 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/reference/primitives.md` — canonical stdlib API + aliases
 - `docs/guides/harness-guide.md` — writing production harness scripts
 - `docs/guides/harness-library.md` — ready-to-use harness library entries
-- `docs/guides/coding-workspace.md` — concrete coding-workspace scenario guide
-- `docs/guides/release-operator-console.md` — concrete release desk scenario guide
 - `docs/guides/channels/telegram.md` — step-by-step Telegram channel setup
 - `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
 - `docs/concepts/governance.md` — capability model, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
-- `docs/operations/ui-clients.md` — TUI, desktop, and web operator clients plus shared connection profiles
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 

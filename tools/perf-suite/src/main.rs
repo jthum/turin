@@ -3156,7 +3156,6 @@ fn default_binary_candidates(repo_root: &Path) -> Vec<PathBuf> {
     [
         "target/release/turin",
         "target/release/turin-manager",
-        "target/release/turin-tui",
         "target/release/turin-map",
         "target/release/turin-channel-telegram",
         "target/release/turin-channel-rocketchat",

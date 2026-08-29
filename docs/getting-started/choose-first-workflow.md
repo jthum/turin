@@ -70,9 +70,8 @@ Add harness UI when the workflow has visible structure:
 - users need contextual panes, notices, badges, or refresh hints
 
 For a first UI slice, keep it to one home screen, one list or detail surface,
-and one action. `turin-app`, `turin-tui`, and `turin-web` can render the same
-semantic harness UI differently, so the harness should describe intent rather
-than renderer-specific widgets.
+and one action. Harness UI should describe semantic intent rather than
+renderer-specific widgets; client support is currently experimental.
 
 ## Example First Slices
 
@@ -103,9 +102,6 @@ multi-agent review only after the single-agent drafting loop is useful.
 - `docs/concepts/what-can-you-do.md`
 - `docs/concepts/scenario-starter-cards.md`
 - `docs/concepts/scenarios.md`
-- `docs/concepts/harness-apps-and-ui-clients.md`
-- `docs/guides/release-operator-console.md`
 - `docs/getting-started/harness-cookbook.md`
 - `docs/concepts/worklists.md`
 - `docs/guides/harness-guide.md`
-- `docs/operations/ui-clients.md`

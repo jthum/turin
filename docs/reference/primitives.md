@@ -198,10 +198,9 @@ local project = scope("project", "my-app", { namespace = "notes" })
 ### UI Intent
 
 The `ui` namespace lets harnesses describe semantic UI intent for Turin clients.
-Clients decide how to react based on their own capabilities. The API is
-still being shaped while `turin-app`, `turin-tui`, and `turin-web` are built in
-parallel, but the authoring direction is semantic intent rather than
-renderer-specific widgets.
+Clients decide how to react based on their own capabilities. This API remains
+experimental while the client product direction is reconsidered; the authoring
+direction is semantic intent rather than renderer-specific widgets.
 
 Load-time example:
 
