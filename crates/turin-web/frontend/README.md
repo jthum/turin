@@ -24,6 +24,21 @@ bun run dev
 
 Vite proxies `/api` to `http://127.0.0.1:9330`.
 
+For interface work without a daemon, run the development-only mock adapter:
+
+```sh
+bun run dev:mock
+```
+
+The mock implements the same browser HTTP and SSE contracts as `turin-web`.
+Its long-session scenario generates message windows on demand rather than
+checking in large data files. Override its default 10,000-message transcript
+when testing different scales:
+
+```sh
+TURIN_MOCK_MESSAGE_COUNT=100000 bun run dev:mock
+```
+
 ## Build
 
 ```sh

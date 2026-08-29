@@ -1,19 +1,6 @@
-export type RuntimeHealth = {
-	connection_kind: 'local' | 'remote';
-	ready: boolean;
-	version: string;
-	protocol_version: number;
-	issue_count: number;
-	agent_count: number;
-	harness_count: number;
-	running_agent_count: number;
-	active_task_count: number;
-};
+import type { Bootstrap } from './contracts.js';
 
-export type Bootstrap = {
-	web_version: string;
-	runtime: RuntimeHealth;
-};
+export type { Bootstrap, RuntimeHealth } from './contracts.js';
 
 export async function loadBootstrap(signal?: AbortSignal): Promise<Bootstrap> {
 	const response = await fetch('/api/bootstrap', {

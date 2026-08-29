@@ -2,9 +2,13 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { turinMockApi } from './dev/mock-api/index.js';
+
+const useMockApi = process.env.TURIN_WEB_MOCK === '1';
 
 export default defineConfig({
 	plugins: [
+		...(useMockApi ? [turinMockApi()] : []),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {
@@ -16,8 +20,6 @@ export default defineConfig({
 		})
 	],
 	server: {
-		proxy: {
-			'/api': 'http://127.0.0.1:9330'
-		}
+		proxy: useMockApi ? undefined : { '/api': 'http://127.0.0.1:9330' }
 	}
 });
