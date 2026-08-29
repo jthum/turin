@@ -24,6 +24,9 @@ browser contracts rather than forwarding the complete control protocol.
     directly to the browser.
 - `crates/turin-web/frontend/`
   - SvelteKit 3 static SPA and locally owned shadcn-svelte components.
+- `crates/turin-web/frontend/src/lib/components/product/`
+  - Product workflow components. Keep navigation, transcript, and composer
+    concerns separate as their behavior grows.
 - `crates/turin-web/frontend/dev/mock-api/`
   - Development-only Vite API adapter. It implements the same browser
     contracts and generates large transcript windows algorithmically.
