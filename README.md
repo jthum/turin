@@ -653,6 +653,7 @@ The library is exercised by `cargo test --test example_harness_examples`, so it 
 - `docs/guides/channels/whatsapp.md` — WhatsApp personal vs dedicated account guidance and linked-device setup
 - `docs/concepts/governance.md` — capability model, import scoping, grants
 - `docs/operations/remote.md` — authenticated remote bridge for HTTP + SSE/WebSocket daemon access
+- `docs/operations/turin-web.md` — SvelteKit browser client development and deployment
 - `docs/operations/testing.md` — local validation, test suite, and smoke workflows
 - `docs/operations/live-provider-testing.md` — live endpoint testing procedures
 

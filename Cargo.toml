@@ -8,6 +8,7 @@ members = [
     "crates/turin-daemon-client",
     "crates/turin-remote-client",
     "crates/turin-client",
+    "crates/turin-web",
     "crates/turin-channel-core",
     "crates/turin-channel-host",
     "crates/turin-channel-runner",

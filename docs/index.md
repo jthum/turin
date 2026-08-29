@@ -23,6 +23,7 @@ This is the documentation landing page for Turin.
 - `docs/guides/rust-embedding.md` — Rust API harnesses and embedding without Lua
 - `docs/operations/daemon.md` — daemon mode, filesystem-backed dynamic state, and control API surface
 - `docs/operations/remote.md` — authenticated HTTP/SSE/WebSocket bridge for remote daemon access
+- `docs/operations/turin-web.md` — run the new browser-client foundation locally or against `turin-remote`
 - `docs/adr/index.md` — architecture decision records for the current runtime and daemon shape
 
 ## Sections

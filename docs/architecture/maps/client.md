@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`turin-client` is the shared Rust client facade for operator-facing code. It hides whether requests go through the local daemon socket or the remote HTTP bridge, exposes typed convenience methods, and re-exports DTOs used by manager, TUI, app, and UI-core code.
+`turin-client` is the shared Rust client facade for operator-facing code. It hides whether requests go through the local daemon socket or the remote HTTP bridge, exposes typed convenience methods, and re-exports DTOs used by manager and client hosts such as `turin-web`.
 
 Keep this crate as a thin transport/domain facade. It should not own daemon semantics, UI presentation, config generation, or business rules that belong in the daemon/runtime.
 
@@ -84,7 +84,7 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - Operator-facing applications use this generic facade. Local-only channel
   binaries may use `turin-daemon-client` directly; channel configuration,
   access policy, bindings, and process health must not become client domains.
-- UI/manager presentation formatting does not belong in this crate.
+- Web/manager presentation formatting does not belong in this crate.
 - Daemon wire-shape changes should be made in `turin-daemon-protocol` first, then reflected here.
 
 ## Common Changes
@@ -109,6 +109,7 @@ Focused checks:
 ```sh
 cargo test -p turin-client
 cargo check -p turin-manager
+cargo check -p turin-web
 ```
 
 Basic checks:
