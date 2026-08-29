@@ -53,6 +53,8 @@ mock code is not included in production assets.
   envelopes or operational paths merely because they are available.
 - Conversation history is fetched in bounded windows. Live text arrives over
   SSE as task, message-start, delta, completion, and failure events.
+- The conversation client keeps a bounded resident transcript and can slide in
+  both directions. Evicted messages remain retrievable from the API.
 - A selected cold session is resumed before its event subscription is opened;
   this establishes a live event receiver but does not make browser navigation
   state part of the Turin runtime.

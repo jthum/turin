@@ -39,6 +39,14 @@ when testing different scales:
 TURIN_MOCK_MESSAGE_COUNT=100000 bun run dev:mock
 ```
 
+Exercise streaming states without changing application code:
+
+```sh
+TURIN_MOCK_STREAM=slow bun run dev:mock
+TURIN_MOCK_STREAM=error bun run dev:mock
+TURIN_MOCK_STREAM=interrupt bun run dev:mock
+```
+
 ## Build
 
 ```sh

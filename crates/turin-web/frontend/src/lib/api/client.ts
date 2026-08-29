@@ -13,6 +13,8 @@ type EventHandlers = {
 	[K in ConversationEventName]?: (event: ConversationEventMap[K]) => void;
 };
 
+export type StreamConnectionState = 'connecting' | 'open' | 'reconnecting';
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	const response = await fetch(path, {
 		...init,
@@ -71,15 +73,25 @@ export class TurinWebClient {
 		});
 	}
 
-	subscribe(sessionId: string, handlers: EventHandlers): () => void {
+	subscribe(
+		sessionId: string,
+		handlers: EventHandlers,
+		onConnectionChange?: (state: StreamConnectionState) => void
+	): () => void {
 		const source = new EventSource(`/api/events?session_id=${encodeURIComponent(sessionId)}`);
+		onConnectionChange?.('connecting');
+		source.onopen = () => onConnectionChange?.('open');
+		source.onerror = () => onConnectionChange?.('reconnecting');
 		for (const name of Object.keys(handlers) as ConversationEventName[]) {
 			source.addEventListener(name, (event) => {
 				const handler = handlers[name] as ((value: unknown) => void) | undefined;
 				handler?.(JSON.parse((event as MessageEvent<string>).data));
 			});
 		}
-		return () => source.close();
+		return () => {
+			source.close();
+			onConnectionChange?.('connecting');
+		};
 	}
 }
 

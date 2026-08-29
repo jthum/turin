@@ -164,16 +164,33 @@ export function turinMockApi(): Plugin {
 		publishEvent('conversation.task.started', {
 			request_id: requestId, session_id: session.id, agent_id: session.agent_id
 		});
-		const responseText = scenario.responseFor(prompt);
+		const response = scenario.responseFor(prompt);
+		if (response.mode === 'error') {
+			await delay(250);
+			publishEvent('conversation.task.failed', {
+				request_id: requestId, session_id: session.id,
+				message: 'The mock provider rejected this request.', retryable: false
+			});
+			return;
+		}
+		const responseText = response.text;
 		const messageId = `${requestId}-assistant`;
 		publishEvent('conversation.message.started', {
 			request_id: requestId, session_id: session.id, message_id: messageId
 		});
-		for (const part of responseText.match(/.{1,12}/g) ?? []) {
-			await new Promise((resolve) => setTimeout(resolve, 35));
+		const chunks = responseText.match(/.{1,12}/g) ?? [];
+		for (const [index, part] of chunks.entries()) {
+			await delay(response.chunkDelayMs);
 			publishEvent('conversation.message.delta', {
 				request_id: requestId, session_id: session.id, message_id: messageId, delta: part
 			});
+			if (response.mode === 'interrupt' && index >= 3) {
+				publishEvent('conversation.task.failed', {
+					request_id: requestId, session_id: session.id,
+					message: 'The mock stream was interrupted after partial output.', retryable: true
+				});
+				return;
+			}
 		}
 		const message: ConversationMessage = {
 			id: messageId, turn_id: `${requestId}-turn`, role: 'assistant', content: responseText,
@@ -183,4 +200,8 @@ export function turinMockApi(): Plugin {
 		session.message_count = (session.message_count ?? 0) + 1;
 		publishEvent('conversation.task.completed', { request_id: requestId, session_id: session.id });
 	}
+}
+
+function delay(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

@@ -5,6 +5,7 @@
 	import type { Agent, Bootstrap, ConversationMessage, Session } from '#lib/api/contracts.js';
 	import { loadBootstrap } from '#lib/api/bootstrap.js';
 	import { turinWeb } from '#lib/api/client.js';
+	import type { StreamConnectionState } from '#lib/api/client.js';
 
 	const PAGE_SIZE = 80;
 	const MAX_RESIDENT = 240;
@@ -13,9 +14,11 @@
 	let sessions = $state<Session[]>([]);
 	let selected = $state<Session | null>(null);
 	let messages = $state<ConversationMessage[]>([]);
-	let messageOffset = $state(0);
+	let newestOffset = $state(0);
+	let olderOffset = $state(0);
 	let messageTotal = $state(0);
 	let hasOlder = $state(false);
+	let hasNewer = $state(false);
 	let loading = $state(true);
 	let loadingMessages = $state(false);
 	let loadingOlder = $state(false);
@@ -26,6 +29,7 @@
 	let newAgentId = $state('');
 	let sidebarOpen = $state(false);
 	let streamMessageId = $state<string | null>(null);
+	let streamState = $state<StreamConnectionState>('connecting');
 	let unsubscribe = $state<(() => void) | null>(null);
 	let transcript: HTMLDivElement;
 	let filteredSessions = $derived(sessions.filter((item) => item.title.toLowerCase().includes(search.toLowerCase())));
@@ -64,15 +68,17 @@
 		selected = session;
 		sidebarOpen = false;
 		messages = [];
-		messageOffset = 0;
+		newestOffset = 0;
+		olderOffset = 0;
 		loadingMessages = true;
 		error = null;
 		try {
 			const page = await turinWeb.loadMessages(session.id, PAGE_SIZE, 0, signal);
 			messages = page.messages;
-			messageOffset = page.messages.length;
+			olderOffset = page.messages.length;
 			messageTotal = page.total;
 			hasOlder = page.has_more;
+			hasNewer = false;
 			unsubscribe = turinWeb.subscribe(session.id, {
 				'conversation.task.started': () => submitting = true,
 				'conversation.message.started': (event) => {
@@ -102,7 +108,7 @@
 					submitting = false;
 					error = event.message;
 				}
-			});
+			}, (state) => streamState = state);
 			await scrollToBottom();
 		} catch (cause) {
 			showError(cause, 'The conversation could not be loaded.');
@@ -116,10 +122,14 @@
 		loadingOlder = true;
 		const previousHeight = transcript?.scrollHeight ?? 0;
 		try {
-			const page = await turinWeb.loadMessages(selected.id, PAGE_SIZE, messageOffset);
-			messages = [...page.messages, ...messages].slice(0, MAX_RESIDENT);
-			messageOffset += page.messages.length;
+			const page = await turinWeb.loadMessages(selected.id, PAGE_SIZE, olderOffset);
+			const combined = [...page.messages, ...messages];
+			const droppedNewest = Math.max(0, combined.length - MAX_RESIDENT);
+			messages = combined.slice(0, MAX_RESIDENT);
+			newestOffset += droppedNewest;
+			olderOffset += page.messages.length;
 			hasOlder = page.has_more;
+			hasNewer = newestOffset > 0;
 			await tick();
 			transcript?.scrollTo({ top: transcript.scrollHeight - previousHeight });
 		} catch (cause) {
@@ -127,6 +137,38 @@
 		} finally {
 			loadingOlder = false;
 		}
+	}
+
+	async function loadNewer() {
+		if (!selected || !hasNewer || loadingOlder) return;
+		loadingOlder = true;
+		try {
+			const offset = Math.max(0, newestOffset - PAGE_SIZE);
+			const page = await turinWeb.loadMessages(selected.id, PAGE_SIZE, offset);
+			const combined = [...messages, ...page.messages];
+			const droppedOldest = Math.max(0, combined.length - MAX_RESIDENT);
+			messages = combined.slice(-MAX_RESIDENT);
+			newestOffset = offset;
+			olderOffset = Math.max(messages.length, olderOffset - droppedOldest);
+			hasNewer = newestOffset > 0;
+			hasOlder = olderOffset < page.total;
+			await scrollToBottom();
+		} catch (cause) {
+			showError(cause, 'Newer messages could not be loaded.');
+		} finally {
+			loadingOlder = false;
+		}
+	}
+
+	async function returnToLatest() {
+		if (!selected || newestOffset === 0) return;
+		const page = await turinWeb.loadMessages(selected.id, PAGE_SIZE, 0);
+		messages = page.messages;
+		newestOffset = 0;
+		olderOffset = page.messages.length;
+		messageTotal = page.total;
+		hasNewer = false;
+		hasOlder = page.has_more;
 	}
 
 	async function createSession() {
@@ -155,7 +197,13 @@
 
 	async function sendMessage() {
 		const content = composer.trim();
-		if (!selected || !content || submitting) return;
+		if (!selected || !content || submitting || streamState !== 'open') return;
+		try {
+			await returnToLatest();
+		} catch (cause) {
+			showError(cause, 'The latest messages could not be loaded.');
+			return;
+		}
 		composer = '';
 		error = null;
 		submitting = true;
@@ -232,7 +280,7 @@
 	<main class="conversation-shell">
 		<header class="conversation-header">
 			<Button class="mobile-menu" variant="ghost" size="icon" onclick={() => sidebarOpen = true} aria-label="Open conversations"><PanelLeft /></Button>
-			<div class="conversation-title"><strong>{selected?.title ?? 'Your Turin workspace'}</strong>{#if selected}<span>{agents.find((agent) => agent.id === selected?.agent_id)?.name ?? selected.agent_id}</span>{/if}</div>
+			<div class="conversation-title"><strong>{selected?.title ?? 'Your Turin workspace'}</strong>{#if selected}<span class:reconnecting={streamState !== 'open'}>{streamState === 'open' ? (agents.find((agent) => agent.id === selected?.agent_id)?.name ?? selected.agent_id) : 'Connecting live updates…'}</span>{/if}</div>
 			{#if selected}<Button variant="ghost" size="icon" onclick={deleteSelected} aria-label="Delete conversation"><Trash2 /></Button>{:else}<Button variant="ghost" size="icon" onclick={() => initialize()} aria-label="Refresh"><RefreshCw /></Button>{/if}
 		</header>
 		{#if error}<div class="error-banner"><span>{error}</span><button onclick={() => error = null}>Dismiss</button></div>{/if}
@@ -252,6 +300,7 @@
 						</article>
 					{/each}
 					{#if submitting && !streamMessageId}<div class="thinking"><span></span><span></span><span></span><em>{selected.agent_id} is thinking</em></div>{/if}
+					{#if hasNewer}<button class="load-older load-newer" onclick={loadNewer} disabled={loadingOlder}>{#if loadingOlder}<LoaderCircle class="spin" />{:else}<ChevronUp />{/if}Load newer messages</button>{/if}
 				</div>
 			{/if}
 		</div>
@@ -259,7 +308,7 @@
 			<div class="composer-dock">
 				<div class="composer-card">
 					<textarea bind:value={composer} onkeydown={keydown} placeholder={`Message ${selected.agent_id}`} rows="2" aria-label="Message"></textarea>
-					<div class="composer-actions"><button class="model-pill"><Sparkles />{agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id}<ChevronUp /></button><Button size="icon" onclick={sendMessage} disabled={!composer.trim() || submitting} aria-label="Send message">{#if submitting}<LoaderCircle class="spin" />{:else}<ArrowUp />{/if}</Button></div>
+					<div class="composer-actions"><button class="model-pill"><Sparkles />{agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id}<ChevronUp /></button><Button size="icon" onclick={sendMessage} disabled={!composer.trim() || submitting || streamState !== 'open'} aria-label="Send message">{#if submitting}<LoaderCircle class="spin" />{:else}<ArrowUp />{/if}</Button></div>
 				</div>
 				<p>Enter to send · Shift + Enter for a new line</p>
 			</div>
@@ -305,6 +354,7 @@
 	.conversation-title { display: grid; min-width: 0; flex: 1; gap: 2px; }
 	.conversation-title strong { overflow: hidden; font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 	.conversation-title span { color: #92928c; font-size: 10px; }
+	.conversation-title span.reconnecting { color: #a66d22; }
 	:global(.mobile-menu) { display: none; }
 	.error-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #f0d4ce; background: #fff4f1; padding: 9px 22px; color: #9b392d; font-size: 12px; }
 	.error-banner button { border: 0; background: transparent; color: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
@@ -322,6 +372,8 @@
 	.stream-caret { display: inline-block; width: 5px; height: 15px; margin-left: 2px; vertical-align: text-bottom; background: #272725; animation: blink .8s infinite; }
 	.load-older { display: flex; align-items: center; gap: 6px; margin: 0 auto 18px; border: 1px solid #e1e1dc; border-radius: 999px; background: white; padding: 7px 11px; color: #6d6d67; font-size: 11px; cursor: pointer; box-shadow: 0 1px 1px #00000008; }
 	.load-older :global(svg) { width: 13px; }
+	.load-newer { margin-top: 22px; margin-bottom: 0; }
+	.load-newer :global(svg) { transform: rotate(180deg); }
 	.history-start { display: block; padding-bottom: 12px; color: #aaa9a3; font-size: 10px; text-align: center; }
 	.thinking { display: flex; align-items: center; gap: 4px; padding: 16px 40px; color: #8e8e88; }
 	.thinking span { width: 4px; height: 4px; border-radius: 50%; background: #8e8e88; animation: pulse 1s infinite; }

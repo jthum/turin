@@ -5,7 +5,15 @@ export type MockScenario = {
 	sessions: Session[];
 	messageCount(sessionId: string): number;
 	messageAt(sessionId: string, index: number): ConversationMessage;
-	responseFor(prompt: string): string;
+	responseFor(prompt: string): MockResponse;
+};
+
+export type MockStreamMode = 'normal' | 'slow' | 'error' | 'interrupt';
+
+export type MockResponse = {
+	text: string;
+	mode: MockStreamMode;
+	chunkDelayMs: number;
 };
 
 const BASE_TIME = Date.parse('2026-08-29T08:00:00.000Z');
@@ -32,6 +40,7 @@ function generatedMessage(sessionId: string, index: number): ConversationMessage
 
 export function createMockScenario(): MockScenario {
 	const largeMessageCount = Math.max(0, Number(process.env.TURIN_MOCK_MESSAGE_COUNT ?? 10_000));
+	const streamMode = mockStreamMode(process.env.TURIN_MOCK_STREAM);
 	const counts = new Map([
 		['session-welcome', 8],
 		['session-research', 32],
@@ -69,7 +78,14 @@ export function createMockScenario(): MockScenario {
 		sessions,
 		messageCount: (sessionId) => counts.get(sessionId) ?? 0,
 		messageAt: generatedMessage,
-		responseFor: (prompt) =>
-			`I received “${prompt.slice(0, 90)}${prompt.length > 90 ? '…' : ''}”. This response is streaming through the same browser event contract used by the Turin host. The mock controls timing and failure behavior without changing application components.`
+		responseFor: (prompt) => ({
+			text: `I received “${prompt.slice(0, 90)}${prompt.length > 90 ? '…' : ''}”. This response is streaming through the same browser event contract used by the Turin host. The mock controls timing and failure behavior without changing application components.`,
+			mode: streamMode,
+			chunkDelayMs: streamMode === 'slow' ? 350 : 35
+		})
 	};
+}
+
+function mockStreamMode(value: string | undefined): MockStreamMode {
+	return value === 'slow' || value === 'error' || value === 'interrupt' ? value : 'normal';
 }
