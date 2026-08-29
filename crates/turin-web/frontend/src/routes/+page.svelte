@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { PanelLeft, RefreshCw, Trash2 } from '@lucide/svelte';
+	import { CircleAlert, MoreHorizontal, RefreshCw, Trash2, X } from '@lucide/svelte';
+	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import MessageComposer from '#lib/components/product/message-composer.svelte';
 	import ConversationTranscript from '#lib/components/product/conversation-transcript.svelte';
 	import SessionRail from '#lib/components/product/session-rail.svelte';
@@ -30,11 +33,11 @@
 	let composer = $state('');
 	let search = $state('');
 	let newAgentId = $state('');
-	let sidebarOpen = $state(false);
+	let deleteDialogOpen = $state(false);
 	let streamMessageId = $state<string | null>(null);
 	let streamState = $state<StreamConnectionState>('connecting');
 	let unsubscribe = $state<(() => void) | null>(null);
-	let transcript = $state<HTMLDivElement>();
+	let transcript = $state<HTMLElement | null>(null);
 
 	function showError(cause: unknown, fallback: string) {
 		error = cause instanceof Error ? cause.message : fallback;
@@ -68,7 +71,6 @@
 		unsubscribe?.();
 		unsubscribe = null;
 		selected = session;
-		sidebarOpen = false;
 		messages = [];
 		newestOffset = 0;
 		olderOffset = 0;
@@ -185,12 +187,13 @@
 	}
 
 	async function deleteSelected() {
-		if (!selected || !confirm(`Delete “${selected.title}”? This cannot be undone.`)) return;
+		if (!selected) return;
 		try {
 			await turinWeb.deleteSession(selected.id);
 			sessions = sessions.filter((item) => item.id !== selected?.id);
 			selected = null;
 			messages = [];
+			deleteDialogOpen = false;
 			if (sessions[0]) await selectSession(sessions[0]);
 		} catch (cause) {
 			showError(cause, 'The conversation could not be deleted.');
@@ -234,48 +237,64 @@
 	});
 </script>
 
-<div class="workspace" class:sidebar-open={sidebarOpen}>
-	<button class="sidebar-scrim" aria-label="Close conversations" onclick={() => sidebarOpen = false}></button>
+<Sidebar.Provider>
 	<SessionRail {bootstrap} {agents} {sessions} selectedId={selected?.id ?? null} {loading} bind:search bind:newAgentId onCreate={createSession} onSelect={selectSession} />
 
-	<main class="conversation-shell">
-		<header class="conversation-header">
-			<Button class="mobile-menu" variant="ghost" size="icon" onclick={() => sidebarOpen = true} aria-label="Open conversations"><PanelLeft /></Button>
-			<div class="conversation-title"><strong>{selected?.title ?? 'Your Turin workspace'}</strong>{#if selected}<span class:reconnecting={streamState !== 'open'}>{streamState === 'open' ? (agents.find((agent) => agent.id === selected?.agent_id)?.name ?? selected.agent_id) : 'Connecting live updates…'}</span>{/if}</div>
-			{#if selected}<Button variant="ghost" size="icon" onclick={deleteSelected} aria-label="Delete conversation"><Trash2 /></Button>{:else}<Button variant="ghost" size="icon" onclick={() => initialize()} aria-label="Refresh"><RefreshCw /></Button>{/if}
+	<Sidebar.Inset class="h-svh min-w-0 overflow-hidden bg-background">
+		<header class="flex h-16 shrink-0 items-center gap-3 border-b border-border/70 bg-background/90 px-4 backdrop-blur-xl sm:px-5">
+			<Sidebar.Trigger class="-ml-1" />
+			<div class="grid min-w-0 flex-1 gap-0.5">
+				<strong class="truncate text-sm font-semibold">{selected?.title ?? 'Your Turin workspace'}</strong>
+				{#if selected}
+					<span class:!text-amber-600={streamState !== 'open'} class="truncate text-xs text-muted-foreground">
+						{streamState === 'open' ? (agents.find((agent) => agent.id === selected?.agent_id)?.name ?? selected.agent_id) : 'Connecting live updates…'}
+					</span>
+				{/if}
+			</div>
+			{#if selected}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}<Button {...props} variant="ghost" size="icon" aria-label="Conversation actions"><MoreHorizontal class="size-4" /></Button>{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content align="end">
+						<DropdownMenu.Label>Conversation</DropdownMenu.Label>
+						<DropdownMenu.Separator />
+						<DropdownMenu.Item variant="destructive" onclick={() => deleteDialogOpen = true}><Trash2 />Delete conversation</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{:else}
+				<Button variant="ghost" size="icon" onclick={() => initialize()} aria-label="Refresh"><RefreshCw class="size-4" /></Button>
+			{/if}
 		</header>
-		{#if error}<div class="error-banner"><span>{error}</span><button onclick={() => error = null}>Dismiss</button></div>{/if}
-		<ConversationTranscript bind:ref={transcript} session={selected} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {submitting} {streamMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onCreate={createSession} />
+
+		{#if error}
+			<div class="flex items-center gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2.5 text-sm text-destructive sm:px-5">
+				<CircleAlert class="size-4 shrink-0" /><span class="min-w-0 flex-1">{error}</span>
+				<Button variant="ghost" size="icon-sm" onclick={() => error = null} aria-label="Dismiss error"><X class="size-4" /></Button>
+			</div>
+		{/if}
+
+		<div class="min-h-0 flex-1">
+			<ConversationTranscript bind:ref={transcript} session={selected} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {submitting} {streamMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onCreate={createSession} />
+		</div>
 		{#if selected}<MessageComposer bind:value={composer} agentId={selected.agent_id} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
-	</main>
-</div>
+	</Sidebar.Inset>
+</Sidebar.Provider>
+
+<AlertDialog.Root bind:open={deleteDialogOpen}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Media class="bg-destructive/10 text-destructive"><Trash2 /></AlertDialog.Media>
+			<AlertDialog.Title>Delete this conversation?</AlertDialog.Title>
+			<AlertDialog.Description>“{selected?.title}” and its stored turns will be permanently removed. This action cannot be undone.</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Keep conversation</AlertDialog.Cancel>
+			<AlertDialog.Action variant="destructive" onclick={deleteSelected}>Delete</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
 
 <style>
-	:global(body) { margin: 0; overflow: hidden; background: #f7f7f5; }
-	:global(button), :global(input), :global(textarea), :global(select) { font: inherit; }
-	.workspace { --rail: 292px; display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); height: 100dvh; color: #191918; background: #f7f7f5; }
-	.conversation-header :global(svg) { width: 17px; height: 17px; }
-	.conversation-shell { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr) auto; background: #fbfbfa; }
-	.conversation-header { display: flex; height: 68px; align-items: center; gap: 12px; padding: 0 22px; border-bottom: 1px solid #e9e9e5; background: #fbfbfae8; backdrop-filter: blur(16px); }
-	.conversation-title { display: grid; min-width: 0; flex: 1; gap: 2px; }
-	.conversation-title strong { overflow: hidden; font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-	.conversation-title span { color: #92928c; font-size: 10px; }
-	.conversation-title span.reconnecting { color: #a66d22; }
-	:global(.mobile-menu) { display: none; }
-	.error-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #f0d4ce; background: #fff4f1; padding: 9px 22px; color: #9b392d; font-size: 12px; }
-	.error-banner button { border: 0; background: transparent; color: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
-	.sidebar-scrim { display: none; }
-	:global(.spin) { animation: spin 1s linear infinite; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-
-	@media (max-width: 760px) {
-		.workspace { display: block; }
-		:global(.session-rail) { position: fixed; z-index: 30; inset: 0 auto 0 0; width: min(86vw, 320px); transform: translateX(-102%); box-shadow: 20px 0 60px #0002; transition: transform .22s ease; }
-		.sidebar-open :global(.session-rail) { transform: translateX(0); }
-		.sidebar-scrim { position: fixed; z-index: 20; inset: 0; border: 0; background: #15151366; opacity: 0; pointer-events: none; transition: opacity .2s; }
-		.sidebar-open .sidebar-scrim { display: block; opacity: 1; pointer-events: auto; }
-		.conversation-shell { height: 100dvh; }
-		:global(.mobile-menu) { display: inline-flex; }
-		.conversation-header { height: 58px; padding: 0 12px; }
-	}
+	:global(body) { margin: 0; overflow: hidden; }
 </style>

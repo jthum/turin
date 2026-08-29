@@ -1,18 +1,13 @@
 <script lang="ts">
-	import { MessageSquare, PanelLeft, Plus, Search } from '@lucide/svelte';
+	import { Bot, MessageSquare, Plus, Search, Sparkles } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import * as Select from '#lib/components/ui/select/index.js';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import type { Agent, Bootstrap, Session } from '#lib/api/contracts.js';
 
 	let {
-		bootstrap,
-		agents,
-		sessions,
-		selectedId,
-		loading,
-		search = $bindable(),
-		newAgentId = $bindable(),
-		onCreate,
-		onSelect
+		bootstrap, agents, sessions, selectedId, loading,
+		search = $bindable(), newAgentId = $bindable(), onCreate, onSelect
 	}: {
 		bootstrap: Bootstrap | null;
 		agents: Agent[];
@@ -25,72 +20,92 @@
 		onSelect: (session: Session) => void;
 	} = $props();
 
-	let filtered = $derived(
-		sessions.filter((session) => session.title.toLowerCase().includes(search.toLowerCase()))
-	);
+	const sidebar = Sidebar.useSidebar();
+	let filtered = $derived(sessions.filter((session) => session.title.toLowerCase().includes(search.toLowerCase())));
+	let selectedAgent = $derived(agents.find((agent) => agent.id === newAgentId));
+
+	function selectSession(session: Session) {
+		onSelect(session);
+		if (sidebar.isMobile) sidebar.setOpenMobile(false);
+	}
 </script>
 
-<aside class="session-rail">
-	<div class="rail-brand">
-		<a href="/" class="brand-lockup" aria-label="Turin home"><span class="brand-mark">T</span><strong>Turin</strong></a>
-		<Button variant="ghost" size="icon-sm" aria-label="Collapse sidebar"><PanelLeft /></Button>
-	</div>
-	<div class="new-session">
-		<Button class="new-button" onclick={onCreate} disabled={!newAgentId}><Plus /> New conversation</Button>
-		<select bind:value={newAgentId} aria-label="Agent for new conversation">
-			{#each agents as agent}<option value={agent.id}>{agent.name} · {agent.model}</option>{/each}
-		</select>
-	</div>
-	<label class="session-search"><Search /><input bind:value={search} placeholder="Search conversations" /></label>
-	<div class="session-list" aria-label="Conversations">
-		<span class="section-label">Recent</span>
-		{#if loading}
-			{#each Array(5) as _}<div class="session-skeleton"></div>{/each}
-		{:else if filtered.length === 0}
-			<p class="rail-empty">No conversations found.</p>
-		{:else}
-			{#each filtered as session (session.id)}
-				<button class="session-row" class:active={selectedId === session.id} onclick={() => onSelect(session)}>
-					<MessageSquare /><span><strong>{session.title}</strong><small>{session.message_count?.toLocaleString() ?? '—'} messages</small></span>
-				</button>
-			{/each}
-		{/if}
-	</div>
-	<div class="rail-footer">
-		<span class:online={bootstrap?.runtime.ready} class="runtime-dot"></span>
-		<span><strong>{bootstrap?.runtime.ready ? 'Runtime ready' : 'Runtime unavailable'}</strong><small>{bootstrap?.runtime.connection_kind ?? 'Connecting'}</small></span>
-	</div>
-</aside>
+<Sidebar.Root collapsible="icon" class="border-r border-sidebar-border">
+	<Sidebar.Header class="gap-3 p-3">
+		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton size="lg" class="hover:bg-transparent active:bg-transparent">
+					<div class="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"><Sparkles class="size-4" /></div>
+					<div class="grid min-w-0 flex-1 text-left leading-tight">
+						<span class="truncate text-sm font-semibold">Turin</span>
+						<span class="truncate text-xs text-muted-foreground">Agent workspace</span>
+					</div>
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
+		</Sidebar.Menu>
 
-<style>
-	.session-rail { display: flex; min-width: 0; height: 100%; flex-direction: column; border-right: 1px solid #e5e5e1; background: #f2f2ef; }
-	.rail-brand { display: flex; height: 68px; align-items: center; justify-content: space-between; padding: 0 18px; }
-	.brand-lockup { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; font-size: 15px; }
-	.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: #191918; color: white; font-size: 13px; font-weight: 750; box-shadow: 0 1px 1px #0002; }
-	.rail-brand :global(svg) { width: 17px; height: 17px; }
-	.new-session { display: grid; gap: 7px; padding: 6px 14px 12px; }
-	:global(.new-button) { width: 100%; justify-content: flex-start; box-shadow: 0 1px 1px #0001; }
-	.new-session select { width: 100%; border: 0; background: transparent; color: #74746f; padding: 3px 8px; font-size: 11px; outline: none; }
-	.session-search { display: flex; height: 34px; align-items: center; gap: 8px; margin: 0 14px 14px; padding: 0 10px; border: 1px solid #dfdfda; border-radius: 9px; background: #fafaf8; color: #999992; }
-	.session-search:focus-within { border-color: #b9b9b2; box-shadow: 0 0 0 3px #00000008; }
-	.session-search :global(svg) { width: 14px; }
-	.session-search input { width: 100%; border: 0; outline: 0; background: transparent; color: #2b2b29; font-size: 12px; }
-	.session-list { min-height: 0; flex: 1; overflow-y: auto; padding: 0 9px; }
-	.section-label { display: block; padding: 6px 11px 7px; color: #999992; font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
-	.session-row { display: flex; width: 100%; align-items: flex-start; gap: 9px; border: 0; border-radius: 9px; background: transparent; padding: 9px 10px; color: #60605b; text-align: left; cursor: pointer; }
-	.session-row:hover { background: #e9e9e5; color: #242422; }
-	.session-row.active { background: white; color: #191918; box-shadow: 0 1px 2px #0000000b, inset 0 0 0 1px #e2e2dd; }
-	.session-row :global(svg) { width: 14px; height: 14px; margin-top: 2px; flex: none; }
-	.session-row span { min-width: 0; display: grid; gap: 3px; }
-	.session-row strong { overflow: hidden; font-size: 12px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
-	.session-row small { color: #9a9a94; font-size: 10px; }
-	.session-skeleton { height: 49px; margin: 4px; border-radius: 9px; background: linear-gradient(100deg, #e7e7e3 35%, #f1f1ed 50%, #e7e7e3 65%); background-size: 300% 100%; animation: shimmer 1.5s infinite; }
-	.rail-empty { padding: 16px 11px; color: #8c8c86; font-size: 12px; }
-	.rail-footer { display: flex; align-items: center; gap: 10px; margin: 8px 14px 14px; padding: 11px; border-top: 1px solid #dfdfda; }
-	.runtime-dot { width: 7px; height: 7px; border-radius: 50%; background: #c9c9c4; }
-	.runtime-dot.online { background: #22a565; box-shadow: 0 0 0 3px #22a56518; }
-	.rail-footer > span:last-child { display: grid; gap: 1px; }
-	.rail-footer strong { font-size: 11px; font-weight: 550; }
-	.rail-footer small { color: #969690; font-size: 10px; text-transform: capitalize; }
-	@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-</style>
+		<Button class="w-full justify-start group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0" onclick={onCreate} disabled={!newAgentId}>
+			<Plus class="size-4" /><span class="group-data-[collapsible=icon]:hidden">New conversation</span>
+		</Button>
+
+		<div class="group-data-[collapsible=icon]:hidden">
+			<Select.Root type="single" bind:value={newAgentId}>
+				<Select.Trigger class="w-full bg-background/60" size="sm">
+					<Bot class="size-4 text-muted-foreground" /><span class="truncate">{selectedAgent?.name ?? 'Choose agent'}</span>
+				</Select.Trigger>
+				<Select.Content>
+					{#each agents as agent}
+						<Select.Item value={agent.id} label={agent.name}>
+							<span>{agent.name}</span><span class="text-xs text-muted-foreground">{agent.model}</span>
+						</Select.Item>
+					{/each}
+				</Select.Content>
+			</Select.Root>
+		</div>
+	</Sidebar.Header>
+
+	<Sidebar.Content>
+		<Sidebar.Group class="min-h-0 flex-1">
+			<Sidebar.GroupLabel>Conversations</Sidebar.GroupLabel>
+			<div class="relative mb-2 px-2 group-data-[collapsible=icon]:hidden">
+				<Search class="pointer-events-none absolute left-5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+				<Sidebar.Input bind:value={search} class="pl-8" placeholder="Search conversations" aria-label="Search conversations" />
+			</div>
+			<Sidebar.GroupContent>
+				<Sidebar.Menu>
+					{#if loading}
+						{#each Array(6) as _}<Sidebar.MenuSkeleton showIcon />{/each}
+					{:else if filtered.length === 0}
+						<p class="px-3 py-5 text-center text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">No conversations found.</p>
+					{:else}
+						{#each filtered as session (session.id)}
+							<Sidebar.MenuItem>
+								<Sidebar.MenuButton size="lg" isActive={selectedId === session.id} tooltipContent={session.title} onclick={() => selectSession(session)}>
+									<MessageSquare />
+									<span class="grid min-w-0 flex-1 gap-0.5">
+										<span class="truncate font-medium">{session.title}</span>
+										<span class="text-xs font-normal text-muted-foreground">{session.message_count?.toLocaleString() ?? '0'} messages</span>
+									</span>
+								</Sidebar.MenuButton>
+							</Sidebar.MenuItem>
+						{/each}
+					{/if}
+				</Sidebar.Menu>
+			</Sidebar.GroupContent>
+		</Sidebar.Group>
+	</Sidebar.Content>
+
+	<Sidebar.Footer class="p-3">
+		<div class="flex items-center gap-3 rounded-xl px-2 py-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+			<span class="relative flex size-2 shrink-0">
+				{#if bootstrap?.runtime.ready}<span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-50"></span>{/if}
+				<span class:!bg-emerald-500={bootstrap?.runtime.ready} class="relative inline-flex size-2 rounded-full bg-muted-foreground/40"></span>
+			</span>
+			<div class="grid min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+				<span class="text-xs font-medium">{bootstrap?.runtime.ready ? 'Runtime ready' : 'Runtime unavailable'}</span>
+				<span class="truncate text-[11px] capitalize text-muted-foreground">{bootstrap?.runtime.connection_kind ?? 'Connecting'}</span>
+			</div>
+		</div>
+	</Sidebar.Footer>
+	<Sidebar.Rail />
+</Sidebar.Root>

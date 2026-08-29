@@ -79,7 +79,15 @@ export function createMockScenario(): MockScenario {
 		messageCount: (sessionId) => counts.get(sessionId) ?? 0,
 		messageAt: generatedMessage,
 		responseFor: (prompt) => ({
-			text: `I received “${prompt.slice(0, 90)}${prompt.length > 90 ? '…' : ''}”. This response is streaming through the same browser event contract used by the Turin host. The mock controls timing and failure behavior without changing application components.`,
+			text: `I received “${prompt.slice(0, 90)}${prompt.length > 90 ? '…' : ''}”.
+
+### What happened
+
+- The response streamed through Turin's browser event contract.
+- The interface kept the active transcript window bounded.
+- Markdown was rendered only after the stream completed.
+
+You can use the mock to test **timing**, failure behavior, and long conversations without changing application components.`,
 			mode: streamMode,
 			chunkDelayMs: streamMode === 'slow' ? 350 : 35
 		})

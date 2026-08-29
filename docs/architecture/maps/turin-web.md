@@ -58,6 +58,9 @@ mock code is not included in production assets.
   SSE as task, message-start, delta, completion, and failure events.
 - The conversation client keeps a bounded resident transcript and can slide in
   both directions. Evicted messages remain retrievable from the API.
+- Provider message content is untrusted. The browser may render Markdown, but
+  raw HTML and unsafe link schemes must not become executable markup. Remote
+  images require deliberate user navigation rather than automatic loading.
 - A selected cold session is resumed before its event subscription is opened;
   this establishes a live event receiver but does not make browser navigation
   state part of the Turin runtime.
