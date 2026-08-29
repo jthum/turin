@@ -164,11 +164,13 @@
 			created_at: new Date().toISOString(), token_count: Math.ceil(content.length / 4)
 		};
 		messages = [...messages, optimistic];
+		messageTotal += 1;
 		await scrollToBottom('smooth');
 		try {
 			await turinWeb.submitMessage(selected.id, content);
 		} catch (cause) {
 			messages = messages.filter((message) => message.id !== optimistic.id);
+			messageTotal = Math.max(0, messageTotal - 1);
 			composer = content;
 			submitting = false;
 			showError(cause, 'The message could not be submitted.');
