@@ -50,6 +50,8 @@ Production uses the static adapter output and requires no Node.js process.
   navigation destination only when its workflow exists.
 - shadcn-svelte components are source-owned building blocks. Product styling
   may evolve without introducing a runtime component-library dependency.
+- Bun is the pinned frontend package manager. `bun.lock` is authoritative; do
+  not add npm, pnpm, or Yarn lockfiles alongside it.
 - Harness UI intents remain an experimental runtime capability; this client is
   not required to reproduce the deleted exploratory renderer.
 
@@ -76,8 +78,8 @@ cargo test -p turin-web
 cargo check -p turin-web
 
 cd crates/turin-web/frontend
-npm run check
-npm run build
+bun run check
+bun run build
 ```
 
 Also run `cargo fmt --all -- --check` and `git diff --check`.

@@ -133,7 +133,7 @@ async fn serve_asset(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(text_response(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "Turin Web assets are not built. Run `npm run build` in crates/turin-web/frontend.",
+                "Turin Web assets are not built. Run `bun run build` in crates/turin-web/frontend.",
             ));
         }
         Err(error) => {

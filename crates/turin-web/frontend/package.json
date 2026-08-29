@@ -2,6 +2,7 @@
 	"name": "turin-web",
 	"private": true,
 	"version": "0.31.0",
+	"packageManager": "bun@1.4.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",

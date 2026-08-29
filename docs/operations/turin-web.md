@@ -20,7 +20,7 @@ Install frontend dependencies once:
 
 ```sh
 cd crates/turin-web/frontend
-npm install
+bun install
 ```
 
 ## Development
@@ -35,7 +35,7 @@ Run Vite in another terminal:
 
 ```sh
 cd crates/turin-web/frontend
-npm run dev
+bun run dev
 ```
 
 Open the URL printed by Vite. Development `/api` requests are proxied to
@@ -47,8 +47,8 @@ Build the browser assets:
 
 ```sh
 cd crates/turin-web/frontend
-npm run check
-npm run build
+bun run check
+bun run build
 ```
 
 Then run the Rust host from the repository root:
