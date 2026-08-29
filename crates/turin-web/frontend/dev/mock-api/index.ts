@@ -166,6 +166,9 @@ export function turinMockApi(): Plugin {
 		});
 		const responseText = scenario.responseFor(prompt);
 		const messageId = `${requestId}-assistant`;
+		publishEvent('conversation.message.started', {
+			request_id: requestId, session_id: session.id, message_id: messageId
+		});
 		for (const part of responseText.match(/.{1,12}/g) ?? []) {
 			await new Promise((resolve) => setTimeout(resolve, 35));
 			publishEvent('conversation.message.delta', {
@@ -178,8 +181,6 @@ export function turinMockApi(): Plugin {
 		};
 		messages.push(message);
 		session.message_count = (session.message_count ?? 0) + 1;
-		publishEvent('conversation.task.completed', {
-			request_id: requestId, session_id: session.id, message
-		});
+		publishEvent('conversation.task.completed', { request_id: requestId, session_id: session.id });
 	}
 }

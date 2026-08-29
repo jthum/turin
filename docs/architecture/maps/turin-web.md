@@ -17,9 +17,16 @@ browser contracts rather than forwarding the complete control protocol.
 - `crates/turin-web/src/server.rs`
   - HTTP listener lifecycle, daemon connection, and loopback bind policy.
 - `crates/turin-web/src/routes.rs`
-  - Web API contracts, static asset delivery, and SPA fallback.
+  - Top-level HTTP dispatch, static asset delivery, and SPA fallback.
+- `crates/turin-web/src/routes/api.rs`
+  - Browser-owned agent, session, bounded transcript, task submission, and SSE
+    contracts. Daemon event envelopes are translated here and are not exposed
+    directly to the browser.
 - `crates/turin-web/frontend/`
   - SvelteKit 3 static SPA and locally owned shadcn-svelte components.
+- `crates/turin-web/frontend/dev/mock-api/`
+  - Development-only Vite API adapter. It implements the same browser
+    contracts and generates large transcript windows algorithmically.
 - `crates/turin-client/`
   - Typed local/remote Turin operations shared with other clients.
 
@@ -35,6 +42,8 @@ browser contracts rather than forwarding the complete control protocol.
 
 During development, Vite serves the SPA and proxies `/api` to the Rust host.
 Production uses the static adapter output and requires no Node.js process.
+`bun run dev:mock` replaces that proxy with the in-process development mock;
+mock code is not included in production assets.
 
 ## Invariants
 
@@ -42,6 +51,11 @@ Production uses the static adapter output and requires no Node.js process.
   concerns; SvelteKit server routes are not a second backend.
 - Browser contracts are explicit projections. Do not expose daemon protocol
   envelopes or operational paths merely because they are available.
+- Conversation history is fetched in bounded windows. Live text arrives over
+  SSE as task, message-start, delta, completion, and failure events.
+- A selected cold session is resumed before its event subscription is opened;
+  this establishes a live event receiver but does not make browser navigation
+  state part of the Turin runtime.
 - Local bind is the safe default. Non-loopback binding requires explicit opt-in
   and an external authenticated boundary until web authentication is designed.
 - Unknown `/api/*` paths return API errors and never fall through to the SPA.

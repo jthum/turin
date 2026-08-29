@@ -4,12 +4,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 use hyper::body::Incoming;
 use hyper::header::{CACHE_CONTROL, CONTENT_TYPE};
 use hyper::{Method, Request, Response, StatusCode};
 use serde::Serialize;
 use turin_client::{Client, ConnectionKind, ControlHealth};
+
+mod api;
+
+pub(crate) type WebBody = UnsyncBoxBody<Bytes, Infallible>;
 
 pub(crate) struct WebState {
     pub(crate) assets_dir: PathBuf,
@@ -60,7 +64,7 @@ impl From<ControlHealth> for RuntimeHealth {
 pub(crate) async fn handle_http(
     request: Request<Incoming>,
     state: Arc<WebState>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<WebBody>, Infallible> {
     let response = match route(request, &state).await {
         Ok(response) => response,
         Err(error) => {
@@ -74,7 +78,7 @@ pub(crate) async fn handle_http(
     Ok(response)
 }
 
-async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<Full<Bytes>>> {
+async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<WebBody>> {
     match (request.method(), request.uri().path()) {
         (&Method::GET, "/api/healthz") => Ok(json_response(
             StatusCode::OK,
@@ -93,6 +97,11 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
                 },
             ))
         }
+        (&Method::GET, "/api/agents") => api::list_agents(state).await,
+        (&Method::GET, "/api/sessions") => api::list_sessions(&request, state).await,
+        (&Method::POST, "/api/sessions") => api::create_session(request, state).await,
+        (&Method::GET, "/api/events") => api::stream_events(&request, state).await,
+        (_, path) if path.starts_with("/api/sessions/") => api::session_route(request, state).await,
         (_, "/api/healthz" | "/api/bootstrap") => Ok(text_response(
             StatusCode::METHOD_NOT_ALLOWED,
             "Method not allowed",
@@ -114,7 +123,7 @@ async fn serve_asset(
     root: &Path,
     request_path: &str,
     method: &Method,
-) -> Result<Response<Full<Bytes>>> {
+) -> Result<Response<WebBody>> {
     let Some(path) = asset_path(root, request_path) else {
         return Ok(text_response(StatusCode::BAD_REQUEST, "Invalid asset path"));
     };
@@ -157,7 +166,7 @@ async fn serve_asset(
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type(&selected))
         .header(CACHE_CONTROL, cache_control)
-        .body(Full::new(body))
+        .body(Full::new(body).boxed_unsync())
         .expect("static response is valid"))
 }
 
@@ -191,22 +200,22 @@ fn content_type(path: &Path) -> &'static str {
     }
 }
 
-fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<Full<Bytes>> {
+pub(super) fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<WebBody> {
     let body = serde_json::to_vec(value).expect("web response serialization is infallible");
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "application/json; charset=utf-8")
         .header(CACHE_CONTROL, "no-store")
-        .body(Full::new(Bytes::from(body)))
+        .body(Full::new(Bytes::from(body)).boxed_unsync())
         .expect("JSON response is valid")
 }
 
-fn text_response(status: StatusCode, value: &'static str) -> Response<Full<Bytes>> {
+pub(super) fn text_response(status: StatusCode, value: &'static str) -> Response<WebBody> {
     Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "text/plain; charset=utf-8")
         .header(CACHE_CONTROL, "no-store")
-        .body(Full::new(Bytes::from_static(value.as_bytes())))
+        .body(Full::new(Bytes::from_static(value.as_bytes())).boxed_unsync())
         .expect("text response is valid")
 }
 

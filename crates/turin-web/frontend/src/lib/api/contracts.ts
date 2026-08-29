@@ -70,6 +70,11 @@ export type ConversationEventMap = {
 		session_id: string;
 		agent_id: string;
 	};
+	'conversation.message.started': {
+		request_id: string;
+		session_id: string;
+		message_id: string;
+	};
 	'conversation.message.delta': {
 		request_id: string;
 		session_id: string;
@@ -79,7 +84,6 @@ export type ConversationEventMap = {
 	'conversation.task.completed': {
 		request_id: string;
 		session_id: string;
-		message: ConversationMessage;
 	};
 	'conversation.task.failed': {
 		request_id: string;
