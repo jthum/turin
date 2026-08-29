@@ -69,6 +69,9 @@ mock code is not included in production assets.
   navigation destination only when its workflow exists.
 - shadcn-svelte components are source-owned building blocks. Product styling
   may evolve without introducing a runtime component-library dependency.
+- The checked-in shadcn configuration uses the Maia style with the Mist token
+  palette and Outfit variable typography. Extend those generated primitives
+  instead of recreating equivalent controls in product components.
 - Bun is the pinned frontend package manager. `bun.lock` is authoritative; do
   not add npm, pnpm, or Yarn lockfiles alongside it.
 - Harness UI intents remain an experimental runtime capability; this client is
