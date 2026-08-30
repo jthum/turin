@@ -18,7 +18,8 @@ use turin_client::{
 };
 use turin_daemon_protocol::{
     EventEnvelope, MemoryListParams, RuntimeEventsSubscribeParams, SessionSearchHitKind,
-    SessionSearchScope, WorklistItemsParams, WorklistListParams,
+    SessionSearchScope, WorkItemControlAction, WorkItemControlParams, WorkItemDetail,
+    WorklistItemsParams, WorklistListParams,
 };
 use url::form_urlencoded;
 
@@ -75,12 +76,26 @@ struct WebWorklistList {
 #[derive(Serialize)]
 struct WebWorkItem {
     id: String,
+    worklist_id: String,
+    parent_id: Option<String>,
     title: String,
     kind: String,
+    prompt: Option<String>,
+    action_name: Option<String>,
     status: String,
     priority: i64,
     paused: bool,
+    pause_reason: Option<String>,
+    pause_until_unix_ms: Option<i64>,
+    after: Vec<String>,
     claim_agent_id: Option<String>,
+    claim_session_id: Option<String>,
+    claim_execution_id: Option<String>,
+    claim_heartbeat_unix_ms: Option<i64>,
+    claimed_at: Option<String>,
+    completed_at: Option<String>,
+    failure_reason: Option<String>,
+    created_at: String,
     updated_at: String,
 }
 
@@ -88,6 +103,15 @@ struct WebWorkItem {
 struct WebWorkItemList {
     worklist_id: String,
     items: Vec<WebWorkItem>,
+}
+
+#[derive(Deserialize)]
+struct WorkItemControlRequest {
+    action: WorkItemControlAction,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    stale_after_ms: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -307,20 +331,7 @@ pub(super) async fn list_worklist_items(
             limit: Some(200),
         })
         .await?;
-    let items = result
-        .items
-        .into_iter()
-        .map(|item| WebWorkItem {
-            id: item.public_id,
-            title: item.title,
-            kind: item.kind,
-            status: item.status,
-            priority: item.priority,
-            paused: item.paused,
-            claim_agent_id: item.claim_agent_id,
-            updated_at: item.updated_at,
-        })
-        .collect();
+    let items = result.items.into_iter().map(web_work_item).collect();
     Ok(json_response(
         StatusCode::OK,
         &WebWorkItemList {
@@ -328,6 +339,93 @@ pub(super) async fn list_worklist_items(
             items,
         },
     ))
+}
+
+pub(super) async fn work_item_route(
+    request: Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let (work_item_id, resource) = parse_work_item_path(request.uri().path())?;
+    match (request.method(), resource) {
+        (&Method::GET, None) => {
+            let item = state.client.get_workitem(work_item_id, None).await?;
+            Ok(json_response(StatusCode::OK, &web_work_item(item)))
+        }
+        (&Method::POST, Some("control")) => {
+            let input: WorkItemControlRequest = read_json(request).await?;
+            let item = match state
+                .client
+                .control_workitem(WorkItemControlParams {
+                    id: work_item_id.clone(),
+                    action: input.action,
+                    reason: input.reason,
+                    stale_after_ms: input.stale_after_ms,
+                    persistence: None,
+                })
+                .await
+            {
+                Ok(item) => item,
+                Err(error) => {
+                    tracing::info!(%error, %work_item_id, "work item control was rejected");
+                    return Ok(json_response(
+                        StatusCode::CONFLICT,
+                        &serde_json::json!({
+                            "error": "The work item changed or is not eligible for that operation. Refresh and try again."
+                        }),
+                    ));
+                }
+            };
+            Ok(json_response(StatusCode::OK, &web_work_item(item)))
+        }
+        _ => Ok(text_response(StatusCode::NOT_FOUND, "API route not found")),
+    }
+}
+
+fn web_work_item(item: WorkItemDetail) -> WebWorkItem {
+    WebWorkItem {
+        id: item.public_id,
+        worklist_id: item.worklist_id,
+        parent_id: item.parent_id,
+        title: item.title,
+        kind: item.kind,
+        prompt: item.prompt,
+        action_name: item.action.map(|action| action.name),
+        status: item.status,
+        priority: item.priority,
+        paused: item.paused,
+        pause_reason: item.pause_reason,
+        pause_until_unix_ms: item.pause_until_unix_ms,
+        after: item.after.unwrap_or_default(),
+        claim_agent_id: item.claim_agent_id,
+        claim_session_id: item.claim_session_id,
+        claim_execution_id: item.claim_execution_id,
+        claim_heartbeat_unix_ms: item.claim_heartbeat_unix_ms,
+        claimed_at: item.claimed_at,
+        completed_at: item.completed_at,
+        failure_reason: item.failure_reason,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+    }
+}
+
+fn parse_work_item_path(path: &str) -> Result<(String, Option<&str>)> {
+    let path = path
+        .strip_prefix("/api/work-items/")
+        .context("invalid work item path")?;
+    let mut segments = path.split('/');
+    let encoded = segments
+        .next()
+        .filter(|value| !value.is_empty())
+        .context("missing work item id")?;
+    let resource = segments.next();
+    if segments.next().is_some() {
+        bail!("invalid work item path");
+    }
+    let id = form_urlencoded::parse(format!("id={encoded}").as_bytes())
+        .next()
+        .map(|(_, value)| value.into_owned())
+        .context("invalid work item id")?;
+    Ok((id, resource))
 }
 
 pub(super) async fn list_memories(
@@ -1082,6 +1180,15 @@ mod tests {
 
         let (_, resource) = parse_session_path("/api/sessions/session-1/branches").unwrap();
         assert_eq!(resource, SessionResource::Branches);
+    }
+
+    #[test]
+    fn work_item_paths_decode_id_and_control_resource() {
+        assert_eq!(
+            parse_work_item_path("/api/work-items/item%2Fone/control").unwrap(),
+            ("item/one".to_string(), Some("control"))
+        );
+        assert!(parse_work_item_path("/api/work-items/item/unknown/extra").is_err());
     }
 
     #[test]

@@ -26,6 +26,28 @@ function timestamp(index: number): string {
 	return new Date(BASE_TIME + index * 45_000).toISOString();
 }
 
+function workItem(worklistId: string, item: Pick<WorkItem, 'id' | 'title' | 'kind' | 'status' | 'priority' | 'updated_at'> & Partial<WorkItem>): WorkItem {
+	return {
+		worklist_id: worklistId,
+		parent_id: null,
+		prompt: null,
+		action_name: null,
+		paused: false,
+		pause_reason: null,
+		pause_until_unix_ms: null,
+		after: [],
+		claim_agent_id: null,
+		claim_session_id: null,
+		claim_execution_id: null,
+		claim_heartbeat_unix_ms: null,
+		claimed_at: null,
+		completed_at: null,
+		failure_reason: null,
+		created_at: item.updated_at,
+		...item
+	};
+}
+
 function generatedMessage(sessionId: string, index: number): ConversationMessage {
 	const role = index % 2 === 0 ? 'user' : Math.floor(index / 2) % 7 === 5 ? 'tool' : 'assistant';
 	const turn = Math.floor(index / 2) + 1;
@@ -118,12 +140,14 @@ export function createMockScenario(): MockScenario {
 		],
 		workItems: {
 			'worklist-runtime': [
-				{ id: 'item-integrity', title: 'Review persistence integrity failures', kind: 'task', status: 'ready', priority: 80, paused: false, claim_agent_id: null, updated_at: timestamp(54) },
-				{ id: 'item-context', title: 'Validate bounded context retrieval', kind: 'task', status: 'running', priority: 60, paused: false, claim_agent_id: 'default', updated_at: timestamp(56) }
+				workItem('worklist-runtime', { id: 'item-integrity', title: 'Review persistence integrity failures', kind: 'task', status: 'pending', priority: 80, prompt: 'Audit malformed rows and graph-parent failures, then summarize any integrity gaps.', action_name: 'runtime.integrity_review', updated_at: timestamp(54) }),
+				workItem('worklist-runtime', { id: 'item-context', title: 'Validate bounded context retrieval', kind: 'task', status: 'active', priority: 60, prompt: 'Exercise a long session and verify bounded ancestry retrieval.', claim_agent_id: 'default', claim_session_id: 'session-context', claim_execution_id: 'execution-context', claim_heartbeat_unix_ms: Date.now(), claimed_at: timestamp(55), updated_at: timestamp(56) }),
+				workItem('worklist-runtime', { id: 'item-permissions', title: 'Recheck delegated tool permissions', kind: 'review', status: 'paused', priority: 45, paused: true, pause_reason: 'Awaiting operator input', prompt: 'Confirm the child agent receives no broader authority than its parent.', updated_at: timestamp(48) }),
+				workItem('worklist-runtime', { id: 'item-release', title: 'Publish persistence findings', kind: 'task', status: 'done', priority: 20, after: ['item-integrity'], completed_at: timestamp(50), updated_at: timestamp(50) })
 			],
 			'worklist-web': [
-				{ id: 'item-workspace', title: 'Build a useful workspace shell', kind: 'task', status: 'running', priority: 90, paused: false, claim_agent_id: 'default', updated_at: timestamp(62) },
-				{ id: 'item-memory', title: 'Design scalable memory exploration', kind: 'task', status: 'ready', priority: 70, paused: false, claim_agent_id: null, updated_at: timestamp(63) }
+				workItem('worklist-web', { id: 'item-workspace', title: 'Build a useful workspace shell', kind: 'task', status: 'active', priority: 90, prompt: 'Turn the exploratory Work surface into an operator workflow.', claim_agent_id: 'default', claim_session_id: 'session-web', claim_execution_id: 'execution-web', claim_heartbeat_unix_ms: 1, claimed_at: timestamp(61), updated_at: timestamp(62) }),
+				workItem('worklist-web', { id: 'item-memory', title: 'Design scalable memory exploration', kind: 'task', status: 'pending', priority: 70, prompt: 'Design search-first memory inspection without loading all records.', updated_at: timestamp(63) })
 			]
 		},
 		memories: [

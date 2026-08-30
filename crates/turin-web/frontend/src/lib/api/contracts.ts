@@ -41,14 +41,30 @@ export type Worklist = {
 
 export type WorkItem = {
 	id: string;
+	worklist_id: string;
+	parent_id: string | null;
 	title: string;
 	kind: string;
+	prompt: string | null;
+	action_name: string | null;
 	status: string;
 	priority: number;
 	paused: boolean;
+	pause_reason: string | null;
+	pause_until_unix_ms: number | null;
+	after: string[];
 	claim_agent_id: string | null;
+	claim_session_id: string | null;
+	claim_execution_id: string | null;
+	claim_heartbeat_unix_ms: number | null;
+	claimed_at: string | null;
+	completed_at: string | null;
+	failure_reason: string | null;
+	created_at: string;
 	updated_at: string;
 };
+
+export type WorkItemControlAction = 'pause' | 'resume' | 'release_stale';
 
 export type Memory = {
 	id: string;

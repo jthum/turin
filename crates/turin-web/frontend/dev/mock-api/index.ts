@@ -133,6 +133,38 @@ export function turinMockApi(): Plugin {
 					const worklistId = decodeURIComponent(worklistMatch[1]);
 					return sendJson(response, 200, { worklist_id: worklistId, items: scenario.workItems[worklistId] ?? [] });
 				}
+				const workItemMatch = path.match(/^\/api\/work-items\/([^/]+)(?:\/(control))?$/);
+				if (workItemMatch) {
+					const workItemId = decodeURIComponent(workItemMatch[1]);
+					const item = Object.values(scenario.workItems).flat().find((candidate) => candidate.id === workItemId);
+					if (!item) return sendJson(response, 404, { error: 'Work item not found.' });
+					if (request.method === 'GET' && !workItemMatch[2]) return sendJson(response, 200, item);
+					if (request.method === 'POST' && workItemMatch[2] === 'control') {
+						const body = await readJson(request);
+						const action = String(body.action ?? '');
+						if (action === 'pause' && item.status === 'pending' && !item.claim_execution_id) {
+							item.status = 'paused';
+							item.paused = true;
+							item.pause_reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim() : 'Paused by operator';
+						} else if (action === 'resume' && item.status === 'paused') {
+							item.status = 'pending';
+							item.paused = false;
+							item.pause_reason = null;
+							item.pause_until_unix_ms = null;
+						} else if (action === 'release_stale' && item.status === 'active' && (item.claim_heartbeat_unix_ms ?? 0) < Date.now() - Number(body.stale_after_ms ?? 300_000)) {
+							item.status = 'pending';
+							item.claim_agent_id = null;
+							item.claim_session_id = null;
+							item.claim_execution_id = null;
+							item.claim_heartbeat_unix_ms = null;
+							item.claimed_at = null;
+						} else {
+							return sendJson(response, 409, { error: 'The work item changed or the operation is not valid.' });
+						}
+						item.updated_at = new Date().toISOString();
+						return sendJson(response, 200, item);
+					}
+				}
 				if (request.method === 'GET' && path === '/api/memories') {
 					const limit = Number(url.searchParams.get('limit') ?? 100);
 					const offset = Number(url.searchParams.get('offset') ?? 0);

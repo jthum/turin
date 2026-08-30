@@ -105,6 +105,9 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
         (&Method::GET, path) if path.starts_with("/api/worklists/") && path.ends_with("/items") => {
             api::list_worklist_items(&request, state).await
         }
+        (_, path) if path.starts_with("/api/work-items/") => {
+            api::work_item_route(request, state).await
+        }
         (&Method::GET, "/api/memories") => api::list_memories(&request, state).await,
         (&Method::GET, "/api/sessions") => api::list_sessions(&request, state).await,
         (&Method::GET, "/api/search/sessions") => api::search_sessions(&request, state).await,

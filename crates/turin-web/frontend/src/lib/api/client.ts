@@ -11,6 +11,7 @@ import type {
 	SearchHit,
 	SubmittedTask,
 	WorkItem,
+	WorkItemControlAction,
 	Worklist
 } from './contracts.js';
 
@@ -30,7 +31,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		}
 	});
 	if (!response.ok) {
-		const message = await response.text();
+		const text = await response.text();
+		let message = text;
+		try {
+			const body = JSON.parse(text) as { error?: unknown };
+			if (typeof body.error === 'string') message = body.error;
+		} catch {
+			// Plain-text failures are already suitable for display.
+		}
 		throw new Error(message || `Turin returned ${response.status}`);
 	}
 	if (response.status === 204) return undefined as T;
@@ -52,6 +60,17 @@ export class TurinWebClient {
 
 	listWorklistItems(worklistId: string, signal?: AbortSignal): Promise<{ worklist_id: string; items: WorkItem[] }> {
 		return request(`/api/worklists/${encodeURIComponent(worklistId)}/items`, { signal });
+	}
+
+	getWorkItem(workItemId: string, signal?: AbortSignal): Promise<WorkItem> {
+		return request(`/api/work-items/${encodeURIComponent(workItemId)}`, { signal });
+	}
+
+	controlWorkItem(workItemId: string, action: WorkItemControlAction, reason?: string): Promise<WorkItem> {
+		return request(`/api/work-items/${encodeURIComponent(workItemId)}/control`, {
+			method: 'POST',
+			body: JSON.stringify({ action, reason })
+		});
 	}
 
 	listMemories(limit = 100, offset = 0, signal?: AbortSignal): Promise<MemoryPage> {

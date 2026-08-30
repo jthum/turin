@@ -27,6 +27,9 @@ browser contracts rather than forwarding the complete control protocol.
 - `crates/turin-web/frontend/src/lib/components/product/`
   - Product workflow components. Keep navigation, transcript, and composer
     concerns separate as their behavior grows.
+- `crates/turin-web/frontend/src/lib/components/product/work-workspace.svelte`
+  - Worklist filtering, work-item inspection, guarded operator interventions,
+    and navigation to an item's owning session.
 - `crates/turin-web/frontend/dev/mock-api/`
   - Development-only Vite API adapter. It implements the same browser
     contracts and generates large transcript windows algorithmically.
@@ -75,6 +78,9 @@ mock code is not included in production assets.
   startup path does not preload either domain. Worklist rows drill into a
   bounded item view, while memory browsing uses bounded pages and an explicit
   load-more action rather than materializing the complete store.
+- The Work surface is operational without becoming a second executor. It may
+  pause pending work, resume paused work, and request stale-claim release. It
+  does not claim, heartbeat, complete, or fail work on behalf of a harness.
 - Conversation discovery uses Turin's ranked persisted-session search rather
   than filtering only the browser's current page. In-conversation search adds
   a session target and returns bounded message snippets with durable turn IDs;

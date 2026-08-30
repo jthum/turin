@@ -12,7 +12,8 @@
 	import SessionRail from '#lib/components/product/session-rail.svelte';
 	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
 	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
-	import type { Agent, ConversationMessage, Harness, Memory, SearchHit, Session, WorkItem, Worklist } from '#lib/api/contracts.js';
+	import WorkWorkspace from '#lib/components/product/work-workspace.svelte';
+	import type { Agent, ConversationMessage, Harness, Memory, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
@@ -27,7 +28,9 @@
 	let worklists = $state<Worklist[]>([]);
 	let selectedWorklist = $state<Worklist | null>(null);
 	let workItems = $state<WorkItem[]>([]);
+	let selectedWorkItem = $state<WorkItem | null>(null);
 	let loadingWorkItems = $state(false);
+	let controllingWorkItem = $state(false);
 	let memories = $state<Memory[]>([]);
 	let memoryTotal = $state(0);
 	let loadingMoreMemories = $state(false);
@@ -204,6 +207,7 @@
 		messageTotal = 0;
 		if (section === 'work') {
 			selectedWorklist = null;
+			selectedWorkItem = null;
 			workItems = [];
 		}
 		void loadSection(section);
@@ -229,6 +233,7 @@
 
 	async function openWorklist(worklist: Worklist) {
 		selectedWorklist = worklist;
+		selectedWorkItem = null;
 		workItems = [];
 		loadingWorkItems = true;
 		try {
@@ -238,6 +243,47 @@
 		} finally {
 			loadingWorkItems = false;
 		}
+	}
+
+	async function openWorkItem(item: WorkItem) {
+		selectedWorkItem = item;
+		try {
+			selectedWorkItem = await turinWeb.getWorkItem(item.id);
+		} catch (cause) {
+			showError(cause, 'Work item details could not be loaded.');
+		}
+	}
+
+	async function controlWorkItem(action: WorkItemControlAction, reason?: string) {
+		if (!selectedWorkItem || controllingWorkItem) return;
+		controllingWorkItem = true;
+		try {
+			const updated = await turinWeb.controlWorkItem(selectedWorkItem.id, action, reason);
+			selectedWorkItem = updated;
+			workItems = workItems.map((item) => item.id === updated.id ? updated : item);
+		} catch (cause) {
+			showError(cause, 'The work item could not be updated.');
+		} finally {
+			controllingWorkItem = false;
+		}
+	}
+
+	async function openWorkItemSession(item: WorkItem) {
+		if (!item.claim_session_id || !item.claim_agent_id) return;
+		const agent = agents.find((candidate) => candidate.id === item.claim_agent_id);
+		if (agent && agent.harness_id !== selectedHarnessId) await selectHarness(agent.harness_id);
+		const existing = sessions.find((session) => session.id === item.claim_session_id);
+		const session = existing ?? {
+			id: item.claim_session_id,
+			title: item.title,
+			agent_id: item.claim_agent_id,
+			created_at: item.claimed_at ?? item.created_at,
+			message_count: null,
+			visibility: 'private',
+			relation_kind: 'work_item'
+		};
+		if (!existing) sessions = [session, ...sessions];
+		await selectSession(session);
 	}
 
 	async function loadMoreMemories() {
@@ -654,9 +700,11 @@
 				<ConversationTranscript bind:this={transcriptView} bind:ref={transcript} session={selected} agentName={selectedAgentName} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {newestOffset} {olderOffset} {submitting} {streamMessageId} {focusedMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onJumpToPosition={jumpToConversationPosition} onJumpToEnd={jumpToLatest} onSearchHit={jumpToSearchHit} onFork={forkFromMessage} onCreate={beginConversation} />
 			</div>
 			{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
+		{:else if activeSection === 'work'}
+			<WorkWorkspace {worklists} {selectedWorklist} {workItems} {selectedWorkItem} loading={loadingSections.includes('work') || loadingWorkItems} controlling={controllingWorkItem} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; selectedWorkItem = null; workItems = []; }} onOpenItem={openWorkItem} onCloseItem={() => selectedWorkItem = null} onControlItem={controlWorkItem} onOpenSession={openWorkItemSession} />
 		{:else}
 			{#key activeSection}
-				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} {worklists} {selectedWorklist} {workItems} {memories} {memoryTotal} loading={loadingSections.includes(activeSection)} {loadingWorkItems} {loadingMoreMemories} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; workItems = []; }} onLoadMoreMemories={loadMoreMemories} />
+				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} {memories} {memoryTotal} loading={loadingSections.includes(activeSection)} {loadingMoreMemories} onLoadMoreMemories={loadMoreMemories} />
 			{/key}
 		{/if}
 		</Sidebar.Inset>
