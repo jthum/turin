@@ -175,7 +175,7 @@ impl DaemonState {
                 );
             }
             WorkItemControlAction::ReleaseStale => {
-                let stale_after_ms = params.stale_after_ms.unwrap_or(60_000);
+                let stale_after_ms = params.stale_after_ms.unwrap_or(300_000);
                 let now_unix_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_else(|_| Duration::from_secs(0))
