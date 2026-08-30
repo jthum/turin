@@ -20,7 +20,15 @@ export type Agent = {
 	name: string;
 	provider: string;
 	model: string;
+	harness_id: string;
 	enabled: boolean;
+};
+
+export type Harness = {
+	id: string;
+	name: string;
+	bound_agent_ids: string[];
+	has_ui: boolean;
 };
 
 export type Session = {
@@ -46,6 +54,18 @@ export type ConversationMessage = {
 	content: string;
 	created_at: string;
 	token_count: number | null;
+	metrics?: {
+		input_tokens: number;
+		output_tokens: number;
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
+		provider?: string;
+		model?: string;
+	};
+	reasoning?: {
+		duration_ms: number;
+		summary: string;
+	};
 };
 
 export type MessagePage = {

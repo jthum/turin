@@ -3,6 +3,7 @@ import type {
 	ConversationEventMap,
 	ConversationEventName,
 	CreatedSession,
+	Harness,
 	MessagePage,
 	Session,
 	SessionPage,
@@ -33,6 +34,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export class TurinWebClient {
+	listHarnesses(signal?: AbortSignal): Promise<{ harnesses: Harness[] }> {
+		return request('/api/harnesses', { signal });
+	}
+
 	listAgents(signal?: AbortSignal): Promise<{ agents: Agent[] }> {
 		return request('/api/agents', { signal });
 	}
@@ -48,9 +53,14 @@ export class TurinWebClient {
 		});
 	}
 
-	loadMessages(sessionId: string, limit = 80, offset = 0, signal?: AbortSignal): Promise<MessagePage> {
+	loadMessages(
+		sessionId: string,
+		options: { limit?: number; offset?: number; total?: number; signal?: AbortSignal } = {}
+	): Promise<MessagePage> {
+		const { limit = 80, offset = 0, total, signal } = options;
+		const totalQuery = total === undefined ? '' : `&total=${total}`;
 		return request(
-			`/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`,
+			`/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${totalQuery}`,
 			{ signal }
 		);
 	}
@@ -64,6 +74,13 @@ export class TurinWebClient {
 
 	deleteSession(sessionId: string): Promise<void> {
 		return request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+	}
+
+	createBranch(sessionId: string, turnId: string, activate: boolean): Promise<{ branch: unknown }> {
+		return request(`/api/sessions/${encodeURIComponent(sessionId)}/branches`, {
+			method: 'POST',
+			body: JSON.stringify({ turn_id: turnId, activate })
+		});
 	}
 
 	submitMessage(sessionId: string, content: string): Promise<SubmittedTask> {

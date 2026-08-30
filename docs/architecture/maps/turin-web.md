@@ -54,10 +54,29 @@ mock code is not included in production assets.
   concerns; SvelteKit server routes are not a second backend.
 - Browser contracts are explicit projections. Do not expose daemon protocol
   envelopes or operational paths merely because they are available.
+- Browser transcript offsets count backward from the latest message. The Rust
+  boundary translates them to persistence's oldest-first window offsets and
+  returns the resolved boundary because complete turns may widen a page.
+- New-conversation state remains browser-local until the first message is sent;
+  merely opening and abandoning the composer does not create a durable session.
+- Message actions may create an exact-turn branch through the narrow web API.
+  The browser sends a durable turn ID and does not reproduce graph semantics.
+- Assistant message details project Turin's existing per-turn efficiency data.
+  Input, output, and provider cache tokens are shown only when reported; the
+  web client does not estimate provider cost or invent unavailable metrics.
+- Harness selection is local presentation state. Turin Web exposes harness
+  identity and agent bindings without creating a runtime-global active harness.
 - Conversation history is fetched in bounded windows. Live text arrives over
   SSE as task, message-start, delta, completion, and failure events.
 - The conversation client keeps a bounded resident transcript and can slide in
-  both directions. Evicted messages remain retrievable from the API.
+  both directions. Scroll boundaries fetch adjacent windows automatically,
+  while a variable-height virtualizer limits mounted message views to the
+  viewport and overscan. A proportional conversation map may seek directly to
+  another bounded window without materializing the intervening transcript.
+  Evicted messages remain retrievable from the API.
+- Explicit conversation navigation is latest-intent-wins. It aborts any older
+  browser window request and ignores obsolete responses, while automatic
+  scroll-boundary loading never starts a competing request.
 - Provider message content is untrusted. The browser may render Markdown, but
   raw HTML and unsafe link schemes must not become executable markup. Remote
   images require deliberate user navigation rather than automatic loading.

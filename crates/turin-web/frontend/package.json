@@ -40,6 +40,7 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"dependencies": {
+		"@tanstack/svelte-virtual": "^3.13.36",
 		"marked": "^18.0.11"
 	}
 }

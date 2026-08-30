@@ -42,7 +42,8 @@ export function turinMockApi(): Plugin {
 		const generatedCount = scenario.messageCount(sessionId);
 		const additions = appended.get(sessionId) ?? [];
 		const total = generatedCount + additions.length;
-		const end = Math.max(0, total - offset);
+		const resolvedOffset = Math.min(total, Math.max(0, offset));
+		const end = Math.max(0, total - resolvedOffset);
 		const start = Math.max(0, end - limit);
 		const messages: ConversationMessage[] = [];
 		for (let index = start; index < end; index += 1) {
@@ -52,7 +53,7 @@ export function turinMockApi(): Plugin {
 					: additions[index - generatedCount]
 			);
 		}
-		return { messages, offset, total, has_more: start > 0 };
+		return { messages, offset: resolvedOffset, total, has_more: start > 0 };
 	}
 
 	return {
@@ -68,13 +69,16 @@ export function turinMockApi(): Plugin {
 						web_version: 'mock',
 						runtime: {
 							connection_kind: 'mock', ready: true, version: 'mock', protocol_version: 1,
-							issue_count: 0, agent_count: scenario.agents.length, harness_count: 1,
+							issue_count: 0, agent_count: scenario.agents.length, harness_count: scenario.harnesses.length,
 							running_agent_count: scenario.agents.length, active_task_count: 0
 						}
 					});
 				}
 				if (request.method === 'GET' && path === '/api/agents') {
 					return sendJson(response, 200, { agents: scenario.agents });
+				}
+				if (request.method === 'GET' && path === '/api/harnesses') {
+					return sendJson(response, 200, { harnesses: scenario.harnesses });
 				}
 				if (request.method === 'GET' && path === '/api/sessions') {
 					const limit = Number(url.searchParams.get('limit') ?? 50);
@@ -96,7 +100,7 @@ export function turinMockApi(): Plugin {
 					return sendJson(response, 201, { session });
 				}
 
-				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages))?$/);
+				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|branches))?$/);
 				if (match) {
 					const sessionId = decodeURIComponent(match[1]);
 					const session = sessions.get(sessionId);
@@ -118,6 +122,16 @@ export function turinMockApi(): Plugin {
 						sessions.delete(sessionId);
 						response.writeHead(204).end();
 						return;
+					}
+					if (request.method === 'POST' && match[2] === 'branches') {
+						const body = await readJson(request);
+						return sendJson(response, 201, {
+							branch: {
+								branch_id: `mock-branch-${nextId++}`,
+								name: `Fork from ${String(body.turn_id ?? 'turn')}`,
+								active: Boolean(body.activate)
+							}
+						});
 					}
 					if (request.method === 'POST' && match[2] === 'messages') {
 						const body = await readJson(request);

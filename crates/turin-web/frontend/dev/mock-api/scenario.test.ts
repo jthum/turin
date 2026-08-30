@@ -20,3 +20,17 @@ test('stream behavior is selected independently of response content', () => {
 	expect(response.mode).toBe('interrupt');
 	expect(response.text).toContain('Inspect the stream');
 });
+
+test('long transcripts exercise rich response surfaces', () => {
+	const scenario = createMockScenario();
+	const orderedList = scenario.messageAt('session-long', 1);
+	const table = scenario.messageAt('session-long', 3);
+	const reasoning = scenario.messageAt('session-long', 7);
+	const tool = scenario.messageAt('session-long', 11);
+
+	expect(orderedList.content).toContain('1. Verify');
+	expect(table.content).toContain('| Concern |');
+	expect(reasoning.reasoning?.duration_ms).toBeGreaterThan(0);
+	expect(reasoning.metrics?.input_tokens).toBeGreaterThan(0);
+	expect(tool.role).toBe('tool');
+});

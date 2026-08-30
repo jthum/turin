@@ -65,10 +65,12 @@ pub(crate) async fn handle_http(
     request: Request<Incoming>,
     state: Arc<WebState>,
 ) -> Result<Response<WebBody>, Infallible> {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
     let response = match route(request, &state).await {
         Ok(response) => response,
         Err(error) => {
-            tracing::warn!(%error, "turin-web request failed");
+            tracing::warn!(%method, %uri, error = ?error, "turin-web request failed");
             json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &serde_json::json!({ "error": "The request could not be completed." }),
@@ -97,6 +99,7 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
                 },
             ))
         }
+        (&Method::GET, "/api/harnesses") => api::list_harnesses(state).await,
         (&Method::GET, "/api/agents") => api::list_agents(state).await,
         (&Method::GET, "/api/sessions") => api::list_sessions(&request, state).await,
         (&Method::POST, "/api/sessions") => api::create_session(request, state).await,

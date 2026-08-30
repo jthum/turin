@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
@@ -12,7 +12,10 @@ use hyper::{Method, Request, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{MissedTickBehavior, interval};
-use turin_client::{ManagedEventStream, SessionMessageDetail, SessionSummary};
+use turin_client::{
+    ManagedEventStream, SessionBranchDetail, SessionEfficiencyDetail, SessionMessageDetail,
+    SessionSummary,
+};
 use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
 use url::form_urlencoded;
 
@@ -30,11 +33,25 @@ struct AgentList {
 }
 
 #[derive(Serialize)]
+struct HarnessList {
+    harnesses: Vec<WebHarness>,
+}
+
+#[derive(Serialize)]
+struct WebHarness {
+    id: String,
+    name: String,
+    bound_agent_ids: Vec<String>,
+    has_ui: bool,
+}
+
+#[derive(Serialize)]
 struct WebAgent {
     id: String,
     name: String,
     provider: String,
     model: String,
+    harness_id: String,
     enabled: bool,
 }
 
@@ -67,6 +84,22 @@ struct WebMessage {
     content: String,
     created_at: String,
     token_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<WebMessageMetrics>,
+}
+
+#[derive(Clone, Serialize)]
+struct WebMessageMetrics {
+    input_tokens: u64,
+    output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_read_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +125,18 @@ struct SubmitMessageRequest {
     content: String,
 }
 
+#[derive(Deserialize)]
+struct CreateBranchRequest {
+    turn_id: String,
+    #[serde(default)]
+    activate: bool,
+}
+
+#[derive(Serialize)]
+struct BranchResponse {
+    branch: SessionBranchDetail,
+}
+
 #[derive(Serialize)]
 struct SubmittedTask {
     request_id: String,
@@ -105,14 +150,31 @@ pub(super) async fn list_agents(state: &WebState) -> Result<Response<WebBody>> {
         .agents
         .into_iter()
         .map(|agent| WebAgent {
-            name: display_name(&agent.id),
+            name: agent_display_name(&agent.id),
             id: agent.id,
             provider: agent.provider,
             model: agent.model,
+            harness_id: agent.harness_ref,
             enabled: agent.enabled,
         })
         .collect();
     Ok(json_response(StatusCode::OK, &AgentList { agents }))
+}
+
+pub(super) async fn list_harnesses(state: &WebState) -> Result<Response<WebBody>> {
+    let harnesses = state
+        .client
+        .list_harnesses()
+        .await?
+        .into_iter()
+        .map(|harness| WebHarness {
+            name: harness_display_name(&harness.harness_id),
+            id: harness.harness_id,
+            bound_agent_ids: harness.bound_agents,
+            has_ui: !harness.ui_intents.is_empty(),
+        })
+        .collect();
+    Ok(json_response(StatusCode::OK, &HarnessList { harnesses }))
 }
 
 pub(super) async fn list_sessions(
@@ -155,17 +217,55 @@ pub(super) async fn session_route(
     request: Request<Incoming>,
     state: &WebState,
 ) -> Result<Response<WebBody>> {
-    let (session_id, messages) = parse_session_path(request.uri().path())?;
-    match (request.method(), messages) {
-        (&Method::GET, true) => get_messages(&request, state, &session_id).await,
-        (&Method::POST, true) => submit_message(request, state, &session_id).await,
-        (&Method::PATCH, false) => rename_session(request, state, &session_id).await,
-        (&Method::DELETE, false) => delete_session(state, &session_id).await,
+    let (session_id, resource) = parse_session_path(request.uri().path())?;
+    match (request.method(), resource) {
+        (&Method::GET, SessionResource::Messages) => {
+            get_messages(&request, state, &session_id).await
+        }
+        (&Method::POST, SessionResource::Messages) => {
+            submit_message(request, state, &session_id).await
+        }
+        (&Method::POST, SessionResource::Branches) => {
+            create_branch(request, state, &session_id).await
+        }
+        (&Method::PATCH, SessionResource::Session) => {
+            rename_session(request, state, &session_id).await
+        }
+        (&Method::DELETE, SessionResource::Session) => delete_session(state, &session_id).await,
         _ => Ok(text_response(
             StatusCode::METHOD_NOT_ALLOWED,
             "Method not allowed",
         )),
     }
+}
+
+async fn create_branch(
+    request: Request<Incoming>,
+    state: &WebState,
+    session_id: &str,
+) -> Result<Response<WebBody>> {
+    let input: CreateBranchRequest = read_json(request).await?;
+    let turn_id = required(&input.turn_id, "turn_id")?
+        .parse::<i64>()
+        .context("turn_id must identify a durable turn")?;
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let branch = state
+        .client
+        .create_session_branch_from_turn_id(
+            session_id,
+            None,
+            &format!("fork-{turn_id}-{suffix}"),
+            turn_id,
+            input.activate,
+        )
+        .await?;
+    Ok(json_response(
+        StatusCode::CREATED,
+        &BranchResponse { branch },
+    ))
 }
 
 async fn get_messages(
@@ -175,25 +275,76 @@ async fn get_messages(
 ) -> Result<Response<WebBody>> {
     let query = query_values(request.uri().query());
     let limit = bounded_usize(&query, "limit", DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT)?;
-    let offset = bounded_usize(&query, "offset", 0, usize::MAX)?;
-    let detail = state
-        .client
-        .get_session_window_at(session_id, limit, Some(offset))
-        .await?;
+    let offset_from_end = bounded_usize(&query, "offset", 0, usize::MAX)?;
+    let detail = if offset_from_end == 0 {
+        state
+            .client
+            .get_session_window(session_id, limit)
+            .await
+            .with_context(|| {
+                format!("failed to load latest message window for session '{session_id}'")
+            })?
+    } else {
+        let total_hint = match query.get("total") {
+            Some(value) => value
+                .parse::<usize>()
+                .context("total must be a non-negative integer")?,
+            None => {
+                let recent = state.client.get_session_window(session_id, 1).await?;
+                recent
+                    .message_window
+                    .as_ref()
+                    .map_or(recent.messages.len(), |window| window.total)
+            }
+        };
+        let start = oldest_first_window_start(total_hint, offset_from_end, limit);
+        state
+            .client
+            .get_session_window_at(session_id, limit, Some(start))
+			.await
+			.with_context(|| {
+				format!(
+					"failed to load message window for session '{session_id}' (offset_from_end={offset_from_end}, oldest_first_start={start}, limit={limit}, total_hint={total_hint})"
+				)
+			})?
+    };
     let total = detail
         .message_window
         .as_ref()
         .map_or(detail.messages.len(), |window| window.total);
     let loaded = detail.messages.len();
+    let persisted_start = detail
+        .message_window
+        .as_ref()
+        .map_or(0, |window| window.offset);
+    let resolved_offset = newest_first_window_offset(total, persisted_start, loaded);
+    let metrics = message_metrics(detail.efficiency.as_ref());
     Ok(json_response(
         StatusCode::OK,
         &MessagePage {
-            messages: detail.messages.into_iter().map(web_message).collect(),
-            offset,
+            messages: detail
+                .messages
+                .into_iter()
+                .map(|message| {
+                    let turn_metrics = (message.role == "assistant")
+                        .then(|| metrics.get(&message.turn_index).cloned())
+                        .flatten();
+                    web_message(message, turn_metrics)
+                })
+                .collect(),
+            offset: resolved_offset,
             total,
-            has_more: offset + loaded < total,
+            has_more: resolved_offset.saturating_add(loaded) < total,
         },
     ))
+}
+
+fn oldest_first_window_start(total: usize, offset_from_end: usize, limit: usize) -> usize {
+    total.saturating_sub(offset_from_end.saturating_add(limit))
+}
+
+fn newest_first_window_offset(total: usize, start: usize, loaded: usize) -> usize {
+    total.saturating_sub(start.saturating_add(loaded))
 }
 
 async fn rename_session(
@@ -453,7 +604,50 @@ fn web_session(session: SessionSummary) -> WebSession {
     }
 }
 
-fn web_message(message: SessionMessageDetail) -> WebMessage {
+fn message_metrics(
+    efficiency: Option<&SessionEfficiencyDetail>,
+) -> HashMap<u32, WebMessageMetrics> {
+    let Some(efficiency) = efficiency else {
+        return HashMap::new();
+    };
+    efficiency
+        .turns
+        .iter()
+        .map(|turn| {
+            let latest = turn.requests.last();
+            let cache_read_input_tokens = efficiency.provider_cache_metrics_available.then(|| {
+                turn.requests
+                    .iter()
+                    .filter_map(|request| request.cache_read_input_tokens)
+                    .sum()
+            });
+            let cache_creation_input_tokens =
+                efficiency.provider_cache_metrics_available.then(|| {
+                    turn.requests
+                        .iter()
+                        .filter_map(|request| request.cache_creation_input_tokens)
+                        .sum()
+                });
+            (
+                turn.turn_index,
+                WebMessageMetrics {
+                    input_tokens: turn.input_tokens,
+                    output_tokens: turn.output_tokens,
+                    cache_read_input_tokens,
+                    cache_creation_input_tokens,
+                    provider: latest
+                        .and_then(|request| request.metrics.as_ref())
+                        .map(|metrics| metrics.provider.clone()),
+                    model: latest
+                        .and_then(|request| request.metrics.as_ref())
+                        .map(|metrics| metrics.model.clone()),
+                },
+            )
+        })
+        .collect()
+}
+
+fn web_message(message: SessionMessageDetail, metrics: Option<WebMessageMetrics>) -> WebMessage {
     WebMessage {
         id: message.id.to_string(),
         turn_id: message.turn_id.to_string(),
@@ -463,6 +657,7 @@ fn web_message(message: SessionMessageDetail) -> WebMessage {
         token_count: message
             .token_count
             .or(message.estimated_token_count.map(u64::from)),
+        metrics,
     }
 }
 
@@ -497,13 +692,38 @@ fn display_name(id: &str) -> String {
         .join(" ")
 }
 
-fn parse_session_path(path: &str) -> Result<(String, bool)> {
+fn agent_display_name(id: &str) -> String {
+    match id {
+        "default" => "Turin".to_owned(),
+        _ => display_name(id),
+    }
+}
+
+fn harness_display_name(id: &str) -> String {
+    match id {
+        "default" => "General".to_owned(),
+        _ => display_name(id),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SessionResource {
+    Session,
+    Messages,
+    Branches,
+}
+
+fn parse_session_path(path: &str) -> Result<(String, SessionResource)> {
     let suffix = path
         .strip_prefix("/api/sessions/")
         .context("invalid session path")?;
-    let (encoded, messages) = suffix
-        .strip_suffix("/messages")
-        .map_or((suffix, false), |id| (id, true));
+    let (encoded, resource) = if let Some(id) = suffix.strip_suffix("/messages") {
+        (id, SessionResource::Messages)
+    } else if let Some(id) = suffix.strip_suffix("/branches") {
+        (id, SessionResource::Branches)
+    } else {
+        (suffix, SessionResource::Session)
+    };
     if encoded.is_empty() || encoded.contains('/') {
         bail!("invalid session path");
     }
@@ -511,7 +731,7 @@ fn parse_session_path(path: &str) -> Result<(String, bool)> {
         .next()
         .map(|(_, value)| value.into_owned())
         .context("invalid session id")?;
-    Ok((session_id, messages))
+    Ok((session_id, resource))
 }
 
 fn query_values(query: Option<&str>) -> HashMap<String, String> {
@@ -562,10 +782,13 @@ mod tests {
 
     #[test]
     fn session_paths_decode_opaque_ids() {
-        let (session_id, messages) =
+        let (session_id, resource) =
             parse_session_path("/api/sessions/id%40%2Ftmp%2Fstate/messages").unwrap();
         assert_eq!(session_id, "id@/tmp/state");
-        assert!(messages);
+        assert_eq!(resource, SessionResource::Messages);
+
+        let (_, resource) = parse_session_path("/api/sessions/session-1/branches").unwrap();
+        assert_eq!(resource, SessionResource::Branches);
     }
 
     #[test]
@@ -612,5 +835,21 @@ mod tests {
         )
         .unwrap();
         assert!(delta.contains("\"delta\":\"Hi\""));
+    }
+
+    #[test]
+    fn browser_message_offsets_are_translated_at_the_web_boundary() {
+        assert_eq!(oldest_first_window_start(1_000, 0, 80), 920);
+        assert_eq!(oldest_first_window_start(1_000, 400, 80), 520);
+        assert_eq!(oldest_first_window_start(30, 900, 80), 0);
+        assert_eq!(newest_first_window_offset(1_000, 520, 80), 400);
+        assert_eq!(newest_first_window_offset(30, 0, 30), 0);
+    }
+
+    #[test]
+    fn bootstrap_ids_use_product_facing_names() {
+        assert_eq!(agent_display_name("default"), "Turin");
+        assert_eq!(harness_display_name("default"), "General");
+        assert_eq!(agent_display_name("release_operator"), "Release Operator");
     }
 }
