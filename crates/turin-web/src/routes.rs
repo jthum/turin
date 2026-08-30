@@ -101,7 +101,13 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
         }
         (&Method::GET, "/api/harnesses") => api::list_harnesses(state).await,
         (&Method::GET, "/api/agents") => api::list_agents(state).await,
+        (&Method::GET, "/api/worklists") => api::list_worklists(state).await,
+        (&Method::GET, path) if path.starts_with("/api/worklists/") && path.ends_with("/items") => {
+            api::list_worklist_items(&request, state).await
+        }
+        (&Method::GET, "/api/memories") => api::list_memories(&request, state).await,
         (&Method::GET, "/api/sessions") => api::list_sessions(&request, state).await,
+        (&Method::GET, "/api/search/sessions") => api::search_sessions(&request, state).await,
         (&Method::POST, "/api/sessions") => api::create_session(request, state).await,
         (&Method::GET, "/api/events") => api::stream_events(&request, state).await,
         (_, path) if path.starts_with("/api/sessions/") => api::session_route(request, state).await,

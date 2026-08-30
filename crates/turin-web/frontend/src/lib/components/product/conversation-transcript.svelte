@@ -5,9 +5,10 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as ScrollArea from '#lib/components/ui/scroll-area/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-	import type { ConversationMessage, Session } from '#lib/api/contracts.js';
+	import type { ConversationMessage, SearchHit, Session } from '#lib/api/contracts.js';
 	import ConversationMap from './conversation-map.svelte';
 	import ConversationMessageView from './conversation-message.svelte';
+	import ConversationSearch from './conversation-search.svelte';
 
 	let {
 		ref = $bindable(), session, agentName, messages, loading, loadingWindow, hasOlder, hasNewer,
@@ -111,9 +112,18 @@
 		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 		ref?.scrollTo({ top: ref.scrollHeight, behavior });
 	}
+
+	function selectSearchHit(hit: SearchHit) {
+		if (hit.turn_index === null || messageTotal <= 1) return;
+		const estimatedMessageIndex = hit.turn_index * 2;
+		onJumpToPosition(Math.min(1, estimatedMessageIndex / (messageTotal - 1)));
+	}
 </script>
 
 <div class="relative h-full min-h-0">
+{#if session && !session.id.startsWith('draft:')}
+	<div class="absolute right-9 top-3 z-30"><ConversationSearch sessionId={session.id} onSelect={selectSearchHit} /></div>
+{/if}
 <ScrollArea.Root bind:viewportRef={ref} class="min-h-0 h-full bg-background" scrollbarYClasses="py-2">
 	{#if loading}
 		<div class="flex h-full min-h-96 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle class="size-4 animate-spin" />Loading conversation</div>

@@ -1,21 +1,26 @@
 <script lang="ts">
-	import { Check, ChevronDown, MoreHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { Check, ChevronDown, Menu, MoreHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import type { Harness, Session } from '#lib/api/contracts.js';
+	import { workspaceLabels, type WorkspaceSection } from '#lib/workspace.js';
 
 	let {
 		harnesses,
 		selectedHarnessId,
 		session,
+		section,
 		onSelect,
+		onNavigate,
 		onDelete
 	}: {
 		harnesses: Harness[];
 		selectedHarnessId: string;
 		session: Session | null;
+		section: WorkspaceSection;
 		onSelect: (harnessId: string) => void;
+		onNavigate: (section: WorkspaceSection) => void;
 		onDelete: () => void;
 	} = $props();
 
@@ -53,11 +58,23 @@
 	</div>
 
 	<div class="hidden min-w-0 px-6 text-center md:block">
-		<span class="block truncate text-sm font-medium">{session?.title ?? 'Conversations'}</span>
+		{#if session}<span class="block truncate text-sm font-medium">{session.title}</span>{/if}
 	</div>
 
 	<div class="flex items-center justify-end gap-1">
-		<Sidebar.Trigger aria-label="Toggle conversations" />
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props })}<Button {...props} variant="ghost" size="icon" class="md:hidden" aria-label="Open workspace navigation"><Menu class="size-4" /></Button>{/snippet}
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content align="end" class="w-52">
+				<DropdownMenu.Label>Workspace</DropdownMenu.Label>
+				<DropdownMenu.Separator />
+				{#each Object.entries(workspaceLabels) as [id, label]}
+					<DropdownMenu.Item onclick={() => onNavigate(id as WorkspaceSection)}>{label}{#if section === id}<Check class="ml-auto" />{/if}</DropdownMenu.Item>
+				{/each}
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
+		{#if section === 'conversations' && session}<Sidebar.Trigger aria-label="Toggle conversations" />{/if}
 		{#if session}
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>

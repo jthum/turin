@@ -16,7 +16,10 @@ use turin_client::{
     ManagedEventStream, SessionBranchDetail, SessionEfficiencyDetail, SessionMessageDetail,
     SessionSummary,
 };
-use turin_daemon_protocol::{EventEnvelope, RuntimeEventsSubscribeParams};
+use turin_daemon_protocol::{
+    EventEnvelope, MemoryListParams, RuntimeEventsSubscribeParams, SessionSearchScope,
+    WorklistItemsParams, WorklistListParams,
+};
 use url::form_urlencoded;
 
 use super::{WebBody, WebState, json_response, text_response};
@@ -55,6 +58,74 @@ struct WebAgent {
     enabled: bool,
 }
 
+#[derive(Serialize)]
+struct WebWorklist {
+    id: String,
+    name: String,
+    scope: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct WebWorklistList {
+    worklists: Vec<WebWorklist>,
+}
+
+#[derive(Serialize)]
+struct WebWorkItem {
+    id: String,
+    title: String,
+    kind: String,
+    status: String,
+    priority: i64,
+    paused: bool,
+    claim_agent_id: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct WebWorkItemList {
+    worklist_id: String,
+    items: Vec<WebWorkItem>,
+}
+
+#[derive(Serialize)]
+struct WebMemory {
+    id: String,
+    scope_kind: String,
+    scope_key: String,
+    content: String,
+    storage: String,
+    weight: f64,
+    retrieval_count: u64,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct WebMemoryList {
+    memories: Vec<WebMemory>,
+    total: u64,
+    offset: u32,
+    limit: u32,
+}
+
+#[derive(Serialize)]
+struct WebSearchHit {
+    session_id: String,
+    agent_id: String,
+    title: Option<String>,
+    created_at: String,
+    turn_index: Option<u32>,
+    role: Option<String>,
+    snippet: String,
+}
+
+#[derive(Serialize)]
+struct WebSearchResults {
+    hits: Vec<WebSearchHit>,
+}
+
 #[derive(Clone, Serialize)]
 struct WebSession {
     id: String,
@@ -62,6 +133,8 @@ struct WebSession {
     agent_id: String,
     created_at: String,
     message_count: Option<usize>,
+    visibility: String,
+    relation_kind: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -177,6 +250,162 @@ pub(super) async fn list_harnesses(state: &WebState) -> Result<Response<WebBody>
     Ok(json_response(StatusCode::OK, &HarnessList { harnesses }))
 }
 
+pub(super) async fn list_worklists(state: &WebState) -> Result<Response<WebBody>> {
+    let worklists = state
+        .client
+        .list_worklists(WorklistListParams {
+            persistence: None,
+            name: None,
+            scope: None,
+        })
+        .await?
+        .into_iter()
+        .map(|worklist| WebWorklist {
+            id: worklist.public_id,
+            name: worklist.name,
+            scope: worklist.scope_ref,
+            created_at: worklist.created_at,
+            updated_at: worklist.updated_at,
+        })
+        .collect();
+    Ok(json_response(
+        StatusCode::OK,
+        &WebWorklistList { worklists },
+    ))
+}
+
+pub(super) async fn list_worklist_items(
+    request: &Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let encoded = request
+        .uri()
+        .path()
+        .strip_prefix("/api/worklists/")
+        .and_then(|path| path.strip_suffix("/items"))
+        .filter(|path| !path.is_empty() && !path.contains('/'))
+        .context("invalid worklist items path")?;
+    let worklist_id = form_urlencoded::parse(format!("id={encoded}").as_bytes())
+        .next()
+        .map(|(_, value)| value.into_owned())
+        .context("invalid worklist id")?;
+    let result = state
+        .client
+        .list_worklist_items(WorklistItemsParams {
+            id: worklist_id,
+            persistence: None,
+            status: None,
+            parent_id: None,
+            r#where: None,
+            claimed_only: false,
+            paused_only: false,
+            due_only: false,
+            limit: Some(200),
+        })
+        .await?;
+    let items = result
+        .items
+        .into_iter()
+        .map(|item| WebWorkItem {
+            id: item.public_id,
+            title: item.title,
+            kind: item.kind,
+            status: item.status,
+            priority: item.priority,
+            paused: item.paused,
+            claim_agent_id: item.claim_agent_id,
+            updated_at: item.updated_at,
+        })
+        .collect();
+    Ok(json_response(
+        StatusCode::OK,
+        &WebWorkItemList {
+            worklist_id: result.worklist_id,
+            items,
+        },
+    ))
+}
+
+pub(super) async fn list_memories(
+    request: &Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let query = query_values(request.uri().query());
+    let limit = bounded_usize(&query, "limit", 100, 200)? as u32;
+    let offset = bounded_usize(&query, "offset", 0, u32::MAX as usize)? as u32;
+    let result = state
+        .client
+        .list_memories(MemoryListParams {
+            persistence: None,
+            scope_kind: None,
+            scope_key: None,
+            include_superseded: false,
+            limit: Some(limit),
+            offset: Some(offset),
+        })
+        .await?;
+    let memories = result
+        .memories
+        .into_iter()
+        .map(|memory| WebMemory {
+            id: memory.public_id,
+            scope_kind: memory.scope_kind,
+            scope_key: memory.scope_key,
+            content: memory.content,
+            storage: memory.storage,
+            weight: memory.weight,
+            retrieval_count: memory.retrieval_count,
+            created_at: memory.created_at,
+        })
+        .collect();
+    Ok(json_response(
+        StatusCode::OK,
+        &WebMemoryList {
+            memories,
+            total: result.total,
+            offset: result.offset,
+            limit: result.limit,
+        },
+    ))
+}
+
+pub(super) async fn search_sessions(
+    request: &Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let query = query_values(request.uri().query());
+    let query = required(query.get("q").map(String::as_str).unwrap_or(""), "q")?;
+    let hits = state
+        .client
+        .search_sessions(query, SessionSearchScope::Sessions, 50, 0)
+        .await?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSearchResults {
+            hits: hits.into_iter().map(web_search_hit).collect(),
+        },
+    ))
+}
+
+async fn search_session_messages(
+    request: &Request<Incoming>,
+    state: &WebState,
+    session_id: &str,
+) -> Result<Response<WebBody>> {
+    let query = query_values(request.uri().query());
+    let query = required(query.get("q").map(String::as_str).unwrap_or(""), "q")?;
+    let hits = state
+        .client
+        .search_session_messages(session_id, query, 50, 0)
+        .await?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSearchResults {
+            hits: hits.into_iter().map(web_search_hit).collect(),
+        },
+    ))
+}
+
 pub(super) async fn list_sessions(
     request: &Request<Incoming>,
     state: &WebState,
@@ -227,6 +456,9 @@ pub(super) async fn session_route(
         }
         (&Method::POST, SessionResource::Branches) => {
             create_branch(request, state, &session_id).await
+        }
+        (&Method::GET, SessionResource::Search) => {
+            search_session_messages(&request, state, &session_id).await
         }
         (&Method::PATCH, SessionResource::Session) => {
             rename_session(request, state, &session_id).await
@@ -601,6 +833,20 @@ fn web_session(session: SessionSummary) -> WebSession {
         agent_id: session.agent_id,
         created_at: session.created_at,
         message_count: None,
+        visibility: session.visibility,
+        relation_kind: session.relation_kind,
+    }
+}
+
+fn web_search_hit(hit: turin_client::SessionSearchHit) -> WebSearchHit {
+    WebSearchHit {
+        session_id: hit.session_id,
+        agent_id: hit.agent_id,
+        title: hit.title,
+        created_at: hit.created_at,
+        turn_index: hit.turn_index,
+        role: hit.role,
+        snippet: hit.snippet,
     }
 }
 
@@ -711,6 +957,7 @@ enum SessionResource {
     Session,
     Messages,
     Branches,
+    Search,
 }
 
 fn parse_session_path(path: &str) -> Result<(String, SessionResource)> {
@@ -721,6 +968,8 @@ fn parse_session_path(path: &str) -> Result<(String, SessionResource)> {
         (id, SessionResource::Messages)
     } else if let Some(id) = suffix.strip_suffix("/branches") {
         (id, SessionResource::Branches)
+    } else if let Some(id) = suffix.strip_suffix("/search") {
+        (id, SessionResource::Search)
     } else {
         (suffix, SessionResource::Session)
     };

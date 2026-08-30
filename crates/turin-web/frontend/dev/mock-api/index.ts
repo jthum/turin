@@ -4,6 +4,7 @@ import type {
 	ConversationEventMap,
 	ConversationEventName,
 	ConversationMessage,
+	SearchHit,
 	Session
 } from '../../src/lib/api/contracts.js';
 import { createMockScenario } from './scenario.js';
@@ -80,6 +81,30 @@ export function turinMockApi(): Plugin {
 				if (request.method === 'GET' && path === '/api/harnesses') {
 					return sendJson(response, 200, { harnesses: scenario.harnesses });
 				}
+				if (request.method === 'GET' && path === '/api/worklists') {
+					return sendJson(response, 200, { worklists: scenario.worklists });
+				}
+				const worklistMatch = path.match(/^\/api\/worklists\/([^/]+)\/items$/);
+				if (request.method === 'GET' && worklistMatch) {
+					const worklistId = decodeURIComponent(worklistMatch[1]);
+					return sendJson(response, 200, { worklist_id: worklistId, items: scenario.workItems[worklistId] ?? [] });
+				}
+				if (request.method === 'GET' && path === '/api/memories') {
+					const limit = Number(url.searchParams.get('limit') ?? 100);
+					const offset = Number(url.searchParams.get('offset') ?? 0);
+					return sendJson(response, 200, {
+						memories: scenario.memories.slice(offset, offset + limit), total: scenario.memories.length,
+						offset, limit
+					});
+				}
+				if (request.method === 'GET' && path === '/api/search/sessions') {
+					const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+					const hits = [...sessions.values()].reverse()
+						.filter((session) => session.title.toLowerCase().includes(query))
+						.slice(0, 50)
+						.map((session) => ({ session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_index: null, role: null, snippet: session.title }));
+					return sendJson(response, 200, { hits });
+				}
 				if (request.method === 'GET' && path === '/api/sessions') {
 					const limit = Number(url.searchParams.get('limit') ?? 50);
 					const offset = Number(url.searchParams.get('offset') ?? 0);
@@ -94,13 +119,14 @@ export function turinMockApi(): Plugin {
 					const id = `session-created-${nextId++}`;
 					const session: Session = {
 						id, title: 'New conversation', agent_id: String(body.agent_id ?? 'default'),
-						created_at: new Date().toISOString(), message_count: 0
+						created_at: new Date().toISOString(), message_count: 0,
+						visibility: 'private', relation_kind: null
 					};
 					sessions.set(id, session);
 					return sendJson(response, 201, { session });
 				}
 
-				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|branches))?$/);
+				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|branches|search))?$/);
 				if (match) {
 					const sessionId = decodeURIComponent(match[1]);
 					const session = sessions.get(sessionId);
@@ -111,6 +137,22 @@ export function turinMockApi(): Plugin {
 							Math.min(200, Number(url.searchParams.get('limit') ?? 80)),
 							Number(url.searchParams.get('offset') ?? 0)
 						));
+					}
+					if (request.method === 'GET' && match[2] === 'search') {
+						const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+						const total = scenario.messageCount(sessionId);
+						const extra = appended.get(sessionId) ?? [];
+						const hits: SearchHit[] = [];
+						for (const message of [...extra].reverse()) {
+							if (hits.length >= 50 || !message.content.toLowerCase().includes(query)) continue;
+							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_index: null, role: message.role, snippet: message.content.slice(0, 220) });
+						}
+						for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
+							const message = scenario.messageAt(sessionId, index);
+							if (!message.content.toLowerCase().includes(query)) continue;
+							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_index: Math.floor(index / 2), role: message.role, snippet: message.content.slice(0, 220) });
+						}
+						return sendJson(response, 200, { hits });
 					}
 					if (request.method === 'PATCH' && !match[2]) {
 						const body = await readJson(request);

@@ -4,10 +4,14 @@ import type {
 	ConversationEventName,
 	CreatedSession,
 	Harness,
+	MemoryPage,
 	MessagePage,
 	Session,
 	SessionPage,
-	SubmittedTask
+	SearchHit,
+	SubmittedTask,
+	WorkItem,
+	Worklist
 } from './contracts.js';
 
 type EventHandlers = {
@@ -42,8 +46,28 @@ export class TurinWebClient {
 		return request('/api/agents', { signal });
 	}
 
+	listWorklists(signal?: AbortSignal): Promise<{ worklists: Worklist[] }> {
+		return request('/api/worklists', { signal });
+	}
+
+	listWorklistItems(worklistId: string, signal?: AbortSignal): Promise<{ worklist_id: string; items: WorkItem[] }> {
+		return request(`/api/worklists/${encodeURIComponent(worklistId)}/items`, { signal });
+	}
+
+	listMemories(limit = 100, offset = 0, signal?: AbortSignal): Promise<MemoryPage> {
+		return request(`/api/memories?limit=${limit}&offset=${offset}`, { signal });
+	}
+
 	listSessions(limit = 50, offset = 0, signal?: AbortSignal): Promise<SessionPage> {
 		return request(`/api/sessions?limit=${limit}&offset=${offset}`, { signal });
+	}
+
+	searchSessions(query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[] }> {
+		return request(`/api/search/sessions?q=${encodeURIComponent(query)}`, { signal });
+	}
+
+	searchSessionMessages(sessionId: string, query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[] }> {
+		return request(`/api/sessions/${encodeURIComponent(sessionId)}/search?q=${encodeURIComponent(query)}`, { signal });
 	}
 
 	createSession(agentId: string): Promise<CreatedSession> {

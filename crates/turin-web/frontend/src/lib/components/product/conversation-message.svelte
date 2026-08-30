@@ -22,7 +22,8 @@
 	let isTool = $derived(message.role === 'tool');
 	let canFork = $derived(/^\d+$/.test(message.turn_id));
 	let author = $derived(isUser ? 'You' : isTool ? 'Tool result' : message.role === 'system' ? 'System' : agentName);
-	let initials = $derived(isUser ? 'Y' : isTool ? 'T' : message.role === 'system' ? 'S' : 'A');
+	let initials = $derived(isUser ? 'Y' : isTool ? 'T' : message.role === 'system' ? 'S' : author.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join(''));
+	let avatarHue = $derived(Array.from(author).reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) % 360, 0));
 
 	function formatTime(value: string) {
 		return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
@@ -59,8 +60,8 @@
 
 <article class="group/message flex items-start gap-3 py-4 sm:gap-4" class:flex-row-reverse={isUser} class:tool-message={isTool}>
 	{#if !isUser}
-		<Avatar.Root size="sm" class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-muted'}>
-			<Avatar.Fallback class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-muted text-foreground'}>
+		<Avatar.Root size="sm" class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'agent-avatar'} style={isTool ? undefined : `--avatar-hue:${avatarHue};`}>
+			<Avatar.Fallback class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-transparent text-white'}>
 				{#if isTool}<Wrench class="size-3" />{:else}{initials}{/if}
 			</Avatar.Fallback>
 		</Avatar.Root>
@@ -140,10 +141,16 @@
 <style>
 	.user-surface {
 		display: inline-block;
-		border: 1px solid var(--border);
+		border: 1px solid color-mix(in oklab, var(--primary) 16%, var(--border));
 		border-radius: 0.35rem 1rem 1rem 1rem;
-		background: var(--muted);
+		background: color-mix(in oklab, var(--primary) 8%, var(--background));
 		padding: 0.58rem 0.85rem;
+	}
+	:global(.agent-avatar) {
+		background:
+			radial-gradient(circle at 72% 24%, hsl(calc(var(--avatar-hue) + 72) 88% 72%), transparent 38%),
+			linear-gradient(145deg, hsl(var(--avatar-hue) 72% 48%), hsl(calc(var(--avatar-hue) + 42) 78% 56%));
+		box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
 	}
 	:global(.reasoning-disclosure[open] .disclosure-chevron),
 	:global(.tool-disclosure[open] .disclosure-chevron),

@@ -6,11 +6,16 @@
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import MessageComposer from '#lib/components/product/message-composer.svelte';
 	import ConversationTranscript from '#lib/components/product/conversation-transcript.svelte';
+	import CapabilityWorkspace from '#lib/components/product/capability-workspace.svelte';
+	import ConversationDashboard from '#lib/components/product/conversation-dashboard.svelte';
 	import HarnessBar from '#lib/components/product/harness-bar.svelte';
 	import SessionRail from '#lib/components/product/session-rail.svelte';
-	import type { Agent, ConversationMessage, Harness, Session } from '#lib/api/contracts.js';
+	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
+	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
+	import type { Agent, ConversationMessage, Harness, Memory, Session, WorkItem, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
+	import type { WorkspaceSection } from '#lib/workspace.js';
 
 	const PAGE_SIZE = 80;
 	const MAX_RESIDENT = 240;
@@ -18,7 +23,18 @@
 	let agents = $state<Agent[]>([]);
 	let harnesses = $state<Harness[]>([]);
 	let sessions = $state<Session[]>([]);
+	let hasMoreSessions = $state(false);
+	let worklists = $state<Worklist[]>([]);
+	let selectedWorklist = $state<Worklist | null>(null);
+	let workItems = $state<WorkItem[]>([]);
+	let loadingWorkItems = $state(false);
+	let memories = $state<Memory[]>([]);
+	let memoryTotal = $state(0);
+	let loadingMoreMemories = $state(false);
+	let loadedSections = $state<WorkspaceSection[]>([]);
+	let loadingSections = $state<WorkspaceSection[]>([]);
 	let selectedHarnessId = $state('');
+	let activeSection = $state<WorkspaceSection>('overview');
 	let selected = $state<Session | null>(null);
 	let messages = $state<ConversationMessage[]>([]);
 	let newestOffset = $state(0);
@@ -27,6 +43,7 @@
 	let hasOlder = $state(false);
 	let hasNewer = $state(false);
 	let loading = $state(true);
+	let loadingMoreSessions = $state(false);
 	let loadingMessages = $state(false);
 	let loadingOlder = $state(false);
 	let submitting = $state(false);
@@ -122,14 +139,13 @@
 			harnesses = harnessPage.harnesses;
 			agents = agentPage.agents;
 			sessions = sessionPage.sessions;
+			hasMoreSessions = sessionPage.has_more;
 			const remembered = localStorage.getItem('turin.selectedHarness');
 			selectedHarnessId = harnesses.some((harness) => harness.id === remembered)
 				? remembered ?? ''
 				: (harnesses.find((harness) => harness.id === 'default')?.id ?? harnesses[0]?.id ?? '');
 			const initialAgents = agents.filter((agent) => agent.harness_id === selectedHarnessId);
 			newAgentId = initialAgents[0]?.id ?? '';
-			const initialSession = sessions.find((session) => initialAgents.some((agent) => agent.id === session.agent_id));
-			if (initialSession) await selectSession(initialSession, signal);
 		} catch (cause) {
 			showError(cause, 'Turin could not be reached.');
 		} finally {
@@ -140,14 +156,10 @@
 	async function selectHarness(harnessId: string) {
 		if (harnessId === selectedHarnessId) return;
 		selectedHarnessId = harnessId;
+		activeSection = 'overview';
 		localStorage.setItem('turin.selectedHarness', harnessId);
 		const harnessAgents = agents.filter((agent) => agent.harness_id === harnessId);
 		newAgentId = harnessAgents[0]?.id ?? '';
-		const nextSession = sessions.find((session) => harnessAgents.some((agent) => agent.id === session.agent_id));
-		if (nextSession) {
-			await selectSession(nextSession);
-			return;
-		}
 		cancelWindowRequest();
 		unsubscribe?.();
 		unsubscribe = null;
@@ -157,7 +169,82 @@
 		streamState = 'connecting';
 	}
 
+	function navigate(section: WorkspaceSection) {
+		activeSection = section;
+		cancelWindowRequest();
+		unsubscribe?.();
+		unsubscribe = null;
+		selected = null;
+		messages = [];
+		messageTotal = 0;
+		if (section === 'work') {
+			selectedWorklist = null;
+			workItems = [];
+		}
+		void loadSection(section);
+	}
+
+	async function loadSection(section: WorkspaceSection) {
+		if (!['work', 'memory'].includes(section) || loadedSections.includes(section) || loadingSections.includes(section)) return;
+		loadingSections = [...loadingSections, section];
+		try {
+			if (section === 'work') worklists = (await turinWeb.listWorklists()).worklists;
+			if (section === 'memory') {
+				const page = await turinWeb.listMemories();
+				memories = page.memories;
+				memoryTotal = page.total;
+			}
+			loadedSections = [...loadedSections, section];
+		} catch (cause) {
+			showError(cause, `${section === 'work' ? 'Worklists' : 'Memories'} could not be loaded.`);
+		} finally {
+			loadingSections = loadingSections.filter((item) => item !== section);
+		}
+	}
+
+	async function openWorklist(worklist: Worklist) {
+		selectedWorklist = worklist;
+		workItems = [];
+		loadingWorkItems = true;
+		try {
+			workItems = (await turinWeb.listWorklistItems(worklist.id)).items;
+		} catch (cause) {
+			showError(cause, 'Worklist items could not be loaded.');
+		} finally {
+			loadingWorkItems = false;
+		}
+	}
+
+	async function loadMoreMemories() {
+		if (loadingMoreMemories || memories.length >= memoryTotal) return;
+		loadingMoreMemories = true;
+		try {
+			const page = await turinWeb.listMemories(100, memories.length);
+			memories = [...memories, ...page.memories];
+			memoryTotal = page.total;
+		} catch (cause) {
+			showError(cause, 'More memories could not be loaded.');
+		} finally {
+			loadingMoreMemories = false;
+		}
+	}
+
+	async function loadMoreSessions() {
+		if (loadingMoreSessions || !hasMoreSessions) return;
+		loadingMoreSessions = true;
+		try {
+			const page = await turinWeb.listSessions(60, sessions.length);
+			sessions = [...sessions, ...page.sessions];
+			hasMoreSessions = page.has_more;
+		} catch (cause) {
+			showError(cause, 'More conversations could not be loaded.');
+		} finally {
+			loadingMoreSessions = false;
+		}
+	}
+
 	async function selectSession(session: Session, signal?: AbortSignal) {
+		activeSection = 'conversations';
 		cancelWindowRequest();
 		unsubscribe?.();
 		unsubscribe = null;
@@ -214,6 +301,7 @@
 
 	function beginConversation(agentId = newAgentId) {
 		if (!agentId) return;
+		activeSection = 'conversations';
 		cancelWindowRequest();
 		unsubscribe?.();
 		unsubscribe = null;
@@ -223,7 +311,9 @@
 			title: 'New conversation',
 			agent_id: agentId,
 			created_at: new Date().toISOString(),
-			message_count: 0
+			message_count: 0,
+			visibility: 'private',
+			relation_kind: null
 		};
 		messages = [];
 		newestOffset = 0;
@@ -374,8 +464,6 @@
 			}
 			deleteDialogOpen = false;
 			deleteTarget = null;
-			const nextSession = sessions.find((session) => visibleAgents.some((agent) => agent.id === session.agent_id));
-			if (!selected && nextSession) await selectSession(nextSession);
 		} catch (cause) {
 			showError(cause, 'The conversation could not be deleted.');
 		}
@@ -438,9 +526,12 @@
 </script>
 
 <Sidebar.Provider class="h-svh min-h-0! flex-col overflow-hidden [--global-bar-height:3.5rem]">
-	<HarnessBar {harnesses} {selectedHarnessId} session={selected} onSelect={selectHarness} onDelete={() => selected && requestDelete(selected)} />
+	<HarnessBar {harnesses} {selectedHarnessId} session={selected} section={activeSection} onSelect={selectHarness} onNavigate={navigate} onDelete={() => selected && requestDelete(selected)} />
 	<div class="flex min-h-0 flex-1">
-		<SessionRail agents={visibleAgents} sessions={visibleSessions} selectedId={selected?.id ?? null} {loading} bind:search bind:newAgentId onCreate={beginConversation} onSelect={selectSession} onDelete={requestDelete} />
+		<WorkspaceNav active={activeSection} onNavigate={navigate} />
+		{#if activeSection === 'conversations' && selected}
+			<SessionRail agents={visibleAgents} sessions={visibleSessions} selectedId={selected.id} {loading} bind:search bind:newAgentId onCreate={beginConversation} onSelect={selectSession} onDelete={requestDelete} />
+		{/if}
 
 	<Sidebar.Inset class="h-full min-w-0 overflow-hidden bg-background">
 		{#if error}
@@ -450,10 +541,20 @@
 			</div>
 		{/if}
 
-		<div class="min-h-0 flex-1">
-			<ConversationTranscript bind:this={transcriptView} bind:ref={transcript} session={selected} agentName={selectedAgentName} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {newestOffset} {olderOffset} {submitting} {streamMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onJumpToPosition={jumpToConversationPosition} onJumpToEnd={jumpToLatest} onFork={forkFromMessage} onCreate={beginConversation} />
-		</div>
-		{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
+		{#if activeSection === 'overview'}
+			<WorkspaceOverview sessions={visibleSessions} agents={visibleAgents} onCreate={beginConversation} onSelect={selectSession} onNavigate={navigate} />
+		{:else if activeSection === 'conversations' && !selected}
+			<ConversationDashboard sessions={visibleSessions} agents={visibleAgents} {loading} loadingMore={loadingMoreSessions} hasMore={hasMoreSessions} onCreate={beginConversation} onSelect={selectSession} onDelete={requestDelete} onLoadMore={loadMoreSessions} />
+		{:else if activeSection === 'conversations'}
+			<div class="min-h-0 flex-1">
+				<ConversationTranscript bind:this={transcriptView} bind:ref={transcript} session={selected} agentName={selectedAgentName} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {newestOffset} {olderOffset} {submitting} {streamMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onJumpToPosition={jumpToConversationPosition} onJumpToEnd={jumpToLatest} onFork={forkFromMessage} onCreate={beginConversation} />
+			</div>
+			{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
+		{:else}
+			{#key activeSection}
+				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} {worklists} {selectedWorklist} {workItems} {memories} {memoryTotal} loading={loadingSections.includes(activeSection)} {loadingWorkItems} {loadingMoreMemories} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; workItems = []; }} onLoadMoreMemories={loadMoreMemories} />
+			{/key}
+		{/if}
 		</Sidebar.Inset>
 	</div>
 </Sidebar.Provider>

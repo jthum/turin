@@ -1,8 +1,11 @@
-import type { Agent, ConversationMessage, Harness, Session } from '../../src/lib/api/contracts.js';
+import type { Agent, ConversationMessage, Harness, Memory, Session, WorkItem, Worklist } from '../../src/lib/api/contracts.js';
 
 export type MockScenario = {
 	agents: Agent[];
 	harnesses: Harness[];
+	worklists: Worklist[];
+	workItems: Record<string, WorkItem[]>;
+	memories: Memory[];
 	sessions: Session[];
 	messageCount(sessionId: string): number;
 	messageAt(sessionId: string, index: number): ConversationMessage;
@@ -73,43 +76,59 @@ function assistantResponse(turn: number): string {
 export function createMockScenario(): MockScenario {
 	const largeMessageCount = Math.max(0, Number(process.env.TURIN_MOCK_MESSAGE_COUNT ?? 10_000));
 	const streamMode = mockStreamMode(process.env.TURIN_MOCK_STREAM);
-	const counts = new Map([
-		['session-welcome', 8],
-		['session-research', 32],
-		['session-long', largeMessageCount]
-	]);
-	const sessions: Session[] = [
-		{
-			id: 'session-welcome',
-			title: 'Building a focused Turin workspace',
-			agent_id: 'default',
-			created_at: timestamp(0),
-			message_count: counts.get('session-welcome') ?? 0
-		},
-		{
-			id: 'session-research',
-			title: 'Runtime architecture review',
-			agent_id: 'reviewer',
-			created_at: timestamp(12),
-			message_count: counts.get('session-research') ?? 0
-		},
-		{
-			id: 'session-long',
-			title: `${largeMessageCount.toLocaleString()} message window test`,
-			agent_id: 'default',
-			created_at: timestamp(24),
-			message_count: largeMessageCount
-		}
-	];
+	const sessionSpecs = [
+		['session-welcome', 'Building a focused Turin workspace', 'default', 8, null],
+		['session-context', 'Context window strategy', 'default', 18, null],
+		['session-release', 'Preparing the next Turin release', 'default', 42, null],
+		['session-docs', 'Consumer-facing documentation', 'scout', 7, null],
+		['session-security', 'Tool authorization review', 'default', 64, null],
+		['session-storage', 'Persistence quality and integrity', 'scout', 126, 'linked'],
+		['session-branches', 'Branching and linked sessions', 'default', 31, null],
+		['session-web', 'Web product direction', 'scout', 83, null],
+		['session-ui', 'Conversation interface polish', 'default', 14, null],
+		['session-performance', 'Runtime memory and latency', 'scout', 220, 'linked'],
+		['session-empty', 'Ideas to revisit later', 'default', 0, null],
+		['session-research', 'Runtime architecture review', 'reviewer', 32, 'linked'],
+		['session-long', `${largeMessageCount.toLocaleString()} message window test`, 'default', largeMessageCount, null]
+	] as const;
+	const counts = new Map<string, number>(sessionSpecs.map(([id, , , count]) => [id, count]));
+	const sessions: Session[] = sessionSpecs.map(([id, title, agentId, count, relationKind], index) => ({
+		id,
+		title,
+		agent_id: agentId,
+		created_at: timestamp(index * 12),
+		message_count: count,
+		visibility: 'private',
+		relation_kind: relationKind
+	}));
 
 	return {
 		agents: [
 			{ id: 'default', name: 'Turin', provider: 'minimax', model: 'MiniMax-M3', harness_id: 'default', enabled: true },
+			{ id: 'scout', name: 'Scout', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'default', enabled: true },
 			{ id: 'reviewer', name: 'Reviewer', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'research', enabled: true }
 		],
 		harnesses: [
-			{ id: 'default', name: 'Default', bound_agent_ids: ['default'], has_ui: false },
+			{ id: 'default', name: 'General', bound_agent_ids: ['default', 'scout'], has_ui: false },
 			{ id: 'research', name: 'Research Desk', bound_agent_ids: ['reviewer'], has_ui: true }
+		],
+		worklists: [
+			{ id: 'worklist-runtime', name: 'Runtime quality', scope: 'global', created_at: timestamp(4), updated_at: timestamp(52) },
+			{ id: 'worklist-web', name: 'Web product runway', scope: 'harness:default', created_at: timestamp(18), updated_at: timestamp(60) }
+		],
+		workItems: {
+			'worklist-runtime': [
+				{ id: 'item-integrity', title: 'Review persistence integrity failures', kind: 'task', status: 'ready', priority: 80, paused: false, claim_agent_id: null, updated_at: timestamp(54) },
+				{ id: 'item-context', title: 'Validate bounded context retrieval', kind: 'task', status: 'running', priority: 60, paused: false, claim_agent_id: 'default', updated_at: timestamp(56) }
+			],
+			'worklist-web': [
+				{ id: 'item-workspace', title: 'Build a useful workspace shell', kind: 'task', status: 'running', priority: 90, paused: false, claim_agent_id: 'default', updated_at: timestamp(62) },
+				{ id: 'item-memory', title: 'Design scalable memory exploration', kind: 'task', status: 'ready', priority: 70, paused: false, claim_agent_id: null, updated_at: timestamp(63) }
+			]
+		},
+		memories: [
+			{ id: 'memory-architecture', scope_kind: 'harness', scope_key: 'default', content: 'Keep Turin core unopinionated; clients own presentation and navigation state.', storage: 'durable', weight: 1, retrieval_count: 12, created_at: timestamp(8) },
+			{ id: 'memory-ui', scope_kind: 'agent', scope_key: 'default', content: 'Prefer focused product workflows over diagnostic dashboards that expose every runtime detail.', storage: 'durable', weight: 0.85, retrieval_count: 7, created_at: timestamp(20) }
 		],
 		sessions,
 		messageCount: (sessionId) => counts.get(sessionId) ?? 0,

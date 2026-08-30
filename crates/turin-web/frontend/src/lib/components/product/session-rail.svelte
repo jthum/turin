@@ -48,7 +48,7 @@
 	}
 </script>
 
-<Sidebar.Root collapsible="offcanvas" class="top-(--global-bar-height)! h-[calc(100svh-var(--global-bar-height))]! border-r border-sidebar-border">
+<Sidebar.Root collapsible="offcanvas" class="top-(--global-bar-height)! h-[calc(100svh-var(--global-bar-height))]! border-r border-sidebar-border md:start-52! group-data-[collapsible=offcanvas]:md:start-[calc(13rem-var(--sidebar-width))]!">
 	<Sidebar.Header class="p-3">
 		{#if searching}
 			<div class="flex items-center gap-1.5">

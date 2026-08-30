@@ -23,9 +23,13 @@
 	.prose-message :global(h1) { font-size: 1.45rem; }
 	.prose-message :global(h2) { font-size: 1.25rem; }
 	.prose-message :global(h3) { font-size: 1.08rem; }
-	.prose-message :global(ul), .prose-message :global(ol) { margin: 0.75rem 0; padding-left: 1.35rem; }
+	.prose-message :global(ul), .prose-message :global(ol) { margin: 0.75rem 0; padding-left: 1.45rem; }
+	.prose-message :global(ul) { list-style: disc; }
+	.prose-message :global(ol) { list-style: decimal; }
+	.prose-message :global(ul ul) { list-style: circle; }
+	.prose-message :global(ul ul ul) { list-style: square; }
 	.prose-message :global(li) { margin: 0.28rem 0; padding-left: 0.18rem; }
-	.prose-message :global(li::marker) { color: var(--muted-foreground); }
+	.prose-message :global(li::marker) { color: color-mix(in oklab, var(--primary) 55%, var(--muted-foreground)); font-size: 0.82em; }
 	.prose-message :global(a) { color: var(--primary); font-weight: 520; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--primary) 35%, transparent); text-underline-offset: 0.18em; }
 	.prose-message :global(a:hover) { text-decoration-color: var(--primary); }
 	.prose-message :global(strong) { font-weight: 650; }

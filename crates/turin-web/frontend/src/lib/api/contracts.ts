@@ -31,18 +31,67 @@ export type Harness = {
 	has_ui: boolean;
 };
 
+export type Worklist = {
+	id: string;
+	name: string;
+	scope: string;
+	created_at: string;
+	updated_at: string;
+};
+
+export type WorkItem = {
+	id: string;
+	title: string;
+	kind: string;
+	status: string;
+	priority: number;
+	paused: boolean;
+	claim_agent_id: string | null;
+	updated_at: string;
+};
+
+export type Memory = {
+	id: string;
+	scope_kind: string;
+	scope_key: string;
+	content: string;
+	storage: string;
+	weight: number;
+	retrieval_count: number;
+	created_at: string;
+};
+
+export type MemoryPage = {
+	memories: Memory[];
+	total: number;
+	offset: number;
+	limit: number;
+};
+
 export type Session = {
 	id: string;
 	title: string;
 	agent_id: string;
 	created_at: string;
 	message_count: number | null;
+	visibility: string;
+	relation_kind: string | null;
 };
 
 export type SessionPage = {
 	sessions: Session[];
 	offset: number;
 	has_more: boolean;
+};
+
+export type SearchHit = {
+	session_id: string;
+	agent_id: string;
+	title: string | null;
+	created_at: string;
+	turn_index: number | null;
+	role: string | null;
+	snippet: string;
 };
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';

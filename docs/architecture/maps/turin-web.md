@@ -19,9 +19,9 @@ browser contracts rather than forwarding the complete control protocol.
 - `crates/turin-web/src/routes.rs`
   - Top-level HTTP dispatch, static asset delivery, and SPA fallback.
 - `crates/turin-web/src/routes/api.rs`
-  - Browser-owned agent, session, bounded transcript, task submission, and SSE
-    contracts. Daemon event envelopes are translated here and are not exposed
-    directly to the browser.
+  - Browser-owned agent, session, bounded transcript, worklist, memory, task
+    submission, and SSE contracts. Daemon event envelopes are translated here
+    and are not exposed directly to the browser.
 - `crates/turin-web/frontend/`
   - SvelteKit 3 static SPA and locally owned shadcn-svelte components.
 - `crates/turin-web/frontend/src/lib/components/product/`
@@ -66,6 +66,19 @@ mock code is not included in production assets.
   web client does not estimate provider cost or invent unavailable metrics.
 - Harness selection is local presentation state. Turin Web exposes harness
   identity and agent bindings without creating a runtime-global active harness.
+- The desktop shell has stable global workspace navigation. Conversation
+  navigation is contextual and appears only while a conversation is open;
+  management views use the wider workspace instead of duplicating the session
+  list beside a session table.
+- Worklists and memories are lazy browser projections over typed `turin-client`
+  operations. Opening those destinations performs the first request; the chat
+  startup path does not preload either domain. Worklist rows drill into a
+  bounded item view, while memory browsing uses bounded pages and an explicit
+  load-more action rather than materializing the complete store.
+- Conversation discovery uses Turin's ranked persisted-session search rather
+  than filtering only the browser's current page. In-conversation search adds
+  a session target and returns bounded message snippets; it does not load the
+  complete transcript into browser memory.
 - Conversation history is fetched in bounded windows. Live text arrives over
   SSE as task, message-start, delta, completion, and failure events.
 - The conversation client keeps a bounded resident transcript and can slide in
