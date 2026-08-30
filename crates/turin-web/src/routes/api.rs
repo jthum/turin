@@ -17,8 +17,8 @@ use turin_client::{
     SessionSummary,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, MemoryListParams, RuntimeEventsSubscribeParams, SessionSearchScope,
-    WorklistItemsParams, WorklistListParams,
+    EventEnvelope, MemoryListParams, RuntimeEventsSubscribeParams, SessionSearchHitKind,
+    SessionSearchScope, WorklistItemsParams, WorklistListParams,
 };
 use url::form_urlencoded;
 
@@ -112,6 +112,7 @@ struct WebMemoryList {
 
 #[derive(Serialize)]
 struct WebSearchHit {
+    kind: SessionSearchHitKind,
     session_id: String,
     agent_id: String,
     title: Option<String>,
@@ -119,6 +120,8 @@ struct WebSearchHit {
     turn_id: Option<String>,
     turn_index: Option<u32>,
     role: Option<String>,
+    tool_name: Option<String>,
+    event_type: Option<String>,
     snippet: String,
 }
 
@@ -379,6 +382,24 @@ pub(super) async fn search_sessions(
     let hits = state
         .client
         .search_sessions(query, SessionSearchScope::Sessions, 50, 0)
+        .await?;
+    Ok(json_response(
+        StatusCode::OK,
+        &WebSearchResults {
+            hits: hits.into_iter().map(web_search_hit).collect(),
+        },
+    ))
+}
+
+pub(super) async fn search_workspace(
+    request: &Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let query = query_values(request.uri().query());
+    let query = required(query.get("q").map(String::as_str).unwrap_or(""), "q")?;
+    let hits = state
+        .client
+        .search_sessions(query, SessionSearchScope::All, 50, 0)
         .await?;
     Ok(json_response(
         StatusCode::OK,
@@ -859,6 +880,7 @@ fn web_session(session: SessionSummary) -> WebSession {
 
 fn web_search_hit(hit: turin_client::SessionSearchHit) -> WebSearchHit {
     WebSearchHit {
+        kind: hit.kind,
         session_id: hit.session_id,
         agent_id: hit.agent_id,
         title: hit.title,
@@ -866,6 +888,8 @@ fn web_search_hit(hit: turin_client::SessionSearchHit) -> WebSearchHit {
         turn_id: hit.turn_id.map(|turn_id| turn_id.to_string()),
         turn_index: hit.turn_index,
         role: hit.role,
+        tool_name: hit.tool_name,
+        event_type: hit.event_type,
         snippet: hit.snippet,
     }
 }

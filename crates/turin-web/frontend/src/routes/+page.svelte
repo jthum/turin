@@ -56,6 +56,8 @@
 	let streamMessageId = $state<string | null>(null);
 	let focusedMessageId = $state<string | null>(null);
 	let streamState = $state<StreamConnectionState>('connecting');
+	let workspaceSearchOpen = $state(false);
+	let WorkspaceSearchDialog = $state<typeof import('#lib/components/product/workspace-search.svelte').default | null>(null);
 	let unsubscribe = $state<(() => void) | null>(null);
 	let transcript = $state<HTMLElement | null>(null);
 	let transcriptView = $state<{
@@ -70,6 +72,19 @@
 
 	function showError(cause: unknown, fallback: string) {
 		error = cause instanceof Error ? cause.message : fallback;
+	}
+
+	async function openWorkspaceSearch() {
+		WorkspaceSearchDialog ??= (await import('#lib/components/product/workspace-search.svelte')).default;
+		workspaceSearchOpen = true;
+	}
+
+	function handleWorkspaceShortcut(event: KeyboardEvent) {
+		if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
+			event.preventDefault();
+			if (workspaceSearchOpen) workspaceSearchOpen = false;
+			else void openWorkspaceSearch();
+		}
 	}
 
 	function beginWindowRequest() {
@@ -253,7 +268,11 @@
 		}
 	}
 
-	async function selectSession(session: Session, signal?: AbortSignal) {
+	async function selectSession(
+		session: Session,
+		signal?: AbortSignal,
+		anchor?: { hit: SearchHit; query: string }
+	) {
 		activeSection = 'conversations';
 		cancelWindowRequest();
 		unsubscribe?.();
@@ -266,7 +285,11 @@
 		loadingMessages = true;
 		error = null;
 		try {
-			const page = await turinWeb.loadMessages(session.id, { limit: PAGE_SIZE, signal });
+			const page = await turinWeb.loadMessages(session.id, {
+				limit: PAGE_SIZE,
+				turnId: anchor?.hit.turn_id ?? undefined,
+				signal
+			});
 			messages = page.messages;
 			olderOffset = page.messages.length;
 			messageTotal = page.total;
@@ -302,7 +325,13 @@
 					error = event.message;
 				}
 			}, (state) => streamState = state);
-			await scrollToBottom();
+			if (anchor) {
+				const target = matchingMessage(anchor.hit, anchor.query);
+				focusedMessageId = target?.id ?? null;
+				if (target) await transcriptView?.restoreMessageAnchor(target.id, (transcript?.clientHeight ?? 0) * 0.28);
+			} else {
+				await scrollToBottom();
+			}
 		} catch (cause) {
 			showError(cause, 'The conversation could not be loaded.');
 		} finally {
@@ -482,6 +511,33 @@
 		}
 	}
 
+	async function openWorkspaceSearchHit(hit: SearchHit, query: string) {
+		const targetAgent = agents.find((agent) => agent.id === hit.agent_id);
+		if (targetAgent && targetAgent.harness_id !== selectedHarnessId) {
+			await selectHarness(targetAgent.harness_id);
+		}
+		const existing = sessions.find((candidate) => candidate.id === hit.session_id);
+		const session = existing ?? {
+			id: hit.session_id,
+			title: hit.title ?? 'Untitled conversation',
+			agent_id: hit.agent_id,
+			created_at: hit.created_at,
+			message_count: null,
+			visibility: 'private',
+			relation_kind: null
+		};
+		if (!existing) sessions = [session, ...sessions];
+		if (selected?.id === session.id && hit.turn_id !== null) {
+			await jumpToSearchHit(hit, query);
+			return;
+		}
+		await selectSession(
+			session,
+			undefined,
+			hit.turn_id === null ? undefined : { hit, query }
+		);
+	}
+
 	async function forkFromMessage(message: ConversationMessage, activate: boolean) {
 		if (!selected || selected.id.startsWith(DRAFT_SESSION_PREFIX)) return;
 		try {
@@ -571,8 +627,10 @@
 	});
 </script>
 
+<svelte:window onkeydown={handleWorkspaceShortcut} />
+
 <Sidebar.Provider class="h-svh min-h-0! flex-col overflow-hidden [--global-bar-height:3.5rem]">
-	<HarnessBar {harnesses} {selectedHarnessId} session={selected} section={activeSection} onSelect={selectHarness} onNavigate={navigate} onDelete={() => selected && requestDelete(selected)} />
+	<HarnessBar {harnesses} {selectedHarnessId} session={selected} section={activeSection} onSelect={selectHarness} onNavigate={navigate} onSearch={() => void openWorkspaceSearch()} onDelete={() => selected && requestDelete(selected)} />
 	<div class="flex min-h-0 flex-1">
 		<WorkspaceNav active={activeSection} onNavigate={navigate} />
 		{#if activeSection === 'conversations' && selected}
@@ -604,6 +662,10 @@
 		</Sidebar.Inset>
 	</div>
 </Sidebar.Provider>
+
+{#if WorkspaceSearchDialog}
+	<WorkspaceSearchDialog bind:open={workspaceSearchOpen} {agents} onSelect={openWorkspaceSearchHit} />
+{/if}
 
 <AlertDialog.Root bind:open={deleteDialogOpen}>
 	<AlertDialog.Content>

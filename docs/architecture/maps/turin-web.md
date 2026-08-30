@@ -80,6 +80,10 @@ mock code is not included in production assets.
   a session target and returns bounded message snippets with durable turn IDs;
   selecting a result loads an active-path window around that exact turn. It
   does not estimate a location from turn count or load the complete transcript.
+- Workspace search is explicitly invoked through the command palette and spans
+  persisted sessions, active-path messages, tool executions, and events. It
+  performs no startup query. Selecting an anchored result opens its session
+  directly at one bounded turn-centered window rather than loading latest first.
 - Conversation history is fetched in bounded windows. Live text arrives over
   SSE as task, message-start, delta, completion, and failure events.
 - The conversation client keeps a bounded resident transcript and can slide in

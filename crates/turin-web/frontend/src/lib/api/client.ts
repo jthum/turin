@@ -66,6 +66,10 @@ export class TurinWebClient {
 		return request(`/api/search/sessions?q=${encodeURIComponent(query)}`, { signal });
 	}
 
+	searchWorkspace(query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[] }> {
+		return request(`/api/search/workspace?q=${encodeURIComponent(query)}`, { signal });
+	}
+
 	searchSessionMessages(sessionId: string, query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[] }> {
 		return request(`/api/sessions/${encodeURIComponent(sessionId)}/search?q=${encodeURIComponent(query)}`, { signal });
 	}

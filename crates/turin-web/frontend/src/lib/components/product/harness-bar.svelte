@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Check, ChevronDown, Menu, MoreHorizontal, Sparkles, Trash2 } from '@lucide/svelte';
+	import { onMount } from 'svelte';
+	import { Check, ChevronDown, Menu, MoreHorizontal, Search, Sparkles, Trash2 } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
@@ -13,6 +14,7 @@
 		section,
 		onSelect,
 		onNavigate,
+		onSearch,
 		onDelete
 	}: {
 		harnesses: Harness[];
@@ -21,10 +23,15 @@
 		section: WorkspaceSection;
 		onSelect: (harnessId: string) => void;
 		onNavigate: (section: WorkspaceSection) => void;
+		onSearch: () => void;
 		onDelete: () => void;
 	} = $props();
 
 	let selectedHarness = $derived(harnesses.find((harness) => harness.id === selectedHarnessId));
+	let searchShortcut = $state('Ctrl K');
+	onMount(() => {
+		searchShortcut = navigator.userAgent.includes('Macintosh') ? '⌘K' : 'Ctrl K';
+	});
 </script>
 
 <header class="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border bg-background px-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,2fr)_minmax(0,1fr)]">
@@ -62,6 +69,9 @@
 	</div>
 
 	<div class="flex items-center justify-end gap-1">
+		<Button variant="outline" size="sm" class="mr-1 hidden h-8 min-w-36 justify-between rounded-full bg-muted/20 px-3 text-muted-foreground sm:flex" onclick={onSearch}>
+			<span class="flex items-center gap-2"><Search class="size-3.5" />Search</span><kbd class="text-[10px] font-medium">{searchShortcut}</kbd>
+		</Button>
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger>
 				{#snippet child({ props })}<Button {...props} variant="ghost" size="icon" class="md:hidden" aria-label="Open workspace navigation"><Menu class="size-4" /></Button>{/snippet}

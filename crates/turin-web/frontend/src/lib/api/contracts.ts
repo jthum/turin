@@ -85,6 +85,7 @@ export type SessionPage = {
 };
 
 export type SearchHit = {
+	kind: 'session' | 'message' | 'tool_execution' | 'event';
 	session_id: string;
 	agent_id: string;
 	title: string | null;
@@ -92,6 +93,8 @@ export type SearchHit = {
 	turn_id: string | null;
 	turn_index: number | null;
 	role: string | null;
+	tool_name: string | null;
+	event_type: string | null;
 	snippet: string;
 };
 

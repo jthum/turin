@@ -76,6 +76,31 @@ export function turinMockApi(): Plugin {
 		return { messages, offset: total - end, total, has_more: start > 0 };
 	}
 
+	function workspaceSearch(query: string): SearchHit[] {
+		const hits: SearchHit[] = [];
+		for (const session of [...sessions.values()].reverse()) {
+			if (session.title.toLowerCase().includes(query)) {
+				hits.push({ kind: 'session', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: null, turn_index: null, role: null, tool_name: null, event_type: null, snippet: session.title });
+			}
+			const total = scenario.messageCount(session.id);
+			for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
+				const message = scenario.messageAt(session.id, index);
+				if (!message.content.toLowerCase().includes(query)) continue;
+				hits.push({ kind: 'message', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
+			}
+			if (hits.length >= 50) break;
+		}
+		if ('read_file persistence checkpoint'.includes(query)) {
+			const session = sessions.get('session-storage');
+			if (session) hits.push({ kind: 'tool_execution', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: `${session.id}-turn-12`, turn_index: 11, role: null, tool_name: 'read_file', event_type: null, snippet: 'read_file persistence checkpoint and verify durable rows' });
+		}
+		if ('task completed runtime'.includes(query)) {
+			const session = sessions.get('session-performance');
+			if (session) hits.push({ kind: 'event', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: `${session.id}-turn-8`, turn_index: 7, role: null, tool_name: null, event_type: 'task_completed', snippet: 'task_completed runtime diagnostic checkpoint' });
+		}
+		return hits.slice(0, 50);
+	}
+
 	return {
 		name: 'turin-mock-api',
 		configureServer(server) {
@@ -121,8 +146,12 @@ export function turinMockApi(): Plugin {
 					const hits = [...sessions.values()].reverse()
 						.filter((session) => session.title.toLowerCase().includes(query))
 						.slice(0, 50)
-						.map((session) => ({ session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: null, turn_index: null, role: null, snippet: session.title }));
+						.map((session) => ({ kind: 'session' as const, session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: null, turn_index: null, role: null, tool_name: null, event_type: null, snippet: session.title }));
 					return sendJson(response, 200, { hits });
+				}
+				if (request.method === 'GET' && path === '/api/search/workspace') {
+					const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+					return sendJson(response, 200, { hits: workspaceSearch(query) });
 				}
 				if (request.method === 'GET' && path === '/api/sessions') {
 					const limit = Number(url.searchParams.get('limit') ?? 50);
@@ -167,12 +196,12 @@ export function turinMockApi(): Plugin {
 						const hits: SearchHit[] = [];
 						for (const message of [...extra].reverse()) {
 							if (hits.length >= 50 || !message.content.toLowerCase().includes(query)) continue;
-							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: null, role: message.role, snippet: message.content.slice(0, 220) });
+							hits.push({ kind: 'message', session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: null, role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
 						}
 						for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
 							const message = scenario.messageAt(sessionId, index);
 							if (!message.content.toLowerCase().includes(query)) continue;
-							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, snippet: message.content.slice(0, 220) });
+							hits.push({ kind: 'message', session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
 						}
 						return sendJson(response, 200, { hits });
 					}
