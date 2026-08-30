@@ -79,12 +79,13 @@ export class TurinWebClient {
 
 	loadMessages(
 		sessionId: string,
-		options: { limit?: number; offset?: number; total?: number; signal?: AbortSignal } = {}
+		options: { limit?: number; offset?: number; total?: number; turnId?: string; signal?: AbortSignal } = {}
 	): Promise<MessagePage> {
-		const { limit = 80, offset = 0, total, signal } = options;
+		const { limit = 80, offset = 0, total, turnId, signal } = options;
 		const totalQuery = total === undefined ? '' : `&total=${total}`;
+		const turnQuery = turnId === undefined ? '' : `&turn_id=${encodeURIComponent(turnId)}`;
 		return request(
-			`/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${totalQuery}`,
+			`/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}${totalQuery}${turnQuery}`,
 			{ signal }
 		);
 	}

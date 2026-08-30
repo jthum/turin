@@ -89,6 +89,7 @@ export type SearchHit = {
 	agent_id: string;
 	title: string | null;
 	created_at: string;
+	turn_id: string | null;
 	turn_index: number | null;
 	role: string | null;
 	snippet: string;

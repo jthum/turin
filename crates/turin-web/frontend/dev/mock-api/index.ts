@@ -57,6 +57,25 @@ export function turinMockApi(): Plugin {
 		return { messages, offset: resolvedOffset, total, has_more: start > 0 };
 	}
 
+	function sessionMessagesAroundTurn(sessionId: string, limit: number, turnId: string) {
+		const generatedCount = scenario.messageCount(sessionId);
+		const additions = appended.get(sessionId) ?? [];
+		const total = generatedCount + additions.length;
+		const generatedPrefix = `${sessionId}-turn-`;
+		let targetIndex = turnId.startsWith(generatedPrefix)
+			? (Number(turnId.slice(generatedPrefix.length)) - 1) * 2
+			: additions.findIndex((message) => message.turn_id === turnId);
+		if (!turnId.startsWith(generatedPrefix) && targetIndex >= 0) targetIndex += generatedCount;
+		if (!Number.isFinite(targetIndex) || targetIndex < 0 || targetIndex >= total) return null;
+		const start = Math.max(0, Math.min(total - limit, targetIndex - Math.floor(limit / 2)));
+		const end = Math.min(total, start + limit);
+		const messages: ConversationMessage[] = [];
+		for (let index = start; index < end; index += 1) {
+			messages.push(index < generatedCount ? scenario.messageAt(sessionId, index) : additions[index - generatedCount]);
+		}
+		return { messages, offset: total - end, total, has_more: start > 0 };
+	}
+
 	return {
 		name: 'turin-mock-api',
 		configureServer(server) {
@@ -102,7 +121,7 @@ export function turinMockApi(): Plugin {
 					const hits = [...sessions.values()].reverse()
 						.filter((session) => session.title.toLowerCase().includes(query))
 						.slice(0, 50)
-						.map((session) => ({ session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_index: null, role: null, snippet: session.title }));
+						.map((session) => ({ session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: null, turn_index: null, role: null, snippet: session.title }));
 					return sendJson(response, 200, { hits });
 				}
 				if (request.method === 'GET' && path === '/api/sessions') {
@@ -132,11 +151,14 @@ export function turinMockApi(): Plugin {
 					const session = sessions.get(sessionId);
 					if (!session) return sendJson(response, 404, { error: 'Session not found' });
 					if (request.method === 'GET' && match[2] === 'messages') {
-						return sendJson(response, 200, sessionMessages(
-							sessionId,
-							Math.min(200, Number(url.searchParams.get('limit') ?? 80)),
-							Number(url.searchParams.get('offset') ?? 0)
-						));
+						const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 80));
+						const turnId = url.searchParams.get('turn_id');
+						const page = turnId
+							? sessionMessagesAroundTurn(sessionId, limit, turnId)
+							: sessionMessages(sessionId, limit, Number(url.searchParams.get('offset') ?? 0));
+						return page
+							? sendJson(response, 200, page)
+							: sendJson(response, 404, { error: 'Turn not found on active path' });
 					}
 					if (request.method === 'GET' && match[2] === 'search') {
 						const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
@@ -145,12 +167,12 @@ export function turinMockApi(): Plugin {
 						const hits: SearchHit[] = [];
 						for (const message of [...extra].reverse()) {
 							if (hits.length >= 50 || !message.content.toLowerCase().includes(query)) continue;
-							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_index: null, role: message.role, snippet: message.content.slice(0, 220) });
+							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: null, role: message.role, snippet: message.content.slice(0, 220) });
 						}
 						for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
 							const message = scenario.messageAt(sessionId, index);
 							if (!message.content.toLowerCase().includes(query)) continue;
-							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_index: Math.floor(index / 2), role: message.role, snippet: message.content.slice(0, 220) });
+							hits.push({ session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, snippet: message.content.slice(0, 220) });
 						}
 						return sendJson(response, 200, { hits });
 					}

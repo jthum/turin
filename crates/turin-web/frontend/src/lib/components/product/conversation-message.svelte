@@ -8,11 +8,12 @@
 	import RichMessage from './rich-message.svelte';
 
 	let {
-		message, agentName, streaming, onFork
+		message, agentName, streaming, focused, onFork
 	}: {
 		message: ConversationMessage;
 		agentName: string;
 		streaming: boolean;
+		focused: boolean;
 		onFork?: (message: ConversationMessage, activate: boolean) => void;
 	} = $props();
 	let copied = $state(false);
@@ -58,7 +59,7 @@
 
 </script>
 
-<article class="group/message flex items-start gap-3 py-4 sm:gap-4" class:flex-row-reverse={isUser} class:tool-message={isTool}>
+<article class="group/message flex items-start gap-3 rounded-xl py-4 transition-colors duration-500 sm:gap-4" class:flex-row-reverse={isUser} class:tool-message={isTool} class:focused-result={focused}>
 	{#if !isUser}
 		<Avatar.Root size="sm" class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'agent-avatar'} style={isTool ? undefined : `--avatar-hue:${avatarHue};`}>
 			<Avatar.Fallback class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-transparent text-white'}>
@@ -146,6 +147,7 @@
 		background: color-mix(in oklab, var(--primary) 8%, var(--background));
 		padding: 0.58rem 0.85rem;
 	}
+	.focused-result { background: color-mix(in oklab, var(--primary) 7%, transparent); }
 	:global(.agent-avatar) {
 		background:
 			radial-gradient(circle at 72% 24%, hsl(calc(var(--avatar-hue) + 72) 88% 72%), transparent 38%),

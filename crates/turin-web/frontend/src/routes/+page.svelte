@@ -12,7 +12,7 @@
 	import SessionRail from '#lib/components/product/session-rail.svelte';
 	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
 	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
-	import type { Agent, ConversationMessage, Harness, Memory, Session, WorkItem, Worklist } from '#lib/api/contracts.js';
+	import type { Agent, ConversationMessage, Harness, Memory, SearchHit, Session, WorkItem, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
@@ -54,6 +54,7 @@
 	let deleteDialogOpen = $state(false);
 	let deleteTarget = $state<Session | null>(null);
 	let streamMessageId = $state<string | null>(null);
+	let focusedMessageId = $state<string | null>(null);
 	let streamState = $state<StreamConnectionState>('connecting');
 	let unsubscribe = $state<(() => void) | null>(null);
 	let transcript = $state<HTMLElement | null>(null);
@@ -106,6 +107,15 @@
 			seen.add(message.id);
 			return true;
 		});
+	}
+
+	function matchingMessage(hit: SearchHit, query: string) {
+		const normalized = query.toLocaleLowerCase();
+		return messages.find((message) =>
+			message.turn_id === hit.turn_id
+			&& (hit.role === null || message.role === hit.role)
+			&& (!normalized || message.content.toLocaleLowerCase().includes(normalized))
+		) ?? messages.find((message) => message.turn_id === hit.turn_id);
 	}
 
 	async function scrollToBottom(behavior: ScrollBehavior = 'instant') {
@@ -250,6 +260,7 @@
 		unsubscribe = null;
 		selected = session;
 		messages = [];
+		focusedMessageId = null;
 		newestOffset = 0;
 		olderOffset = 0;
 		loadingMessages = true;
@@ -401,6 +412,7 @@
 
 	async function jumpToConversationPosition(position: number) {
 		if (!selected || messageTotal === 0) return;
+		focusedMessageId = null;
 		const targetIndex = Math.round(Math.min(1, Math.max(0, position)) * (messageTotal - 1));
 		const residentStart = messageTotal - olderOffset;
 		const residentEnd = messageTotal - newestOffset;
@@ -431,6 +443,40 @@
 			if (message) await transcriptView?.restoreMessageAnchor(message.id, (transcript?.clientHeight ?? 0) * 0.35);
 		} catch (cause) {
 			if (isCurrentWindowRequest(request) && !isAbortError(cause)) showError(cause, 'That point in the conversation could not be loaded.');
+		} finally {
+			finishWindowRequest(request);
+		}
+	}
+
+	async function jumpToSearchHit(hit: SearchHit, query: string) {
+		if (!selected || hit.turn_id === null) return;
+		const resident = matchingMessage(hit, query);
+		if (resident) {
+			cancelWindowRequest();
+			focusedMessageId = resident.id;
+			await transcriptView?.restoreMessageAnchor(resident.id, (transcript?.clientHeight ?? 0) * 0.28);
+			return;
+		}
+
+		const request = beginWindowRequest();
+		try {
+			const page = await turinWeb.loadMessages(selected.id, {
+				limit: PAGE_SIZE,
+				turnId: hit.turn_id,
+				signal: request.controller.signal
+			});
+			if (!isCurrentWindowRequest(request)) return;
+			messages = page.messages;
+			newestOffset = page.offset;
+			olderOffset = page.offset + page.messages.length;
+			messageTotal = page.total;
+			hasNewer = newestOffset > 0;
+			hasOlder = olderOffset < page.total;
+			const target = matchingMessage(hit, query);
+			focusedMessageId = target?.id ?? null;
+			if (target) await transcriptView?.restoreMessageAnchor(target.id, (transcript?.clientHeight ?? 0) * 0.28);
+		} catch (cause) {
+			if (isCurrentWindowRequest(request) && !isAbortError(cause)) showError(cause, 'That search result could not be loaded.');
 		} finally {
 			finishWindowRequest(request);
 		}
@@ -547,7 +593,7 @@
 			<ConversationDashboard sessions={visibleSessions} agents={visibleAgents} {loading} loadingMore={loadingMoreSessions} hasMore={hasMoreSessions} onCreate={beginConversation} onSelect={selectSession} onDelete={requestDelete} onLoadMore={loadMoreSessions} />
 		{:else if activeSection === 'conversations'}
 			<div class="min-h-0 flex-1">
-				<ConversationTranscript bind:this={transcriptView} bind:ref={transcript} session={selected} agentName={selectedAgentName} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {newestOffset} {olderOffset} {submitting} {streamMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onJumpToPosition={jumpToConversationPosition} onJumpToEnd={jumpToLatest} onFork={forkFromMessage} onCreate={beginConversation} />
+				<ConversationTranscript bind:this={transcriptView} bind:ref={transcript} session={selected} agentName={selectedAgentName} {messages} loading={loadingMessages} loadingWindow={loadingOlder} {hasOlder} {hasNewer} {messageTotal} {newestOffset} {olderOffset} {submitting} {streamMessageId} {focusedMessageId} onLoadOlder={loadOlder} onLoadNewer={loadNewer} onJumpToPosition={jumpToConversationPosition} onJumpToEnd={jumpToLatest} onSearchHit={jumpToSearchHit} onFork={forkFromMessage} onCreate={beginConversation} />
 			</div>
 			{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
 		{:else}

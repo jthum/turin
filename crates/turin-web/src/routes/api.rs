@@ -116,6 +116,7 @@ struct WebSearchHit {
     agent_id: String,
     title: Option<String>,
     created_at: String,
+    turn_id: Option<String>,
     turn_index: Option<u32>,
     role: Option<String>,
     snippet: String,
@@ -508,7 +509,25 @@ async fn get_messages(
     let query = query_values(request.uri().query());
     let limit = bounded_usize(&query, "limit", DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT)?;
     let offset_from_end = bounded_usize(&query, "offset", 0, usize::MAX)?;
-    let detail = if offset_from_end == 0 {
+    let anchor_turn_id = query
+        .get("turn_id")
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .context("turn_id must identify a durable turn")
+        })
+        .transpose()?;
+    let detail = if let Some(turn_id) = anchor_turn_id {
+        state
+            .client
+            .get_session_window_around_turn(session_id, turn_id, limit)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to load message window around turn '{turn_id}' for session '{session_id}'"
+                )
+            })?
+    } else if offset_from_end == 0 {
         state
             .client
             .get_session_window(session_id, limit)
@@ -844,6 +863,7 @@ fn web_search_hit(hit: turin_client::SessionSearchHit) -> WebSearchHit {
         agent_id: hit.agent_id,
         title: hit.title,
         created_at: hit.created_at,
+        turn_id: hit.turn_id.map(|turn_id| turn_id.to_string()),
         turn_index: hit.turn_index,
         role: hit.role,
         snippet: hit.snippet,

@@ -13,7 +13,8 @@
 	let {
 		ref = $bindable(), session, agentName, messages, loading, loadingWindow, hasOlder, hasNewer,
 		messageTotal, newestOffset, olderOffset, submitting, streamMessageId,
-		onLoadOlder, onLoadNewer, onJumpToPosition, onJumpToEnd, onFork, onCreate
+		focusedMessageId, onLoadOlder, onLoadNewer, onJumpToPosition, onJumpToEnd,
+		onSearchHit, onFork, onCreate
 	}: {
 		ref: HTMLElement | null;
 		session: Session | null;
@@ -28,10 +29,12 @@
 		olderOffset: number;
 		submitting: boolean;
 		streamMessageId: string | null;
+		focusedMessageId: string | null;
 		onLoadOlder: () => void;
 		onLoadNewer: () => void;
 		onJumpToPosition: (position: number) => void;
 		onJumpToEnd: () => void;
+		onSearchHit: (hit: SearchHit, query: string) => void;
 		onFork: (message: ConversationMessage, activate: boolean) => void;
 		onCreate: () => void;
 	} = $props();
@@ -113,16 +116,11 @@
 		ref?.scrollTo({ top: ref.scrollHeight, behavior });
 	}
 
-	function selectSearchHit(hit: SearchHit) {
-		if (hit.turn_index === null || messageTotal <= 1) return;
-		const estimatedMessageIndex = hit.turn_index * 2;
-		onJumpToPosition(Math.min(1, estimatedMessageIndex / (messageTotal - 1)));
-	}
 </script>
 
 <div class="relative h-full min-h-0">
 {#if session && !session.id.startsWith('draft:')}
-	<div class="absolute right-9 top-3 z-30"><ConversationSearch sessionId={session.id} onSelect={selectSearchHit} /></div>
+	<div class="absolute right-9 top-3 z-30"><ConversationSearch sessionId={session.id} onSelect={onSearchHit} /></div>
 {/if}
 <ScrollArea.Root bind:viewportRef={ref} class="min-h-0 h-full bg-background" scrollbarYClasses="py-2">
 	{#if loading}
@@ -161,7 +159,7 @@
 						class="absolute left-0 top-0 w-full"
 						style:transform={`translateY(${row.start}px)`}
 					>
-						<ConversationMessageView {message} {agentName} streaming={streamMessageId === message.id} {onFork} />
+						<ConversationMessageView {message} {agentName} streaming={streamMessageId === message.id} focused={focusedMessageId === message.id} {onFork} />
 					</div>
 				{/if}
 			{/each}
