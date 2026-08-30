@@ -103,6 +103,8 @@ pub struct SessionSearchParams {
     #[serde(default)]
     pub offset: usize,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub store: Option<String>,
     #[serde(default)]
     pub path: Option<String>,

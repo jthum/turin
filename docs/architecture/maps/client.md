@@ -21,7 +21,8 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
 - `crates/turin-client/src/sessions.rs`
   - Live and persisted session convenience methods, on-demand turn topology,
     direct linked-session discovery, family topology/archive, exact-turn branch
-    creation, branch listing, checkout, and durable deletion.
+    creation, branch listing, checkout, durable deletion, and global or
+    session-targeted persisted-history search.
 - `crates/turin-client/src/tasks.rs`
   - Task submit/wait/cancel/promote convenience methods.
 - `crates/turin-client/src/authorizations.rs`

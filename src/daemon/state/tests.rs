@@ -2839,6 +2839,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
             10,
             0,
             None,
+            None,
         )
         .await?;
     assert!(default_hits.is_empty());
@@ -2850,6 +2851,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
             10,
             0,
             Some(StoreSelector::Path(reviewer_path.clone())),
+            None,
         )
         .await?;
     assert_eq!(reviewer_hits.len(), 1);

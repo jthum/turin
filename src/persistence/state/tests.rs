@@ -2036,6 +2036,32 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
             .iter()
             .any(|hit| hit.kind == SessionSearchHitKind::Message)
     );
+    let other_session_id = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            other_session_id,
+            turn(0),
+            "user",
+            &json!([{"type": "text", "text": "A different compiler panic"}]),
+            None,
+        )
+        .await
+        .unwrap();
+    let targeted_hits = store
+        .search_session_history_in_session(
+            "panic",
+            SessionSearchScope::Messages,
+            16,
+            0,
+            Some(session_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(targeted_hits.len(), 1);
+    assert!(targeted_hits[0].match_text.contains("src/main.rs"));
 
     let tool_hits = store
         .search_session_history("read_file", SessionSearchScope::ToolExecutions, 16, 0)

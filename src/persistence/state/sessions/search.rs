@@ -22,6 +22,18 @@ impl StateStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionSearchRow>> {
+        self.search_session_history_in_session(query, scope, limit, offset, None)
+            .await
+    }
+
+    pub async fn search_session_history_in_session(
+        &self,
+        query: &str,
+        scope: SessionSearchScope,
+        limit: usize,
+        offset: usize,
+        session_id: Option<i64>,
+    ) -> Result<Vec<SessionSearchRow>> {
         let normalized = query.trim().to_ascii_lowercase();
         if normalized.is_empty() || limit == 0 {
             return Ok(Vec::new());
@@ -42,6 +54,7 @@ impl StateStore {
                     scope,
                     page_size,
                     candidate_offset,
+                    session_id,
                 )
                 .await?;
             let candidate_count = candidates.len();
@@ -76,6 +89,7 @@ impl StateStore {
         scope: SessionSearchScope,
         limit: usize,
         offset: usize,
+        session_id: Option<i64>,
     ) -> Result<Vec<SessionSearchCandidate>> {
         let conn = self.connect().await?;
         let sql = ranked_session_search_sql(scope);
@@ -85,6 +99,7 @@ impl StateStore {
             .query(turso::params![
                 needle,
                 normalized,
+                session_id,
                 limit as i64,
                 offset as i64
             ])
@@ -175,8 +190,9 @@ fn ranked_session_search_sql(scope: SessionSearchScope) -> String {
                    NULL AS turn_id,
                    s.id AS session_id
             FROM sessions s
-            WHERE LOWER(s.agent_id) LIKE ?1
-               OR LOWER(COALESCE(s.metadata, '')) LIKE ?1
+            WHERE (LOWER(s.agent_id) LIKE ?1
+               OR LOWER(COALESCE(s.metadata, '')) LIKE ?1)
+              AND (?3 IS NULL OR s.id = ?3)
             "#,
         );
     }
@@ -207,8 +223,9 @@ fn ranked_session_search_sql(scope: SessionSearchScope) -> String {
             FROM messages tm
             JOIN turns t ON t.id = tm.turn_id
             JOIN sessions s ON s.id = t.session_id
-            WHERE LOWER(tm.content) LIKE ?1
-               OR LOWER(tm.role) LIKE ?1
+            WHERE (LOWER(tm.content) LIKE ?1
+               OR LOWER(tm.role) LIKE ?1)
+              AND (?3 IS NULL OR t.session_id = ?3)
             "#,
         );
     }
@@ -246,10 +263,11 @@ fn ranked_session_search_sql(scope: SessionSearchScope) -> String {
             FROM tool_executions tt
             JOIN turns t ON t.id = tt.turn_id
             JOIN sessions s ON s.id = t.session_id
-            WHERE LOWER(tt.tool_name) LIKE ?1
+            WHERE (LOWER(tt.tool_name) LIKE ?1
                OR LOWER(COALESCE(tt.args, '')) LIKE ?1
                OR LOWER(COALESCE(tt.output, '')) LIKE ?1
-               OR LOWER(COALESCE(tt.verdict, '')) LIKE ?1
+               OR LOWER(COALESCE(tt.verdict, '')) LIKE ?1)
+              AND (?3 IS NULL OR t.session_id = ?3)
             "#,
         );
     }
@@ -277,13 +295,14 @@ fn ranked_session_search_sql(scope: SessionSearchScope) -> String {
             FROM events e
             JOIN sessions s ON s.id = e.session_id
             LEFT JOIN turns t ON t.id = e.turn_id
-            WHERE LOWER(e.event_type) LIKE ?1 OR LOWER(e.payload) LIKE ?1
+            WHERE (LOWER(e.event_type) LIKE ?1 OR LOWER(e.payload) LIKE ?1)
+              AND (?3 IS NULL OR e.session_id = ?3)
             "#,
         );
     }
 
     format!(
-        "SELECT * FROM ({}) AS ranked\nORDER BY score DESC, created_at DESC, sort_id DESC\nLIMIT ?3 OFFSET ?4",
+        "SELECT * FROM ({}) AS ranked\nORDER BY score DESC, created_at DESC, sort_id DESC\nLIMIT ?4 OFFSET ?5",
         arms.join("\nUNION ALL\n")
     )
 }

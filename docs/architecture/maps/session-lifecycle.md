@@ -41,6 +41,8 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
   - Ranked session, active-path message, tool-execution, and event search read model.
     Candidate rows are paged in SQL and filtered through cached active paths because the
     embedded Turso release does not yet support recursive CTE ancestry.
+    An optional session target narrows the ranked SQL candidates before active-path
+    filtering, so clients can search a long conversation without materializing it.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 

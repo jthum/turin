@@ -100,6 +100,7 @@ pub(super) async fn search(
             params.limit,
             params.offset,
             store_selector,
+            params.session_id.as_deref(),
         )
         .await
     {

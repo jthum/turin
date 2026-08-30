@@ -1,10 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use tracing::{debug, instrument};
 use turin_daemon_protocol::SessionSearchScope;
 
 use super::session_summary_from_row_and_selector;
 use crate::daemon::state::{DaemonState, SessionSearchHit, SessionSummary};
-use crate::kernel::session_refs::{describe_store_selector, format_session_reference};
+use crate::kernel::session_refs::{
+    describe_store_selector, format_session_reference, parse_session_reference,
+};
 use crate::persistence::manager::StoreSelector;
 
 impl DaemonState {
@@ -63,13 +65,43 @@ impl DaemonState {
         limit: usize,
         offset: usize,
         store_selector: Option<StoreSelector>,
+        session_id: Option<&str>,
     ) -> Result<Vec<SessionSearchHit>> {
-        let store = match &store_selector {
+        let mut effective_store_selector = store_selector;
+        let target_public_id = if let Some(session_id) = session_id {
+            let session_ref = parse_session_reference(session_id)?;
+            if let Some(target_selector) = session_ref.store_selector {
+                if effective_store_selector
+                    .as_ref()
+                    .is_some_and(|selector| selector != &target_selector)
+                {
+                    bail!("Session target and search store select different databases");
+                }
+                effective_store_selector = Some(target_selector);
+            }
+            Some(
+                uuid::Uuid::parse_str(&session_ref.public_id)
+                    .with_context(|| format!("Invalid session id '{}'", session_ref.public_id))?,
+            )
+        } else {
+            None
+        };
+        let store = match &effective_store_selector {
             Some(selector) => self.kernel.store_manager().open(selector).await?,
             None => self.kernel.store_manager().get_default().await?,
         };
+        let target_internal_id = if let Some(public_id) = target_public_id {
+            Some(
+                store
+                    .get_session_by_public_id(public_id)
+                    .await?
+                    .with_context(|| format!("Session '{public_id}' was not found"))?,
+            )
+        } else {
+            None
+        };
         let rows = store
-            .search_session_history(query, scope, limit, offset)
+            .search_session_history_in_session(query, scope, limit, offset, target_internal_id)
             .await?;
         debug!(count = rows.len(), "Searched persisted session history");
         Ok(rows
@@ -81,7 +113,7 @@ impl DaemonState {
                 SessionSearchHit {
                     kind: row.kind,
                     score: row.score,
-                    session_id: match &store_selector {
+                    session_id: match &effective_store_selector {
                         Some(selector) => format_session_reference(&session_id, selector),
                         None => session_id,
                     },

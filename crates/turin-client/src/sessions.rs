@@ -269,8 +269,33 @@ impl Client {
                     scope: Some(scope),
                     limit,
                     offset,
+                    session_id: None,
                     store: store.map(str::to_string),
                     path: path.map(str::to_string),
+                }),
+            )
+            .await?;
+        Ok(response.hits)
+    }
+
+    pub async fn search_session_messages(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SessionSearchHit>> {
+        let response: SessionSearchResultList = self
+            .request_ok(
+                None,
+                DaemonRequest::SessionSearch(SessionSearchParams {
+                    query: query.to_string(),
+                    scope: Some(SessionSearchScope::Messages),
+                    limit,
+                    offset,
+                    session_id: Some(session_id.to_string()),
+                    store: None,
+                    path: None,
                 }),
             )
             .await?;
