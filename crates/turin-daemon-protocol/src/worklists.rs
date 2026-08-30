@@ -28,6 +28,26 @@ pub struct WorkItemTargetParams {
     pub persistence: Option<ContextPersistenceParams>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemControlAction {
+    Pause,
+    Resume,
+    ReleaseStale,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkItemControlParams {
+    pub id: String,
+    pub action: WorkItemControlAction,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub stale_after_ms: Option<u64>,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorklistItemsParams {
     pub id: String,

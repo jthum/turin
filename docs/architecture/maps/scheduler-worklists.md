@@ -18,7 +18,7 @@ This subsystem should preserve two guarantees:
 - `src/daemon/state/scheduled_worklist_actions.rs`
   - Scheduled `worklist.dispatch_next` and `worklist.release_stale` action execution.
 - `src/daemon/state/worklists.rs`
-  - Daemon-facing worklist list/detail/item query APIs.
+  - Daemon-facing worklist list/detail/item query APIs and guarded operator controls.
 - `src/work_items.rs`
   - Shared row-level work item domain helpers: public id formatting, pause/claimability/orphan checks, dependency checks, where filtering, and `WorkItemRow` to `QueuedTask` conversion.
 - `crates/turin-harness-lua/src/harness/stdlib/runtime_worklist.rs`
@@ -104,6 +104,10 @@ Runtime schedule API:
 - Worklist filtering should use shared `work_items.rs` helpers so scheduler, daemon, and runtime paths do not drift.
 - Stale-claim release must recheck the persisted heartbeat and claim identity while updating.
   A heartbeat that lands after candidate selection must prevent release in both runtime and scheduled paths.
+- Client-facing operator controls may pause unclaimed pending work, resume paused work, or release
+  a stale claim. Claim, heartbeat, completion, and failure remain executing-worker operations.
+- Operator pause/resume transitions must include their expected status and ownership state in the
+  persistence update. A browser or other client must not take ownership from an active worker.
 - Partial work-item updates mutate only fields present in the update request. They must not
   read and rewrite unrelated fields that another execution may have changed concurrently.
 - `runtime_schedule.rs` should remain a binding/validation layer; scheduler semantics belong in daemon state code.

@@ -1,6 +1,6 @@
 use crate::daemon::protocol::{
-    ErrorCode, ResponseEnvelope, WorkItemTargetParams, WorklistItemsParams, WorklistList,
-    WorklistListParams, WorklistTargetParams,
+    ErrorCode, ResponseEnvelope, WorkItemControlParams, WorkItemTargetParams, WorklistItemsParams,
+    WorklistList, WorklistListParams, WorklistTargetParams,
 };
 use crate::daemon::state::WorklistItemsQuery;
 
@@ -84,6 +84,22 @@ pub(super) async fn item_get(
         id,
         result,
         "work item detail",
+        ErrorCode::WorkItemNotFound,
+        || format!("Work item '{}' not found", params.id),
+    )
+}
+
+pub(super) async fn item_control(
+    id: Option<String>,
+    params: WorkItemControlParams,
+    ctx: &DispatchContext,
+) -> ResponseEnvelope {
+    let guard = ctx.state.read().await;
+    let result = guard.control_work_item(&params).await;
+    optional_response(
+        id,
+        result,
+        "work item control",
         ErrorCode::WorkItemNotFound,
         || format!("Work item '{}' not found", params.id),
     )

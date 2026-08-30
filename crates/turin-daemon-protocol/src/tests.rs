@@ -934,3 +934,31 @@ fn workitem_get_request_round_trips_typed_shape() {
         other => panic!("unexpected request variant: {other:?}"),
     }
 }
+
+#[test]
+fn workitem_control_request_round_trips_typed_shape() {
+    let request = RequestEnvelope::new(
+        Some("req_workitem_control".to_string()),
+        DaemonRequest::WorkItemControl(WorkItemControlParams {
+            id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49".to_string(),
+            action: WorkItemControlAction::ReleaseStale,
+            reason: None,
+            stale_after_ms: Some(90_000),
+            persistence: None,
+        }),
+    );
+
+    let value = serde_json::to_value(&request).expect("serialize request");
+    assert_eq!(value["op"], "workitem.control");
+    assert_eq!(value["params"]["action"], "release_stale");
+    assert_eq!(value["params"]["stale_after_ms"], 90_000);
+
+    let decoded: RequestEnvelope = serde_json::from_value(value).expect("deserialize request");
+    match decoded.request {
+        DaemonRequest::WorkItemControl(params) => {
+            assert_eq!(params.action, WorkItemControlAction::ReleaseStale);
+            assert_eq!(params.stale_after_ms, Some(90_000));
+        }
+        other => panic!("unexpected request variant: {other:?}"),
+    }
+}

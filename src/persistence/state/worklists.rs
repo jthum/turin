@@ -289,6 +289,62 @@ impl StateStore {
         self.require_visible_work_item_after(id, "released").await
     }
 
+    pub async fn pause_pending_work_item(
+        &self,
+        id: i64,
+        metadata: Option<&str>,
+    ) -> Result<Option<WorkItemRow>> {
+        let conn = self.connect().await?;
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE work_items
+                SET status = 'paused',
+                    metadata = ?2,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?1
+                  AND status = 'pending'
+                  AND claim_execution_id IS NULL
+                "#,
+                turso::params![id, metadata],
+            )
+            .await
+            .context("Failed to pause pending work item")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_work_item_by_id(id).await
+    }
+
+    pub async fn resume_paused_work_item(&self, id: i64) -> Result<Option<WorkItemRow>> {
+        let current = self.require_work_item(id).await?;
+        if current.status != "paused" {
+            return Ok(None);
+        }
+        let metadata = clear_pause_metadata(current.metadata.as_deref())?;
+        let conn = self.connect().await?;
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE work_items
+                SET status = 'pending',
+                    metadata = ?2,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?1
+                  AND status = 'paused'
+                  AND metadata IS ?3
+                  AND claim_execution_id IS NULL
+                "#,
+                turso::params![id, metadata, current.metadata],
+            )
+            .await
+            .context("Failed to resume paused work item")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_work_item_by_id(id).await
+    }
+
     pub async fn release_stale_work_item(
         &self,
         id: i64,

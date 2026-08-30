@@ -8,8 +8,8 @@ use crate::{
     SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
     SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
     SidestepTaskParams, SubmitTaskParams, TaskIdParams, ToolAuthorizationResolveParams,
-    UpdateAgentParams, WaitTaskParams, WorkItemTargetParams, WorklistItemsParams,
-    WorklistListParams, WorklistTargetParams,
+    UpdateAgentParams, WaitTaskParams, WorkItemControlParams, WorkItemTargetParams,
+    WorklistItemsParams, WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,6 +95,8 @@ pub enum DaemonRequest {
     WorklistItems(WorklistItemsParams),
     #[serde(rename = "workitem.get")]
     WorkItemGet(WorkItemTargetParams),
+    #[serde(rename = "workitem.control")]
+    WorkItemControl(WorkItemControlParams),
     #[serde(rename = "memory.list")]
     MemoryList(MemoryListParams),
     #[serde(rename = "session.list")]

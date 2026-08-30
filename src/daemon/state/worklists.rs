@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use turin_daemon_protocol::{
-    ContextPersistenceParams, ScheduleActionParams, WorkItemDetail, WorkItemList, WorklistDetail,
+    ContextPersistenceParams, ScheduleActionParams, WorkItemControlAction, WorkItemControlParams,
+    WorkItemDetail, WorkItemList, WorklistDetail,
 };
 
 use super::DaemonState;
@@ -142,6 +143,59 @@ impl DaemonState {
         Ok(Some(map_work_item_detail(row, &public_ids, &worklist)))
     }
 
+    pub async fn control_work_item(
+        &self,
+        params: &WorkItemControlParams,
+    ) -> Result<Option<WorkItemDetail>> {
+        let store = self
+            .resolve_worklist_store(params.persistence.as_ref())
+            .await?;
+        let public_id = uuid::Uuid::parse_str(&params.id)
+            .map_err(|err| anyhow!("invalid work item id: {}", err))?;
+        let Some(row) = store.get_work_item_by_public_id(public_id).await? else {
+            return Ok(None);
+        };
+
+        match params.action {
+            WorkItemControlAction::Pause => {
+                let metadata =
+                    operator_pause_metadata(row.metadata.as_deref(), params.reason.as_deref())?;
+                anyhow::ensure!(
+                    store
+                        .pause_pending_work_item(row.id, metadata.as_deref())
+                        .await?
+                        .is_some(),
+                    "work item changed before it could be paused"
+                );
+            }
+            WorkItemControlAction::Resume => {
+                anyhow::ensure!(
+                    store.resume_paused_work_item(row.id).await?.is_some(),
+                    "work item changed before it could be resumed"
+                );
+            }
+            WorkItemControlAction::ReleaseStale => {
+                let stale_after_ms = params.stale_after_ms.unwrap_or(60_000);
+                let now_unix_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_else(|_| Duration::from_secs(0))
+                    .as_millis() as i64;
+                let stale_after_ms = i64::try_from(stale_after_ms).unwrap_or(i64::MAX);
+                let stale_before_unix_ms = now_unix_ms.saturating_sub(stale_after_ms);
+                anyhow::ensure!(
+                    store
+                        .release_stale_work_item(row.id, stale_before_unix_ms)
+                        .await?
+                        .is_some(),
+                    "work item has a live claim or changed before it could be released"
+                );
+            }
+        }
+
+        self.work_item_detail(&params.id, params.persistence.as_ref())
+            .await
+    }
+
     async fn resolve_worklist_store(
         &self,
         persistence: Option<&ContextPersistenceParams>,
@@ -152,6 +206,34 @@ impl DaemonState {
         )?;
         self.kernel.store_manager().open(&selector).await
     }
+}
+
+fn operator_pause_metadata(metadata: Option<&str>, reason: Option<&str>) -> Result<Option<String>> {
+    let mut metadata = match metadata {
+        Some(raw) => serde_json::from_str::<JsonValue>(raw)
+            .map_err(|err| anyhow!("invalid work item metadata: {}", err))?,
+        None => JsonValue::Object(JsonMap::new()),
+    };
+    let JsonValue::Object(map) = &mut metadata else {
+        return Err(anyhow!("work item metadata must be an object"));
+    };
+    map.insert("paused".to_string(), JsonValue::Bool(true));
+    map.insert(
+        "paused_at_unix_ms".to_string(),
+        JsonValue::from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_else(|_| Duration::from_secs(0))
+                .as_millis() as i64,
+        ),
+    );
+    if let Some(reason) = reason.map(str::trim).filter(|reason| !reason.is_empty()) {
+        map.insert(
+            "pause_reason".to_string(),
+            JsonValue::String(reason.to_string()),
+        );
+    }
+    Ok(Some(serde_json::to_string(&metadata)?))
 }
 
 fn map_worklist_detail(

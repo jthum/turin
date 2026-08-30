@@ -1038,6 +1038,80 @@ async fn stale_release_does_not_clear_a_refreshed_work_item_claim() {
     assert!(released.claim_execution_id.is_none());
 }
 
+#[tokio::test]
+async fn operator_work_item_transitions_preserve_worker_ownership() {
+    let store = StateStore::open_memory().await.unwrap();
+    let worklist = store.open_worklist("operator", "", None).await.unwrap();
+    let item = store
+        .create_work_item(WorkItemInsert {
+            public_id: uuid::Uuid::now_v7(),
+            worklist_id: worklist.id,
+            parent_item_id: None,
+            title: "Review result",
+            item_kind: "prompt",
+            prompt: Some("Review result"),
+            content: None,
+            tools: None,
+            conflict_policy: None,
+            action_name: None,
+            action_params: None,
+            priority: 0,
+            after_ids: None,
+            metadata: Some(r#"{"role":"review"}"#),
+        })
+        .await
+        .unwrap();
+
+    let paused = store
+        .pause_pending_work_item(
+            item.id,
+            Some(r#"{"role":"review","paused":true,"pause_reason":"operator"}"#),
+        )
+        .await
+        .unwrap()
+        .expect("pending item should pause");
+    assert_eq!(paused.status, "paused");
+    assert!(
+        store
+            .pause_pending_work_item(item.id, paused.metadata.as_deref())
+            .await
+            .unwrap()
+            .is_none(),
+        "a paused item must not satisfy the pending transition"
+    );
+
+    let resumed = store
+        .resume_paused_work_item(item.id)
+        .await
+        .unwrap()
+        .expect("paused item should resume");
+    assert_eq!(resumed.status, "pending");
+    assert_eq!(resumed.metadata.as_deref(), Some(r#"{"role":"review"}"#));
+
+    assert!(
+        store
+            .try_claim_work_item(item.id, "worker", Some("session"), Some("execution"), 100)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .pause_pending_work_item(item.id, None)
+            .await
+            .unwrap()
+            .is_none(),
+        "operator pause must not take ownership from an active worker"
+    );
+    assert!(
+        store
+            .resume_paused_work_item(item.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "operator resume must not alter active work"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn heartbeat_and_stale_release_cannot_both_win() {
     let store = StateStore::open_memory().await.unwrap();

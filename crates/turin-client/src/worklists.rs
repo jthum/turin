@@ -1,7 +1,8 @@
 use anyhow::Result;
 use turin_daemon_protocol::{
-    ContextPersistenceParams, DaemonRequest, WorkItemDetail, WorkItemList, WorkItemTargetParams,
-    WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams, WorklistTargetParams,
+    ContextPersistenceParams, DaemonRequest, WorkItemControlParams, WorkItemDetail, WorkItemList,
+    WorkItemTargetParams, WorklistDetail, WorklistItemsParams, WorklistList, WorklistListParams,
+    WorklistTargetParams,
 };
 
 use crate::client::Client;
@@ -47,5 +48,10 @@ impl Client {
             }),
         )
         .await
+    }
+
+    pub async fn control_workitem(&self, params: WorkItemControlParams) -> Result<WorkItemDetail> {
+        self.request_ok(None, DaemonRequest::WorkItemControl(params))
+            .await
     }
 }
