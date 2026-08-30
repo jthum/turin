@@ -43,6 +43,10 @@ This module is central runtime plumbing. Prefer small, behavior-preserving clean
     embedded Turso release does not yet support recursive CTE ancestry.
     An optional session target narrows the ranked SQL candidates before active-path
     filtering, so clients can search a long conversation without materializing it.
+- `src/persistence/state/messages.rs`
+  - Active-path message windows may be loaded by oldest-first offset or around
+    an exact durable turn. Turn-anchored windows preserve both older and newer
+    context and do not change the session's read or execution target.
 - `src/kernel/hot_history.rs`
   - In-memory hot-history pruning policy.
 

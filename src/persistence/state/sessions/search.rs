@@ -120,6 +120,7 @@ impl StateStore {
                     agent_id: row.get::<String>(3)?,
                     metadata: row.get::<Option<String>>(4)?,
                     created_at: row.get::<String>(5)?,
+                    turn_id,
                     turn_index: super::super::persisted_optional_u32(
                         &search_hit_record(kind, sort_id, session_id, turn_id),
                         "turn index",

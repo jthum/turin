@@ -29,6 +29,10 @@ pub struct SessionGetParams {
     /// When omitted, the persisted active branch remains the read target.
     #[serde(default)]
     pub target_turn_id: Option<i64>,
+    /// Center the active-path message window around this durable turn without
+    /// changing the path being inspected.
+    #[serde(default)]
+    pub message_anchor_turn_id: Option<i64>,
     #[serde(default)]
     pub message_limit: Option<usize>,
     #[serde(default)]

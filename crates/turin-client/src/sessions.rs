@@ -128,6 +128,7 @@ impl Client {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -146,6 +147,7 @@ impl Client {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: Some(true),
@@ -170,6 +172,7 @@ impl Client {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: Some(true),
@@ -202,6 +205,7 @@ impl Client {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: Some(message_limit),
                 message_offset,
                 include_events: Some(false),
@@ -229,6 +233,7 @@ impl Client {
             DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.to_string(),
                 target_turn_id: Some(turn_id),
+                message_anchor_turn_id: None,
                 message_limit: Some(message_limit),
                 message_offset: None,
                 include_events: Some(false),
@@ -236,6 +241,31 @@ impl Client {
                 event_offset: None,
                 event_types: None,
                 include_efficiency: Some(false),
+            }),
+        )
+        .await
+    }
+
+    /// Load a bounded active-path transcript window around an exact durable turn.
+    pub async fn get_session_window_around_turn(
+        &self,
+        session_id: &str,
+        turn_id: i64,
+        message_limit: usize,
+    ) -> Result<SessionDetail> {
+        self.request_ok(
+            None,
+            DaemonRequest::SessionGet(SessionGetParams {
+                session_id: session_id.to_string(),
+                target_turn_id: None,
+                message_anchor_turn_id: Some(turn_id),
+                message_limit: Some(message_limit),
+                message_offset: None,
+                include_events: Some(false),
+                event_limit: None,
+                event_offset: None,
+                event_types: None,
+                include_efficiency: Some(true),
             }),
         )
         .await

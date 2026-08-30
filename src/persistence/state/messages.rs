@@ -320,6 +320,34 @@ impl StateStore {
             .await
     }
 
+    /// Return an active-branch message window containing `anchor_turn_id` with
+    /// surrounding messages on both sides. The branch target is not changed.
+    pub async fn get_message_window_around_turn(
+        &self,
+        session_id: i64,
+        anchor_turn_id: i64,
+        limit: usize,
+    ) -> Result<(Vec<MessageRow>, usize, usize)> {
+        let turns = self.branch_path_turns(session_id, None).await?;
+        let anchor_position = turns
+            .iter()
+            .position(|turn| turn.id == anchor_turn_id)
+            .with_context(|| {
+                format!("Turn {anchor_turn_id} is not on the active path for session {session_id}")
+            })?;
+        let conn = self.connect().await?;
+        let counts = message_counts_for_turns(&conn, &turns).await?;
+        let preceding = turns[..anchor_position]
+            .iter()
+            .map(|turn| counts.get(&turn.id).copied().unwrap_or(0))
+            .sum::<usize>();
+        let anchor_count = counts.get(&anchor_turn_id).copied().unwrap_or(0);
+        let limit = limit.max(1);
+        let offset = preceding.saturating_sub(limit.saturating_sub(anchor_count) / 2);
+        self.messages_window_for_turns_with_counts(session_id, &turns, counts, offset, limit)
+            .await
+    }
+
     async fn messages_for_turns(
         &self,
         session_id: i64,
@@ -390,6 +418,18 @@ impl StateStore {
 
         let conn = self.connect().await?;
         let counts = message_counts_for_turns(&conn, turns).await?;
+        self.messages_window_for_turns_with_counts(session_id, turns, counts, offset, limit)
+            .await
+    }
+
+    async fn messages_window_for_turns_with_counts(
+        &self,
+        session_id: i64,
+        turns: &[super::TurnRow],
+        counts: HashMap<i64, usize>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<MessageRow>, usize, usize)> {
         let total = counts.values().copied().sum::<usize>();
         let target_offset = offset.min(total);
         let mut preceding = 0usize;

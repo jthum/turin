@@ -1186,6 +1186,44 @@ async fn test_message_window_preserves_complete_turn_groups() {
 }
 
 #[tokio::test]
+async fn test_message_window_around_turn_preserves_active_path_context() {
+    let store = StateStore::open_memory().await.unwrap();
+    let session = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    for turn_index in 0..5 {
+        for role in ["user", "assistant"] {
+            store
+                .insert_message(
+                    session,
+                    turn(turn_index),
+                    role,
+                    &json!([{"type": "text", "text": format!("{role}-{turn_index}")}]),
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    let turns = store.branch_path_turns(session, None).await.unwrap();
+    let anchor = turns[2].id;
+    let (messages, total, offset) = store
+        .get_message_window_around_turn(session, anchor, 6)
+        .await
+        .unwrap();
+
+    assert_eq!(total, 10);
+    assert_eq!(offset, 2);
+    assert_eq!(messages.len(), 6);
+    assert!(messages[0].content.contains("user-1"));
+    assert!(messages[2].content.contains("user-2"));
+    assert!(messages[5].content.contains("assistant-3"));
+}
+
+#[tokio::test]
 async fn test_insert_and_get_tool_executions() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
@@ -2035,6 +2073,14 @@ async fn test_search_session_history_queries_messages_tools_events_and_titles() 
         message_hits
             .iter()
             .any(|hit| hit.kind == SessionSearchHitKind::Message)
+    );
+    assert!(
+        message_hits
+            .iter()
+            .find(|hit| hit.kind == SessionSearchHitKind::Message)
+            .and_then(|hit| hit.turn_id)
+            .is_some(),
+        "message search hits should retain their durable navigation target"
     );
     let other_session_id = store
         .create_session(uuid::Uuid::now_v7(), "default", None)

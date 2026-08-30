@@ -537,6 +537,7 @@ pub struct SessionSearchHit {
     pub agent_id: String,
     pub title: Option<String>,
     pub created_at: String,
+    pub turn_id: Option<i64>,
     pub turn_index: Option<u32>,
     pub role: Option<String>,
     pub tool_name: Option<String>,

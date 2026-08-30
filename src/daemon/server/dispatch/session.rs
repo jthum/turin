@@ -184,6 +184,20 @@ pub(super) async fn get(
 fn session_projection_request(
     params: &SessionGetParams,
 ) -> anyhow::Result<SessionProjectionRequest> {
+    if params.message_anchor_turn_id.is_some() {
+        anyhow::ensure!(
+            params.target_turn_id.is_none(),
+            "message_anchor_turn_id cannot be combined with target_turn_id"
+        );
+        anyhow::ensure!(
+            params.message_limit.is_some(),
+            "message_anchor_turn_id requires message_limit"
+        );
+        anyhow::ensure!(
+            params.message_offset.is_none(),
+            "message_anchor_turn_id cannot be combined with message_offset"
+        );
+    }
     let has_event_options = params.event_limit.is_some()
         || params.event_offset.is_some()
         || params.event_types.is_some();
@@ -219,6 +233,7 @@ fn session_projection_request(
     };
     Ok(SessionProjectionRequest {
         target_turn_id: params.target_turn_id,
+        message_anchor_turn_id: params.message_anchor_turn_id,
         message_limit: params.message_limit,
         message_offset: params.message_offset,
         events,
@@ -489,6 +504,7 @@ mod tests {
         SessionGetParams {
             session_id: "session".to_string(),
             target_turn_id: None,
+            message_anchor_turn_id: None,
             message_limit: None,
             message_offset: None,
             include_events: None,

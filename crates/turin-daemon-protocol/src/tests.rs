@@ -132,6 +132,7 @@ fn session_get_accepts_full_and_windowed_request_shapes() {
         DaemonRequest::SessionGet(SessionGetParams {
             session_id: "sess_123".to_string(),
             target_turn_id: Some(42),
+            message_anchor_turn_id: None,
             message_limit: Some(48),
             message_offset: Some(96),
             include_events: Some(false),

@@ -120,6 +120,7 @@ impl DaemonState {
                     agent_id: row.agent_id,
                     title,
                     created_at: row.created_at,
+                    turn_id: row.turn_id,
                     turn_index: row.turn_index,
                     role: row.role,
                     tool_name: row.tool_name,

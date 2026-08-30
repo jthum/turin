@@ -44,6 +44,7 @@ pub(crate) enum SessionEventProjection {
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectionRequest {
     pub target_turn_id: Option<i64>,
+    pub message_anchor_turn_id: Option<i64>,
     pub message_limit: Option<usize>,
     pub message_offset: Option<usize>,
     pub events: SessionEventProjection,
@@ -54,6 +55,7 @@ impl SessionProjectionRequest {
     fn full() -> Self {
         Self {
             target_turn_id: None,
+            message_anchor_turn_id: None,
             message_limit: None,
             message_offset: None,
             events: SessionEventProjection::All { event_types: None },
@@ -214,28 +216,41 @@ impl DaemonState {
                 "internal_session_id": row.id,
                 "message_limit": request.message_limit,
                 "message_offset": request.message_offset,
+                "message_anchor_turn_id": request.message_anchor_turn_id,
             })
         );
         let (persisted_messages, total_messages, message_offset) =
-            match (request.message_limit, request.message_offset) {
-                (Some(limit), Some(offset)) => {
-                    store
-                        .get_message_window(row.id, &read_target, offset, limit)
-                        .await?
+            if let Some(anchor_turn_id) = request.message_anchor_turn_id {
+                store
+                    .get_message_window_around_turn(
+                        row.id,
+                        anchor_turn_id,
+                        request
+                            .message_limit
+                            .expect("message anchor requires a limit"),
+                    )
+                    .await?
+            } else {
+                match (request.message_limit, request.message_offset) {
+                    (Some(limit), Some(offset)) => {
+                        store
+                            .get_message_window(row.id, &read_target, offset, limit)
+                            .await?
+                    }
+                    (Some(limit), None) => {
+                        let (messages, total) = store
+                            .get_recent_messages(row.id, &read_target, limit)
+                            .await?;
+                        let offset = total.saturating_sub(messages.len());
+                        (messages, total, offset)
+                    }
+                    (None, None) => {
+                        let messages = store.get_messages(row.id, &read_target).await?;
+                        let total = messages.len();
+                        (messages, total, 0)
+                    }
+                    (None, Some(_)) => unreachable!("message offset was validated above"),
                 }
-                (Some(limit), None) => {
-                    let (messages, total) = store
-                        .get_recent_messages(row.id, &read_target, limit)
-                        .await?;
-                    let offset = total.saturating_sub(messages.len());
-                    (messages, total, offset)
-                }
-                (None, None) => {
-                    let messages = store.get_messages(row.id, &read_target).await?;
-                    let total = messages.len();
-                    (messages, total, 0)
-                }
-                (None, Some(_)) => unreachable!("message offset was validated above"),
             };
         let _message_payload_bytes = persisted_messages
             .iter()

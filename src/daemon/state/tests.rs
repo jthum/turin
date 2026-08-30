@@ -2245,6 +2245,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
             &live.session_id,
             SessionProjectionRequest {
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: Some(2),
                 message_offset: None,
                 events: SessionEventProjection::Window {
@@ -2282,6 +2283,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
             &live.session_id,
             SessionProjectionRequest {
                 target_turn_id: Some(first_turn.turn_id),
+                message_anchor_turn_id: None,
                 message_limit: Some(24),
                 message_offset: None,
                 events: SessionEventProjection::None,
@@ -2317,6 +2319,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
             &live.session_id,
             SessionProjectionRequest {
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: Some(2),
                 message_offset: None,
                 events: SessionEventProjection::None,
@@ -2376,6 +2379,7 @@ async fn session_detail_projection_bounds_messages_and_omits_events() -> Result<
             &live.session_id,
             SessionProjectionRequest {
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: Some(2),
                 message_offset: Some(0),
                 events: SessionEventProjection::None,

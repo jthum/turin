@@ -443,6 +443,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id,
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -648,6 +649,7 @@ async fn daemon_unclean_restart_restores_transcript_but_not_request_handle() -> 
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id,
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -726,6 +728,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.clone(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -794,6 +797,7 @@ async fn daemon_task_sidestep_runs_ephemerally_and_cleans_up_slot() -> Result<()
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id,
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -970,6 +974,7 @@ async fn daemon_task_promote_can_persist_detached_sidestep_result() -> Result<()
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id,
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -1064,6 +1069,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.clone(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -1133,6 +1139,7 @@ async fn daemon_task_sidestep_can_fork_a_sibling_branch() -> Result<()> {
             .request(DaemonRequest::SessionGet(SessionGetParams {
                 session_id: session_id.clone(),
                 target_turn_id: None,
+                message_anchor_turn_id: None,
                 message_limit: None,
                 message_offset: None,
                 include_events: None,
@@ -1181,6 +1188,7 @@ async fn wait_for_persisted_user_messages(
                 .request(DaemonRequest::SessionGet(SessionGetParams {
                     session_id: session_id.to_string(),
                     target_turn_id: None,
+                    message_anchor_turn_id: None,
                     message_limit: None,
                     message_offset: None,
                     include_events: None,
