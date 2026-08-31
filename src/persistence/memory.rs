@@ -174,6 +174,49 @@ impl StateStore {
         })
     }
 
+    pub async fn delete_memory(&self, public_id: Uuid) -> Result<bool> {
+        let mut conn = self.connect().await?;
+        let tx = conn
+            .transaction()
+            .await
+            .context("Failed to start memory deletion transaction")?;
+        let public_id = public_id.into_bytes().to_vec();
+        let mut rows = tx
+            .query(
+                "SELECT id FROM memories WHERE public_id = ?1 LIMIT 1",
+                turso::params![public_id],
+            )
+            .await
+            .context("Failed to look up memory for deletion")?;
+        let Some(row) = rows.next().await? else {
+            return Ok(false);
+        };
+        let row_id = row.get::<i64>(0)?;
+        drop(rows);
+
+        tx.execute(
+            "UPDATE memories SET superseded_by_memory_id = NULL WHERE superseded_by_memory_id = ?1",
+            turso::params![row_id],
+        )
+        .await
+        .context("Failed to detach memory supersession references")?;
+        tx.execute(
+            "DELETE FROM memory_feedback_events WHERE memory_id = ?1",
+            turso::params![row_id],
+        )
+        .await
+        .context("Failed to delete memory feedback history")?;
+        let deleted = tx
+            .execute("DELETE FROM memories WHERE id = ?1", turso::params![row_id])
+            .await
+            .context("Failed to delete memory")?;
+        anyhow::ensure!(deleted == 1, "memory changed before it could be deleted");
+        tx.commit()
+            .await
+            .context("Failed to commit memory deletion transaction")?;
+        Ok(true)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn correct_memory(
         &self,

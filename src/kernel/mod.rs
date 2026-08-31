@@ -38,6 +38,7 @@ pub use session_lifecycle::prepare_persisted_session_sidestep;
 pub use turn::context_window::estimate_history_input_tokens;
 pub(crate) use turn::context_window::estimate_persisted_message_input_tokens;
 
+use crate::inference::embeddings::EmbeddingProvider;
 use crate::inference::provider::ProviderClient;
 use crate::kernel::governance::GovernanceManager;
 use crate::kernel::policy::RuntimePolicyManager;
@@ -387,6 +388,10 @@ impl Kernel {
     /// Access the store manager.
     pub fn store_manager(&self) -> &Arc<StoreManager> {
         &self.host.store_manager
+    }
+
+    pub(crate) fn embedding_provider(&self) -> Option<&Arc<dyn EmbeddingProvider>> {
+        self.host.embedding_provider.as_ref()
     }
 
     /// Access the agent manager.

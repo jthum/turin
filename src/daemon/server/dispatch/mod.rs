@@ -102,6 +102,9 @@ pub(super) async fn dispatch(
             worklist::item_control(id, params, &context).await
         }
         DaemonRequest::MemoryList(params) => memory::list(id, params, &context).await,
+        DaemonRequest::MemoryGet(params) => memory::get(id, params, &context).await,
+        DaemonRequest::MemoryCorrect(params) => memory::correct(id, params, &context).await,
+        DaemonRequest::MemoryDelete(params) => memory::delete(id, params, &context).await,
         DaemonRequest::SessionList(params) => session::list(id, params, &context).await,
         DaemonRequest::SessionListLive(params) => session::list_live(id, params, &context).await,
         DaemonRequest::SessionSearch(params) => session::search(id, params, &context).await,

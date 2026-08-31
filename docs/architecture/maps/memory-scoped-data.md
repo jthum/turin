@@ -40,7 +40,8 @@ This subsystem should preserve four guarantees:
 - `src/persistence/memory/inspection.rs`
   - Bounded, read-only operator inspection and scope summaries.
 - `src/daemon/state/memories.rs`
-  - Maps inspection rows into the typed daemon `memory.list` response.
+  - Maps inspection rows into typed daemon responses and owns operator-facing
+    get, correct, and delete orchestration.
 
 ## Data Flow
 
@@ -85,6 +86,13 @@ Lua bridge:
 - Lua-facing memory/KV APIs should share bridge helpers; do not copy backend invocation blocks into every namespace.
 - Native `remember` and `recall` should continue to call the scoped-data backend directly, not reimplement persistence semantics.
 - Operator inspection must not update retrieval count or last-retrieved timestamps and must never expose embedding blobs.
+- Operator search uses persisted full-text search and remains observational;
+  filtering must not masquerade as an agent retrieval.
+- Operator correction preserves the original storage mode. Correcting an
+  embedded memory requires the configured embedding provider and embeds the
+  replacement before the atomic supersession write.
+- Operator deletion is exact and atomic: it removes feedback history and clears
+  inbound supersession pointers before deleting the selected memory.
 - Applying memory feedback must update the ranking weight and append its audit event in one
   transaction. Concurrent deltas accumulate from the persisted weight rather than overwriting it.
 - Correcting memory must insert the replacement and supersede the original in one transaction.
@@ -123,9 +131,10 @@ Change native memory tools:
 
 Change operator memory inspection:
 
-1. Keep the persistence query bounded and observational in `src/persistence/memory.rs`.
+1. Keep persistence queries bounded and observational in
+   `src/persistence/memory/inspection.rs`.
 2. Update the typed daemon projection in `src/daemon/state/memories.rs`.
-3. Run `cargo test -p turin memory_inspection_is_bounded_filtered_and_does_not_record_retrieval`.
+3. Run the operator lifecycle tests listed below.
 
 ## Tests
 
@@ -137,6 +146,7 @@ cargo test -p turin concurrent_memory_ --lib
 cargo test -p turin memory_feedback_rolls_back_weight_when_audit_insert_fails --lib
 cargo test -p turin memory_correction_rolls_back_replacement_when_supersession_fails --lib
 cargo test -p turin memory_purge_rolls_back_audit_deletion_when_memory_deletion_fails --lib
+cargo test -p turin memory_operator_search_correction_lineage_and_deletion_are_coherent --lib
 ```
 
 Harness integration tests:

@@ -12,15 +12,16 @@ impl StateStore {
         &self,
         scope_kind: Option<&str>,
         scope_key: Option<&str>,
+        query: Option<&str>,
         include_superseded: bool,
         limit: u32,
         offset: u32,
     ) -> Result<MemoryInspectionPage> {
         let conn = self.connect().await?;
         let (where_clause, params) =
-            memory_inspection_filter(scope_kind, scope_key, include_superseded);
+            memory_inspection_filter(scope_kind, scope_key, query, include_superseded);
 
-        let count_sql = format!("SELECT COUNT(*) FROM memories {where_clause}");
+        let count_sql = format!("SELECT COUNT(*) FROM memories m {where_clause}");
         let mut count_rows = conn
             .prepare(&count_sql)
             .await?
@@ -72,10 +73,13 @@ impl StateStore {
         page_params.push(SqlValue::Integer(offset as i64));
         let offset_index = page_params.len();
         let page_sql = format!(
-            "SELECT public_id, scope_kind, scope_key, content, metadata, \
-                    embedding IS NOT NULL, embedding_key, embedding_dimensions, weight, \
-                    retrieval_count, last_retrieved_at, superseded_at, created_at \
-             FROM memories {where_clause} ORDER BY id DESC \
+            "SELECT m.public_id, m.scope_kind, m.scope_key, m.content, m.metadata, \
+                    m.embedding IS NOT NULL, m.embedding_key, m.embedding_dimensions, m.weight, \
+                    m.retrieval_count, m.last_retrieved_at, m.superseded_at, m.created_at, \
+                    replacement.public_id \
+             FROM memories m \
+             LEFT JOIN memories replacement ON replacement.id = m.superseded_by_memory_id \
+             {where_clause} ORDER BY m.id DESC \
              LIMIT ?{limit_index} OFFSET ?{offset_index}"
         );
         let mut rows = conn
@@ -110,6 +114,7 @@ impl StateStore {
                 last_retrieved_at: row.get(10)?,
                 superseded_at: row.get(11)?,
                 created_at: row.get(12)?,
+                superseded_by_public_id: row.get(13)?,
             });
         }
 
@@ -119,25 +124,80 @@ impl StateStore {
             total,
         })
     }
+
+    pub async fn inspect_memory(
+        &self,
+        public_id: uuid::Uuid,
+    ) -> Result<Option<MemoryInspectionRow>> {
+        let conn = self.connect().await?;
+        let mut rows = conn
+            .query(
+                r#"
+				SELECT m.public_id, m.scope_kind, m.scope_key, m.content, m.metadata,
+				       m.embedding IS NOT NULL, m.embedding_key, m.embedding_dimensions, m.weight,
+				       m.retrieval_count, m.last_retrieved_at, m.superseded_at, m.created_at,
+				       replacement.public_id
+				FROM memories m
+				LEFT JOIN memories replacement ON replacement.id = m.superseded_by_memory_id
+				WHERE m.public_id = ?1
+				LIMIT 1
+				"#,
+                turso::params![public_id.into_bytes().to_vec()],
+            )
+            .await
+            .context("Failed to inspect memory")?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        Ok(Some(MemoryInspectionRow {
+            public_id: row.get(0)?,
+            scope_kind: row.get(1)?,
+            scope_key: row.get(2)?,
+            content: row.get(3)?,
+            metadata: row.get(4)?,
+            embedded: row.get::<i64>(5)? != 0,
+            embedding_key: row.get(6)?,
+            embedding_dimensions: crate::persistence::state::persisted_optional_u32(
+                "memory inspection row",
+                "embedding dimensions",
+                row.get::<Option<i64>>(7)?,
+            )?,
+            weight: row.get(8)?,
+            retrieval_count: crate::persistence::state::persisted_u64(
+                "memory inspection row",
+                "retrieval count",
+                row.get::<i64>(9)?,
+            )?,
+            last_retrieved_at: row.get(10)?,
+            superseded_at: row.get(11)?,
+            created_at: row.get(12)?,
+            superseded_by_public_id: row.get(13)?,
+        }))
+    }
 }
 
 fn memory_inspection_filter(
     scope_kind: Option<&str>,
     scope_key: Option<&str>,
+    query: Option<&str>,
     include_superseded: bool,
 ) -> (String, Vec<SqlValue>) {
     let mut clauses = Vec::new();
     let mut params = Vec::new();
     if let Some(scope_kind) = scope_kind {
         params.push(SqlValue::Text(scope_kind.to_string()));
-        clauses.push(format!("scope_kind = ?{}", params.len()));
+        clauses.push(format!("m.scope_kind = ?{}", params.len()));
     }
     if let Some(scope_key) = scope_key {
         params.push(SqlValue::Text(scope_key.to_string()));
-        clauses.push(format!("scope_key = ?{}", params.len()));
+        clauses.push(format!("m.scope_key = ?{}", params.len()));
+    }
+    if let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) {
+        params.push(SqlValue::Text(query.to_string()));
+        clauses.push(format!("fts_match(m.content, ?{})", params.len()));
     }
     if !include_superseded {
-        clauses.push("superseded_at IS NULL".to_string());
+        clauses.push("m.superseded_at IS NULL".to_string());
     }
     let where_clause = if clauses.is_empty() {
         String::new()

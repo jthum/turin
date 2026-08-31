@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BindHarnessParams, CreateAgentParams, EntityIdParams, HarnessActionRunParams,
     HarnessSourceGetParams, HarnessSourceSaveParams, HarnessSourceValidateParams,
-    LiveSessionTargetParams, MemoryListParams, NoParams, OpenSessionParams, PromoteTaskParams,
-    ResumeSessionParams, ScheduleCreateParams, ScheduleRunsParams, ScheduleUpdateParams,
-    SessionBranchCheckoutParams, SessionBranchCreateParams, SessionBranchSiblingsParams,
-    SessionGetParams, SessionIdParams, SessionListParams, SessionSearchParams, SessionTitleParams,
-    SidestepTaskParams, SubmitTaskParams, TaskIdParams, ToolAuthorizationResolveParams,
-    UpdateAgentParams, WaitTaskParams, WorkItemControlParams, WorkItemTargetParams,
-    WorklistItemsParams, WorklistListParams, WorklistTargetParams,
+    LiveSessionTargetParams, MemoryCorrectParams, MemoryListParams, MemoryTargetParams, NoParams,
+    OpenSessionParams, PromoteTaskParams, ResumeSessionParams, ScheduleCreateParams,
+    ScheduleRunsParams, ScheduleUpdateParams, SessionBranchCheckoutParams,
+    SessionBranchCreateParams, SessionBranchSiblingsParams, SessionGetParams, SessionIdParams,
+    SessionListParams, SessionSearchParams, SessionTitleParams, SidestepTaskParams,
+    SubmitTaskParams, TaskIdParams, ToolAuthorizationResolveParams, UpdateAgentParams,
+    WaitTaskParams, WorkItemControlParams, WorkItemTargetParams, WorklistItemsParams,
+    WorklistListParams, WorklistTargetParams,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -99,6 +100,12 @@ pub enum DaemonRequest {
     WorkItemControl(WorkItemControlParams),
     #[serde(rename = "memory.list")]
     MemoryList(MemoryListParams),
+    #[serde(rename = "memory.get")]
+    MemoryGet(MemoryTargetParams),
+    #[serde(rename = "memory.correct")]
+    MemoryCorrect(MemoryCorrectParams),
+    #[serde(rename = "memory.delete")]
+    MemoryDelete(MemoryTargetParams),
     #[serde(rename = "session.list")]
     SessionList(SessionListParams),
     #[serde(rename = "session.list_live")]

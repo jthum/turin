@@ -737,6 +737,7 @@ pub struct MemoryInspectionRow {
     pub retrieval_count: u64,
     pub last_retrieved_at: Option<String>,
     pub superseded_at: Option<String>,
+    pub superseded_by_public_id: Option<Vec<u8>>,
     pub created_at: String,
 }
 

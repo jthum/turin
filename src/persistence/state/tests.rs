@@ -3454,7 +3454,7 @@ async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
     }
 
     let first_page = store
-        .inspect_memories(None, None, false, 2, 0)
+        .inspect_memories(None, None, None, false, 2, 0)
         .await
         .unwrap();
     assert_eq!(first_page.total, 3);
@@ -3463,7 +3463,7 @@ async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
     assert!(first_page.rows.iter().all(|row| row.retrieval_count == 0));
 
     let alpha = store
-        .inspect_memories(Some("agent"), Some("alpha"), false, 10, 0)
+        .inspect_memories(Some("agent"), Some("alpha"), None, false, 10, 0)
         .await
         .unwrap();
     assert_eq!(alpha.total, 2);
@@ -3473,6 +3473,87 @@ async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
         alpha.rows[0].metadata.as_deref(),
         Some(r#"{"source":"test"}"#)
     );
+}
+
+#[tokio::test]
+async fn memory_operator_search_correction_lineage_and_deletion_are_coherent() {
+    let store = StateStore::open_memory().await.unwrap();
+    let stored = store
+        .insert_memory(
+            "agent",
+            "researcher",
+            "The deployment window is Tuesday",
+            None,
+            None,
+            None,
+            &json!({ "source": "operator-test" }),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_memory(
+            "agent",
+            "researcher",
+            "A separate fact",
+            None,
+            None,
+            None,
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+    let search = store
+        .inspect_memories(
+            Some("agent"),
+            Some("researcher"),
+            Some("deployment Tuesday"),
+            false,
+            10,
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(search.total, 1);
+    assert_eq!(search.rows[0].retrieval_count, 0);
+
+    let original_id = uuid::Uuid::from_slice(&stored.public_id).unwrap();
+    let correction = store
+        .correct_memory(
+            "agent",
+            "researcher",
+            original_id,
+            "The deployment window is Wednesday",
+            None,
+            None,
+            None,
+            &json!({ "source": "operator-test" }),
+        )
+        .await
+        .unwrap();
+    let original = store
+        .inspect_memory(original_id)
+        .await
+        .unwrap()
+        .expect("original memory remains inspectable");
+    assert!(original.superseded_at.is_some());
+    assert_eq!(
+        original.superseded_by_public_id.as_deref(),
+        Some(correction.replacement_public_id.as_slice())
+    );
+
+    let replacement_id = uuid::Uuid::from_slice(&correction.replacement_public_id).unwrap();
+    assert!(store.delete_memory(replacement_id).await.unwrap());
+    assert!(
+        store
+            .inspect_memory(replacement_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let original = store.inspect_memory(original_id).await.unwrap().unwrap();
+    assert!(original.superseded_by_public_id.is_none());
+    assert!(!store.delete_memory(replacement_id).await.unwrap());
 }
 
 #[tokio::test]

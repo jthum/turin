@@ -244,6 +244,7 @@ fn memory_list_round_trips_filters_and_window() {
             persistence: None,
             scope_kind: Some("agent".to_string()),
             scope_key: Some("researcher".to_string()),
+            query: Some("ownership".to_string()),
             include_superseded: true,
             limit: Some(40),
             offset: Some(80),
@@ -254,6 +255,7 @@ fn memory_list_round_trips_filters_and_window() {
     assert_eq!(value["op"], "memory.list");
     assert_eq!(value["params"]["scope_kind"], "agent");
     assert_eq!(value["params"]["scope_key"], "researcher");
+    assert_eq!(value["params"]["query"], "ownership");
     assert_eq!(value["params"]["include_superseded"], true);
     assert_eq!(value["params"]["limit"], 40);
     assert_eq!(value["params"]["offset"], 80);
@@ -263,12 +265,43 @@ fn memory_list_round_trips_filters_and_window() {
         DaemonRequest::MemoryList(params) => {
             assert_eq!(params.scope_kind.as_deref(), Some("agent"));
             assert_eq!(params.scope_key.as_deref(), Some("researcher"));
+            assert_eq!(params.query.as_deref(), Some("ownership"));
             assert!(params.include_superseded);
             assert_eq!(params.limit, Some(40));
             assert_eq!(params.offset, Some(80));
         }
         other => panic!("unexpected request variant: {other:?}"),
     }
+}
+
+#[test]
+fn memory_lifecycle_requests_round_trip() {
+    let correct = RequestEnvelope::new(
+        Some("req_memory_correct".to_string()),
+        DaemonRequest::MemoryCorrect(MemoryCorrectParams {
+            id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49".to_string(),
+            content: "Corrected durable fact".to_string(),
+            persistence: None,
+        }),
+    );
+    let value = serde_json::to_value(correct).unwrap();
+    assert_eq!(value["op"], "memory.correct");
+    assert_eq!(value["params"]["content"], "Corrected durable fact");
+    assert!(matches!(
+        serde_json::from_value::<RequestEnvelope>(value)
+            .unwrap()
+            .request,
+        DaemonRequest::MemoryCorrect(_)
+    ));
+
+    let delete = RequestEnvelope::new(
+        None,
+        DaemonRequest::MemoryDelete(MemoryTargetParams {
+            id: "0196f8fe-6e6a-7e1a-8da5-3f774f1a8d49".to_string(),
+            persistence: None,
+        }),
+    );
+    assert_eq!(serde_json::to_value(delete).unwrap()["op"], "memory.delete");
 }
 
 #[test]

@@ -12,11 +12,34 @@ pub struct MemoryListParams {
     #[serde(default)]
     pub scope_key: Option<String>,
     #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
     pub include_superseded: bool,
     #[serde(default)]
     pub limit: Option<u32>,
     #[serde(default)]
     pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryTargetParams {
+    pub id: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryCorrectParams {
+    pub id: String,
+    pub content: String,
+    #[serde(default)]
+    pub persistence: Option<ContextPersistenceParams>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryDeleteResult {
+    pub id: String,
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,6 +70,8 @@ pub struct MemoryDetail {
     pub last_retrieved_at: Option<String>,
     #[serde(default)]
     pub superseded_at: Option<String>,
+    #[serde(default)]
+    pub superseded_by_id: Option<String>,
     pub created_at: String,
 }
 
