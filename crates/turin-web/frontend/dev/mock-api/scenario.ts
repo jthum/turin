@@ -48,6 +48,21 @@ function workItem(worklistId: string, item: Pick<WorkItem, 'id' | 'title' | 'kin
 	};
 }
 
+function memory(item: Pick<Memory, 'id' | 'scope_kind' | 'scope_key' | 'content' | 'created_at'> & Partial<Memory>): Memory {
+	return {
+		metadata: null,
+		storage: 'lexical_only',
+		embedding_key: null,
+		embedding_dimensions: null,
+		weight: 1,
+		retrieval_count: 0,
+		last_retrieved_at: null,
+		superseded_at: null,
+		superseded_by_id: null,
+		...item
+	};
+}
+
 function generatedMessage(sessionId: string, index: number): ConversationMessage {
 	const role = index % 2 === 0 ? 'user' : Math.floor(index / 2) % 7 === 5 ? 'tool' : 'assistant';
 	const turn = Math.floor(index / 2) + 1;
@@ -151,8 +166,10 @@ export function createMockScenario(): MockScenario {
 			]
 		},
 		memories: [
-			{ id: 'memory-architecture', scope_kind: 'harness', scope_key: 'default', content: 'Keep Turin core unopinionated; clients own presentation and navigation state.', storage: 'durable', weight: 1, retrieval_count: 12, created_at: timestamp(8) },
-			{ id: 'memory-ui', scope_kind: 'agent', scope_key: 'default', content: 'Prefer focused product workflows over diagnostic dashboards that expose every runtime detail.', storage: 'durable', weight: 0.85, retrieval_count: 7, created_at: timestamp(20) }
+			memory({ id: 'memory-architecture', scope_kind: 'harness', scope_key: 'default', content: 'Keep Turin core unopinionated; clients own presentation and navigation state.', metadata: { source_task: 'architecture-review', tags: ['principle'] }, storage: 'embedded', embedding_key: 'minilm', embedding_dimensions: 384, weight: 1, retrieval_count: 12, last_retrieved_at: timestamp(51), created_at: timestamp(8) }),
+			memory({ id: 'memory-ui', scope_kind: 'agent', scope_key: 'default', content: 'Prefer focused product workflows over diagnostic dashboards that expose every runtime detail.', metadata: { source_task: 'ui-review', tags: ['product'] }, weight: 0.85, retrieval_count: 7, last_retrieved_at: timestamp(45), created_at: timestamp(20) }),
+			memory({ id: 'memory-context', scope_kind: 'session', scope_key: 'session-context', content: 'Context retrieval should stop at the nearest semantic checkpoint before filling the remaining token budget.', metadata: { tags: ['context', 'performance'] }, weight: 1.2, retrieval_count: 18, created_at: timestamp(28) }),
+			memory({ id: 'memory-old-ui', scope_kind: 'agent', scope_key: 'default', content: 'Render every runtime diagnostic on the default dashboard.', superseded_at: timestamp(19), superseded_by_id: 'memory-ui', weight: 0.6, retrieval_count: 2, created_at: timestamp(6) })
 		],
 		sessions,
 		messageCount: (sessionId) => counts.get(sessionId) ?? 0,

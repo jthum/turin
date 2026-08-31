@@ -168,10 +168,45 @@ export function turinMockApi(): Plugin {
 				if (request.method === 'GET' && path === '/api/memories') {
 					const limit = Number(url.searchParams.get('limit') ?? 100);
 					const offset = Number(url.searchParams.get('offset') ?? 0);
+					const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+					const scopeKind = url.searchParams.get('scope_kind');
+					const scopeKey = url.searchParams.get('scope_key');
+					const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
+					const visible = scenario.memories.filter((memory) =>
+						(!query || memory.content.toLowerCase().includes(query))
+						&& (!scopeKind || (memory.scope_kind === scopeKind && memory.scope_key === scopeKey))
+						&& (includeSuperseded || !memory.superseded_at)
+					);
+					const scopes = [...new Map(scenario.memories.filter((memory) => includeSuperseded || !memory.superseded_at).map((memory) => {
+						const key = `${memory.scope_kind}\u0000${memory.scope_key}`;
+						return [key, { scope_kind: memory.scope_kind, scope_key: memory.scope_key, count: scenario.memories.filter((candidate) => candidate.scope_kind === memory.scope_kind && candidate.scope_key === memory.scope_key && (includeSuperseded || !candidate.superseded_at)).length }];
+					})).values()];
 					return sendJson(response, 200, {
-						memories: scenario.memories.slice(offset, offset + limit), total: scenario.memories.length,
-						offset, limit
+						memories: visible.slice(offset, offset + limit), scopes, total: visible.length, offset, limit
 					});
+				}
+				const memoryMatch = path.match(/^\/api\/memories\/([^/]+)(?:\/(correct))?$/);
+				if (memoryMatch) {
+					const memoryId = decodeURIComponent(memoryMatch[1]);
+					const index = scenario.memories.findIndex((memory) => memory.id === memoryId);
+					if (index < 0) return sendJson(response, 404, { error: 'Memory not found.' });
+					if (request.method === 'GET' && !memoryMatch[2]) return sendJson(response, 200, scenario.memories[index]);
+					if (request.method === 'POST' && memoryMatch[2] === 'correct') {
+						const body = await readJson(request);
+						const content = typeof body.content === 'string' ? body.content.trim() : '';
+						if (!content || scenario.memories[index].superseded_at) return sendJson(response, 409, { error: 'Memory cannot be corrected.' });
+						const original = scenario.memories[index];
+						const replacement = { ...original, id: `memory-corrected-${nextId++}`, content, created_at: new Date().toISOString(), superseded_at: null, superseded_by_id: null, retrieval_count: 0, last_retrieved_at: null };
+						original.superseded_at = new Date().toISOString();
+						original.superseded_by_id = replacement.id;
+						scenario.memories.unshift(replacement);
+						return sendJson(response, 200, replacement);
+					}
+					if (request.method === 'DELETE' && !memoryMatch[2]) {
+						scenario.memories.splice(index, 1);
+						for (const memory of scenario.memories) if (memory.superseded_by_id === memoryId) memory.superseded_by_id = null;
+						return sendJson(response, 200, { id: memoryId, deleted: true });
+					}
 				}
 				if (request.method === 'GET' && path === '/api/search/sessions') {
 					const query = (url.searchParams.get('q') ?? '').trim().toLowerCase();

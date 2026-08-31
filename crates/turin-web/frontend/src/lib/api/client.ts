@@ -4,7 +4,9 @@ import type {
 	ConversationEventName,
 	CreatedSession,
 	Harness,
+	Memory,
 	MemoryPage,
+	MemoryListOptions,
 	MessagePage,
 	Session,
 	SessionPage,
@@ -73,8 +75,32 @@ export class TurinWebClient {
 		});
 	}
 
-	listMemories(limit = 100, offset = 0, signal?: AbortSignal): Promise<MemoryPage> {
-		return request(`/api/memories?limit=${limit}&offset=${offset}`, { signal });
+	listMemories(options: MemoryListOptions = {}, signal?: AbortSignal): Promise<MemoryPage> {
+		const params = new URLSearchParams({
+			limit: String(options.limit ?? 100),
+			offset: String(options.offset ?? 0)
+		});
+		if (options.query?.trim()) params.set('q', options.query.trim());
+		if (options.scopeKind && options.scopeKey) {
+			params.set('scope_kind', options.scopeKind);
+			params.set('scope_key', options.scopeKey);
+		}
+		if (options.includeSuperseded) params.set('include_superseded', 'true');
+		return request(`/api/memories?${params}`, { signal });
+	}
+
+	getMemory(memoryId: string, signal?: AbortSignal): Promise<Memory> {
+		return request(`/api/memories/${encodeURIComponent(memoryId)}`, { signal });
+	}
+
+	correctMemory(memoryId: string, content: string): Promise<Memory> {
+		return request(`/api/memories/${encodeURIComponent(memoryId)}/correct`, {
+			method: 'POST', body: JSON.stringify({ content })
+		});
+	}
+
+	deleteMemory(memoryId: string): Promise<{ id: string; deleted: boolean }> {
+		return request(`/api/memories/${encodeURIComponent(memoryId)}`, { method: 'DELETE' });
 	}
 
 	listSessions(limit = 50, offset = 0, signal?: AbortSignal): Promise<SessionPage> {

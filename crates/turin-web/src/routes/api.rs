@@ -17,9 +17,9 @@ use turin_client::{
     SessionSummary,
 };
 use turin_daemon_protocol::{
-    EventEnvelope, MemoryListParams, RuntimeEventsSubscribeParams, SessionSearchHitKind,
-    SessionSearchScope, WorkItemControlAction, WorkItemControlParams, WorkItemDetail,
-    WorklistItemsParams, WorklistListParams,
+    EventEnvelope, MemoryCorrectParams, MemoryDetail, MemoryListParams, MemoryTargetParams,
+    RuntimeEventsSubscribeParams, SessionSearchHitKind, SessionSearchScope, WorkItemControlAction,
+    WorkItemControlParams, WorkItemDetail, WorklistItemsParams, WorklistListParams,
 };
 use url::form_urlencoded;
 
@@ -120,18 +120,37 @@ struct WebMemory {
     scope_kind: String,
     scope_key: String,
     content: String,
+    metadata: Option<Value>,
     storage: String,
+    embedding_key: Option<String>,
+    embedding_dimensions: Option<u32>,
     weight: f64,
     retrieval_count: u64,
+    last_retrieved_at: Option<String>,
+    superseded_at: Option<String>,
+    superseded_by_id: Option<String>,
     created_at: String,
+}
+
+#[derive(Serialize)]
+struct WebMemoryScope {
+    scope_kind: String,
+    scope_key: String,
+    count: u64,
 }
 
 #[derive(Serialize)]
 struct WebMemoryList {
     memories: Vec<WebMemory>,
+    scopes: Vec<WebMemoryScope>,
     total: u64,
     offset: u32,
     limit: u32,
+}
+
+#[derive(Deserialize)]
+struct CorrectMemoryRequest {
+    content: String,
 }
 
 #[derive(Serialize)]
@@ -435,40 +454,153 @@ pub(super) async fn list_memories(
     let query = query_values(request.uri().query());
     let limit = bounded_usize(&query, "limit", 100, 200)? as u32;
     let offset = bounded_usize(&query, "offset", 0, u32::MAX as usize)? as u32;
+    let scope_kind = query
+        .get("scope_kind")
+        .cloned()
+        .filter(|value| !value.is_empty());
+    let scope_key = query
+        .get("scope_key")
+        .cloned()
+        .filter(|value| !value.is_empty());
+    if scope_kind.is_some() != scope_key.is_some() {
+        bail!("scope_kind and scope_key must be supplied together");
+    }
+    let search = query
+        .get("q")
+        .cloned()
+        .filter(|value| !value.trim().is_empty());
+    let include_superseded = query
+        .get("include_superseded")
+        .is_some_and(|value| value == "true");
     let result = state
         .client
         .list_memories(MemoryListParams {
             persistence: None,
-            scope_kind: None,
-            scope_key: None,
-            include_superseded: false,
+            scope_kind,
+            scope_key,
+            query: search,
+            include_superseded,
             limit: Some(limit),
             offset: Some(offset),
         })
         .await?;
-    let memories = result
-        .memories
+    let memories = result.memories.into_iter().map(web_memory).collect();
+    let scopes = result
+        .scopes
         .into_iter()
-        .map(|memory| WebMemory {
-            id: memory.public_id,
-            scope_kind: memory.scope_kind,
-            scope_key: memory.scope_key,
-            content: memory.content,
-            storage: memory.storage,
-            weight: memory.weight,
-            retrieval_count: memory.retrieval_count,
-            created_at: memory.created_at,
+        .map(|scope| WebMemoryScope {
+            scope_kind: scope.scope_kind,
+            scope_key: scope.scope_key,
+            count: scope.count,
         })
         .collect();
     Ok(json_response(
         StatusCode::OK,
         &WebMemoryList {
             memories,
+            scopes,
             total: result.total,
             offset: result.offset,
             limit: result.limit,
         },
     ))
+}
+
+pub(super) async fn memory_route(
+    request: Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let (memory_id, resource) = parse_memory_path(request.uri().path())?;
+    match (request.method(), resource) {
+        (&Method::GET, None) => {
+            let memory = state
+                .client
+                .get_memory(MemoryTargetParams {
+                    id: memory_id,
+                    persistence: None,
+                })
+                .await?;
+            Ok(json_response(StatusCode::OK, &web_memory(memory)))
+        }
+        (&Method::POST, Some("correct")) => {
+            let input: CorrectMemoryRequest = read_json(request).await?;
+            match state
+                .client
+                .correct_memory(MemoryCorrectParams {
+                    id: memory_id,
+                    content: input.content,
+                    persistence: None,
+                })
+                .await
+            {
+                Ok(memory) => Ok(json_response(StatusCode::OK, &web_memory(memory))),
+                Err(error) => {
+                    tracing::info!(%error, "memory correction was rejected");
+                    Ok(json_response(
+                        StatusCode::CONFLICT,
+                        &serde_json::json!({ "error": "The memory changed or could not be corrected with its current storage policy." }),
+                    ))
+                }
+            }
+        }
+        (&Method::DELETE, None) => match state
+            .client
+            .delete_memory(MemoryTargetParams {
+                id: memory_id,
+                persistence: None,
+            })
+            .await
+        {
+            Ok(result) => Ok(json_response(StatusCode::OK, &result)),
+            Err(error) => {
+                tracing::info!(%error, "memory deletion was rejected");
+                Ok(json_response(
+                    StatusCode::CONFLICT,
+                    &serde_json::json!({ "error": "The memory changed or could not be deleted." }),
+                ))
+            }
+        },
+        _ => Ok(text_response(StatusCode::NOT_FOUND, "API route not found")),
+    }
+}
+
+fn web_memory(memory: MemoryDetail) -> WebMemory {
+    WebMemory {
+        id: memory.public_id,
+        scope_kind: memory.scope_kind,
+        scope_key: memory.scope_key,
+        content: memory.content,
+        metadata: memory.metadata,
+        storage: memory.storage,
+        embedding_key: memory.embedding_key,
+        embedding_dimensions: memory.embedding_dimensions,
+        weight: memory.weight,
+        retrieval_count: memory.retrieval_count,
+        last_retrieved_at: memory.last_retrieved_at,
+        superseded_at: memory.superseded_at,
+        superseded_by_id: memory.superseded_by_id,
+        created_at: memory.created_at,
+    }
+}
+
+fn parse_memory_path(path: &str) -> Result<(String, Option<&str>)> {
+    let path = path
+        .strip_prefix("/api/memories/")
+        .context("invalid memory path")?;
+    let mut segments = path.split('/');
+    let encoded = segments
+        .next()
+        .filter(|value| !value.is_empty())
+        .context("missing memory id")?;
+    let resource = segments.next();
+    if segments.next().is_some() {
+        bail!("invalid memory path");
+    }
+    let id = form_urlencoded::parse(format!("id={encoded}").as_bytes())
+        .next()
+        .map(|(_, value)| value.into_owned())
+        .context("invalid memory id")?;
+    Ok((id, resource))
 }
 
 pub(super) async fn search_sessions(
@@ -1189,6 +1321,19 @@ mod tests {
             ("item/one".to_string(), Some("control"))
         );
         assert!(parse_work_item_path("/api/work-items/item/unknown/extra").is_err());
+    }
+
+    #[test]
+    fn memory_paths_decode_id_and_optional_resource() {
+        assert_eq!(
+            parse_memory_path("/api/memories/memory%2Fone").unwrap(),
+            ("memory/one".to_string(), None)
+        );
+        assert_eq!(
+            parse_memory_path("/api/memories/memory%2Fone/correct").unwrap(),
+            ("memory/one".to_string(), Some("correct"))
+        );
+        assert!(parse_memory_path("/api/memories/memory/correct/extra").is_err());
     }
 
     #[test]

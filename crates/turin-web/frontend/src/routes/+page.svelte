@@ -5,6 +5,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import MessageComposer from '#lib/components/product/message-composer.svelte';
+	import MemoryWorkspace from '#lib/components/product/memory-workspace.svelte';
 	import ConversationTranscript from '#lib/components/product/conversation-transcript.svelte';
 	import CapabilityWorkspace from '#lib/components/product/capability-workspace.svelte';
 	import ConversationDashboard from '#lib/components/product/conversation-dashboard.svelte';
@@ -13,7 +14,7 @@
 	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
 	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
 	import WorkWorkspace from '#lib/components/product/work-workspace.svelte';
-	import type { Agent, ConversationMessage, Harness, Memory, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
+	import type { Agent, ConversationMessage, Harness, Memory, MemoryListOptions, MemoryScope, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
@@ -32,8 +33,14 @@
 	let loadingWorkItems = $state(false);
 	let controllingWorkItem = $state(false);
 	let memories = $state<Memory[]>([]);
+	let memoryScopes = $state<MemoryScope[]>([]);
 	let memoryTotal = $state(0);
+	let selectedMemory = $state<Memory | null>(null);
+	let memoryFilters = $state<MemoryListOptions>({});
+	let loadingMemories = $state(false);
 	let loadingMoreMemories = $state(false);
+	let mutatingMemory = $state(false);
+	let memoryRequestController: AbortController | null = null;
 	let loadedSections = $state<WorkspaceSection[]>([]);
 	let loadingSections = $state<WorkspaceSection[]>([]);
 	let selectedHarnessId = $state('');
@@ -199,6 +206,9 @@
 
 	function navigate(section: WorkspaceSection) {
 		activeSection = section;
+		memoryRequestController?.abort();
+		memoryRequestController = null;
+		loadingMemories = false;
 		cancelWindowRequest();
 		unsubscribe?.();
 		unsubscribe = null;
@@ -210,6 +220,7 @@
 			selectedWorkItem = null;
 			workItems = [];
 		}
+		if (section === 'memory') selectedMemory = null;
 		void loadSection(section);
 	}
 
@@ -221,6 +232,7 @@
 			if (section === 'memory') {
 				const page = await turinWeb.listMemories();
 				memories = page.memories;
+				memoryScopes = page.scopes;
 				memoryTotal = page.total;
 			}
 			loadedSections = [...loadedSections, section];
@@ -290,13 +302,72 @@
 		if (loadingMoreMemories || memories.length >= memoryTotal) return;
 		loadingMoreMemories = true;
 		try {
-			const page = await turinWeb.listMemories(100, memories.length);
+			const page = await turinWeb.listMemories({ ...memoryFilters, limit: 100, offset: memories.length });
 			memories = [...memories, ...page.memories];
+			memoryScopes = page.scopes;
 			memoryTotal = page.total;
 		} catch (cause) {
 			showError(cause, 'More memories could not be loaded.');
 		} finally {
 			loadingMoreMemories = false;
+		}
+	}
+
+	async function filterMemories(options: MemoryListOptions) {
+		memoryFilters = options;
+		memoryRequestController?.abort();
+		const controller = new AbortController();
+		memoryRequestController = controller;
+		loadingMemories = true;
+		try {
+			const page = await turinWeb.listMemories({ ...options, limit: 100, offset: 0 }, controller.signal);
+			if (memoryRequestController !== controller) return;
+			memories = page.memories;
+			memoryScopes = page.scopes;
+			memoryTotal = page.total;
+		} catch (cause) {
+			if (!controller.signal.aborted) showError(cause, 'Memory search could not be completed.');
+		} finally {
+			if (memoryRequestController === controller) {
+				memoryRequestController = null;
+				loadingMemories = false;
+			}
+		}
+	}
+
+	async function openMemory(memory: Memory) {
+		selectedMemory = memory;
+		try {
+			selectedMemory = await turinWeb.getMemory(memory.id);
+		} catch (cause) {
+			showError(cause, 'Memory details could not be loaded.');
+		}
+	}
+
+	async function correctMemory(content: string) {
+		if (!selectedMemory || mutatingMemory) return;
+		mutatingMemory = true;
+		try {
+			selectedMemory = await turinWeb.correctMemory(selectedMemory.id, content.trim());
+			await filterMemories(memoryFilters);
+		} catch (cause) {
+			showError(cause, 'The memory could not be corrected.');
+		} finally {
+			mutatingMemory = false;
+		}
+	}
+
+	async function deleteMemory() {
+		if (!selectedMemory || mutatingMemory) return;
+		mutatingMemory = true;
+		try {
+			await turinWeb.deleteMemory(selectedMemory.id);
+			selectedMemory = null;
+			await filterMemories(memoryFilters);
+		} catch (cause) {
+			showError(cause, 'The memory could not be forgotten.');
+		} finally {
+			mutatingMemory = false;
 		}
 	}
 
@@ -702,9 +773,11 @@
 			{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
 		{:else if activeSection === 'work'}
 			<WorkWorkspace {worklists} {selectedWorklist} {workItems} {selectedWorkItem} loading={loadingSections.includes('work') || loadingWorkItems} controlling={controllingWorkItem} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; selectedWorkItem = null; workItems = []; }} onOpenItem={openWorkItem} onCloseItem={() => selectedWorkItem = null} onControlItem={controlWorkItem} onOpenSession={openWorkItemSession} />
+		{:else if activeSection === 'memory'}
+			<MemoryWorkspace {memories} scopes={memoryScopes} total={memoryTotal} {selectedMemory} loading={loadingSections.includes('memory') || loadingMemories} loadingMore={loadingMoreMemories} mutating={mutatingMemory} onFilter={filterMemories} onLoadMore={loadMoreMemories} onOpen={openMemory} onClose={() => selectedMemory = null} onCorrect={correctMemory} onDelete={deleteMemory} />
 		{:else}
 			{#key activeSection}
-				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} {memories} {memoryTotal} loading={loadingSections.includes(activeSection)} {loadingMoreMemories} onLoadMoreMemories={loadMoreMemories} />
+				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} loading={loadingSections.includes(activeSection)} />
 			{/key}
 		{/if}
 		</Sidebar.Inset>

@@ -109,6 +109,7 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
             api::work_item_route(request, state).await
         }
         (&Method::GET, "/api/memories") => api::list_memories(&request, state).await,
+        (_, path) if path.starts_with("/api/memories/") => api::memory_route(request, state).await,
         (&Method::GET, "/api/sessions") => api::list_sessions(&request, state).await,
         (&Method::GET, "/api/search/sessions") => api::search_sessions(&request, state).await,
         (&Method::GET, "/api/search/workspace") => api::search_workspace(&request, state).await,

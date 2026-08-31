@@ -71,17 +71,39 @@ export type Memory = {
 	scope_kind: string;
 	scope_key: string;
 	content: string;
+	metadata: unknown | null;
 	storage: string;
+	embedding_key: string | null;
+	embedding_dimensions: number | null;
 	weight: number;
 	retrieval_count: number;
+	last_retrieved_at: string | null;
+	superseded_at: string | null;
+	superseded_by_id: string | null;
 	created_at: string;
+};
+
+export type MemoryScope = {
+	scope_kind: string;
+	scope_key: string;
+	count: number;
 };
 
 export type MemoryPage = {
 	memories: Memory[];
+	scopes: MemoryScope[];
 	total: number;
 	offset: number;
 	limit: number;
+};
+
+export type MemoryListOptions = {
+	limit?: number;
+	offset?: number;
+	query?: string;
+	scopeKind?: string;
+	scopeKey?: string;
+	includeSuperseded?: boolean;
 };
 
 export type Session = {

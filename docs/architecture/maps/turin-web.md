@@ -30,6 +30,9 @@ browser contracts rather than forwarding the complete control protocol.
 - `crates/turin-web/frontend/src/lib/components/product/work-workspace.svelte`
   - Worklist filtering, work-item inspection, guarded operator interventions,
     and navigation to an item's owning session.
+- `crates/turin-web/frontend/src/lib/components/product/memory-workspace.svelte`
+  - Persisted memory search, scope filtering, bounded browsing, lineage-aware
+    inspection, correction, and explicit forgetting.
 - `crates/turin-web/frontend/dev/mock-api/`
   - Development-only Vite API adapter. It implements the same browser
     contracts and generates large transcript windows algorithmically.
@@ -78,6 +81,10 @@ mock code is not included in production assets.
   startup path does not preload either domain. Worklist rows drill into a
   bounded item view, while memory browsing uses bounded pages and an explicit
   load-more action rather than materializing the complete store.
+- Memory search is server-backed and observational: it must not increment agent
+  retrieval statistics. Correction creates a replacement with visible lineage
+  rather than mutating content in place; forgetting requires explicit
+  confirmation and uses exact memory identity.
 - The Work surface is operational without becoming a second executor. It may
   pause pending work, resume paused work, and request stale-claim release. It
   does not claim, heartbeat, complete, or fail work on behalf of a harness.
