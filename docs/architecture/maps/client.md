@@ -16,6 +16,9 @@ Keep this crate as a thin transport/domain facade. It should not own daemon sema
   - Public DTOs decoded from daemon responses and small private response wrapper structs.
 - `crates/turin-client/src/health.rs`
   - `ControlHealth` and status-to-health summarization.
+- `crates/turin-client/src/agents.rs`
+  - Agent detail, runtime status, scoped issues, availability, and hot-reload
+    convenience methods.
 - `crates/turin-client/src/schedules.rs`
   - Schedule convenience methods.
 - `crates/turin-client/src/sessions.rs`

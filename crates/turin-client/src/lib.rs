@@ -1,3 +1,4 @@
+mod agents;
 mod authorizations;
 mod client;
 mod harnesses;
