@@ -33,6 +33,9 @@ browser contracts rather than forwarding the complete control protocol.
 - `crates/turin-web/frontend/src/lib/components/product/memory-workspace.svelte`
   - Persisted memory search, scope filtering, bounded browsing, lineage-aware
     inspection, correction, and explicit forgetting.
+- `crates/turin-web/frontend/src/lib/components/product/agent-workspace.svelte`
+  - Agent inventory, live workload inspection, inference-route and registry
+    health detail, availability controls, and explicit hot reload.
 - `crates/turin-web/frontend/dev/mock-api/`
   - Development-only Vite API adapter. It implements the same browser
     contracts and generates large transcript windows algorithmically.
@@ -88,6 +91,10 @@ mock code is not included in production assets.
 - The Work surface is operational without becoming a second executor. It may
   pause pending work, resume paused work, and request stale-claim release. It
   does not claim, heartbeat, complete, or fail work on behalf of a harness.
+- The Agents surface operates existing daemon lifecycle semantics. It may
+  enable, disable, and reload configured agents, but it does not edit agent
+  files, cancel tasks, or infer runtime-global agent selection. Availability
+  changes require confirmation because reconciliation may retire idle runtimes.
 - Conversation discovery uses Turin's ranked persisted-session search rather
   than filtering only the browser's current page. In-conversation search adds
   a session target and returns bounded message snippets with durable turn IDs;

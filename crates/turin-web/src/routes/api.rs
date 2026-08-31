@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{MissedTickBehavior, interval};
 use turin_client::{
-    ManagedEventStream, SessionBranchDetail, SessionEfficiencyDetail, SessionMessageDetail,
-    SessionSummary,
+    AgentDetail, AgentRuntime, Issue, ManagedEventStream, SessionBranchDetail,
+    SessionEfficiencyDetail, SessionMessageDetail, SessionSummary,
 };
 use turin_daemon_protocol::{
     EventEnvelope, MemoryCorrectParams, MemoryDetail, MemoryListParams, MemoryTargetParams,
@@ -57,6 +57,50 @@ struct WebAgent {
     model: String,
     harness_id: String,
     enabled: bool,
+    running: bool,
+    active_tasks: usize,
+    queued_tasks: usize,
+    awaiting_results: usize,
+}
+
+#[derive(Serialize)]
+struct WebAgentDetail {
+    #[serde(flatten)]
+    agent: WebAgent,
+    directory: String,
+    system_prompt: Option<String>,
+    idle_timeout_seconds: Option<u64>,
+    has_local_harness: bool,
+    inference_contexts: Vec<WebInferenceContext>,
+    current_session_id: Option<String>,
+    issues: Vec<WebAgentIssue>,
+}
+
+#[derive(Serialize)]
+struct WebInferenceContext {
+    id: String,
+    provider: String,
+    model: String,
+    is_default: bool,
+}
+
+#[derive(Serialize)]
+struct WebAgentIssue {
+    path: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AgentControlAction {
+    Enable,
+    Disable,
+    Reload,
+}
+
+#[derive(Deserialize)]
+struct AgentControlRequest {
+    action: AgentControlAction,
 }
 
 #[derive(Serialize)]
@@ -265,20 +309,142 @@ struct SubmittedTask {
 
 pub(super) async fn list_agents(state: &WebState) -> Result<Response<WebBody>> {
     let status = state.client.status().await?;
+    let mut runtimes: HashMap<_, _> = status
+        .agent_runtimes
+        .into_iter()
+        .map(|runtime| (runtime.agent_id.clone(), runtime))
+        .collect();
     let agents = status
         .registry
         .agents
         .into_iter()
-        .map(|agent| WebAgent {
-            name: agent_display_name(&agent.id),
-            id: agent.id,
-            provider: agent.provider,
-            model: agent.model,
-            harness_id: agent.harness_ref,
-            enabled: agent.enabled,
+        .map(|agent| {
+            let runtime = runtimes.remove(&agent.id);
+            WebAgent {
+                name: agent_display_name(&agent.id),
+                id: agent.id,
+                provider: agent.provider,
+                model: agent.model,
+                harness_id: agent.harness_ref,
+                enabled: agent.enabled,
+                running: runtime.as_ref().is_some_and(|runtime| runtime.running),
+                active_tasks: runtime.as_ref().map_or(0, |runtime| runtime.active_tasks),
+                queued_tasks: runtime.as_ref().map_or(0, |runtime| runtime.queued_tasks),
+                awaiting_results: runtime
+                    .as_ref()
+                    .map_or(0, |runtime| runtime.awaiting_results),
+            }
         })
         .collect();
     Ok(json_response(StatusCode::OK, &AgentList { agents }))
+}
+
+pub(super) async fn agent_route(
+    request: Request<Incoming>,
+    state: &WebState,
+) -> Result<Response<WebBody>> {
+    let (agent_id, resource) = parse_agent_path(request.uri().path())?;
+    match (request.method(), resource) {
+        (&Method::GET, None) => Ok(json_response(
+            StatusCode::OK,
+            &load_agent_detail(state, &agent_id).await?,
+        )),
+        (&Method::POST, Some("control")) => {
+            let input: AgentControlRequest = read_json(request).await?;
+            let result = match input.action {
+                AgentControlAction::Enable => state.client.set_agent_enabled(&agent_id, true).await,
+                AgentControlAction::Disable => {
+                    state.client.set_agent_enabled(&agent_id, false).await
+                }
+                AgentControlAction::Reload => state.client.reload_agent(&agent_id).await,
+            };
+            if result.is_err() {
+                return Ok(text_response(
+                    StatusCode::CONFLICT,
+                    "The agent changed or the operation could not be completed.",
+                ));
+            }
+            Ok(json_response(
+                StatusCode::OK,
+                &load_agent_detail(state, &agent_id).await?,
+            ))
+        }
+        _ => Ok(text_response(StatusCode::NOT_FOUND, "API route not found")),
+    }
+}
+
+async fn load_agent_detail(state: &WebState, agent_id: &str) -> Result<WebAgentDetail> {
+    let (detail, runtime, issues) = tokio::try_join!(
+        state.client.get_agent(agent_id),
+        state.client.get_agent_status(agent_id),
+        state.client.list_agent_issues(agent_id),
+    )?;
+    Ok(web_agent_detail(detail, runtime, issues))
+}
+
+fn web_agent_detail(
+    detail: AgentDetail,
+    runtime: AgentRuntime,
+    issues: Vec<Issue>,
+) -> WebAgentDetail {
+    WebAgentDetail {
+        agent: WebAgent {
+            id: detail.id.clone(),
+            name: agent_display_name(&detail.id),
+            provider: detail.provider,
+            model: detail.model,
+            harness_id: detail
+                .harness
+                .unwrap_or_else(|| format!("agent::{}", detail.id)),
+            enabled: detail.enabled,
+            running: runtime.running,
+            active_tasks: runtime.active_tasks,
+            queued_tasks: runtime.queued_tasks,
+            awaiting_results: runtime.awaiting_results,
+        },
+        directory: detail.directory,
+        system_prompt: detail.system_prompt,
+        idle_timeout_seconds: detail.idle_timeout_seconds,
+        has_local_harness: detail.has_local_harness,
+        inference_contexts: runtime
+            .inference_contexts
+            .into_iter()
+            .map(|context| WebInferenceContext {
+                id: context.id,
+                provider: context.provider,
+                model: context.model,
+                is_default: context.is_default,
+            })
+            .collect(),
+        current_session_id: runtime.current_session_id,
+        issues: issues
+            .into_iter()
+            .map(|issue| WebAgentIssue {
+                path: issue.path,
+                message: issue.message,
+            })
+            .collect(),
+    }
+}
+
+fn parse_agent_path(path: &str) -> Result<(String, Option<&str>)> {
+    let path = path
+        .strip_prefix("/api/agents/")
+        .context("invalid agent path")?;
+    let mut segments = path.split('/');
+    let encoded = segments
+        .next()
+        .filter(|value| !value.is_empty())
+        .context("missing agent id")?;
+    let resource = segments.next();
+    if segments.next().is_some() {
+        bail!("invalid agent path");
+    }
+    let id = form_urlencoded::parse(format!("id={encoded}").as_bytes())
+        .next()
+        .map(|(_, value)| value.into_owned())
+        .context("invalid agent id")?;
+    Ok((id, resource))
 }
 
 pub(super) async fn list_harnesses(state: &WebState) -> Result<Response<WebBody>> {
@@ -1334,6 +1500,19 @@ mod tests {
             ("memory/one".to_string(), Some("correct"))
         );
         assert!(parse_memory_path("/api/memories/memory/correct/extra").is_err());
+    }
+
+    #[test]
+    fn agent_paths_decode_id_and_control_resource() {
+        assert_eq!(
+            parse_agent_path("/api/agents/review%2Fworker").unwrap(),
+            ("review/worker".to_string(), None)
+        );
+        assert_eq!(
+            parse_agent_path("/api/agents/review%2Fworker/control").unwrap(),
+            ("review/worker".to_string(), Some("control"))
+        );
+        assert!(parse_agent_path("/api/agents/worker/control/extra").is_err());
     }
 
     #[test]

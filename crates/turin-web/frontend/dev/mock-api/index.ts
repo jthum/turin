@@ -122,6 +122,39 @@ export function turinMockApi(): Plugin {
 				if (request.method === 'GET' && path === '/api/agents') {
 					return sendJson(response, 200, { agents: scenario.agents });
 				}
+				const agentMatch = path.match(/^\/api\/agents\/([^/]+)(?:\/(control))?$/);
+				if (agentMatch) {
+					const agentId = decodeURIComponent(agentMatch[1]);
+					const agent = scenario.agents.find((candidate) => candidate.id === agentId);
+					if (!agent) return sendJson(response, 404, { error: 'Agent not found.' });
+					if (request.method === 'POST' && agentMatch[2] === 'control') {
+						const body = await readJson(request);
+						const action = String(body.action ?? '');
+						if (action === 'enable') agent.enabled = true;
+						else if (action === 'disable') {
+							agent.enabled = false;
+							agent.running = false;
+							agent.active_tasks = 0;
+							agent.queued_tasks = 0;
+							agent.awaiting_results = 0;
+						} else if (action !== 'reload') return sendJson(response, 409, { error: 'Unsupported agent operation.' });
+					}
+					if (request.method === 'GET' && agentMatch[2]) return sendJson(response, 404, { error: 'API route not found.' });
+					if (request.method !== 'GET' && request.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed.' });
+					return sendJson(response, 200, {
+						...agent,
+						directory: `/workspace/.turin/runtime/agents/${agent.id}`,
+						system_prompt: agent.id === 'scout' ? 'Investigate narrowly and return concise evidence.' : null,
+						idle_timeout_seconds: agent.id === 'scout' ? 180 : 300,
+						has_local_harness: agent.harness_id.startsWith('agent::'),
+						inference_contexts: [
+							{ id: 'default', provider: agent.provider, model: agent.model, is_default: true },
+							...(agent.id === 'default' ? [{ id: 'fast', provider: 'minimax', model: 'MiniMax-M2.7', is_default: false }] : [])
+						],
+						current_session_id: agent.running ? 'session-performance' : null,
+						issues: agent.id === 'reviewer' ? [{ path: '/workspace/.turin/runtime/agents/reviewer/config.toml', message: 'Example registry warning for the mock workflow.' }] : []
+					});
+				}
 				if (request.method === 'GET' && path === '/api/harnesses') {
 					return sendJson(response, 200, { harnesses: scenario.harnesses });
 				}

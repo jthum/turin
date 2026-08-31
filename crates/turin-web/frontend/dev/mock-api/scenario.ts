@@ -141,9 +141,9 @@ export function createMockScenario(): MockScenario {
 
 	return {
 		agents: [
-			{ id: 'default', name: 'Turin', provider: 'minimax', model: 'MiniMax-M3', harness_id: 'default', enabled: true },
-			{ id: 'scout', name: 'Scout', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'default', enabled: true },
-			{ id: 'reviewer', name: 'Reviewer', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'research', enabled: true }
+			{ id: 'default', name: 'Turin', provider: 'minimax', model: 'MiniMax-M3', harness_id: 'default', enabled: true, running: true, active_tasks: 1, queued_tasks: 0, awaiting_results: 0 },
+			{ id: 'scout', name: 'Scout', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'default', enabled: true, running: false, active_tasks: 0, queued_tasks: 0, awaiting_results: 0 },
+			{ id: 'reviewer', name: 'Reviewer', provider: 'minimax', model: 'MiniMax-M2.7', harness_id: 'research', enabled: true, running: true, active_tasks: 0, queued_tasks: 2, awaiting_results: 1 }
 		],
 		harnesses: [
 			{ id: 'default', name: 'General', bound_agent_ids: ['default', 'scout'], has_ui: false },

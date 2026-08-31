@@ -101,6 +101,7 @@ async fn route(request: Request<Incoming>, state: &WebState) -> Result<Response<
         }
         (&Method::GET, "/api/harnesses") => api::list_harnesses(state).await,
         (&Method::GET, "/api/agents") => api::list_agents(state).await,
+        (_, path) if path.starts_with("/api/agents/") => api::agent_route(request, state).await,
         (&Method::GET, "/api/worklists") => api::list_worklists(state).await,
         (&Method::GET, path) if path.starts_with("/api/worklists/") && path.ends_with("/items") => {
             api::list_worklist_items(&request, state).await

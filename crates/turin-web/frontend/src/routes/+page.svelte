@@ -4,6 +4,7 @@
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import AgentWorkspace from '#lib/components/product/agent-workspace.svelte';
 	import MessageComposer from '#lib/components/product/message-composer.svelte';
 	import MemoryWorkspace from '#lib/components/product/memory-workspace.svelte';
 	import ConversationTranscript from '#lib/components/product/conversation-transcript.svelte';
@@ -14,7 +15,7 @@
 	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
 	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
 	import WorkWorkspace from '#lib/components/product/work-workspace.svelte';
-	import type { Agent, ConversationMessage, Harness, Memory, MemoryListOptions, MemoryScope, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
+	import type { Agent, AgentControlAction, AgentDetail, ConversationMessage, Harness, Memory, MemoryListOptions, MemoryScope, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
@@ -23,6 +24,9 @@
 	const MAX_RESIDENT = 240;
 	const DRAFT_SESSION_PREFIX = 'draft:';
 	let agents = $state<Agent[]>([]);
+	let selectedAgent = $state<AgentDetail | null>(null);
+	let loadingAgent = $state(false);
+	let mutatingAgent = $state(false);
 	let harnesses = $state<Harness[]>([]);
 	let sessions = $state<Session[]>([]);
 	let hasMoreSessions = $state(false);
@@ -199,6 +203,7 @@
 		unsubscribe?.();
 		unsubscribe = null;
 		selected = null;
+		selectedAgent = null;
 		messages = [];
 		messageTotal = 0;
 		streamState = 'connecting';
@@ -221,7 +226,63 @@
 			workItems = [];
 		}
 		if (section === 'memory') selectedMemory = null;
+		if (section === 'agents') selectedAgent = null;
 		void loadSection(section);
+	}
+
+	async function openAgent(agent: Agent) {
+		if (loadingAgent) return;
+		selectedAgent = null;
+		loadingAgent = true;
+		try {
+			selectedAgent = await turinWeb.getAgent(agent.id);
+		} catch (cause) {
+			showError(cause, 'Agent details could not be loaded.');
+		} finally {
+			loadingAgent = false;
+		}
+	}
+
+	async function controlAgent(action: AgentControlAction) {
+		if (!selectedAgent || mutatingAgent) return;
+		mutatingAgent = true;
+		try {
+			const updated = await turinWeb.controlAgent(selectedAgent.id, action);
+			selectedAgent = updated;
+			agents = agents.map((agent) => agent.id === updated.id ? {
+				id: updated.id,
+				name: updated.name,
+				provider: updated.provider,
+				model: updated.model,
+				harness_id: updated.harness_id,
+				enabled: updated.enabled,
+				running: updated.running,
+				active_tasks: updated.active_tasks,
+				queued_tasks: updated.queued_tasks,
+				awaiting_results: updated.awaiting_results
+			} : agent);
+		} catch (cause) {
+			showError(cause, 'The agent operation could not be completed.');
+		} finally {
+			mutatingAgent = false;
+		}
+	}
+
+	async function openAgentSession(agent: AgentDetail) {
+		if (!agent.current_session_id) return;
+		const existing = sessions.find((session) => session.id === agent.current_session_id);
+		const session = existing ?? {
+			id: agent.current_session_id,
+			title: `${agent.name} conversation`,
+			agent_id: agent.id,
+			created_at: new Date().toISOString(),
+			message_count: null,
+			visibility: 'private',
+			relation_kind: null
+		};
+		if (!existing) sessions = [session, ...sessions];
+		selectedAgent = null;
+		await selectSession(session);
 	}
 
 	async function loadSection(section: WorkspaceSection) {
@@ -775,9 +836,11 @@
 			<WorkWorkspace {worklists} {selectedWorklist} {workItems} {selectedWorkItem} loading={loadingSections.includes('work') || loadingWorkItems} controlling={controllingWorkItem} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; selectedWorkItem = null; workItems = []; }} onOpenItem={openWorkItem} onCloseItem={() => selectedWorkItem = null} onControlItem={controlWorkItem} onOpenSession={openWorkItemSession} />
 		{:else if activeSection === 'memory'}
 			<MemoryWorkspace {memories} scopes={memoryScopes} total={memoryTotal} {selectedMemory} loading={loadingSections.includes('memory') || loadingMemories} loadingMore={loadingMoreMemories} mutating={mutatingMemory} onFilter={filterMemories} onLoadMore={loadMoreMemories} onOpen={openMemory} onClose={() => selectedMemory = null} onCorrect={correctMemory} onDelete={deleteMemory} />
+		{:else if activeSection === 'agents'}
+			<AgentWorkspace agents={visibleAgents} {selectedAgent} {loading} mutating={mutatingAgent} onOpen={openAgent} onClose={() => selectedAgent = null} onControl={controlAgent} onOpenSession={openAgentSession} />
 		{:else}
 			{#key activeSection}
-				<CapabilityWorkspace section={activeSection} agents={visibleAgents} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} loading={loadingSections.includes(activeSection)} />
+				<CapabilityWorkspace section={activeSection} harness={harnesses.find((harness) => harness.id === selectedHarnessId)} loading={loadingSections.includes(activeSection)} />
 			{/key}
 		{/if}
 		</Sidebar.Inset>

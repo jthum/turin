@@ -1,5 +1,7 @@
 import type {
 	Agent,
+	AgentControlAction,
+	AgentDetail,
 	ConversationEventMap,
 	ConversationEventName,
 	CreatedSession,
@@ -54,6 +56,17 @@ export class TurinWebClient {
 
 	listAgents(signal?: AbortSignal): Promise<{ agents: Agent[] }> {
 		return request('/api/agents', { signal });
+	}
+
+	getAgent(agentId: string, signal?: AbortSignal): Promise<AgentDetail> {
+		return request(`/api/agents/${encodeURIComponent(agentId)}`, { signal });
+	}
+
+	controlAgent(agentId: string, action: AgentControlAction): Promise<AgentDetail> {
+		return request(`/api/agents/${encodeURIComponent(agentId)}/control`, {
+			method: 'POST',
+			body: JSON.stringify({ action })
+		});
 	}
 
 	listWorklists(signal?: AbortSignal): Promise<{ worklists: Worklist[] }> {

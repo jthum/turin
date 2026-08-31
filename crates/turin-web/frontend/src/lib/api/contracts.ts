@@ -22,7 +22,35 @@ export type Agent = {
 	model: string;
 	harness_id: string;
 	enabled: boolean;
+	running: boolean;
+	active_tasks: number;
+	queued_tasks: number;
+	awaiting_results: number;
 };
+
+export type AgentInferenceContext = {
+	id: string;
+	provider: string;
+	model: string;
+	is_default: boolean;
+};
+
+export type AgentIssue = {
+	path: string;
+	message: string;
+};
+
+export type AgentDetail = Agent & {
+	directory: string;
+	system_prompt: string | null;
+	idle_timeout_seconds: number | null;
+	has_local_harness: boolean;
+	inference_contexts: AgentInferenceContext[];
+	current_session_id: string | null;
+	issues: AgentIssue[];
+};
+
+export type AgentControlAction = 'enable' | 'disable' | 'reload';
 
 export type Harness = {
 	id: string;
