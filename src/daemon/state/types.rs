@@ -35,12 +35,22 @@ pub struct SessionSummary {
     pub origin_id: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub parent_internal_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_title: Option<String>,
     pub root_internal_id: Option<i64>,
     pub origin_turn_id: Option<i64>,
     pub relation_kind: Option<String>,
     pub thread_key: Option<String>,
     pub visibility: String,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_message_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_message_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_message_created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

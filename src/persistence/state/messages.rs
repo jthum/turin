@@ -19,6 +19,13 @@ pub struct TokenBoundedMessages {
     pub has_prior_history: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionMessagePreview {
+    pub text: String,
+    pub role: String,
+    pub created_at: String,
+}
+
 impl StateStore {
     pub async fn list_session_rows(
         &self,
@@ -61,6 +68,70 @@ impl StateStore {
             sessions.push(map_session_row(&row)?);
         }
         Ok(sessions)
+    }
+
+    /// Fetch latest-message summaries for a bounded page of sessions in one query.
+    pub async fn latest_session_message_previews(
+        &self,
+        session_ids: &[i64],
+        max_chars: usize,
+    ) -> Result<HashMap<i64, SessionMessagePreview>> {
+        if session_ids.is_empty() || max_chars == 0 {
+            return Ok(HashMap::new());
+        }
+
+        let conn = self.connect().await?;
+        let placeholders = (0..session_ids.len())
+            .map(|index| format!("?{}", index + 2))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            r#"
+                SELECT s.id, m.role,
+                       substr(CASE json_type(m.content)
+                           WHEN 'text' THEN json_extract(m.content, '$')
+                           WHEN 'array' THEN COALESCE(
+                               json_extract(m.content, '$[0].text'),
+                               json_extract(m.content, '$[0].content'),
+                               ''
+                           )
+                           WHEN 'object' THEN COALESCE(
+                               json_extract(m.content, '$.text'),
+                               json_extract(m.content, '$.content'),
+                               ''
+                           )
+                           ELSE ''
+                       END, 1, ?1),
+                       m.created_at
+                FROM sessions s
+                JOIN branch_heads b ON b.id = s.active_branch_head_id
+                JOIN messages m ON m.id = (
+                    SELECT candidate.id
+                    FROM messages candidate
+                    WHERE candidate.turn_id = b.head_turn_id
+                      AND candidate.role IN ('user', 'assistant')
+                    ORDER BY candidate.id DESC
+                    LIMIT 1
+                )
+                WHERE s.id IN ({placeholders})
+            "#
+        );
+        let mut params = Vec::with_capacity(session_ids.len() + 1);
+        params.push(SqlValue::Integer(max_chars as i64));
+        params.extend(session_ids.iter().copied().map(SqlValue::Integer));
+        let mut rows = conn.query(&sql, params).await?;
+        let mut previews = HashMap::with_capacity(session_ids.len());
+        while let Some(row) = rows.next().await? {
+            previews.insert(
+                row.get::<i64>(0)?,
+                SessionMessagePreview {
+                    role: row.get::<String>(1)?,
+                    text: row.get::<String>(2)?,
+                    created_at: row.get::<String>(3)?,
+                },
+            );
+        }
+        Ok(previews)
     }
 
     pub async fn insert_message(

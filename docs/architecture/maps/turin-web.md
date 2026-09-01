@@ -29,7 +29,7 @@ browser contracts rather than forwarding the complete control protocol.
     concerns separate as their behavior grows.
 - `crates/turin-web/frontend/src/lib/components/product/work-workspace.svelte`
   - Worklist filtering, work-item inspection, guarded operator interventions,
-    and navigation to an item's owning session.
+    and navigation to the conversation context used by an item's worker.
 - `crates/turin-web/frontend/src/lib/components/product/memory-workspace.svelte`
   - Persisted memory search, scope filtering, bounded browsing, lineage-aware
     inspection, correction, and explicit forgetting.
@@ -55,7 +55,9 @@ browser contracts rather than forwarding the complete control protocol.
 During development, Vite serves the SPA and proxies `/api` to the Rust host.
 Production uses the static adapter output and requires no Node.js process.
 `bun run dev:mock` replaces that proxy with the in-process development mock;
-mock code is not included in production assets.
+mock code is not included in production assets. The mock must preserve root
+session filtering, linked-child discovery, bounded transcript windows, and
+stream event shapes; product components must not branch on mock mode.
 
 ## Invariants
 
@@ -68,11 +70,27 @@ mock code is not included in production assets.
   returns the resolved boundary because complete turns may widen a page.
 - New-conversation state remains browser-local until the first message is sent;
   merely opening and abandoning the composer does not create a durable session.
+- Workspace location is browser-owned. Primary destinations use stable paths,
+  durable conversations use `/conversations/:session_id`, and the cross-cutting
+  harness selection remains an optional query parameter. Refresh and browser
+  history restore the selected harness, workspace section, and durable
+  conversation. Exact conversation restoration uses a bounded
+  one-message session projection rather than scanning or loading its history.
 - Message actions may create an exact-turn branch through the narrow web API.
   The browser sends a durable turn ID and does not reproduce graph semantics.
 - Assistant message details project Turin's existing per-turn efficiency data.
   Input, output, and provider cache tokens are shown only when reported; the
   web client does not estimate provider cost or invent unavailable metrics.
+- Opaque runtime identifiers are routing and diagnostic values, not product
+  labels. Memory scopes resolve to conversation titles, agent names, or
+  workspace names wherever those relationships are available.
+- Root conversation discovery excludes contextual linked sessions. Linked
+  children are fetched on demand from their parent, while child summaries carry
+  their immutable parent identity and title so provenance remains navigable in
+  either direction without loading either transcript.
+- Tool output is execution detail within an agent turn. The transcript renders
+  it as subordinate, collapsible activity rather than presenting a tool as a
+  peer conversation speaker.
 - Harness selection is local presentation state. Turin Web exposes harness
   identity and agent bindings without creating a runtime-global active harness.
 - The desktop shell has stable global workspace navigation. Conversation
@@ -88,6 +106,9 @@ mock code is not included in production assets.
   retrieval statistics. Correction creates a replacement with visible lineage
   rather than mutating content in place; forgetting requires explicit
   confirmation and uses exact memory identity.
+- Memory discovery filters by stable scope kinds rather than enumerating every
+  conversation, agent, or workspace scope. Specific scope identity is provenance
+  detail, not an unbounded global select or the primary table scan target.
 - The Work surface is operational without becoming a second executor. It may
   pause pending work, resume paused work, and request stale-claim release. It
   does not claim, heartbeat, complete, or fail work on behalf of a harness.
@@ -100,12 +121,21 @@ mock code is not included in production assets.
   a session target and returns bounded message snippets with durable turn IDs;
   selecting a result loads an active-path window around that exact turn. It
   does not estimate a location from turn count or load the complete transcript.
+- Session lists may opt into a short latest-message preview. The daemon resolves
+  previews for the bounded page in one persistence query; callers that do not
+  request them pay no query or payload cost. The browser uses these summaries
+  as orientation, never as a substitute for loading the transcript window.
+- Conversation titles are durable session metadata. Turin Web exposes rename as
+  an explicit conversation action and refreshes its local projections from the
+  returned session summary.
 - Workspace search is explicitly invoked through the command palette and spans
   persisted sessions, active-path messages, tool executions, and events. It
   performs no startup query. Selecting an anchored result opens its session
   directly at one bounded turn-centered window rather than loading latest first.
 - Conversation history is fetched in bounded windows. Live text arrives over
-  SSE as task, message-start, delta, completion, and failure events.
+  SSE as task, message-start, delta, completion, and failure events. Completion
+  transitions the accumulated text from the cheap streaming renderer to the
+  sanitized Markdown renderer without requiring a transcript reload.
 - The conversation client keeps a bounded resident transcript and can slide in
   both directions. Scroll boundaries fetch adjacent windows automatically,
   while a variable-height virtualizer limits mounted message views to the

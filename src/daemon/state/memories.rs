@@ -1,10 +1,13 @@
+use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 use turin_daemon_protocol::{
     MemoryCorrectParams, MemoryDeleteResult, MemoryDetail, MemoryList, MemoryListParams,
-    MemoryScopeDetail, MemoryTargetParams,
+    MemoryScopeKindDetail, MemoryTargetParams,
 };
 
 use super::DaemonState;
+use crate::kernel::session_refs::parse_session_reference;
 
 const DEFAULT_MEMORY_LIST_LIMIT: u32 = 100;
 const MAX_MEMORY_LIST_LIMIT: u32 = 250;
@@ -32,14 +35,42 @@ impl DaemonState {
             )
             .await?;
 
+        let mut session_ids = page
+            .rows
+            .iter()
+            .filter(|row| row.scope_kind == "session")
+            .filter_map(|row| session_scope_public_id(&row.scope_key))
+            .collect::<Vec<_>>();
+        session_ids.sort_unstable();
+        session_ids.dedup();
+        let session_titles = store
+            .get_session_rows_by_public_ids(&session_ids)
+            .await?
+            .into_iter()
+            .filter_map(|row| {
+                let public_id = uuid::Uuid::from_slice(&row.public_id).ok()?;
+                let title = super::helpers::session_title_from_metadata(row.metadata.as_deref())?;
+                Some((public_id, title))
+            })
+            .collect::<HashMap<_, _>>();
+
         Ok(MemoryList {
-            memories: page.rows.into_iter().map(memory_detail).collect(),
-            scopes: page
-                .scopes
+            memories: page
+                .rows
                 .into_iter()
-                .map(|scope| MemoryScopeDetail {
+                .map(|row| {
+                    let display_name = (row.scope_kind == "session")
+                        .then(|| session_scope_public_id(&row.scope_key))
+                        .flatten()
+                        .and_then(|public_id| session_titles.get(&public_id).cloned());
+                    memory_detail(row, display_name)
+                })
+                .collect(),
+            scope_kinds: page
+                .scope_kinds
+                .into_iter()
+                .map(|scope| MemoryScopeKindDetail {
                     scope_kind: scope.scope_kind,
-                    scope_key: scope.scope_key,
                     count: scope.count,
                 })
                 .collect(),
@@ -53,7 +84,11 @@ impl DaemonState {
         let store = self.memory_store(params.persistence.as_ref()).await?;
         let public_id = uuid::Uuid::parse_str(&params.id)
             .map_err(|error| anyhow::anyhow!("invalid memory id: {error}"))?;
-        Ok(store.inspect_memory(public_id).await?.map(memory_detail))
+        let Some(row) = store.inspect_memory(public_id).await? else {
+            return Ok(None);
+        };
+        let display_name = memory_scope_display_name(&store, &row).await?;
+        Ok(Some(memory_detail(row, display_name)))
     }
 
     pub async fn correct_memory(&self, params: &MemoryCorrectParams) -> Result<MemoryDetail> {
@@ -101,11 +136,12 @@ impl DaemonState {
             )
             .await?;
         let replacement_id = uuid::Uuid::from_slice(&correction.replacement_public_id)?;
-        store
+        let row = store
             .inspect_memory(replacement_id)
             .await?
-            .map(memory_detail)
-            .ok_or_else(|| anyhow::anyhow!("corrected memory was not visible"))
+            .ok_or_else(|| anyhow::anyhow!("corrected memory was not visible"))?;
+        let display_name = memory_scope_display_name(&store, &row).await?;
+        Ok(memory_detail(row, display_name))
     }
 
     pub async fn delete_memory(&self, params: &MemoryTargetParams) -> Result<MemoryDeleteResult> {
@@ -130,11 +166,15 @@ impl DaemonState {
     }
 }
 
-fn memory_detail(row: crate::persistence::schema::MemoryInspectionRow) -> MemoryDetail {
+fn memory_detail(
+    row: crate::persistence::schema::MemoryInspectionRow,
+    scope_display_name: Option<String>,
+) -> MemoryDetail {
     MemoryDetail {
         public_id: super::helpers::format_uuid_bytes_simple(&row.public_id),
         scope_kind: row.scope_kind,
         scope_key: row.scope_key,
+        scope_display_name,
         content: row.content,
         metadata: row
             .metadata
@@ -157,4 +197,36 @@ fn memory_detail(row: crate::persistence::schema::MemoryInspectionRow) -> Memory
             .map(super::helpers::format_uuid_bytes_simple),
         created_at: row.created_at,
     }
+}
+
+fn session_scope_public_id(scope_key: &str) -> Option<uuid::Uuid> {
+    let raw_key = serde_json::from_str::<serde_json::Value>(scope_key)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| scope_key.to_string());
+    let session_ref = parse_session_reference(&raw_key).ok()?;
+    uuid::Uuid::parse_str(&session_ref.public_id).ok()
+}
+
+async fn memory_scope_display_name(
+    store: &crate::persistence::state::StateStore,
+    row: &crate::persistence::schema::MemoryInspectionRow,
+) -> Result<Option<String>> {
+    let Some(public_id) = (row.scope_kind == "session")
+        .then(|| session_scope_public_id(&row.scope_key))
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    Ok(store
+        .get_session_row_by_public_id(public_id)
+        .await?
+        .and_then(|session| {
+            super::helpers::session_title_from_metadata(session.metadata.as_deref())
+        }))
 }

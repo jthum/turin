@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { ArrowLeft, ArrowRight, CirclePause, ExternalLink, ListChecks, RotateCcw, Search, Unplug } from '@lucide/svelte';
-	import type { WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
+	import { ArrowLeft, CirclePause, ExternalLink, ListChecks, RotateCcw, Search, Unplug } from '@lucide/svelte';
+	import type { Agent, Harness, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -11,13 +11,16 @@
 	import * as Table from '#lib/components/ui/table/index.js';
 
 	let {
-		worklists, selectedWorklist, workItems, selectedWorkItem, loading, controlling,
+		worklists, selectedWorklist, workItems, selectedWorkItem, sessions, agents, harnesses, loading, controlling,
 		onOpenWorklist, onCloseWorklist, onOpenItem, onCloseItem, onControlItem, onOpenSession
 	}: {
 		worklists: Worklist[];
 		selectedWorklist: Worklist | null;
 		workItems: WorkItem[];
 		selectedWorkItem: WorkItem | null;
+		sessions: Session[];
+		agents: Agent[];
+		harnesses: Harness[];
 		loading: boolean;
 		controlling: boolean;
 		onOpenWorklist: (worklist: Worklist) => void;
@@ -51,11 +54,29 @@
 		return item.paused ? 'paused' : item.status;
 	}
 
-	function statusVariant(item: WorkItem): 'default' | 'secondary' | 'outline' | 'destructive' {
+	function agentName(id: string | null) {
+		if (!id) return 'Unclaimed';
+		return agents.find((agent) => agent.id === id)?.name ?? id;
+	}
+
+	function scopeLabel(scope: string) {
+		if (scope === 'global') return 'All workspaces';
+		const separator = scope.indexOf(':');
+		if (separator < 0) return scope.replaceAll('_', ' ');
+		const kind = scope.slice(0, separator);
+		const key = scope.slice(separator + 1);
+		if (kind === 'harness') return harnesses.find((harness) => harness.id === key)?.name ?? 'This workspace';
+		if (kind === 'agent') return agents.find((agent) => agent.id === key)?.name ?? 'Assigned agent';
+		if (kind === 'session') return sessions.find((session) => session.id === key)?.title ?? 'One conversation';
+		return `${kind.replaceAll('_', ' ')} · ${key}`;
+	}
+
+	function statusVariant(item: WorkItem): 'success' | 'warning' | 'danger' | 'info' | 'outline' {
 		const value = visibleStatus(item);
-		if (value === 'failed' || value === 'cancelled') return 'destructive';
-		if (value === 'active' || value === 'running') return 'default';
-		if (value === 'done' || value === 'completed') return 'secondary';
+		if (value === 'failed' || value === 'cancelled') return 'danger';
+		if (value === 'active' || value === 'running') return 'info';
+		if (value === 'done' || value === 'completed') return 'success';
+		if (value === 'paused' || value === 'pending') return 'warning';
 		return 'outline';
 	}
 
@@ -71,7 +92,7 @@
 			{#if selectedWorklist}
 				<Button variant="ghost" size="sm" class="-ml-2 mb-3" onclick={onCloseWorklist}><ArrowLeft />All worklists</Button>
 				<div class="flex flex-wrap items-end justify-between gap-3">
-					<div><h1 class="font-heading text-3xl font-semibold tracking-tight">{selectedWorklist.name}</h1><p class="mt-2 text-sm text-muted-foreground">Prioritized work in {selectedWorklist.scope}.</p></div>
+					<div><h1 class="font-heading text-3xl font-semibold tracking-tight">{selectedWorklist.name}</h1><p class="mt-2 text-sm text-muted-foreground">Available to {scopeLabel(selectedWorklist.scope)}.</p></div>
 					<Badge variant="secondary">{workItems.length} {workItems.length === 1 ? 'item' : 'items'}</Badge>
 				</div>
 			{:else}
@@ -93,13 +114,13 @@
 				<div class="grid min-h-72 place-items-center text-sm text-muted-foreground">Loading work…</div>
 			{:else if selectedWorklist && filteredItems.length > 0}
 				<Table.Root>
-					<Table.Header><Table.Row><Table.Head>Item</Table.Head><Table.Head>Status</Table.Head><Table.Head>Priority</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Updated</Table.Head><Table.Head class="w-10"><span class="sr-only">Open</span></Table.Head></Table.Row></Table.Header>
-					<Table.Body>{#each filteredItems as item}<Table.Row class="cursor-pointer" onclick={() => onOpenItem(item)}><Table.Cell><p class="font-medium">{item.title}</p><p class="mt-0.5 text-xs text-muted-foreground">{item.action_name ?? item.kind}</p></Table.Cell><Table.Cell><Badge variant={statusVariant(item)}>{visibleStatus(item)}</Badge></Table.Cell><Table.Cell class="tabular-nums">{item.priority}</Table.Cell><Table.Cell class="text-muted-foreground">{item.claim_agent_id ?? 'Unclaimed'}</Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(item.updated_at)}</Table.Cell><Table.Cell><ArrowRight class="size-4 text-muted-foreground" /></Table.Cell></Table.Row>{/each}</Table.Body>
+					<Table.Header><Table.Row><Table.Head>Item</Table.Head><Table.Head>Status</Table.Head><Table.Head>Priority</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Updated</Table.Head></Table.Row></Table.Header>
+					<Table.Body>{#each filteredItems as item}<Table.Row class="cursor-pointer" onclick={() => onOpenItem(item)}><Table.Cell><p class="font-medium">{item.title}</p><p class="mt-0.5 text-xs text-muted-foreground">{item.action_name ?? item.kind}</p></Table.Cell><Table.Cell><Badge variant={statusVariant(item)}>{visibleStatus(item)}</Badge></Table.Cell><Table.Cell class="tabular-nums">{item.priority}</Table.Cell><Table.Cell class="text-muted-foreground">{agentName(item.claim_agent_id)}</Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(item.updated_at)}</Table.Cell></Table.Row>{/each}</Table.Body>
 				</Table.Root>
 			{:else if selectedWorklist}
 				<div class="grid min-h-72 place-items-center text-center"><div><ListChecks class="mx-auto mb-3 size-5 text-primary" /><p class="text-sm font-medium">{workItems.length === 0 ? 'This worklist is empty' : 'No items match these filters'}</p><p class="mt-1 text-xs text-muted-foreground">{workItems.length === 0 ? 'New work will appear here when a harness creates it.' : 'Change the state, ownership, or search filters.'}</p></div></div>
 			{:else if filteredWorklists.length > 0}
-				<Table.Root><Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Scope</Table.Head><Table.Head>Updated</Table.Head><Table.Head class="w-10"><span class="sr-only">Open</span></Table.Head></Table.Row></Table.Header><Table.Body>{#each filteredWorklists as worklist}<Table.Row class="cursor-pointer" onclick={() => onOpenWorklist(worklist)}><Table.Cell class="font-medium">{worklist.name}</Table.Cell><Table.Cell><Badge variant="outline">{worklist.scope}</Badge></Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(worklist.updated_at)}</Table.Cell><Table.Cell><ArrowRight class="size-4 text-muted-foreground" /></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root>
+				<Table.Root><Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Available to</Table.Head><Table.Head>Updated</Table.Head></Table.Row></Table.Header><Table.Body>{#each filteredWorklists as worklist}<Table.Row class="cursor-pointer" onclick={() => onOpenWorklist(worklist)}><Table.Cell class="font-medium">{worklist.name}</Table.Cell><Table.Cell class="text-muted-foreground">{scopeLabel(worklist.scope)}</Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(worklist.updated_at)}</Table.Cell></Table.Row>{/each}</Table.Body></Table.Root>
 			{:else}
 				<div class="grid min-h-72 place-items-center text-sm text-muted-foreground">{worklists.length === 0 ? 'No worklists have been created.' : 'No matching worklists.'}</div>
 			{/if}
@@ -108,22 +129,23 @@
 </div>
 
 <Sheet.Root bind:open={() => selectedWorkItem !== null, (open) => { if (!open) onCloseItem(); }}>
-	<Sheet.Content class="w-full overflow-y-auto sm:max-w-xl">
+	<Sheet.Content class="w-full max-w-none! overflow-y-auto bg-background sm:w-[min(92vw,60rem)]!">
 		{#if selectedWorkItem}
-			<Sheet.Header class="border-b pb-5 pr-10"><div class="mb-2 flex items-center gap-2"><Badge variant={statusVariant(selectedWorkItem)}>{visibleStatus(selectedWorkItem)}</Badge><span class="text-xs text-muted-foreground">Priority {selectedWorkItem.priority}</span></div><Sheet.Title class="font-heading text-xl">{selectedWorkItem.title}</Sheet.Title><Sheet.Description>{selectedWorkItem.action_name ?? selectedWorkItem.kind}</Sheet.Description></Sheet.Header>
-			<div class="flex flex-1 flex-col gap-6 py-6">
-				{#if selectedWorkItem.prompt}<section><h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Instructions</h3><p class="mt-2 whitespace-pre-wrap leading-6">{selectedWorkItem.prompt}</p></section>{/if}
+			<Sheet.Header class="border-b bg-background pb-5 pr-12"><div class="mb-2 flex items-center gap-2"><Badge variant={statusVariant(selectedWorkItem)}>{visibleStatus(selectedWorkItem)}</Badge><span class="text-xs text-muted-foreground">Priority {selectedWorkItem.priority}</span></div><Sheet.Title class="font-heading text-xl leading-7">{selectedWorkItem.title}</Sheet.Title><Sheet.Description>{selectedWorkItem.action_name ?? selectedWorkItem.kind}</Sheet.Description></Sheet.Header>
+			<Sheet.Body class="gap-5 px-7 py-7">
+				{#if selectedWorkItem.prompt}<section class="rounded-xl border bg-background p-5"><h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Task brief</h3><p class="mt-3 whitespace-pre-wrap text-[0.9375rem] leading-6">{selectedWorkItem.prompt}</p></section>{/if}
 				{#if selectedWorkItem.pause_reason}<section class="rounded-lg border border-amber-500/25 bg-amber-500/5 p-4"><h3 class="text-sm font-medium">Paused</h3><p class="mt-1 text-sm text-muted-foreground">{selectedWorkItem.pause_reason}</p></section>{/if}
 				{#if selectedWorkItem.failure_reason}<section class="rounded-lg border border-destructive/25 bg-destructive/5 p-4"><h3 class="text-sm font-medium text-destructive">Failure</h3><p class="mt-1 text-sm text-muted-foreground">{selectedWorkItem.failure_reason}</p></section>{/if}
-				<section class="grid grid-cols-2 gap-x-5 gap-y-4 border-y py-5 text-sm"><div><p class="text-xs text-muted-foreground">Owner</p><p class="mt-1 font-medium">{selectedWorkItem.claim_agent_id ?? 'Unclaimed'}</p></div><div><p class="text-xs text-muted-foreground">Kind</p><p class="mt-1 font-medium">{selectedWorkItem.kind}</p></div><div><p class="text-xs text-muted-foreground">Claimed</p><p class="mt-1">{formatDate(selectedWorkItem.claimed_at)}</p></div><div><p class="text-xs text-muted-foreground">Updated</p><p class="mt-1">{formatDate(selectedWorkItem.updated_at)}</p></div></section>
-				{#if selectedWorkItem.after.length > 0}<section><h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Depends on</h3><div class="mt-2 flex flex-wrap gap-2">{#each selectedWorkItem.after as dependency}<Badge variant="outline">{dependency}</Badge>{/each}</div></section>{/if}
-				{#if selectedWorkItem.status === 'pending' && !selectedWorkItem.claim_execution_id}<section class="rounded-lg border p-4"><div class="flex items-start gap-3"><CirclePause class="mt-0.5 size-4 text-muted-foreground" /><div class="min-w-0 flex-1"><h3 class="text-sm font-medium">Pause pending work</h3><p class="mt-1 text-xs text-muted-foreground">Prevents a worker from claiming this item until it is resumed.</p><Input bind:value={pauseReason} class="mt-3" placeholder="Reason (optional)" /><Button class="mt-3" variant="outline" size="sm" onclick={pause} disabled={controlling}>Pause item</Button></div></div></section>{/if}
-			</div>
-			<Sheet.Footer class="sticky bottom-0 -mx-6 mt-auto flex-row flex-wrap border-t bg-background px-6 py-4 sm:justify-start">
-				{#if selectedWorkItem.status === 'paused'}<Button size="sm" onclick={() => onControlItem('resume')} disabled={controlling}><RotateCcw />Resume</Button>{/if}
-				{#if selectedWorkItem.status === 'active'}<Button size="sm" variant="outline" onclick={() => releaseOpen = true} disabled={controlling}><Unplug />Release stale claim</Button>{/if}
-				{#if selectedWorkItem.claim_session_id}<Button size="sm" variant="ghost" onclick={() => onOpenSession(selectedWorkItem)}><ExternalLink />Open session</Button>{/if}
-			</Sheet.Footer>
+				<section class="rounded-xl border bg-background p-5"><h3 class="mb-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assignment</h3><div class="grid grid-cols-2 gap-x-5 gap-y-5 text-sm"><div><p class="text-xs text-muted-foreground">Owner</p><p class="mt-1 font-medium">{agentName(selectedWorkItem.claim_agent_id)}</p></div><div><p class="text-xs text-muted-foreground">Kind</p><p class="mt-1 font-medium">{selectedWorkItem.kind}</p></div><div><p class="text-xs text-muted-foreground">Claimed</p><p class="mt-1">{formatDate(selectedWorkItem.claimed_at)}</p></div><div><p class="text-xs text-muted-foreground">Updated</p><p class="mt-1">{formatDate(selectedWorkItem.updated_at)}</p></div></div>{#if selectedWorkItem.claim_session_id}<div class="mt-5 flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between"><div><p class="text-sm font-medium">Worker context</p><p class="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">Inspect the conversation in which {agentName(selectedWorkItem.claim_agent_id)} is processing this item. Turin records the conversation, but not an exact task message.</p></div><Button size="sm" variant="outline" onclick={() => onOpenSession(selectedWorkItem)}><ExternalLink />Inspect context</Button></div>{/if}</section>
+				{#if selectedWorkItem.after.length > 0}<section class="rounded-xl border bg-background p-5"><h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dependencies</h3><div class="mt-3 flex flex-wrap gap-2">{#each selectedWorkItem.after as dependency}<Badge variant="outline">{dependency}</Badge>{/each}</div></section>{/if}
+				{#if selectedWorkItem.status === 'pending' && !selectedWorkItem.claim_execution_id}<section class="rounded-xl border bg-background p-5"><div class="flex items-start gap-3"><span class="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><CirclePause class="size-4" /></span><div class="min-w-0 flex-1"><h3 class="text-sm font-semibold">Pause pending work</h3><p class="mt-1 text-xs leading-5 text-muted-foreground">Prevent a worker from claiming this item until an operator resumes it.</p><Input bind:value={pauseReason} class="mt-4 bg-background" placeholder="Reason (optional)" /><Button class="mt-3" variant="outline" size="sm" onclick={pause} disabled={controlling}>Pause item</Button></div></div></section>{/if}
+			</Sheet.Body>
+			{#if selectedWorkItem.status === 'paused' || selectedWorkItem.status === 'active'}
+				<Sheet.Footer class="sticky bottom-0 mt-auto flex-row flex-wrap border-t bg-background/95 py-4 backdrop-blur sm:justify-start">
+					{#if selectedWorkItem.status === 'paused'}<Button size="sm" onclick={() => onControlItem('resume')} disabled={controlling}><RotateCcw />Resume</Button>{/if}
+					{#if selectedWorkItem.status === 'active'}<Button size="sm" variant="outline" onclick={() => releaseOpen = true} disabled={controlling}><Unplug />Release stale claim</Button>{/if}
+				</Sheet.Footer>
+			{/if}
 		{/if}
 	</Sheet.Content>
 </Sheet.Root>

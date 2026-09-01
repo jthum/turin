@@ -742,16 +742,15 @@ pub struct MemoryInspectionRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemoryInspectionScopeRow {
+pub struct MemoryInspectionScopeKindRow {
     pub scope_kind: String,
-    pub scope_key: String,
     pub count: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct MemoryInspectionPage {
     pub rows: Vec<MemoryInspectionRow>,
-    pub scopes: Vec<MemoryInspectionScopeRow>,
+    pub scope_kinds: Vec<MemoryInspectionScopeKindRow>,
     pub total: u64,
 }
 

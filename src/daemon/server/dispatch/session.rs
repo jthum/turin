@@ -31,7 +31,12 @@ pub(super) async fn list(
             );
         }
         return match guard
-            .list_linked_sessions(parent_session_id, params.limit, params.offset)
+            .list_linked_sessions(
+                parent_session_id,
+                params.limit,
+                params.offset,
+                params.preview_chars,
+            )
             .await
         {
             Ok(Some(sessions)) => {
@@ -58,6 +63,7 @@ pub(super) async fn list(
             params.offset,
             store_selector,
             params.origin_id.as_deref(),
+            params.preview_chars,
         )
         .await
     {

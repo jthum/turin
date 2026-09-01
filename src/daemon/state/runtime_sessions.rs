@@ -435,8 +435,14 @@ impl DaemonState {
             })
         );
 
+        let mut session = session_summary_from_row_and_selector(&row, &store_selector);
+        if let Some(parent_id) = row.parent_session_id
+            && let Some(parent) = store.get_session_row(parent_id).await?
+        {
+            attach_parent_session_context(&mut session, &parent, &store_selector)?;
+        }
         let detail = SessionDetail {
-            session: session_summary_from_row_and_selector(&row, &store_selector),
+            session,
             branches,
             events,
             messages,
@@ -633,6 +639,20 @@ pub(super) fn session_summary_from_row_and_selector(
     let mut summary = super::helpers::session_summary_from_row(row);
     summary.session_id = format_session_reference(&summary.session_id, selector);
     summary
+}
+
+pub(super) fn attach_parent_session_context(
+    summary: &mut SessionSummary,
+    parent: &SessionRow,
+    selector: &StoreSelector,
+) -> Result<()> {
+    let public_id = uuid::Uuid::from_slice(&parent.public_id)?;
+    summary.parent_session_id = Some(format_session_reference(
+        &public_id.simple().to_string(),
+        selector,
+    ));
+    summary.parent_title = super::helpers::session_title_from_metadata(parent.metadata.as_deref());
+    Ok(())
 }
 
 fn branch_detail_from_row(row: BranchHeadRow) -> SessionBranchDetail {

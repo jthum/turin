@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { ArrowRight, Bot, Brain, ListTodo, MessageSquare, Plus } from '@lucide/svelte';
+	import { ArrowRight, Brain, Check, ListTodo, Plus } from '@lucide/svelte';
 	import type { Agent, Session } from '#lib/api/contracts.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
+	import AgentMarker from './agent-marker.svelte';
 
 	let {
 		sessions, agents, onCreate, onSelect, onNavigate
@@ -15,7 +16,13 @@
 		onNavigate: (section: WorkspaceSection) => void;
 	} = $props();
 
-	let recent = $derived(sessions.slice(0, 6));
+	let recent = $derived(sessions.slice(0, 7));
+	let selectedAgentId = $state('');
+	let selectedAgent = $derived(agents.find((agent) => agent.id === selectedAgentId) ?? agents[0]);
+
+	$effect(() => {
+		if (!agents.some((agent) => agent.id === selectedAgentId)) selectedAgentId = agents[0]?.id ?? '';
+	});
 
 	function relativeTime(value: string) {
 		const seconds = Math.max(1, Math.floor((Date.now() - Date.parse(value)) / 1000));
@@ -23,58 +30,70 @@
 		if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
 		return `${Math.floor(seconds / 86_400)}d ago`;
 	}
+
 </script>
 
-<div class="h-full overflow-y-auto bg-muted/20">
-	<div class="mx-auto flex w-full max-w-[92rem] flex-col gap-6 px-5 py-8 lg:px-8 lg:py-10">
-		<header class="flex flex-col justify-between gap-5 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-background to-background p-6 sm:flex-row sm:items-end lg:p-8">
+<div class="h-full overflow-y-auto bg-muted/15">
+	<div class="mx-auto flex w-full max-w-[86rem] flex-col gap-8 px-5 py-8 lg:px-8 lg:py-10">
+		<header class="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
 			<div>
-				<h1 class="font-heading text-3xl font-semibold tracking-tight">What are you working on?</h1>
-				<p class="mt-2 text-sm text-muted-foreground">Start a new conversation or continue one that is already in motion.</p>
+				<h1 class="font-heading text-3xl font-semibold tracking-tight sm:text-4xl">Pick up where you left off.</h1>
+				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">Continue an active thread, or give an agent a new outcome to work toward.</p>
 			</div>
-			<Button onclick={() => onCreate(agents[0]?.id)} disabled={agents.length === 0}><Plus />New conversation</Button>
+			<Button variant="outline" onclick={() => onNavigate('conversations')}>View conversations<ArrowRight /></Button>
 		</header>
 
-		<div class:grid={agents.length > 1} class="gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(20rem,0.7fr)]">
-			<Card.Root class="shadow-none">
-				<Card.Header>
-					<Card.Title>Recent conversations</Card.Title>
-					<Card.Description>Continue from the latest message.</Card.Description>
-					<Card.Action><Button variant="ghost" size="sm" onclick={() => onNavigate('conversations')}>View all<ArrowRight /></Button></Card.Action>
-				</Card.Header>
-				<Card.Content class="space-y-1">
-					{#if recent.length === 0}<div class="grid min-h-56 place-items-center text-sm text-muted-foreground">No conversations yet.</div>{/if}
+		<div class="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(19rem,0.7fr)]">
+			<Card.Root class="gap-0 overflow-hidden py-0 shadow-none" aria-label="Recent conversations">
+				<Card.Content class="p-0">
+					{#if recent.length === 0}<div class="grid min-h-72 place-items-center text-sm text-muted-foreground">Your recent work will appear here.</div>{/if}
 					{#each recent as session}
-						<button class="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-muted" onclick={() => onSelect(session)}>
-							<span class="grid size-9 shrink-0 place-items-center rounded-xl bg-muted transition-colors group-hover:bg-background"><MessageSquare class="size-4 text-muted-foreground" /></span>
-							<span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{session.title}</span><span class="mt-0.5 block text-xs text-muted-foreground">{agents.find((agent) => agent.id === session.agent_id)?.name ?? session.agent_id}</span></span>
-							<span class="text-xs text-muted-foreground">{relativeTime(session.created_at)}</span>
+						<button class="group flex w-full items-center gap-3 border-b px-5 py-4 text-left transition-colors last:border-b-0 hover:bg-muted/45" onclick={() => onSelect(session)}>
+							<span class="min-w-0 flex-1">
+								<span class="block truncate text-sm font-semibold text-foreground">{session.title}</span>
+								{#if session.latest_message_preview}<span class="mt-1 block truncate text-sm leading-5 text-muted-foreground">{session.latest_message_preview}</span>{/if}
+								<span class="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground/75">
+									<AgentMarker name={agents.find((agent) => agent.id === session.agent_id)?.name ?? session.agent_id} class="size-2" />
+									<span class="font-medium text-muted-foreground">{agents.find((agent) => agent.id === session.agent_id)?.name ?? session.agent_id}</span>
+									<span aria-hidden="true">·</span>
+									<span>{relativeTime(session.latest_message_created_at ?? session.created_at)}</span>
+								</span>
+							</span>
+							<ArrowRight class="size-4 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
 						</button>
 					{/each}
 				</Card.Content>
 			</Card.Root>
 
-			{#if agents.length > 1}<Card.Root class="shadow-none">
-				<Card.Header><Card.Title>Start with an agent</Card.Title><Card.Description>Each conversation keeps its own context.</Card.Description></Card.Header>
-				<Card.Content class="space-y-2">
+			<Card.Root class="gap-0 overflow-hidden py-0 shadow-none">
+				<Card.Header class="gap-1 border-b py-5"><Card.Title>Start a conversation</Card.Title><Card.Description>Choose the agent that should own the context.</Card.Description></Card.Header>
+				<Card.Content class="space-y-2 p-4">
 					{#each agents as agent}
-						<button class="group flex w-full items-center gap-3 rounded-xl border bg-background px-3 py-3 text-left transition-colors hover:bg-muted/60" onclick={() => onCreate(agent.id)}>
-							<span class="grid size-9 place-items-center rounded-xl bg-primary/10 text-primary"><Bot class="size-4" /></span>
+						<button class={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors hover:bg-muted/50 ${selectedAgent?.id === agent.id ? 'border-primary bg-primary/5' : ''}`} onclick={() => selectedAgentId = agent.id}>
+							<AgentMarker name={agent.name} class="size-3" />
 							<span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{agent.name}</span><span class="block truncate text-xs text-muted-foreground">{agent.model}</span></span>
-							<ArrowRight class="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+							{#if selectedAgent?.id === agent.id}<span class="grid size-5 place-items-center rounded-full bg-primary text-primary-foreground"><Check class="size-3" /></span>{/if}
 						</button>
 					{/each}
+					<Button class="mt-4 w-full" size="lg" disabled={!selectedAgent} onclick={() => selectedAgent && onCreate(selectedAgent.id)}><Plus />Start with {selectedAgent?.name ?? 'agent'}</Button>
 				</Card.Content>
-			</Card.Root>{/if}
+			</Card.Root>
 		</div>
 
-		<div class="grid gap-4 md:grid-cols-2">
-			<Card.Root class="shadow-none">
-				<Card.Header><span class="mb-2 grid size-9 place-items-center rounded-xl bg-primary/10 text-primary"><ListTodo class="size-4" /></span><Card.Title>Work</Card.Title><Card.Description>Inspect durable queues and the items waiting inside them.</Card.Description><Card.Action><Button variant="outline" size="sm" onclick={() => onNavigate('work')}>Open work<ArrowRight /></Button></Card.Action></Card.Header>
-			</Card.Root>
-			<Card.Root class="shadow-none">
-				<Card.Header><span class="mb-2 grid size-9 place-items-center rounded-xl bg-chart-2/10 text-chart-2"><Brain class="size-4" /></span><Card.Title>Memory</Card.Title><Card.Description>Search durable knowledge and inspect how it is scoped.</Card.Description><Card.Action><Button variant="outline" size="sm" onclick={() => onNavigate('memory')}>Open memory<ArrowRight /></Button></Card.Action></Card.Header>
-			</Card.Root>
-		</div>
+		<section>
+			<div class="mb-4"><h2 class="font-heading text-lg font-semibold">Beyond the conversation</h2><p class="mt-1 text-sm text-muted-foreground">Review durable work or return to knowledge Turin has retained.</p></div>
+			<div class="grid gap-4 md:grid-cols-2">
+				<button class="group flex items-center gap-4 rounded-2xl border bg-background p-5 text-left transition-colors hover:border-primary/25 hover:bg-primary/3" onclick={() => onNavigate('work')}>
+					<span class="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400"><ListTodo class="size-4" /></span>
+					<span class="min-w-0 flex-1"><span class="block font-medium">Review work</span><span class="mt-1 block text-sm text-muted-foreground">See queued, active, paused, and completed items.</span></span>
+					<ArrowRight class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</button>
+				<button class="group flex items-center gap-4 rounded-2xl border bg-background p-5 text-left transition-colors hover:border-primary/25 hover:bg-primary/3" onclick={() => onNavigate('memory')}>
+					<span class="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"><Brain class="size-4" /></span>
+					<span class="min-w-0 flex-1"><span class="block font-medium">Search memory</span><span class="mt-1 block text-sm text-muted-foreground">Find durable knowledge and inspect its provenance.</span></span>
+					<ArrowRight class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+				</button>
+			</div>
+		</section>
 	</div>
 </div>

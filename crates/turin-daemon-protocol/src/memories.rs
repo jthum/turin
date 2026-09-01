@@ -45,7 +45,7 @@ pub struct MemoryDeleteResult {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryList {
     pub memories: Vec<MemoryDetail>,
-    pub scopes: Vec<MemoryScopeDetail>,
+    pub scope_kinds: Vec<MemoryScopeKindDetail>,
     pub total: u64,
     pub offset: u32,
     pub limit: u32,
@@ -56,6 +56,8 @@ pub struct MemoryDetail {
     pub public_id: String,
     pub scope_kind: String,
     pub scope_key: String,
+    #[serde(default)]
+    pub scope_display_name: Option<String>,
     pub content: String,
     #[serde(default)]
     pub metadata: Option<Value>,
@@ -76,8 +78,7 @@ pub struct MemoryDetail {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MemoryScopeDetail {
+pub struct MemoryScopeKindDetail {
     pub scope_kind: String,
-    pub scope_key: String,
     pub count: u64,
 }

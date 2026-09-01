@@ -429,6 +429,7 @@ async fn daemon_task_wait_and_session_round_trip_over_endpoint() -> Result<()> {
                     path: None,
                     origin_id: None,
                     parent_session_id: None,
+                    preview_chars: None,
                 },
             ))
             .await?,
@@ -1586,6 +1587,7 @@ poll_interval_ms = 25
                     path: None,
                     origin_id: Some("relay:fs-isolated".to_string()),
                     parent_session_id: None,
+                    preview_chars: None,
                 },
             ))
             .await?,
@@ -1604,6 +1606,7 @@ poll_interval_ms = 25
                     path: None,
                     origin_id: Some("client:other".to_string()),
                     parent_session_id: None,
+                    preview_chars: None,
                 },
             ))
             .await?,

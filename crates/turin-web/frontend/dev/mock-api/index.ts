@@ -4,10 +4,12 @@ import type {
 	ConversationEventMap,
 	ConversationEventName,
 	ConversationMessage,
+	Memory,
 	SearchHit,
 	Session
 } from '../../src/lib/api/contracts.js';
-import { createMockScenario } from './scenario.js';
+import { randomUUID } from 'node:crypto';
+import { createMockScenario, mockMessageIndexForTurn, mockTurnForMessageIndex, MOCK_SESSION_IDS } from './scenario.js';
 
 type Subscriber = { response: ServerResponse; sessionId: string };
 
@@ -31,6 +33,19 @@ export function turinMockApi(): Plugin {
 	const appended = new Map<string, ConversationMessage[]>();
 	const subscribers = new Set<Subscriber>();
 	let nextId = 1;
+
+	function memoryResponse(memory: Memory): Memory {
+		return {
+			...memory,
+			scope_display_name: memory.scope_kind === 'session'
+				? scenario.sessions.find((session) => session.id === memory.scope_key)?.title ?? null
+				: memory.scope_kind === 'agent'
+					? scenario.agents.find((agent) => agent.id === memory.scope_key)?.name ?? null
+					: memory.scope_kind === 'harness'
+						? scenario.harnesses.find((harness) => harness.id === memory.scope_key)?.name ?? null
+						: memory.scope_kind === 'global' ? 'All workspaces' : null
+		};
+	}
 
 	function publish<K extends ConversationEventName>(name: K, data: ConversationEventMap[K]): void {
 		const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -63,7 +78,7 @@ export function turinMockApi(): Plugin {
 		const total = generatedCount + additions.length;
 		const generatedPrefix = `${sessionId}-turn-`;
 		let targetIndex = turnId.startsWith(generatedPrefix)
-			? (Number(turnId.slice(generatedPrefix.length)) - 1) * 2
+			? mockMessageIndexForTurn(Number(turnId.slice(generatedPrefix.length)))
 			: additions.findIndex((message) => message.turn_id === turnId);
 		if (!turnId.startsWith(generatedPrefix) && targetIndex >= 0) targetIndex += generatedCount;
 		if (!Number.isFinite(targetIndex) || targetIndex < 0 || targetIndex >= total) return null;
@@ -86,16 +101,16 @@ export function turinMockApi(): Plugin {
 			for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
 				const message = scenario.messageAt(session.id, index);
 				if (!message.content.toLowerCase().includes(query)) continue;
-				hits.push({ kind: 'message', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
+				hits.push({ kind: 'message', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: mockTurnForMessageIndex(index) - 1, role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
 			}
 			if (hits.length >= 50) break;
 		}
 		if ('read_file persistence checkpoint'.includes(query)) {
-			const session = sessions.get('session-storage');
+			const session = sessions.get(MOCK_SESSION_IDS.storage);
 			if (session) hits.push({ kind: 'tool_execution', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: `${session.id}-turn-12`, turn_index: 11, role: null, tool_name: 'read_file', event_type: null, snippet: 'read_file persistence checkpoint and verify durable rows' });
 		}
 		if ('task completed runtime'.includes(query)) {
-			const session = sessions.get('session-performance');
+			const session = sessions.get(MOCK_SESSION_IDS.performance);
 			if (session) hits.push({ kind: 'event', session_id: session.id, agent_id: session.agent_id, title: session.title, created_at: session.created_at, turn_id: `${session.id}-turn-8`, turn_index: 7, role: null, tool_name: null, event_type: 'task_completed', snippet: 'task_completed runtime diagnostic checkpoint' });
 		}
 		return hits.slice(0, 50);
@@ -151,7 +166,7 @@ export function turinMockApi(): Plugin {
 							{ id: 'default', provider: agent.provider, model: agent.model, is_default: true },
 							...(agent.id === 'default' ? [{ id: 'fast', provider: 'minimax', model: 'MiniMax-M2.7', is_default: false }] : [])
 						],
-						current_session_id: agent.running ? 'session-performance' : null,
+						current_session_id: agent.running ? MOCK_SESSION_IDS.performance : null,
 						issues: agent.id === 'reviewer' ? [{ path: '/workspace/.turin/runtime/agents/reviewer/config.toml', message: 'Example registry warning for the mock workflow.' }] : []
 					});
 				}
@@ -207,15 +222,17 @@ export function turinMockApi(): Plugin {
 					const includeSuperseded = url.searchParams.get('include_superseded') === 'true';
 					const visible = scenario.memories.filter((memory) =>
 						(!query || memory.content.toLowerCase().includes(query))
-						&& (!scopeKind || (memory.scope_kind === scopeKind && memory.scope_key === scopeKey))
+						&& (!scopeKind || memory.scope_kind === scopeKind)
+						&& (!scopeKey || memory.scope_key === scopeKey)
 						&& (includeSuperseded || !memory.superseded_at)
 					);
-					const scopes = [...new Map(scenario.memories.filter((memory) => includeSuperseded || !memory.superseded_at).map((memory) => {
-						const key = `${memory.scope_kind}\u0000${memory.scope_key}`;
-						return [key, { scope_kind: memory.scope_kind, scope_key: memory.scope_key, count: scenario.memories.filter((candidate) => candidate.scope_kind === memory.scope_kind && candidate.scope_key === memory.scope_key && (includeSuperseded || !candidate.superseded_at)).length }];
-					})).values()];
+					const scopeKinds = [...new Set(scenario.memories.map((memory) => memory.scope_kind))].map((kind) => ({
+						scope_kind: kind,
+						count: scenario.memories.filter((memory) => memory.scope_kind === kind && (includeSuperseded || !memory.superseded_at)).length
+					}));
+					const memories = visible.slice(offset, offset + limit).map(memoryResponse);
 					return sendJson(response, 200, {
-						memories: visible.slice(offset, offset + limit), scopes, total: visible.length, offset, limit
+						memories, scope_kinds: scopeKinds, total: visible.length, offset, limit
 					});
 				}
 				const memoryMatch = path.match(/^\/api\/memories\/([^/]+)(?:\/(correct))?$/);
@@ -223,7 +240,7 @@ export function turinMockApi(): Plugin {
 					const memoryId = decodeURIComponent(memoryMatch[1]);
 					const index = scenario.memories.findIndex((memory) => memory.id === memoryId);
 					if (index < 0) return sendJson(response, 404, { error: 'Memory not found.' });
-					if (request.method === 'GET' && !memoryMatch[2]) return sendJson(response, 200, scenario.memories[index]);
+					if (request.method === 'GET' && !memoryMatch[2]) return sendJson(response, 200, memoryResponse(scenario.memories[index]));
 					if (request.method === 'POST' && memoryMatch[2] === 'correct') {
 						const body = await readJson(request);
 						const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -233,7 +250,7 @@ export function turinMockApi(): Plugin {
 						original.superseded_at = new Date().toISOString();
 						original.superseded_by_id = replacement.id;
 						scenario.memories.unshift(replacement);
-						return sendJson(response, 200, replacement);
+						return sendJson(response, 200, memoryResponse(replacement));
 					}
 					if (request.method === 'DELETE' && !memoryMatch[2]) {
 						scenario.memories.splice(index, 1);
@@ -256,7 +273,7 @@ export function turinMockApi(): Plugin {
 				if (request.method === 'GET' && path === '/api/sessions') {
 					const limit = Number(url.searchParams.get('limit') ?? 50);
 					const offset = Number(url.searchParams.get('offset') ?? 0);
-					const all = [...sessions.values()].reverse();
+					const all = [...sessions.values()].filter((session) => !session.parent_session_id).reverse();
 					return sendJson(response, 200, {
 						sessions: all.slice(offset, offset + limit), offset,
 						has_more: offset + limit < all.length
@@ -264,7 +281,7 @@ export function turinMockApi(): Plugin {
 				}
 				if (request.method === 'POST' && path === '/api/sessions') {
 					const body = await readJson(request);
-					const id = `session-created-${nextId++}`;
+					const id = randomUUID();
 					const session: Session = {
 						id, title: 'New conversation', agent_id: String(body.agent_id ?? 'default'),
 						created_at: new Date().toISOString(), message_count: 0,
@@ -274,11 +291,26 @@ export function turinMockApi(): Plugin {
 					return sendJson(response, 201, { session });
 				}
 
-				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|branches|search))?$/);
+				const match = path.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|branches|search|linked))?$/);
 				if (match) {
 					const sessionId = decodeURIComponent(match[1]);
 					const session = sessions.get(sessionId);
 					if (!session) return sendJson(response, 404, { error: 'Session not found' });
+					if (request.method === 'GET' && !match[2]) {
+						return sendJson(response, 200, { session });
+					}
+					if (request.method === 'GET' && match[2] === 'linked') {
+						const limit = Number(url.searchParams.get('limit') ?? 50);
+						const offset = Number(url.searchParams.get('offset') ?? 0);
+						const children = [...sessions.values()]
+							.filter((candidate) => candidate.parent_session_id === sessionId)
+							.reverse();
+						return sendJson(response, 200, {
+							sessions: children.slice(offset, offset + limit),
+							offset,
+							has_more: offset + limit < children.length
+						});
+					}
 					if (request.method === 'GET' && match[2] === 'messages') {
 						const limit = Math.min(200, Number(url.searchParams.get('limit') ?? 80));
 						const turnId = url.searchParams.get('turn_id');
@@ -301,7 +333,7 @@ export function turinMockApi(): Plugin {
 						for (let index = total - 1; index >= 0 && hits.length < 50; index -= 1) {
 							const message = scenario.messageAt(sessionId, index);
 							if (!message.content.toLowerCase().includes(query)) continue;
-							hits.push({ kind: 'message', session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: Math.floor(index / 2), role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
+							hits.push({ kind: 'message', session_id: sessionId, agent_id: session.agent_id, title: session.title, created_at: message.created_at, turn_id: message.turn_id, turn_index: mockTurnForMessageIndex(index) - 1, role: message.role, tool_name: null, event_type: null, snippet: message.content.slice(0, 220) });
 						}
 						return sendJson(response, 200, { hits });
 					}
@@ -405,6 +437,9 @@ export function turinMockApi(): Plugin {
 		};
 		messages.push(message);
 		session.message_count = (session.message_count ?? 0) + 1;
+		session.latest_message_preview = responseText.replace(/\s+/g, ' ').slice(0, 180);
+		session.latest_message_role = 'assistant';
+		session.latest_message_created_at = message.created_at;
 		publishEvent('conversation.task.completed', { request_id: requestId, session_id: session.id });
 	}
 }

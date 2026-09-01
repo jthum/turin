@@ -76,6 +76,9 @@ pub struct SessionListParams {
     /// Return direct child sessions of this persisted session instead of roots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+    /// Include a bounded preview of the latest user or assistant message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_chars: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

@@ -94,10 +94,8 @@ export class TurinWebClient {
 			offset: String(options.offset ?? 0)
 		});
 		if (options.query?.trim()) params.set('q', options.query.trim());
-		if (options.scopeKind && options.scopeKey) {
-			params.set('scope_kind', options.scopeKind);
-			params.set('scope_key', options.scopeKey);
-		}
+		if (options.scopeKind) params.set('scope_kind', options.scopeKind);
+		if (options.scopeKey) params.set('scope_key', options.scopeKey);
 		if (options.includeSuperseded) params.set('include_superseded', 'true');
 		return request(`/api/memories?${params}`, { signal });
 	}
@@ -120,6 +118,10 @@ export class TurinWebClient {
 		return request(`/api/sessions?limit=${limit}&offset=${offset}`, { signal });
 	}
 
+	listLinkedSessions(sessionId: string, limit = 50, offset = 0, signal?: AbortSignal): Promise<SessionPage> {
+		return request(`/api/sessions/${encodeURIComponent(sessionId)}/linked?limit=${limit}&offset=${offset}`, { signal });
+	}
+
 	searchSessions(query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[] }> {
 		return request(`/api/search/sessions?q=${encodeURIComponent(query)}`, { signal });
 	}
@@ -137,6 +139,10 @@ export class TurinWebClient {
 			method: 'POST',
 			body: JSON.stringify({ agent_id: agentId })
 		});
+	}
+
+	getSession(sessionId: string, signal?: AbortSignal): Promise<{ session: Session }> {
+		return request(`/api/sessions/${encodeURIComponent(sessionId)}`, { signal });
 	}
 
 	loadMessages(

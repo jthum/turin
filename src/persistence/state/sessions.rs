@@ -417,6 +417,31 @@ impl StateStore {
         }
     }
 
+    pub async fn get_session_rows_by_public_ids(
+        &self,
+        public_ids: &[uuid::Uuid],
+    ) -> Result<Vec<SessionRow>> {
+        if public_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.connect().await?;
+        let placeholders = (1..=public_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("{SESSION_SELECT} WHERE public_id IN ({placeholders})");
+        let params = public_ids
+            .iter()
+            .map(|public_id| turso::Value::Blob(public_id.into_bytes().to_vec()))
+            .collect::<Vec<_>>();
+        let mut rows = conn.query(&sql, params).await?;
+        let mut sessions = Vec::with_capacity(public_ids.len());
+        while let Some(row) = rows.next().await? {
+            sessions.push(map_session_row(&row)?);
+        }
+        Ok(sessions)
+    }
+
     pub async fn update_session_title(
         &self,
         public_id: uuid::Uuid,

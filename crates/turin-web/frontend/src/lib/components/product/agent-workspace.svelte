@@ -8,6 +8,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
+	import AgentMarker from './agent-marker.svelte';
 
 	let {
 		agents, selectedAgent, loading, mutating, onOpen, onClose, onControl, onOpenSession
@@ -47,44 +48,41 @@
 			<p class="mt-2 max-w-2xl text-sm text-muted-foreground">Inspect who can take work, understand current runtime pressure, and deliberately control availability.</p>
 		</header>
 
-		<Card.Root class="overflow-hidden shadow-none">
-			<Card.Header class="gap-4 border-b bg-background sm:flex-row sm:items-center sm:justify-between">
-				<div><Card.Title>Runtime roster</Card.Title><Card.Description>Configured agents for the selected harness.</Card.Description></div>
-				<div class="relative w-full sm:w-72"><Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input bind:value={query} class="pl-9" placeholder="Search agents…" /></div>
-			</Card.Header>
-			<Card.Content class="p-0">
-				{#if loading}
-					<div class="grid min-h-64 place-items-center text-sm text-muted-foreground">Loading agents…</div>
-				{:else if filtered.length === 0}
-					<div class="grid min-h-64 place-items-center px-6 text-center"><div><Bot class="mx-auto mb-3 size-6 text-muted-foreground" /><p class="font-medium">No agents found</p><p class="mt-1 text-sm text-muted-foreground">Try another search or select a different harness.</p></div></div>
-				{:else}
-					<Table.Root>
-						<Table.Header><Table.Row><Table.Head>Agent</Table.Head><Table.Head>Model</Table.Head><Table.Head>Workload</Table.Head><Table.Head class="w-28">State</Table.Head></Table.Row></Table.Header>
-						<Table.Body>
-							{#each filtered as agent}
-								<Table.Row class="cursor-pointer" onclick={() => onOpen(agent)}>
-									<Table.Cell><div class="flex items-center gap-3"><span class="grid size-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Bot class="size-4" /></span><span><span class="block font-medium">{agent.name}</span><span class="block text-xs text-muted-foreground">{agent.id}</span></span></div></Table.Cell>
-									<Table.Cell><span class="block text-sm">{agent.model}</span><span class="block text-xs text-muted-foreground">{agent.provider}</span></Table.Cell>
-									<Table.Cell><span class:font-medium={agent.active_tasks > 0} class="text-sm">{workload(agent)}</span></Table.Cell>
-									<Table.Cell>{#if !agent.enabled}<Badge variant="outline">Disabled</Badge>{:else if agent.running}<Badge>Running</Badge>{:else}<Badge variant="secondary">Ready</Badge>{/if}</Table.Cell>
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				{/if}
-			</Card.Content>
+		<Card.Root class="gap-0 overflow-hidden py-0 shadow-none">
+			<div class="border-b bg-background p-4">
+				<div class="relative w-full sm:max-w-md"><Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input bind:value={query} class="pl-9" placeholder="Search agents" /></div>
+			</div>
+			{#if loading}
+				<div class="grid min-h-64 place-items-center text-sm text-muted-foreground">Loading agents…</div>
+			{:else if filtered.length === 0}
+				<div class="grid min-h-64 place-items-center px-6 text-center"><div><Bot class="mx-auto mb-3 size-6 text-muted-foreground" /><p class="font-medium">No agents found</p><p class="mt-1 text-sm text-muted-foreground">Try another search or select a different harness.</p></div></div>
+			{:else}
+				<Table.Root>
+					<Table.Header><Table.Row><Table.Head class="w-[32%]">Agent</Table.Head><Table.Head class="w-[32%]">Model</Table.Head><Table.Head>Workload</Table.Head><Table.Head class="w-28">Status</Table.Head></Table.Row></Table.Header>
+					<Table.Body>
+						{#each filtered as agent}
+							<Table.Row class="cursor-pointer" onclick={() => onOpen(agent)}>
+								<Table.Cell><div class="flex items-center gap-2.5"><AgentMarker name={agent.name} class="size-3" /><span><span class="block font-medium">{agent.name}</span><span class="mt-0.5 block text-xs text-muted-foreground">{agent.id}</span></span></div></Table.Cell>
+								<Table.Cell><span class="block">{agent.model}</span><span class="mt-0.5 block text-xs text-muted-foreground">{agent.provider}</span></Table.Cell>
+								<Table.Cell class="text-muted-foreground"><span class:font-medium={agent.active_tasks > 0} class:text-foreground={agent.active_tasks > 0}>{workload(agent)}</span></Table.Cell>
+								<Table.Cell>{#if !agent.enabled}<Badge variant="outline">Disabled</Badge>{:else if agent.running}<Badge variant="info">Running</Badge>{:else}<Badge variant="success">Ready</Badge>{/if}</Table.Cell>
+							</Table.Row>
+						{/each}
+					</Table.Body>
+				</Table.Root>
+			{/if}
 		</Card.Root>
 	</div>
 </div>
 
 <Sheet.Root open={selectedAgent !== null} onOpenChange={(open) => !open && onClose()}>
-	<Sheet.Content class="w-full overflow-y-auto sm:max-w-xl">
+	<Sheet.Content class="w-full max-w-none! overflow-y-auto sm:w-[min(92vw,60rem)]!">
 		{#if selectedAgent}
 			<Sheet.Header class="border-b pb-5">
 				<div class="flex items-start gap-3"><span class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Bot class="size-5" /></span><div class="min-w-0"><Sheet.Title>{selectedAgent.name}</Sheet.Title><Sheet.Description>{selectedAgent.provider} / {selectedAgent.model}</Sheet.Description></div></div>
 			</Sheet.Header>
 
-			<div class="space-y-7 py-6">
+			<Sheet.Body class="gap-7">
 				<div class="grid grid-cols-3 gap-2">
 					<div class="rounded-xl border bg-muted/20 p-3"><span class="text-xs text-muted-foreground">Active</span><strong class="mt-1 block text-xl">{selectedAgent.active_tasks}</strong></div>
 					<div class="rounded-xl border bg-muted/20 p-3"><span class="text-xs text-muted-foreground">Queued</span><strong class="mt-1 block text-xl">{selectedAgent.queued_tasks}</strong></div>
@@ -100,7 +98,7 @@
 				{#if selectedAgent.system_prompt}<section><h3 class="mb-3 text-sm font-semibold">System instruction</h3><p class="whitespace-pre-wrap rounded-xl border bg-muted/20 p-4 text-sm leading-6">{selectedAgent.system_prompt}</p></section>{/if}
 
 				<section><h3 class="mb-3 text-sm font-semibold">Registry health</h3>{#if selectedAgent.issues.length === 0}<div class="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm"><ShieldCheck class="size-5 text-emerald-600" /><span>No configuration issues reported.</span></div>{:else}<div class="space-y-2">{#each selectedAgent.issues as issue}<div class="rounded-xl border border-destructive/20 bg-destructive/5 p-4"><p class="flex items-center gap-2 text-sm font-medium text-destructive"><CircleAlert class="size-4" />{issue.message}</p><p class="mt-2 break-all text-xs text-muted-foreground">{issue.path}</p></div>{/each}</div>{/if}</section>
-			</div>
+			</Sheet.Body>
 
 			<Sheet.Footer class="border-t pt-5 sm:justify-between">
 				<Button variant="outline" onclick={() => onControl('reload')} disabled={mutating}><RefreshCw class={mutating ? 'animate-spin' : ''} />Reload</Button>

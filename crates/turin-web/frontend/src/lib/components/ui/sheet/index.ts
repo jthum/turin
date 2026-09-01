@@ -1,4 +1,5 @@
 import Close from "./sheet-close.svelte";
+import Body from "./sheet-body.svelte";
 import Content from "./sheet-content.svelte";
 import Description from "./sheet-description.svelte";
 import Footer from "./sheet-footer.svelte";
@@ -16,6 +17,7 @@ export {
 	Portal,
 	Overlay,
 	Content,
+	Body,
 	Header,
 	Footer,
 	Title,
@@ -27,6 +29,7 @@ export {
 	Portal as SheetPortal,
 	Overlay as SheetOverlay,
 	Content as SheetContent,
+	Body as SheetBody,
 	Header as SheetHeader,
 	Footer as SheetFooter,
 	Title as SheetTitle,

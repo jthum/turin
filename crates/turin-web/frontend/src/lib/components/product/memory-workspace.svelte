@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Brain, Database, History, Search, Trash2 } from '@lucide/svelte';
-	import type { Memory, MemoryListOptions, MemoryScope } from '#lib/api/contracts.js';
+	import { Bot, Brain, Globe2, History, LayoutGrid, MessageSquare, Search, Trash2 } from '@lucide/svelte';
+	import type { Agent, Harness, Memory, MemoryListOptions, MemoryScopeKind, Session } from '#lib/api/contracts.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -12,11 +12,14 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 
 	let {
-		memories, scopes, total, selectedMemory, loading, loadingMore, mutating,
+		memories, scopeKinds, sessions, agents, harnesses, total, selectedMemory, loading, loadingMore, mutating,
 		onFilter, onLoadMore, onOpen, onClose, onCorrect, onDelete
 	}: {
 		memories: Memory[];
-		scopes: MemoryScope[];
+		scopeKinds: MemoryScopeKind[];
+		sessions: Session[];
+		agents: Agent[];
+		harnesses: Harness[];
 		total: number;
 		selectedMemory: Memory | null;
 		loading: boolean;
@@ -44,11 +47,9 @@
 			return;
 		}
 		const timer = setTimeout(() => {
-			const selectedScope = scopes.find((candidate) => scopeValue(candidate) === filter.scope);
 			onFilter({
 				query: filter.query,
-				scopeKind: selectedScope?.scope_kind,
-				scopeKey: selectedScope?.scope_key,
+				scopeKind: filter.scope === 'all' ? undefined : filter.scope,
 				includeSuperseded: filter.history === 'all'
 			});
 		}, 250);
@@ -59,8 +60,37 @@
 		correction = selectedMemory?.content ?? '';
 	});
 
-	function scopeValue(value: MemoryScope) {
-		return JSON.stringify([value.scope_kind, value.scope_key]);
+	function scopeTypeLabel(kind: string) {
+		if (kind === 'session') return 'Conversation';
+		if (kind === 'agent') return 'Agent';
+		if (kind === 'harness') return 'Workspace';
+		if (kind === 'global') return 'Global';
+		return kind.replaceAll('_', ' ').replace(/^./, (character) => character.toUpperCase());
+	}
+
+	function scopeEntityLabel(kind: string, key: string, displayName?: string | null) {
+		if (displayName) return displayName;
+		if (kind === 'session') {
+			const title = sessions.find((session) => session.id === key)?.title;
+			return title ?? 'Conversation-specific memory';
+		}
+		if (kind === 'agent') {
+			const name = agents.find((agent) => agent.id === key)?.name;
+			return name ?? 'Agent-specific memory';
+		}
+		if (kind === 'harness') {
+			const name = harnesses.find((harness) => harness.id === key)?.name;
+			return name ?? 'Workspace memory';
+		}
+		if (kind === 'global') return 'Available across workspaces';
+		return key;
+	}
+
+	function scopeClass(kind: string) {
+		if (kind === 'session') return 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+		if (kind === 'agent') return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+		if (kind === 'harness') return 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+		return 'border-border bg-muted/50 text-muted-foreground';
 	}
 
 	function formatDate(value: string | null) {
@@ -83,7 +113,7 @@
 		<Card.Root class="gap-0 overflow-hidden py-0 shadow-none">
 			<div class="flex flex-col gap-3 border-b bg-background p-4 lg:flex-row">
 				<div class="relative min-w-0 flex-1 lg:max-w-xl"><Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input bind:value={query} class="pl-9" placeholder="Search durable knowledge" /></div>
-				<Select.Root type="single" bind:value={scope}><Select.Trigger class="w-full lg:w-64">{scope === 'all' ? 'All scopes' : (scopes.find((item) => scopeValue(item) === scope)?.scope_key ?? 'Scope')}</Select.Trigger><Select.Content><Select.Item value="all">All scopes</Select.Item>{#each scopes as item}<Select.Item value={scopeValue(item)}>{item.scope_kind}:{item.scope_key} ({item.count})</Select.Item>{/each}</Select.Content></Select.Root>
+				<Select.Root type="single" bind:value={scope}><Select.Trigger class="w-full lg:w-56">{scope === 'all' ? 'All scopes' : scopeTypeLabel(scope)}</Select.Trigger><Select.Content><Select.Item value="all">All scopes</Select.Item>{#each scopeKinds as item}<Select.Item value={item.scope_kind}>{scopeTypeLabel(item.scope_kind)} ({item.count.toLocaleString()})</Select.Item>{/each}</Select.Content></Select.Root>
 				<Select.Root type="single" bind:value={history}><Select.Trigger class="w-full lg:w-44">{history === 'current' ? 'Current only' : 'Include history'}</Select.Trigger><Select.Content><Select.Item value="current">Current only</Select.Item><Select.Item value="all">Include history</Select.Item></Select.Content></Select.Root>
 			</div>
 
@@ -94,7 +124,7 @@
 			{:else}
 				<Table.Root>
 					<Table.Header><Table.Row><Table.Head>Knowledge</Table.Head><Table.Head>Scope</Table.Head><Table.Head>Storage</Table.Head><Table.Head>Weight</Table.Head><Table.Head>Used</Table.Head><Table.Head>Created</Table.Head></Table.Row></Table.Header>
-					<Table.Body>{#each memories as memory}<Table.Row class="cursor-pointer align-top" onclick={() => onOpen(memory)}><Table.Cell class="max-w-2xl whitespace-normal"><p class="line-clamp-2 font-medium leading-5">{memory.content}</p>{#if memory.superseded_at}<div class="mt-2"><Badge variant="outline"><History />Superseded</Badge></div>{/if}</Table.Cell><Table.Cell><Badge variant="secondary">{memory.scope_kind}:{memory.scope_key}</Badge></Table.Cell><Table.Cell class="text-muted-foreground">{memory.storage === 'embedded' ? 'Vector + text' : 'Text'}</Table.Cell><Table.Cell class="tabular-nums">{memory.weight.toFixed(2)}</Table.Cell><Table.Cell class="tabular-nums text-muted-foreground">{memory.retrieval_count}</Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(memory.created_at)}</Table.Cell></Table.Row>{/each}</Table.Body>
+					<Table.Body>{#each memories as memory}<Table.Row class="cursor-pointer align-top" onclick={() => onOpen(memory)}><Table.Cell class="max-w-2xl whitespace-normal"><p class="line-clamp-2 font-medium leading-5">{memory.content}</p>{#if memory.superseded_at}<div class="mt-2"><Badge variant="warning">Superseded</Badge></div>{/if}</Table.Cell><Table.Cell class="max-w-52"><Badge variant="outline" class={scopeClass(memory.scope_kind)}>{#if memory.scope_kind === 'session'}<MessageSquare />{:else if memory.scope_kind === 'agent'}<Bot />{:else if memory.scope_kind === 'harness'}<LayoutGrid />{:else}<Globe2 />{/if}{scopeTypeLabel(memory.scope_kind)}</Badge><p class="mt-1.5 truncate text-xs text-muted-foreground" title={scopeEntityLabel(memory.scope_kind, memory.scope_key, memory.scope_display_name)}>{scopeEntityLabel(memory.scope_kind, memory.scope_key, memory.scope_display_name)}</p></Table.Cell><Table.Cell class="text-muted-foreground">{memory.storage === 'embedded' ? 'Vector + text' : 'Text'}</Table.Cell><Table.Cell class="tabular-nums">{memory.weight.toFixed(2)}</Table.Cell><Table.Cell class="tabular-nums text-muted-foreground">{memory.retrieval_count}</Table.Cell><Table.Cell class="text-muted-foreground">{formatDate(memory.created_at)}</Table.Cell></Table.Row>{/each}</Table.Body>
 				</Table.Root>
 			{/if}
 			{#if memories.length < total}<Card.Footer class="justify-center border-t py-4"><Button variant="outline" onclick={onLoadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</Button></Card.Footer>{/if}
@@ -103,16 +133,16 @@
 </div>
 
 <Sheet.Root bind:open={() => selectedMemory !== null, (open) => { if (!open) onClose(); }}>
-	<Sheet.Content class="w-full overflow-y-auto sm:max-w-2xl">
+	<Sheet.Content class="w-full max-w-none! overflow-y-auto sm:w-[min(92vw,60rem)]!">
 		{#if selectedMemory}
-			<Sheet.Header class="border-b pb-5 pr-10"><div class="mb-2 flex items-center gap-2"><Badge variant="secondary">{selectedMemory.scope_kind}:{selectedMemory.scope_key}</Badge>{#if selectedMemory.superseded_at}<Badge variant="outline">Superseded</Badge>{/if}</div><Sheet.Title class="font-heading text-xl">Durable memory</Sheet.Title><Sheet.Description>Stored {formatDate(selectedMemory.created_at)}</Sheet.Description></Sheet.Header>
-			<div class="flex flex-1 flex-col gap-6 py-6">
+			<Sheet.Header class="border-b pb-5 pr-10"><div class="mb-2 flex items-center gap-2"><Badge variant="outline" class={scopeClass(selectedMemory.scope_kind)}>{#if selectedMemory.scope_kind === 'session'}<MessageSquare />{:else if selectedMemory.scope_kind === 'agent'}<Bot />{:else if selectedMemory.scope_kind === 'harness'}<LayoutGrid />{:else}<Globe2 />{/if}{scopeTypeLabel(selectedMemory.scope_kind)}</Badge>{#if selectedMemory.superseded_at}<Badge variant="warning">Superseded</Badge>{/if}</div><Sheet.Title class="font-heading text-xl">Durable memory</Sheet.Title><Sheet.Description>{scopeEntityLabel(selectedMemory.scope_kind, selectedMemory.scope_key, selectedMemory.scope_display_name)} · Stored {formatDate(selectedMemory.created_at)}</Sheet.Description></Sheet.Header>
+			<Sheet.Body>
 				<section><h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Content</h3><p class="mt-2 whitespace-pre-wrap text-base leading-7">{selectedMemory.content}</p></section>
 				<section class="grid grid-cols-2 gap-x-5 gap-y-4 border-y py-5 text-sm sm:grid-cols-3"><div><p class="text-xs text-muted-foreground">Storage</p><p class="mt-1 font-medium">{selectedMemory.storage}</p></div><div><p class="text-xs text-muted-foreground">Weight</p><p class="mt-1 font-medium tabular-nums">{selectedMemory.weight.toFixed(2)}</p></div><div><p class="text-xs text-muted-foreground">Retrievals</p><p class="mt-1 font-medium tabular-nums">{selectedMemory.retrieval_count}</p></div><div><p class="text-xs text-muted-foreground">Last used</p><p class="mt-1">{formatDate(selectedMemory.last_retrieved_at)}</p></div><div><p class="text-xs text-muted-foreground">Embedding</p><p class="mt-1">{selectedMemory.embedding_dimensions ? `${selectedMemory.embedding_dimensions} dimensions` : 'None'}</p></div><div><p class="text-xs text-muted-foreground">ID</p><p class="mt-1 truncate font-mono text-xs" title={selectedMemory.id}>{selectedMemory.id}</p></div></section>
 				{#if selectedMemory.superseded_by_id}<section class="rounded-lg border bg-muted/30 p-4"><div class="flex items-start gap-3"><History class="mt-0.5 size-4 text-muted-foreground" /><div><h3 class="text-sm font-medium">Replaced by a correction</h3><p class="mt-1 font-mono text-xs text-muted-foreground">{selectedMemory.superseded_by_id}</p></div></div></section>{/if}
 				{#if metadata(selectedMemory.metadata)}<section><h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provenance metadata</h3><pre class="mt-2 overflow-x-auto rounded-lg border bg-muted/30 p-4 text-xs leading-5">{metadata(selectedMemory.metadata)}</pre></section>{/if}
-				{#if !selectedMemory.superseded_at}<section class="rounded-lg border p-4"><div class="flex items-start gap-3"><Database class="mt-1 size-4 text-muted-foreground" /><div class="min-w-0 flex-1"><h3 class="text-sm font-medium">Correct this memory</h3><p class="mt-1 text-xs text-muted-foreground">Creates a replacement and preserves this version in history.</p><Textarea bind:value={correction} class="mt-3 min-h-32" /><Button class="mt-3" size="sm" onclick={() => onCorrect(correction)} disabled={mutating || !correction.trim() || correction.trim() === selectedMemory.content}>{mutating ? 'Saving…' : 'Save correction'}</Button></div></div></section>{/if}
-			</div>
+				{#if !selectedMemory.superseded_at}<section class="border-t pt-6"><h3 class="text-sm font-semibold">Correct this memory</h3><p class="mt-1 text-xs text-muted-foreground">Creates a replacement while preserving this version in history.</p><Textarea bind:value={correction} class="mt-4 min-h-32" /><Button class="mt-3" size="sm" onclick={() => onCorrect(correction)} disabled={mutating || !correction.trim() || correction.trim() === selectedMemory.content}>{mutating ? 'Saving…' : 'Save correction'}</Button></section>{/if}
+			</Sheet.Body>
 			<Sheet.Footer class="sticky bottom-0 -mx-6 mt-auto border-t bg-background px-6 py-4 sm:justify-start"><Button variant="ghost" class="text-destructive hover:text-destructive" onclick={() => deleteOpen = true} disabled={mutating}><Trash2 />Forget memory</Button></Sheet.Footer>
 		{/if}
 	</Sheet.Content>

@@ -1,29 +1,36 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Check, ChevronDown, Menu, MoreHorizontal, Search, Sparkles, Trash2 } from '@lucide/svelte';
+	import { Check, ChevronDown, GitBranch, Menu, MoreHorizontal, Pencil, Search, Sparkles, Trash2 } from '@lucide/svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import type { Harness, Session } from '#lib/api/contracts.js';
 	import { workspaceLabels, type WorkspaceSection } from '#lib/workspace.js';
+	import LinkedConversationsMenu from './linked-conversations-menu.svelte';
 
 	let {
 		harnesses,
 		selectedHarnessId,
 		session,
+		renamable,
 		section,
 		onSelect,
 		onNavigate,
 		onSearch,
+		onOpenRelationship,
+		onRename,
 		onDelete
 	}: {
 		harnesses: Harness[];
 		selectedHarnessId: string;
 		session: Session | null;
+		renamable: boolean;
 		section: WorkspaceSection;
 		onSelect: (harnessId: string) => void;
 		onNavigate: (section: WorkspaceSection) => void;
 		onSearch: () => void;
+		onOpenRelationship: (sessionId: string, turnId?: string) => void;
+		onRename: () => void;
 		onDelete: () => void;
 	} = $props();
 
@@ -65,7 +72,15 @@
 	</div>
 
 	<div class="hidden min-w-0 px-6 text-center md:block">
-		{#if session}<span class="block truncate text-sm font-medium">{session.title}</span>{/if}
+		{#if session}
+			<span class="block truncate text-sm font-medium">{session.title}</span>
+			{#if session.parent_session_id}
+				<a href={`/conversations/${encodeURIComponent(session.parent_session_id)}`} onclick={(event) => { event.preventDefault(); onOpenRelationship(session.parent_session_id!, session.origin_turn_id ?? undefined); }} class="mx-auto mt-0.5 flex w-fit max-w-full items-center gap-1 truncate text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+					<GitBranch class="size-3 shrink-0" />
+					<span class="truncate">Linked from {session.parent_title ?? 'parent conversation'}</span>
+				</a>
+			{/if}
+		{/if}
 	</div>
 
 	<div class="flex items-center justify-end gap-1">
@@ -86,6 +101,7 @@
 		</DropdownMenu.Root>
 		{#if section === 'conversations' && session}<Sidebar.Trigger aria-label="Toggle conversations" />{/if}
 		{#if session}
+			<LinkedConversationsMenu {session} onOpen={onOpenRelationship} />
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}<Button {...props} variant="ghost" size="icon" aria-label="Conversation actions"><MoreHorizontal class="size-4" /></Button>{/snippet}
@@ -93,6 +109,7 @@
 				<DropdownMenu.Content align="end">
 					<DropdownMenu.Label>Conversation</DropdownMenu.Label>
 					<DropdownMenu.Separator />
+					{#if renamable}<DropdownMenu.Item onclick={onRename}><Pencil />Rename conversation</DropdownMenu.Item><DropdownMenu.Separator />{/if}
 					<DropdownMenu.Item variant="destructive" onclick={onDelete}><Trash2 />Delete conversation</DropdownMenu.Item>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>

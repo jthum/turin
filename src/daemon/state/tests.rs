@@ -1216,6 +1216,7 @@ provider = "noop"
             0,
             Some(StoreSelector::Alias("project_alpha".to_string())),
             None,
+            None,
         )
         .await?;
     assert!(
@@ -2695,7 +2696,7 @@ async fn session_list_and_get_expose_persisted_session_details() -> Result<()> {
     }
     assert!(saw_completed, "daemon task did not complete in time");
 
-    let sessions = state.list_sessions(10, 0, None, None).await?;
+    let sessions = state.list_sessions(10, 0, None, None, None).await?;
     assert!(!sessions.is_empty());
     let session = &sessions[0];
     assert_eq!(session.agent_id, "default");
@@ -2720,7 +2721,11 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
     let store = state.kernel.store_manager().get_default().await?;
     let root_public_id = uuid::Uuid::now_v7();
     let root_id = store
-        .create_session(root_public_id, "default", None)
+        .create_session(
+            root_public_id,
+            "default",
+            Some(r#"{"title":"Parent investigation"}"#),
+        )
         .await?;
     let child_public_id = uuid::Uuid::now_v7();
     store
@@ -2738,17 +2743,25 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
         )
         .await?;
 
-    let roots = state.list_sessions(10, 0, None, None).await?;
+    let roots = state.list_sessions(10, 0, None, None, None).await?;
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].visibility, "top_level");
 
     let children = state
-        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0)
+        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0, None)
         .await?
         .expect("root exists");
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].agent_id, "reviewer");
     assert_eq!(children[0].parent_internal_id, Some(root_id));
+    assert_eq!(
+        children[0].parent_session_id.as_deref(),
+        Some(root_public_id.simple().to_string().as_str())
+    );
+    assert_eq!(
+        children[0].parent_title.as_deref(),
+        Some("Parent investigation")
+    );
     assert_eq!(children[0].thread_key.as_deref(), Some("review"));
     assert_eq!(children[0].visibility, "contextual");
 
@@ -2767,7 +2780,7 @@ async fn session_listing_separates_roots_from_linked_children() -> Result<()> {
         Some(1)
     );
     let visible_children = state
-        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0)
+        .list_linked_sessions(&root_public_id.simple().to_string(), 10, 0, None)
         .await?
         .expect("root exists");
     assert!(visible_children.is_empty());
@@ -2812,7 +2825,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
         "completed"
     );
 
-    let default_sessions = state.list_sessions(20, 0, None, None).await?;
+    let default_sessions = state.list_sessions(20, 0, None, None, None).await?;
     assert!(
         default_sessions
             .iter()
@@ -2826,6 +2839,7 @@ async fn session_list_and_search_can_target_an_explicit_state_store() -> Result<
             20,
             0,
             Some(StoreSelector::Path(reviewer_path.clone())),
+            None,
             None,
         )
         .await?;

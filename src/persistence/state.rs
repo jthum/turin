@@ -20,6 +20,7 @@ mod events;
 mod graph;
 mod kv;
 mod messages;
+pub(crate) use messages::SessionMessagePreview;
 mod scheduler;
 mod sessions;
 mod signals;

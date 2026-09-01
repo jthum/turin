@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use turso::Value as SqlValue;
 
 use crate::persistence::schema::{
-    MemoryInspectionPage, MemoryInspectionRow, MemoryInspectionScopeRow,
+    MemoryInspectionPage, MemoryInspectionRow, MemoryInspectionScopeKindRow,
 };
 use crate::persistence::state::StateStore;
 
@@ -45,25 +45,23 @@ impl StateStore {
             "WHERE superseded_at IS NULL".to_string()
         };
         let scope_sql = format!(
-            "SELECT scope_kind, scope_key, COUNT(*) FROM memories {scope_where} \
-             GROUP BY scope_kind, scope_key ORDER BY scope_kind, scope_key"
+            "SELECT scope_kind, COUNT(*) FROM memories {scope_where} \
+             GROUP BY scope_kind ORDER BY scope_kind"
         );
         let mut scope_rows = conn
             .query(&scope_sql, ())
             .await
             .context("Failed to list memory scopes for inspection")?;
-        let mut scopes = Vec::new();
+        let mut scope_kinds = Vec::new();
         while let Some(row) = scope_rows.next().await? {
             let scope_kind = row.get::<String>(0)?;
-            let scope_key = row.get::<String>(1)?;
-            scopes.push(MemoryInspectionScopeRow {
+            scope_kinds.push(MemoryInspectionScopeKindRow {
                 count: crate::persistence::state::persisted_u64(
-                    &format!("memory scope {scope_kind}:{scope_key}"),
+                    &format!("memory scope kind {scope_kind}"),
                     "count",
-                    row.get::<i64>(2)?,
+                    row.get::<i64>(1)?,
                 )?,
                 scope_kind,
-                scope_key,
             });
         }
 
@@ -120,7 +118,7 @@ impl StateStore {
 
         Ok(MemoryInspectionPage {
             rows: memories,
-            scopes,
+            scope_kinds,
             total,
         })
     }

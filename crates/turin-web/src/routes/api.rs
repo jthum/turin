@@ -163,6 +163,7 @@ struct WebMemory {
     id: String,
     scope_kind: String,
     scope_key: String,
+    scope_display_name: Option<String>,
     content: String,
     metadata: Option<Value>,
     storage: String,
@@ -177,16 +178,15 @@ struct WebMemory {
 }
 
 #[derive(Serialize)]
-struct WebMemoryScope {
+struct WebMemoryScopeKind {
     scope_kind: String,
-    scope_key: String,
     count: u64,
 }
 
 #[derive(Serialize)]
 struct WebMemoryList {
     memories: Vec<WebMemory>,
-    scopes: Vec<WebMemoryScope>,
+    scope_kinds: Vec<WebMemoryScopeKind>,
     total: u64,
     offset: u32,
     limit: u32,
@@ -226,6 +226,12 @@ struct WebSession {
     message_count: Option<usize>,
     visibility: String,
     relation_kind: Option<String>,
+    parent_session_id: Option<String>,
+    parent_title: Option<String>,
+    origin_turn_id: Option<String>,
+    latest_message_preview: Option<String>,
+    latest_message_role: Option<String>,
+    latest_message_created_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -628,8 +634,8 @@ pub(super) async fn list_memories(
         .get("scope_key")
         .cloned()
         .filter(|value| !value.is_empty());
-    if scope_kind.is_some() != scope_key.is_some() {
-        bail!("scope_kind and scope_key must be supplied together");
+    if scope_key.is_some() && scope_kind.is_none() {
+        bail!("scope_key requires scope_kind");
     }
     let search = query
         .get("q")
@@ -651,12 +657,11 @@ pub(super) async fn list_memories(
         })
         .await?;
     let memories = result.memories.into_iter().map(web_memory).collect();
-    let scopes = result
-        .scopes
+    let scope_kinds = result
+        .scope_kinds
         .into_iter()
-        .map(|scope| WebMemoryScope {
+        .map(|scope| WebMemoryScopeKind {
             scope_kind: scope.scope_kind,
-            scope_key: scope.scope_key,
             count: scope.count,
         })
         .collect();
@@ -664,7 +669,7 @@ pub(super) async fn list_memories(
         StatusCode::OK,
         &WebMemoryList {
             memories,
-            scopes,
+            scope_kinds,
             total: result.total,
             offset: result.offset,
             limit: result.limit,
@@ -731,10 +736,20 @@ pub(super) async fn memory_route(
 }
 
 fn web_memory(memory: MemoryDetail) -> WebMemory {
+    let scope_display_name =
+        memory
+            .scope_display_name
+            .or_else(|| match memory.scope_kind.as_str() {
+                "agent" => Some(agent_display_name(&memory.scope_key)),
+                "harness" => Some(harness_display_name(&memory.scope_key)),
+                "global" => Some("All workspaces".to_string()),
+                _ => None,
+            });
     WebMemory {
         id: memory.public_id,
         scope_kind: memory.scope_kind,
         scope_key: memory.scope_key,
+        scope_display_name,
         content: memory.content,
         metadata: memory.metadata,
         storage: memory.storage,
@@ -831,7 +846,10 @@ pub(super) async fn list_sessions(
     let query = query_values(request.uri().query());
     let limit = bounded_usize(&query, "limit", DEFAULT_SESSION_LIMIT, MAX_SESSION_LIMIT)?;
     let offset = bounded_usize(&query, "offset", 0, usize::MAX)?;
-    let mut sessions = state.client.list_sessions(limit + 1, offset).await?;
+    let mut sessions = state
+        .client
+        .list_sessions_with_previews(limit + 1, offset, 180)
+        .await?;
     let has_more = sessions.len() > limit;
     sessions.truncate(limit);
     Ok(json_response(
@@ -866,6 +884,15 @@ pub(super) async fn session_route(
 ) -> Result<Response<WebBody>> {
     let (session_id, resource) = parse_session_path(request.uri().path())?;
     match (request.method(), resource) {
+        (&Method::GET, SessionResource::Session) => {
+            let detail = state.client.get_session_window(&session_id, 1).await?;
+            Ok(json_response(
+                StatusCode::OK,
+                &SessionResponse {
+                    session: web_session(detail.session),
+                },
+            ))
+        }
         (&Method::GET, SessionResource::Messages) => {
             get_messages(&request, state, &session_id).await
         }
@@ -878,6 +905,9 @@ pub(super) async fn session_route(
         (&Method::GET, SessionResource::Search) => {
             search_session_messages(&request, state, &session_id).await
         }
+        (&Method::GET, SessionResource::Linked) => {
+            list_linked_sessions(&request, state, &session_id).await
+        }
         (&Method::PATCH, SessionResource::Session) => {
             rename_session(request, state, &session_id).await
         }
@@ -887,6 +917,30 @@ pub(super) async fn session_route(
             "Method not allowed",
         )),
     }
+}
+
+async fn list_linked_sessions(
+    request: &Request<Incoming>,
+    state: &WebState,
+    parent_session_id: &str,
+) -> Result<Response<WebBody>> {
+    let query = query_values(request.uri().query());
+    let limit = bounded_usize(&query, "limit", DEFAULT_SESSION_LIMIT, MAX_SESSION_LIMIT)?;
+    let offset = bounded_usize(&query, "offset", 0, usize::MAX)?;
+    let mut sessions = state
+        .client
+        .list_linked_sessions_with_previews(parent_session_id, limit + 1, offset, Some(180))
+        .await?;
+    let has_more = sessions.len() > limit;
+    sessions.truncate(limit);
+    Ok(json_response(
+        StatusCode::OK,
+        &SessionPage {
+            sessions: sessions.into_iter().map(web_session).collect(),
+            offset,
+            has_more,
+        },
+    ))
 }
 
 async fn create_branch(
@@ -1271,6 +1325,12 @@ fn web_session(session: SessionSummary) -> WebSession {
         message_count: None,
         visibility: session.visibility,
         relation_kind: session.relation_kind,
+        parent_session_id: session.parent_session_id,
+        parent_title: session.parent_title,
+        origin_turn_id: session.origin_turn_id.map(|turn_id| turn_id.to_string()),
+        latest_message_preview: session.latest_message_preview,
+        latest_message_role: session.latest_message_role,
+        latest_message_created_at: session.latest_message_created_at,
     }
 }
 
@@ -1398,6 +1458,7 @@ enum SessionResource {
     Messages,
     Branches,
     Search,
+    Linked,
 }
 
 fn parse_session_path(path: &str) -> Result<(String, SessionResource)> {
@@ -1410,6 +1471,8 @@ fn parse_session_path(path: &str) -> Result<(String, SessionResource)> {
         (id, SessionResource::Branches)
     } else if let Some(id) = suffix.strip_suffix("/search") {
         (id, SessionResource::Search)
+    } else if let Some(id) = suffix.strip_suffix("/linked") {
+        (id, SessionResource::Linked)
     } else {
         (suffix, SessionResource::Session)
     };
@@ -1478,6 +1541,9 @@ mod tests {
 
         let (_, resource) = parse_session_path("/api/sessions/session-1/branches").unwrap();
         assert_eq!(resource, SessionResource::Branches);
+
+        let (_, resource) = parse_session_path("/api/sessions/session-1/linked").unwrap();
+        assert_eq!(resource, SessionResource::Linked);
     }
 
     #[test]

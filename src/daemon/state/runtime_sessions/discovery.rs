@@ -8,6 +8,7 @@ use crate::kernel::session_refs::{
     describe_store_selector, format_session_reference, parse_session_reference,
 };
 use crate::persistence::manager::StoreSelector;
+use crate::persistence::state::SessionMessagePreview;
 
 impl DaemonState {
     #[instrument(skip(self), fields(store = %store_selector_label(store_selector.as_ref())))]
@@ -17,18 +18,36 @@ impl DaemonState {
         offset: usize,
         store_selector: Option<StoreSelector>,
         origin_id: Option<&str>,
+        preview_chars: Option<usize>,
     ) -> Result<Vec<SessionSummary>> {
         let store = match &store_selector {
             Some(selector) => self.kernel.store_manager().open(selector).await?,
             None => self.kernel.store_manager().get_default().await?,
         };
         let rows = store.list_session_rows(limit, offset, origin_id).await?;
+        let previews = match preview_chars {
+            Some(chars) => {
+                store
+                    .latest_session_message_previews(
+                        &rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+                        chars.clamp(32, 500),
+                    )
+                    .await?
+            }
+            None => Default::default(),
+        };
         debug!(count = rows.len(), "Listed persisted sessions");
         Ok(rows
             .iter()
-            .map(|row| match &store_selector {
-                Some(selector) => session_summary_from_row_and_selector(row, selector),
-                None => super::super::helpers::session_summary_from_row(row),
+            .map(|row| {
+                let mut summary = match &store_selector {
+                    Some(selector) => session_summary_from_row_and_selector(row, selector),
+                    None => super::super::helpers::session_summary_from_row(row),
+                };
+                if let Some(preview) = previews.get(&row.id) {
+                    apply_message_preview(&mut summary, preview);
+                }
+                summary
             })
             .collect())
     }
@@ -38,6 +57,7 @@ impl DaemonState {
         parent_session_id: &str,
         limit: usize,
         offset: usize,
+        preview_chars: Option<usize>,
     ) -> Result<Option<Vec<SessionSummary>>> {
         let Some((store_selector, store, parent)) =
             self.resolve_persisted_session(parent_session_id).await?
@@ -47,9 +67,33 @@ impl DaemonState {
         let rows = store
             .list_linked_session_rows(parent.id, limit, offset)
             .await?;
+        let previews = match preview_chars {
+            Some(chars) => {
+                store
+                    .latest_session_message_previews(
+                        &rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+                        chars.clamp(32, 500),
+                    )
+                    .await?
+            }
+            None => Default::default(),
+        };
+        let parent_public_id = uuid::Uuid::from_slice(&parent.public_id)?;
+        let parent_session_id =
+            format_session_reference(&parent_public_id.simple().to_string(), &store_selector);
+        let parent_title =
+            super::super::helpers::session_title_from_metadata(parent.metadata.as_deref());
         Ok(Some(
             rows.iter()
-                .map(|row| session_summary_from_row_and_selector(row, &store_selector))
+                .map(|row| {
+                    let mut summary = session_summary_from_row_and_selector(row, &store_selector);
+                    summary.parent_session_id = Some(parent_session_id.clone());
+                    summary.parent_title = parent_title.clone();
+                    if let Some(preview) = previews.get(&row.id) {
+                        apply_message_preview(&mut summary, preview);
+                    }
+                    summary
+                })
                 .collect(),
         ))
     }
@@ -131,6 +175,12 @@ impl DaemonState {
             })
             .collect())
     }
+}
+
+fn apply_message_preview(summary: &mut SessionSummary, preview: &SessionMessagePreview) {
+    summary.latest_message_preview = Some(preview.text.clone());
+    summary.latest_message_role = Some(preview.role.clone());
+    summary.latest_message_created_at = Some(preview.created_at.clone());
 }
 
 fn store_selector_label(selector: Option<&StoreSelector>) -> String {

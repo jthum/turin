@@ -2,7 +2,9 @@
 	import { onMount, tick } from 'svelte';
 	import { CircleAlert, Trash2, X } from '@lucide/svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import { Input } from '#lib/components/ui/input/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import AgentWorkspace from '#lib/components/product/agent-workspace.svelte';
 	import MessageComposer from '#lib/components/product/message-composer.svelte';
@@ -15,7 +17,7 @@
 	import WorkspaceNav from '#lib/components/product/workspace-nav.svelte';
 	import WorkspaceOverview from '#lib/components/product/workspace-overview.svelte';
 	import WorkWorkspace from '#lib/components/product/work-workspace.svelte';
-	import type { Agent, AgentControlAction, AgentDetail, ConversationMessage, Harness, Memory, MemoryListOptions, MemoryScope, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
+	import type { Agent, AgentControlAction, AgentDetail, ConversationMessage, Harness, Memory, MemoryListOptions, MemoryScopeKind, SearchHit, Session, WorkItem, WorkItemControlAction, Worklist } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
 	import type { StreamConnectionState } from '#lib/api/client.js';
 	import type { WorkspaceSection } from '#lib/workspace.js';
@@ -23,6 +25,16 @@
 	const PAGE_SIZE = 80;
 	const MAX_RESIDENT = 240;
 	const DRAFT_SESSION_PREFIX = 'draft:';
+	const WORKSPACE_SECTIONS = new Set<WorkspaceSection>(['overview', 'conversations', 'work', 'memory', 'agents', 'settings']);
+	const SECTION_PATHS: Record<WorkspaceSection, string> = {
+		overview: '/',
+		conversations: '/conversations',
+		work: '/work',
+		memory: '/memory',
+		agents: '/agents',
+		settings: '/settings'
+	};
+	type HistoryMode = 'push' | 'replace' | 'none';
 	let agents = $state<Agent[]>([]);
 	let selectedAgent = $state<AgentDetail | null>(null);
 	let loadingAgent = $state(false);
@@ -37,7 +49,7 @@
 	let loadingWorkItems = $state(false);
 	let controllingWorkItem = $state(false);
 	let memories = $state<Memory[]>([]);
-	let memoryScopes = $state<MemoryScope[]>([]);
+	let memoryScopeKinds = $state<MemoryScopeKind[]>([]);
 	let memoryTotal = $state(0);
 	let selectedMemory = $state<Memory | null>(null);
 	let memoryFilters = $state<MemoryListOptions>({});
@@ -67,6 +79,9 @@
 	let newAgentId = $state('');
 	let deleteDialogOpen = $state(false);
 	let deleteTarget = $state<Session | null>(null);
+	let renameDialogOpen = $state(false);
+	let renameTitle = $state('');
+	let renaming = $state(false);
 	let streamMessageId = $state<string | null>(null);
 	let focusedMessageId = $state<string | null>(null);
 	let streamState = $state<StreamConnectionState>('connecting');
@@ -86,6 +101,52 @@
 
 	function showError(cause: unknown, fallback: string) {
 		error = cause instanceof Error ? cause.message : fallback;
+	}
+
+	function writeWorkspaceUrl(mode: Exclude<HistoryMode, 'none'>) {
+		const url = new URL(window.location.href);
+		const durableSessionId = activeSection === 'conversations' && selected && !selected.id.startsWith(DRAFT_SESSION_PREFIX)
+			? selected.id
+			: null;
+		const defaultHarnessId = harnesses.find((harness) => harness.id === 'default')?.id ?? harnesses[0]?.id;
+		url.search = '';
+		url.pathname = durableSessionId
+			? `/conversations/${encodeURIComponent(durableSessionId)}`
+			: SECTION_PATHS[activeSection];
+		if (!durableSessionId && selectedHarnessId && selectedHarnessId !== defaultHarnessId) {
+			url.searchParams.set('harness', selectedHarnessId);
+		}
+		window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', url);
+	}
+
+	async function restoreWorkspaceUrl(signal?: AbortSignal) {
+		const params = new URLSearchParams(window.location.search);
+		const segments = window.location.pathname.split('/').filter(Boolean);
+		const requestedSection = (segments[0] ?? 'overview') as WorkspaceSection;
+		const section = WORKSPACE_SECTIONS.has(requestedSection) ? requestedSection : 'overview';
+		const requestedHarness = params.get('harness');
+		if (requestedHarness && harnesses.some((harness) => harness.id === requestedHarness) && requestedHarness !== selectedHarnessId) {
+			await selectHarness(requestedHarness, 'none');
+		}
+		const sessionId = section === 'conversations' && segments[1]
+			? decodeURIComponent(segments[1])
+			: null;
+		if (!sessionId) {
+			navigate(section, 'none');
+			return;
+		}
+		try {
+			const existing = sessions.find((session) => session.id === sessionId);
+			const session = existing ?? (await turinWeb.getSession(sessionId, signal)).session;
+			if (!existing) sessions = [session, ...sessions];
+			const agent = agents.find((candidate) => candidate.id === session.agent_id);
+			if (agent && agent.harness_id !== selectedHarnessId) await selectHarness(agent.harness_id, 'none');
+			await selectSession(session, signal, undefined, 'none');
+		} catch (cause) {
+			showError(cause, 'The linked conversation could not be loaded.');
+			navigate('conversations', 'none');
+			writeWorkspaceUrl('replace');
+		}
 	}
 
 	async function openWorkspaceSearch() {
@@ -185,6 +246,7 @@
 				: (harnesses.find((harness) => harness.id === 'default')?.id ?? harnesses[0]?.id ?? '');
 			const initialAgents = agents.filter((agent) => agent.harness_id === selectedHarnessId);
 			newAgentId = initialAgents[0]?.id ?? '';
+			await restoreWorkspaceUrl(signal);
 		} catch (cause) {
 			showError(cause, 'Turin could not be reached.');
 		} finally {
@@ -192,7 +254,7 @@
 		}
 	}
 
-	async function selectHarness(harnessId: string) {
+	async function selectHarness(harnessId: string, historyMode: HistoryMode = 'push') {
 		if (harnessId === selectedHarnessId) return;
 		selectedHarnessId = harnessId;
 		activeSection = 'overview';
@@ -207,9 +269,10 @@
 		messages = [];
 		messageTotal = 0;
 		streamState = 'connecting';
+		if (historyMode !== 'none') writeWorkspaceUrl(historyMode);
 	}
 
-	function navigate(section: WorkspaceSection) {
+	function navigate(section: WorkspaceSection, historyMode: HistoryMode = 'push') {
 		activeSection = section;
 		memoryRequestController?.abort();
 		memoryRequestController = null;
@@ -228,6 +291,7 @@
 		if (section === 'memory') selectedMemory = null;
 		if (section === 'agents') selectedAgent = null;
 		void loadSection(section);
+		if (historyMode !== 'none') writeWorkspaceUrl(historyMode);
 	}
 
 	async function openAgent(agent: Agent) {
@@ -293,7 +357,7 @@
 			if (section === 'memory') {
 				const page = await turinWeb.listMemories();
 				memories = page.memories;
-				memoryScopes = page.scopes;
+				memoryScopeKinds = page.scope_kinds;
 				memoryTotal = page.total;
 			}
 			loadedSections = [...loadedSections, section];
@@ -344,7 +408,7 @@
 	async function openWorkItemSession(item: WorkItem) {
 		if (!item.claim_session_id || !item.claim_agent_id) return;
 		const agent = agents.find((candidate) => candidate.id === item.claim_agent_id);
-		if (agent && agent.harness_id !== selectedHarnessId) await selectHarness(agent.harness_id);
+		if (agent && agent.harness_id !== selectedHarnessId) await selectHarness(agent.harness_id, 'none');
 		const existing = sessions.find((session) => session.id === item.claim_session_id);
 		const session = existing ?? {
 			id: item.claim_session_id,
@@ -365,7 +429,7 @@
 		try {
 			const page = await turinWeb.listMemories({ ...memoryFilters, limit: 100, offset: memories.length });
 			memories = [...memories, ...page.memories];
-			memoryScopes = page.scopes;
+			memoryScopeKinds = page.scope_kinds;
 			memoryTotal = page.total;
 		} catch (cause) {
 			showError(cause, 'More memories could not be loaded.');
@@ -384,7 +448,7 @@
 			const page = await turinWeb.listMemories({ ...options, limit: 100, offset: 0 }, controller.signal);
 			if (memoryRequestController !== controller) return;
 			memories = page.memories;
-			memoryScopes = page.scopes;
+			memoryScopeKinds = page.scope_kinds;
 			memoryTotal = page.total;
 		} catch (cause) {
 			if (!controller.signal.aborted) showError(cause, 'Memory search could not be completed.');
@@ -449,13 +513,15 @@
 	async function selectSession(
 		session: Session,
 		signal?: AbortSignal,
-		anchor?: { hit: SearchHit; query: string }
+		anchor?: { hit: SearchHit; query: string },
+		historyMode: HistoryMode = 'push'
 	) {
 		activeSection = 'conversations';
 		cancelWindowRequest();
 		unsubscribe?.();
 		unsubscribe = null;
 		selected = session;
+		if (historyMode !== 'none') writeWorkspaceUrl(historyMode);
 		messages = [];
 		focusedMessageId = null;
 		newestOffset = 0;
@@ -493,7 +559,22 @@
 					void scrollToBottom('smooth');
 				},
 				'conversation.task.completed': () => {
+					const completedMessageId = streamMessageId;
 					streamMessageId = null;
+					if (completedMessageId) {
+						const completed = messages.find((message) => message.id === completedMessageId);
+						messages = messages.map((message) => message.id === completedMessageId ? { ...message } : message);
+						if (completed && selected) {
+							const preview = completed.content.replace(/\s+/g, ' ').slice(0, 180);
+							const updated = {
+								latest_message_preview: preview,
+								latest_message_role: completed.role,
+								latest_message_created_at: completed.created_at
+							};
+							sessions = sessions.map((session) => session.id === selected?.id ? { ...session, ...updated } : session);
+							selected = { ...selected, ...updated };
+						}
+					}
 					submitting = false;
 					messageTotal += 1;
 				},
@@ -504,10 +585,14 @@
 				}
 			}, (state) => streamState = state);
 			if (anchor) {
+				loadingMessages = false;
+				await tick();
 				const target = matchingMessage(anchor.hit, anchor.query);
 				focusedMessageId = target?.id ?? null;
 				if (target) await transcriptView?.restoreMessageAnchor(target.id, (transcript?.clientHeight ?? 0) * 0.28);
 			} else {
+				loadingMessages = false;
+				await tick();
 				await scrollToBottom();
 			}
 		} catch (cause) {
@@ -517,7 +602,7 @@
 		}
 	}
 
-	function beginConversation(agentId = newAgentId) {
+	function beginConversation(agentId = newAgentId, historyMode: Exclude<HistoryMode, 'none'> = 'push') {
 		if (!agentId) return;
 		activeSection = 'conversations';
 		cancelWindowRequest();
@@ -533,6 +618,7 @@
 			visibility: 'private',
 			relation_kind: null
 		};
+		writeWorkspaceUrl(historyMode);
 		messages = [];
 		newestOffset = 0;
 		olderOffset = 0;
@@ -692,7 +778,7 @@
 	async function openWorkspaceSearchHit(hit: SearchHit, query: string) {
 		const targetAgent = agents.find((agent) => agent.id === hit.agent_id);
 		if (targetAgent && targetAgent.harness_id !== selectedHarnessId) {
-			await selectHarness(targetAgent.harness_id);
+			await selectHarness(targetAgent.harness_id, 'none');
 		}
 		const existing = sessions.find((candidate) => candidate.id === hit.session_id);
 		const session = existing ?? {
@@ -716,11 +802,36 @@
 		);
 	}
 
+	async function openRelatedConversation(sessionId: string, turnId?: string) {
+		try {
+			const { session } = await turinWeb.getSession(sessionId);
+			if (!turnId) {
+				await selectSession(session);
+				return;
+			}
+			await openWorkspaceSearchHit({
+				kind: 'message',
+				session_id: session.id,
+				agent_id: session.agent_id,
+				title: session.title,
+				created_at: session.created_at,
+				turn_id: turnId,
+				turn_index: null,
+				role: null,
+				tool_name: null,
+				event_type: null,
+				snippet: ''
+			}, '');
+		} catch (cause) {
+			showError(cause, 'The related conversation could not be opened.');
+		}
+	}
+
 	async function forkFromMessage(message: ConversationMessage, activate: boolean) {
 		if (!selected || selected.id.startsWith(DRAFT_SESSION_PREFIX)) return;
 		try {
 			await turinWeb.createBranch(selected.id, message.turn_id, activate);
-			if (activate) await selectSession(selected);
+			if (activate) await selectSession(selected, undefined, undefined, 'none');
 		} catch (cause) {
 			showError(cause, 'The branch could not be created.');
 		}
@@ -729,6 +840,28 @@
 	function requestDelete(session: Session) {
 		deleteTarget = session;
 		deleteDialogOpen = true;
+	}
+
+	function requestRename() {
+		if (!selected || selected.id.startsWith(DRAFT_SESSION_PREFIX)) return;
+		renameTitle = selected.title;
+		renameDialogOpen = true;
+	}
+
+	async function renameConversation() {
+		const title = renameTitle.trim();
+		if (!selected || !title || renaming) return;
+		renaming = true;
+		try {
+			const { session } = await turinWeb.renameSession(selected.id, title);
+			sessions = sessions.map((item) => item.id === session.id ? { ...item, title: session.title } : item);
+			selected = { ...selected, title: session.title };
+			renameDialogOpen = false;
+		} catch (cause) {
+			showError(cause, 'The conversation could not be renamed.');
+		} finally {
+			renaming = false;
+		}
 	}
 
 	async function deleteConversation() {
@@ -741,6 +874,7 @@
 			if (selected?.id === target.id) {
 				selected = null;
 				messages = [];
+				writeWorkspaceUrl('replace');
 			}
 			deleteDialogOpen = false;
 			deleteTarget = null;
@@ -758,7 +892,7 @@
 				const created = await turinWeb.createSession(selected.agent_id);
 				createdFromDraft = created.session;
 				sessions = [created.session, ...sessions];
-				await selectSession(created.session);
+				await selectSession(created.session, undefined, undefined, 'replace');
 			} catch (cause) {
 				showError(cause, 'A new conversation could not be created.');
 				return;
@@ -792,7 +926,7 @@
 				unsubscribe = null;
 				sessions = sessions.filter((session) => session.id !== createdFromDraft?.id);
 				try { await turinWeb.deleteSession(createdFromDraft.id); } catch { /* Preserve the submission error. */ }
-				beginConversation(createdFromDraft.agent_id);
+				beginConversation(createdFromDraft.agent_id, 'replace');
 			}
 			showError(cause, 'The message could not be submitted.');
 		}
@@ -800,15 +934,17 @@
 
 	onMount(() => {
 		const controller = new AbortController();
+		const restore = () => void restoreWorkspaceUrl();
+		window.addEventListener('popstate', restore);
 		void initialize(controller.signal);
-		return () => { controller.abort(); cancelWindowRequest(); unsubscribe?.(); };
+		return () => { controller.abort(); cancelWindowRequest(); unsubscribe?.(); window.removeEventListener('popstate', restore); };
 	});
 </script>
 
 <svelte:window onkeydown={handleWorkspaceShortcut} />
 
 <Sidebar.Provider class="h-svh min-h-0! flex-col overflow-hidden [--global-bar-height:3.5rem]">
-	<HarnessBar {harnesses} {selectedHarnessId} session={selected} section={activeSection} onSelect={selectHarness} onNavigate={navigate} onSearch={() => void openWorkspaceSearch()} onDelete={() => selected && requestDelete(selected)} />
+	<HarnessBar {harnesses} {selectedHarnessId} session={selected} renamable={Boolean(selected && !selected.id.startsWith(DRAFT_SESSION_PREFIX))} section={activeSection} onSelect={selectHarness} onNavigate={navigate} onSearch={() => void openWorkspaceSearch()} onOpenRelationship={openRelatedConversation} onRename={requestRename} onDelete={() => selected && requestDelete(selected)} />
 	<div class="flex min-h-0 flex-1">
 		<WorkspaceNav active={activeSection} onNavigate={navigate} />
 		{#if activeSection === 'conversations' && selected}
@@ -833,9 +969,9 @@
 			</div>
 			{#if selected}<MessageComposer bind:value={composer} agentName={selectedAgentName} model={agents.find((agent) => agent.id === selected?.agent_id)?.model ?? selected.agent_id} {submitting} connected={streamState === 'open'} onSend={sendMessage} />{/if}
 		{:else if activeSection === 'work'}
-			<WorkWorkspace {worklists} {selectedWorklist} {workItems} {selectedWorkItem} loading={loadingSections.includes('work') || loadingWorkItems} controlling={controllingWorkItem} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; selectedWorkItem = null; workItems = []; }} onOpenItem={openWorkItem} onCloseItem={() => selectedWorkItem = null} onControlItem={controlWorkItem} onOpenSession={openWorkItemSession} />
+			<WorkWorkspace {worklists} {selectedWorklist} {workItems} {selectedWorkItem} {sessions} {agents} {harnesses} loading={loadingSections.includes('work') || loadingWorkItems} controlling={controllingWorkItem} onOpenWorklist={openWorklist} onCloseWorklist={() => { selectedWorklist = null; selectedWorkItem = null; workItems = []; }} onOpenItem={openWorkItem} onCloseItem={() => selectedWorkItem = null} onControlItem={controlWorkItem} onOpenSession={openWorkItemSession} />
 		{:else if activeSection === 'memory'}
-			<MemoryWorkspace {memories} scopes={memoryScopes} total={memoryTotal} {selectedMemory} loading={loadingSections.includes('memory') || loadingMemories} loadingMore={loadingMoreMemories} mutating={mutatingMemory} onFilter={filterMemories} onLoadMore={loadMoreMemories} onOpen={openMemory} onClose={() => selectedMemory = null} onCorrect={correctMemory} onDelete={deleteMemory} />
+			<MemoryWorkspace {memories} scopeKinds={memoryScopeKinds} {sessions} {agents} {harnesses} total={memoryTotal} {selectedMemory} loading={loadingSections.includes('memory') || loadingMemories} loadingMore={loadingMoreMemories} mutating={mutatingMemory} onFilter={filterMemories} onLoadMore={loadMoreMemories} onOpen={openMemory} onClose={() => selectedMemory = null} onCorrect={correctMemory} onDelete={deleteMemory} />
 		{:else if activeSection === 'agents'}
 			<AgentWorkspace agents={visibleAgents} {selectedAgent} {loading} mutating={mutatingAgent} onOpen={openAgent} onClose={() => selectedAgent = null} onControl={controlAgent} onOpenSession={openAgentSession} />
 		{:else}
@@ -864,6 +1000,22 @@
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>
+
+<Dialog.Root bind:open={renameDialogOpen}>
+	<Dialog.Content class="sm:max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Rename conversation</Dialog.Title>
+			<Dialog.Description>Use a title that makes this thread easy to find later.</Dialog.Description>
+		</Dialog.Header>
+		<form onsubmit={(event) => { event.preventDefault(); void renameConversation(); }}>
+			<Input bind:value={renameTitle} autofocus maxlength={160} aria-label="Conversation title" />
+			<Dialog.Footer class="mt-5">
+				<Button type="button" variant="outline" onclick={() => renameDialogOpen = false}>Cancel</Button>
+				<Button type="submit" disabled={!renameTitle.trim() || renaming}>{renaming ? 'Saving…' : 'Save title'}</Button>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
 
 <style>
 	:global(body) { margin: 0; overflow: hidden; }

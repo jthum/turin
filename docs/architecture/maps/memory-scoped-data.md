@@ -86,6 +86,13 @@ Lua bridge:
 - Lua-facing memory/KV APIs should share bridge helpers; do not copy backend invocation blocks into every namespace.
 - Native `remember` and `recall` should continue to call the scoped-data backend directly, not reimplement persistence semantics.
 - Operator inspection must not update retrieval count or last-retrieved timestamps and must never expose embedding blobs.
+- Operator pages expose bounded memory rows plus counts grouped by scope kind.
+  They must not enumerate every concrete session, agent, or harness scope alongside
+  each page; exact scope keys remain optional query filters supplied by a caller.
+- Operator memory rows may include a backend-resolved scope display name for
+  orientation. Session labels are resolved in one bounded batch per list page;
+  clients must not issue one lookup per row or present opaque scope keys as the
+  primary product label.
 - Operator search uses persisted full-text search and remains observational;
   filtering must not masquerade as an agent retrieval.
 - Operator correction preserves the original storage mode. Correcting an

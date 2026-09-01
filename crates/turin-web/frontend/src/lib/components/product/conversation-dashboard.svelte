@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { ArrowUpRight, Bot, GitBranch, MessageSquare, MoreHorizontal, Plus, Search, Trash2 } from '@lucide/svelte';
+	import { ArrowUpRight, MessageSquare, MoreHorizontal, Plus, Search, Trash2 } from '@lucide/svelte';
 	import type { Agent, SearchHit, Session } from '#lib/api/contracts.js';
 	import { turinWeb } from '#lib/api/client.js';
-	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
+	import AgentMarker from './agent-marker.svelte';
 
 	let {
 		sessions, agents, loading, loadingMore, hasMore,
@@ -76,6 +76,7 @@
 		if (Number.isNaN(date.getTime())) return value;
 		return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
 	}
+
 </script>
 
 <div class="h-full overflow-y-auto bg-muted/20">
@@ -112,19 +113,13 @@
 			{:else}
 				<Table.Root>
 					<Table.Header>
-						<Table.Row><Table.Head>Title</Table.Head><Table.Head>Agent</Table.Head><Table.Head>Thread</Table.Head><Table.Head>Created</Table.Head><Table.Head class="w-12"><span class="sr-only">Actions</span></Table.Head></Table.Row>
+						<Table.Row><Table.Head>Title</Table.Head><Table.Head>Agent</Table.Head><Table.Head>Created</Table.Head><Table.Head class="w-12"><span class="sr-only">Actions</span></Table.Head></Table.Row>
 					</Table.Header>
 					<Table.Body>
 						{#each filtered as session (session.id)}
 							<Table.Row class="cursor-pointer" onclick={() => onSelect(session)}>
-								<Table.Cell class="min-w-72">
-									<div class="flex items-center gap-3">
-										<span class="grid size-8 shrink-0 place-items-center rounded-lg bg-muted"><MessageSquare class="size-4 text-muted-foreground" /></span>
-										<span class="truncate font-medium">{session.title}</span>
-									</div>
-								</Table.Cell>
-								<Table.Cell><span class="inline-flex items-center gap-2"><Bot class="size-3.5 text-muted-foreground" />{agentName(session.agent_id)}</span></Table.Cell>
-								<Table.Cell>{#if session.relation_kind}<Badge variant="secondary"><GitBranch />{session.relation_kind}</Badge>{:else}<span class="text-muted-foreground">Primary</span>{/if}</Table.Cell>
+								<Table.Cell class="min-w-72"><p class="font-medium">{session.title}</p>{#if session.latest_message_preview}<p class="mt-1 max-w-xl truncate text-xs font-normal text-muted-foreground">{session.latest_message_preview}</p>{/if}</Table.Cell>
+								<Table.Cell><span class="inline-flex items-center gap-2"><AgentMarker name={agentName(session.agent_id)} />{agentName(session.agent_id)}</span></Table.Cell>
 								<Table.Cell class="text-muted-foreground">{formatDate(session.created_at)}</Table.Cell>
 								<Table.Cell onclick={(event) => event.stopPropagation()}>
 									<DropdownMenu.Root>

@@ -2565,6 +2565,43 @@ async fn test_file_based_store() {
 }
 
 #[tokio::test]
+async fn latest_session_message_previews_are_batched_and_bounded() {
+    let store = StateStore::open_memory().await.unwrap();
+    let first = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+    let second = store
+        .create_session(uuid::Uuid::now_v7(), "default", None)
+        .await
+        .unwrap();
+
+    store
+        .insert_message(first, turn(0), "user", &json!("earlier"), None)
+        .await
+        .unwrap();
+    store
+        .insert_message(
+            first,
+            turn(0),
+            "assistant",
+            &json!([{ "type": "text", "text": "latest response" }]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let previews = store
+        .latest_session_message_previews(&[first, second], 6)
+        .await
+        .unwrap();
+    let preview = previews.get(&first).expect("first session preview");
+    assert_eq!(preview.text, "latest");
+    assert_eq!(preview.role, "assistant");
+    assert!(!previews.contains_key(&second));
+}
+
+#[tokio::test]
 async fn test_create_session_initializes_main_branch() {
     let store = StateStore::open_memory().await.unwrap();
     let session = store
@@ -3459,7 +3496,9 @@ async fn memory_inspection_is_bounded_filtered_and_does_not_record_retrieval() {
         .unwrap();
     assert_eq!(first_page.total, 3);
     assert_eq!(first_page.rows.len(), 2);
-    assert_eq!(first_page.scopes.len(), 2);
+    assert_eq!(first_page.scope_kinds.len(), 1);
+    assert_eq!(first_page.scope_kinds[0].scope_kind, "agent");
+    assert_eq!(first_page.scope_kinds[0].count, 3);
     assert!(first_page.rows.iter().all(|row| row.retrieval_count == 0));
 
     let alpha = store

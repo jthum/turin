@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { BrainCircuit, Check, ChevronRight, Copy, GitBranch, MoreHorizontal, Share2, Wrench } from '@lucide/svelte';
-	import * as Avatar from '#lib/components/ui/avatar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import type { ConversationMessage } from '#lib/api/contracts.js';
+	import AgentMarker from './agent-marker.svelte';
 	import RichMessage from './rich-message.svelte';
 
 	let {
@@ -22,9 +22,7 @@
 	let isUser = $derived(message.role === 'user');
 	let isTool = $derived(message.role === 'tool');
 	let canFork = $derived(/^\d+$/.test(message.turn_id));
-	let author = $derived(isUser ? 'You' : isTool ? 'Tool result' : message.role === 'system' ? 'System' : agentName);
-	let initials = $derived(isUser ? 'Y' : isTool ? 'T' : message.role === 'system' ? 'S' : author.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join(''));
-	let avatarHue = $derived(Array.from(author).reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) % 360, 0));
+	let author = $derived(isUser ? 'You' : message.role === 'system' ? 'System' : agentName);
 
 	function formatTime(value: string) {
 		return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value));
@@ -59,14 +57,21 @@
 
 </script>
 
-<article class="group/message flex items-start gap-3 rounded-xl py-4 transition-colors duration-500 sm:gap-4" class:flex-row-reverse={isUser} class:tool-message={isTool} class:focused-result={focused}>
-	{#if !isUser}
-		<Avatar.Root size="sm" class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'agent-avatar'} style={isTool ? undefined : `--avatar-hue:${avatarHue};`}>
-			<Avatar.Fallback class={isTool ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-transparent text-white'}>
-				{#if isTool}<Wrench class="size-3" />{:else}{initials}{/if}
-			</Avatar.Fallback>
-		</Avatar.Root>
-	{/if}
+{#if isTool}
+	<article class="rounded-xl py-1.5 pl-5 sm:pl-6" class:focused-result={focused}>
+		<details class="tool-disclosure text-sm text-muted-foreground">
+			<summary class="flex w-fit cursor-pointer list-none items-center gap-2 rounded-md py-1 pr-2 transition-colors hover:text-foreground">
+				<ChevronRight class="disclosure-chevron size-3" />
+				<Wrench class="size-3.5" />
+				<span>Tool activity</span>
+				<time class="text-[11px] text-muted-foreground/70">{formatTime(message.created_at)}</time>
+			</summary>
+			<pre class="mb-1 ml-5 mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/25 px-3 py-2.5 text-xs leading-5 text-foreground">{message.content}</pre>
+		</details>
+	</article>
+{:else}
+<article class="group/message flex items-start gap-2 rounded-xl py-4 transition-colors duration-500" class:flex-row-reverse={isUser} class:focused-result={focused}>
+	{#if !isUser}<AgentMarker name={author} class="mt-1 size-3" />{/if}
 	<div class="min-w-0" class:flex-1={!isUser} class:max-w-[85%]={isUser}>
 		<div class="mb-2.5 flex items-start" class:justify-end={isUser}>
 			<strong class="text-sm font-semibold capitalize leading-5">{author}</strong>
@@ -77,17 +82,10 @@
 				<p class="mb-0 mt-2 pl-7 text-sm leading-6 text-muted-foreground">{message.reasoning.summary}</p>
 			</details>
 		{/if}
-		{#if isTool}
-			<details class="tool-disclosure rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm">
-				<summary class="flex cursor-pointer list-none items-center gap-2 text-muted-foreground"><ChevronRight class="disclosure-chevron size-3.5" />Show tool output</summary>
-				<pre class="mb-0 mt-2 overflow-x-auto whitespace-pre-wrap break-words border-t border-amber-500/15 pt-2 text-xs leading-5 text-foreground">{message.content}</pre>
-			</details>
-		{:else}
-			<div class:user-surface={isUser} class="text-foreground" class:ml-auto={isUser}>
-				<RichMessage content={message.content} {streaming} />
-				{#if streaming}<span class="ml-0.5 inline-block h-4 w-1 animate-pulse bg-primary align-text-bottom"></span>{/if}
-			</div>
-		{/if}
+		<div class:user-surface={isUser} class="text-foreground" class:ml-auto={isUser}>
+			<RichMessage content={message.content} {streaming} />
+			{#if streaming}<span class="ml-0.5 inline-block h-4 w-1 animate-pulse bg-primary align-text-bottom"></span>{/if}
+		</div>
 
 		<div class="message-footer mt-1.5 flex min-h-7 items-center gap-1 text-muted-foreground" class:justify-end={isUser}>
 			<time class="mr-1 text-[11px]">{formatTime(message.created_at)}</time>
@@ -138,6 +136,7 @@
 		{/if}
 	</div>
 </article>
+{/if}
 
 <style>
 	.user-surface {
@@ -147,12 +146,9 @@
 		background: color-mix(in oklab, var(--primary) 8%, var(--background));
 		padding: 0.58rem 0.85rem;
 	}
-	.focused-result { background: color-mix(in oklab, var(--primary) 7%, transparent); }
-	:global(.agent-avatar) {
-		background:
-			radial-gradient(circle at 72% 24%, hsl(calc(var(--avatar-hue) + 72) 88% 72%), transparent 38%),
-			linear-gradient(145deg, hsl(var(--avatar-hue) 72% 48%), hsl(calc(var(--avatar-hue) + 42) 78% 56%));
-		box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
+	.focused-result {
+		outline: 2px solid color-mix(in oklab, var(--primary) 45%, transparent);
+		outline-offset: 2px;
 	}
 	:global(.reasoning-disclosure[open] .disclosure-chevron),
 	:global(.tool-disclosure[open] .disclosure-chevron),

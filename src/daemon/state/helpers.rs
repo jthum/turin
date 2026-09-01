@@ -151,12 +151,17 @@ pub(super) fn session_summary_from_row(
                     .map(|raw| serde_json::Value::String(raw.clone()))
             }),
         parent_internal_id: row.parent_session_id,
+        parent_session_id: None,
+        parent_title: None,
         root_internal_id: row.root_session_id,
         origin_turn_id: row.origin_turn_id,
         relation_kind: row.relation_kind.clone(),
         thread_key: row.thread_key.clone(),
         visibility: row.visibility.clone(),
         created_at: row.created_at.clone(),
+        latest_message_preview: None,
+        latest_message_role: None,
+        latest_message_created_at: None,
     }
 }
 

@@ -176,12 +176,22 @@ pub struct SessionSummary {
     pub origin_id: Option<String>,
     pub metadata: Option<Value>,
     pub parent_internal_id: Option<i64>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub parent_title: Option<String>,
     pub root_internal_id: Option<i64>,
     pub origin_turn_id: Option<i64>,
     pub relation_kind: Option<String>,
     pub thread_key: Option<String>,
     pub visibility: String,
     pub created_at: String,
+    #[serde(default)]
+    pub latest_message_preview: Option<String>,
+    #[serde(default)]
+    pub latest_message_role: Option<String>,
+    #[serde(default)]
+    pub latest_message_created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -98,6 +98,7 @@ export type Memory = {
 	id: string;
 	scope_kind: string;
 	scope_key: string;
+	scope_display_name?: string | null;
 	content: string;
 	metadata: unknown | null;
 	storage: string;
@@ -111,15 +112,14 @@ export type Memory = {
 	created_at: string;
 };
 
-export type MemoryScope = {
+export type MemoryScopeKind = {
 	scope_kind: string;
-	scope_key: string;
 	count: number;
 };
 
 export type MemoryPage = {
 	memories: Memory[];
-	scopes: MemoryScope[];
+	scope_kinds: MemoryScopeKind[];
 	total: number;
 	offset: number;
 	limit: number;
@@ -142,6 +142,12 @@ export type Session = {
 	message_count: number | null;
 	visibility: string;
 	relation_kind: string | null;
+	parent_session_id?: string | null;
+	parent_title?: string | null;
+	origin_turn_id?: string | null;
+	latest_message_preview?: string | null;
+	latest_message_role?: string | null;
+	latest_message_created_at?: string | null;
 };
 
 export type SessionPage = {

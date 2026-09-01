@@ -215,10 +215,12 @@ fn session_list_can_filter_by_origin_or_target_direct_linked_children() {
             path: None,
             origin_id: Some("client:desktop".to_string()),
             parent_session_id: None,
+            preview_chars: Some(180),
         }),
     );
     let origin_value = serde_json::to_value(origin_request).expect("serialize origin session list");
     assert_eq!(origin_value["params"]["origin_id"], "client:desktop");
+    assert_eq!(origin_value["params"]["preview_chars"], 180);
 
     let request = RequestEnvelope::new(
         Some("req_linked_sessions".to_string()),
@@ -229,6 +231,7 @@ fn session_list_can_filter_by_origin_or_target_direct_linked_children() {
             path: None,
             origin_id: None,
             parent_session_id: Some("019f-parent".to_string()),
+            preview_chars: None,
         }),
     );
     let value = serde_json::to_value(request).expect("serialize linked session list");

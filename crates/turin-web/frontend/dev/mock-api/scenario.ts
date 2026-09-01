@@ -22,6 +22,22 @@ export type MockResponse = {
 
 const BASE_TIME = Date.parse('2026-08-29T08:00:00.000Z');
 
+export const MOCK_SESSION_IDS = {
+	welcome: '019d52d1-1e01-7b4c-8f39-000000000001',
+	context: '019d52d1-1e01-7b4c-8f39-000000000002',
+	release: '019d52d1-1e01-7b4c-8f39-000000000003',
+	docs: '019d52d1-1e01-7b4c-8f39-000000000004',
+	security: '019d52d1-1e01-7b4c-8f39-000000000005',
+	storage: '019d52d1-1e01-7b4c-8f39-000000000006',
+	branches: '019d52d1-1e01-7b4c-8f39-000000000007',
+	web: '019d52d1-1e01-7b4c-8f39-000000000008',
+	ui: '019d52d1-1e01-7b4c-8f39-000000000009',
+	performance: '019d52d1-1e01-7b4c-8f39-00000000000a',
+	empty: '019d52d1-1e01-7b4c-8f39-00000000000b',
+	research: '019d52d1-1e01-7b4c-8f39-00000000000c',
+	long: '019d52d1-1e01-7b4c-8f39-00000000000d'
+} as const;
+
 function timestamp(index: number): string {
 	return new Date(BASE_TIME + index * 45_000).toISOString();
 }
@@ -63,9 +79,30 @@ function memory(item: Pick<Memory, 'id' | 'scope_kind' | 'scope_key' | 'content'
 	};
 }
 
+const MESSAGE_PATTERN = [
+	['user', 0], ['assistant', 0],
+	['user', 1], ['assistant', 1],
+	['user', 2], ['assistant', 2],
+	['user', 3], ['assistant', 3],
+	['user', 4], ['assistant', 4],
+	['user', 5], ['tool', 5], ['assistant', 5],
+	['user', 6], ['assistant', 6]
+] as const;
+const TURN_START_OFFSETS = [0, 2, 4, 6, 8, 10, 13] as const;
+
+export function mockMessageIndexForTurn(turn: number) {
+	const normalized = Math.max(1, turn) - 1;
+	return Math.floor(normalized / 7) * MESSAGE_PATTERN.length + TURN_START_OFFSETS[normalized % 7];
+}
+
+export function mockTurnForMessageIndex(index: number) {
+	const [, turnOffset] = MESSAGE_PATTERN[index % MESSAGE_PATTERN.length];
+	return Math.floor(index / MESSAGE_PATTERN.length) * 7 + turnOffset + 1;
+}
+
 function generatedMessage(sessionId: string, index: number): ConversationMessage {
-	const role = index % 2 === 0 ? 'user' : Math.floor(index / 2) % 7 === 5 ? 'tool' : 'assistant';
-	const turn = Math.floor(index / 2) + 1;
+	const [role] = MESSAGE_PATTERN[index % MESSAGE_PATTERN.length];
+	const turn = mockTurnForMessageIndex(index);
 	const content = role === 'user'
 		? userPrompt(turn)
 		: role === 'tool'
@@ -114,29 +151,36 @@ export function createMockScenario(): MockScenario {
 	const largeMessageCount = Math.max(0, Number(process.env.TURIN_MOCK_MESSAGE_COUNT ?? 10_000));
 	const streamMode = mockStreamMode(process.env.TURIN_MOCK_STREAM);
 	const sessionSpecs = [
-		['session-welcome', 'Building a focused Turin workspace', 'default', 8, null],
-		['session-context', 'Context window strategy', 'default', 18, null],
-		['session-release', 'Preparing the next Turin release', 'default', 42, null],
-		['session-docs', 'Consumer-facing documentation', 'scout', 7, null],
-		['session-security', 'Tool authorization review', 'default', 64, null],
-		['session-storage', 'Persistence quality and integrity', 'scout', 126, 'linked'],
-		['session-branches', 'Branching and linked sessions', 'default', 31, null],
-		['session-web', 'Web product direction', 'scout', 83, null],
-		['session-ui', 'Conversation interface polish', 'default', 14, null],
-		['session-performance', 'Runtime memory and latency', 'scout', 220, 'linked'],
-		['session-empty', 'Ideas to revisit later', 'default', 0, null],
-		['session-research', 'Runtime architecture review', 'reviewer', 32, 'linked'],
-		['session-long', `${largeMessageCount.toLocaleString()} message window test`, 'default', largeMessageCount, null]
+		[MOCK_SESSION_IDS.welcome, 'Building a focused Turin workspace', 'default', 8, null, null],
+		[MOCK_SESSION_IDS.context, 'Context window strategy', 'default', 17, null, null],
+		[MOCK_SESSION_IDS.release, 'Preparing the next Turin release', 'default', 43, null, null],
+		[MOCK_SESSION_IDS.docs, 'Consumer-facing documentation', 'scout', 8, null, null],
+		[MOCK_SESSION_IDS.security, 'Tool authorization review', 'default', 64, null, null],
+		[MOCK_SESSION_IDS.storage, 'Persistence quality and integrity', 'scout', 126, 'delegated', MOCK_SESSION_IDS.context],
+		[MOCK_SESSION_IDS.branches, 'Branching and linked sessions', 'default', 30, null, null],
+		[MOCK_SESSION_IDS.web, 'Web product direction', 'scout', 83, null, null],
+		[MOCK_SESSION_IDS.ui, 'Conversation interface polish', 'default', 15, null, null],
+		[MOCK_SESSION_IDS.performance, 'Runtime memory and latency', 'scout', 220, 'delegated', MOCK_SESSION_IDS.storage],
+		[MOCK_SESSION_IDS.empty, 'Ideas to revisit later', 'default', 0, null, null],
+		[MOCK_SESSION_IDS.research, 'Runtime architecture review', 'reviewer', 32, 'delegated', MOCK_SESSION_IDS.docs],
+		[MOCK_SESSION_IDS.long, `${largeMessageCount.toLocaleString()} message window test`, 'default', largeMessageCount, null, null]
 	] as const;
 	const counts = new Map<string, number>(sessionSpecs.map(([id, , , count]) => [id, count]));
-	const sessions: Session[] = sessionSpecs.map(([id, title, agentId, count, relationKind], index) => ({
+	const titles = new Map<string, string>(sessionSpecs.map(([id, title]) => [id, title]));
+	const sessions: Session[] = sessionSpecs.map(([id, title, agentId, count, relationKind, parentSessionId], index) => ({
 		id,
 		title,
 		agent_id: agentId,
 		created_at: timestamp(index * 12),
 		message_count: count,
-		visibility: 'private',
-		relation_kind: relationKind
+		visibility: parentSessionId ? 'contextual' : 'top_level',
+		relation_kind: relationKind,
+		parent_session_id: parentSessionId,
+		parent_title: parentSessionId ? titles.get(parentSessionId) ?? null : null,
+		origin_turn_id: parentSessionId ? `${parentSessionId}-turn-2` : null,
+		latest_message_preview: count > 0 ? generatedMessage(id, count - 1).content.replace(/\s+/g, ' ').slice(0, 180) : null,
+		latest_message_role: count > 0 ? generatedMessage(id, count - 1).role : null,
+		latest_message_created_at: count > 0 ? generatedMessage(id, count - 1).created_at : null
 	}));
 
 	return {
@@ -156,19 +200,20 @@ export function createMockScenario(): MockScenario {
 		workItems: {
 			'worklist-runtime': [
 				workItem('worklist-runtime', { id: 'item-integrity', title: 'Review persistence integrity failures', kind: 'task', status: 'pending', priority: 80, prompt: 'Audit malformed rows and graph-parent failures, then summarize any integrity gaps.', action_name: 'runtime.integrity_review', updated_at: timestamp(54) }),
-				workItem('worklist-runtime', { id: 'item-context', title: 'Validate bounded context retrieval', kind: 'task', status: 'active', priority: 60, prompt: 'Exercise a long session and verify bounded ancestry retrieval.', claim_agent_id: 'default', claim_session_id: 'session-context', claim_execution_id: 'execution-context', claim_heartbeat_unix_ms: Date.now(), claimed_at: timestamp(55), updated_at: timestamp(56) }),
+				workItem('worklist-runtime', { id: 'item-context', title: 'Validate bounded context retrieval', kind: 'task', status: 'active', priority: 60, prompt: 'Exercise a long session and verify bounded ancestry retrieval.', claim_agent_id: 'default', claim_session_id: MOCK_SESSION_IDS.context, claim_execution_id: 'execution-context', claim_heartbeat_unix_ms: Date.now(), claimed_at: timestamp(55), updated_at: timestamp(56) }),
 				workItem('worklist-runtime', { id: 'item-permissions', title: 'Recheck delegated tool permissions', kind: 'review', status: 'paused', priority: 45, paused: true, pause_reason: 'Awaiting operator input', prompt: 'Confirm the child agent receives no broader authority than its parent.', updated_at: timestamp(48) }),
+				workItem('worklist-runtime', { id: 'item-index', title: 'Rebuild the stale search index', kind: 'task', status: 'failed', priority: 35, prompt: 'Rebuild the persisted search index and verify the new generation before activation.', failure_reason: 'The source database was locked by another maintenance task.', updated_at: timestamp(47) }),
 				workItem('worklist-runtime', { id: 'item-release', title: 'Publish persistence findings', kind: 'task', status: 'done', priority: 20, after: ['item-integrity'], completed_at: timestamp(50), updated_at: timestamp(50) })
 			],
 			'worklist-web': [
-				workItem('worklist-web', { id: 'item-workspace', title: 'Build a useful workspace shell', kind: 'task', status: 'active', priority: 90, prompt: 'Turn the exploratory Work surface into an operator workflow.', claim_agent_id: 'default', claim_session_id: 'session-web', claim_execution_id: 'execution-web', claim_heartbeat_unix_ms: 1, claimed_at: timestamp(61), updated_at: timestamp(62) }),
+				workItem('worklist-web', { id: 'item-workspace', title: 'Build a useful workspace shell', kind: 'task', status: 'active', priority: 90, prompt: 'Turn the exploratory Work surface into an operator workflow.', claim_agent_id: 'default', claim_session_id: MOCK_SESSION_IDS.web, claim_execution_id: 'execution-web', claim_heartbeat_unix_ms: 1, claimed_at: timestamp(61), updated_at: timestamp(62) }),
 				workItem('worklist-web', { id: 'item-memory', title: 'Design scalable memory exploration', kind: 'task', status: 'pending', priority: 70, prompt: 'Design search-first memory inspection without loading all records.', updated_at: timestamp(63) })
 			]
 		},
 		memories: [
 			memory({ id: 'memory-architecture', scope_kind: 'harness', scope_key: 'default', content: 'Keep Turin core unopinionated; clients own presentation and navigation state.', metadata: { source_task: 'architecture-review', tags: ['principle'] }, storage: 'embedded', embedding_key: 'minilm', embedding_dimensions: 384, weight: 1, retrieval_count: 12, last_retrieved_at: timestamp(51), created_at: timestamp(8) }),
 			memory({ id: 'memory-ui', scope_kind: 'agent', scope_key: 'default', content: 'Prefer focused product workflows over diagnostic dashboards that expose every runtime detail.', metadata: { source_task: 'ui-review', tags: ['product'] }, weight: 0.85, retrieval_count: 7, last_retrieved_at: timestamp(45), created_at: timestamp(20) }),
-			memory({ id: 'memory-context', scope_kind: 'session', scope_key: 'session-context', content: 'Context retrieval should stop at the nearest semantic checkpoint before filling the remaining token budget.', metadata: { tags: ['context', 'performance'] }, weight: 1.2, retrieval_count: 18, created_at: timestamp(28) }),
+			memory({ id: 'memory-context', scope_kind: 'session', scope_key: MOCK_SESSION_IDS.context, content: 'Context retrieval should stop at the nearest semantic checkpoint before filling the remaining token budget.', metadata: { tags: ['context', 'performance'] }, weight: 1.2, retrieval_count: 18, created_at: timestamp(28) }),
 			memory({ id: 'memory-old-ui', scope_kind: 'agent', scope_key: 'default', content: 'Render every runtime diagnostic on the default dashboard.', superseded_at: timestamp(19), superseded_by_id: 'memory-ui', weight: 0.6, retrieval_count: 2, created_at: timestamp(6) })
 		],
 		sessions,

@@ -55,6 +55,16 @@ impl Client {
         self.list_sessions_in(limit, offset, None, None).await
     }
 
+    pub async fn list_sessions_with_previews(
+        &self,
+        limit: usize,
+        offset: usize,
+        preview_chars: usize,
+    ) -> Result<Vec<SessionSummary>> {
+        self.list_sessions_filtered(limit, offset, None, None, None, Some(preview_chars))
+            .await
+    }
+
     pub async fn list_sessions_in(
         &self,
         limit: usize,
@@ -62,7 +72,7 @@ impl Client {
         store: Option<&str>,
         path: Option<&str>,
     ) -> Result<Vec<SessionSummary>> {
-        self.list_sessions_filtered(limit, offset, store, path, None)
+        self.list_sessions_filtered(limit, offset, store, path, None, None)
             .await
     }
 
@@ -72,7 +82,7 @@ impl Client {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionSummary>> {
-        self.list_sessions_filtered(limit, offset, None, None, Some(origin_id))
+        self.list_sessions_filtered(limit, offset, None, None, Some(origin_id), None)
             .await
     }
 
@@ -83,6 +93,7 @@ impl Client {
         store: Option<&str>,
         path: Option<&str>,
         origin_id: Option<&str>,
+        preview_chars: Option<usize>,
     ) -> Result<Vec<SessionSummary>> {
         let response: SessionList = self
             .request_ok(
@@ -94,6 +105,7 @@ impl Client {
                     path: path.map(str::to_string),
                     origin_id: origin_id.map(str::to_string),
                     parent_session_id: None,
+                    preview_chars,
                 }),
             )
             .await?;
@@ -106,6 +118,17 @@ impl Client {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<SessionSummary>> {
+        self.list_linked_sessions_with_previews(parent_session_id, limit, offset, None)
+            .await
+    }
+
+    pub async fn list_linked_sessions_with_previews(
+        &self,
+        parent_session_id: &str,
+        limit: usize,
+        offset: usize,
+        preview_chars: Option<usize>,
+    ) -> Result<Vec<SessionSummary>> {
         let response: SessionList = self
             .request_ok(
                 None,
@@ -116,6 +139,7 @@ impl Client {
                     path: None,
                     origin_id: None,
                     parent_session_id: Some(parent_session_id.to_string()),
+                    preview_chars,
                 }),
             )
             .await?;
